@@ -22,6 +22,13 @@
  * Pi replaces with its own that know the `app.*` actions and the user's
  * changes. The write is left to run: its outcome goes to the clipboard's
  * report, and a failure is never thrown back into the key handling.
+ *
+ * Cmd+A selects the whole text and Cmd+X cuts the selection: it copies the
+ * text as a copy key does and removes it as a deleting key does. Outside
+ * macOS, Ctrl+A and Ctrl+X do the same, as Ctrl is the command modifier
+ * there; on macOS they keep the editor's line start and Pi's copy. Without a
+ * selection a cut key keeps its usual meaning, and the select-all key is used
+ * up even when there is no text to select.
  */
 import type { AppKeybinding } from "@earendil-works/pi-coding-agent";
 import {
@@ -220,6 +227,21 @@ function copies(data: string): boolean {
   );
 }
 
+/** Cmd is the command modifier on macOS; elsewhere Ctrl is, read at each key so a test can change it. */
+function ctrlIsCommand(): boolean {
+  return process.platform !== "darwin";
+}
+
+/** Whether `data` is the key that selects all the text: Cmd+A, or Ctrl+A outside macOS. */
+function selectsAll(data: string): boolean {
+  return matchesKey(data, "super+a") || (ctrlIsCommand() && matchesKey(data, "ctrl+a"));
+}
+
+/** Whether `data` is the key that cuts a selection: Cmd+X, or Ctrl+X outside macOS. */
+function cuts(data: string): boolean {
+  return matchesKey(data, "super+x") || (ctrlIsCommand() && matchesKey(data, "ctrl+x"));
+}
+
 /** A printable key from a terminal in modifyOtherKeys mode: no modifier, or Shift alone. */
 function isModifyOtherKeysPrintable(data: string): boolean {
   if (!data.startsWith("\x1b[27;") || !data.endsWith("~")) return false;
@@ -281,6 +303,9 @@ type CursorBinding =
   | "tui.editor.cursorLineEnd";
 const LINE_START = "\x01";
 const LINE_END = "\x05";
+const DOWN = "\x1b[B";
+const PAGE_DOWN = "\x1b[6~";
+const ESCAPE = "\x1b";
 
 /** Where the editor's first text row and column are in the coordinates mouse events arrive in. */
 export type TextOrigin = { top: number; left: number };
@@ -370,19 +395,29 @@ export class EditorSelection {
 
   /**
    * A key for the editor. True when the key was used up: Shift with an arrow
-   * key that moved the selection's end, a copy key that copied the selection,
-   * a deleting key that removed it, or Escape that dropped it (Escape
-   * otherwise interrupts the agent). False when the caller should pass it on,
-   * which for input that inserts text is after the selection it replaces has
-   * been removed.
+   * key that moved the selection's end, the select-all key, a cut or copy key
+   * that cut or copied the selection, a deleting key that removed it, or
+   * Escape that dropped it (Escape otherwise interrupts the agent). False when
+   * the caller should pass it on, which for input that inserts text is after
+   * the selection it replaces has been removed.
    */
   key(data: string): boolean {
     if (isKeyRelease(data)) return false;
+    if (selectsAll(data)) {
+      this.selectAll();
+      return true;
+    }
     const arrow = ARROWS.find((entry) => matchesKey(data, entry.shifted));
     if (arrow) return this.extend(arrow);
     if (!this.range()) {
       this.selection = undefined;
       return false;
+    }
+    if (cuts(data)) {
+      // The text is taken before it is removed; the write then runs on its own.
+      this.copy();
+      this.remove();
+      return true;
     }
     if (copies(data)) {
       this.copy();
@@ -400,6 +435,49 @@ export class EditorSelection {
     if (insertsText(data)) this.remove();
     this.selection = undefined;
     return false;
+  }
+
+  /**
+   * Select the whole text, with the editor's cursor at its end. The cursor
+   * moves with the editor's own keys: down to the last line, then the
+   * line-end key. An open autocomplete menu takes those keys, so it is closed
+   * first. Any surprise (an unbound key, a cursor that did not move, a changed
+   * text) leaves nothing selected.
+   */
+  private selectAll(): void {
+    this.selection = undefined;
+    this.drag = undefined;
+    const lines = this.editor.lines();
+    if (!lines) return;
+    const text = lines.join("\n");
+    if (text === "") return;
+    const keys = getKeybindings();
+    if (this.editor.menuOpen() && keys.matches(ESCAPE, "tui.select.cancel")) {
+      this.editor.input(ESCAPE);
+    }
+    if (this.editor.menuOpen()) return;
+    const lastLine = lines.length - 1;
+    const end: TextPosition = { line: lastLine, col: lines[lastLine]?.length ?? 0 };
+    const down = downKey();
+    let cursor = this.editor.cursor();
+    while (cursor && cursor.line < lastLine) {
+      if (!down) return;
+      this.editor.input(down);
+      const moved = this.editor.cursor();
+      // The walk only moves forward through a finite text, so a key that did not move it ends it.
+      if (!moved || compare(moved, cursor) <= 0) return;
+      cursor = moved;
+    }
+    if (
+      cursor &&
+      compare(cursor, end) !== 0 &&
+      keys.matches(LINE_END, "tui.editor.cursorLineEnd")
+    ) {
+      this.editor.input(LINE_END);
+    }
+    const placed = this.editor.cursor();
+    if (!placed || compare(placed, end) !== 0 || this.editor.lines()?.join("\n") !== text) return;
+    this.selection = { anchor: { line: 0, col: 0 }, focus: end, text };
   }
 
   /**
@@ -636,6 +714,19 @@ export class EditorSelection {
       remaining = next;
     }
   }
+}
+
+/**
+ * The editor's key that moves the cursor down: Page Down when it is bound, as
+ * the editor lays out the whole text once per key and Page Down passes a page
+ * of rows each time, so the walk costs a key per page instead of one per row.
+ * Neither key browses the prompt history before the cursor is on the last
+ * line, where the walk stops.
+ */
+function downKey(): string | undefined {
+  const keys = getKeybindings();
+  if (keys.matches(PAGE_DOWN, "tui.editor.pageDown")) return PAGE_DOWN;
+  return keys.matches(DOWN, "tui.editor.cursorDown") ? DOWN : undefined;
 }
 
 function drawnAs(frameRow: string, row: VisualLine, pad: number): boolean {

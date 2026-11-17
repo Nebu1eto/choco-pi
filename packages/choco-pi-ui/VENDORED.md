@@ -481,3 +481,32 @@ Tool arguments and tool result text are snake_case (user decision; no aliases). 
   remains only when not even the active label fits.
 - Consumer: the Preferences tab of `profile/extensions/status-commands.ts`.
 - Test: `tests/settings-mouse.test.ts` (this package).
+
+## 2026-11-17 choco-pi patch: select all and cut in the editor selection
+
+- `extensions/zentui/editor-selection.ts`: Cmd+A (`super+a`) selects the whole
+  draft, and Cmd+X (`super+x`) cuts a selection: it copies the selected text as
+  a copy key does, then removes it as a deleting key does. Outside macOS
+  (`process.platform !== "darwin"`, read at each key) Ctrl+A and Ctrl+X do the
+  same, since Ctrl is the command modifier there. There Ctrl+A no longer
+  reaches the editor's line start (Home still does), and Ctrl+X with a
+  selection cuts instead of copying. On macOS Ctrl+A stays the line start and
+  Ctrl+X still copies. Without a selection a cut key keeps its usual meaning
+  (Ctrl+X runs Pi's `app.message.copy`). The select-all key is used up even on
+  an empty draft.
+- Select-all moves the cursor with the editor's own keys: Page Down (Down when
+  Page Down is unbound) until the last line, then the line-end key, so the
+  cursor is on the selection's end as the selection requires. pi-tui rebuilds
+  its visual-line map on every cursor key, so Page Down's page of rows per key
+  keeps the walk to one rebuild per page instead of one per row, and neither
+  key browses history before the last line. An open autocomplete menu takes
+  these keys, so Escape closes it first; if it stays open, or a key is
+  unbound, or the cursor or text behaves unexpectedly, nothing is selected.
+- A cut removes the text at once, as other editors do. A failed clipboard
+  write is reported through the existing `SelectionClipboard.report`, which is
+  shown only in fullscreen; the editor's undo restores the text, one removal
+  key per step, as after deleting a selection.
+- Cmd keys reach the editor only from a terminal that passes them on in the
+  Kitty keyboard protocol; Rex sends Cmd+A as `ESC[97;9u`.
+- Tests: `tests/zentui-editor-selection.test.ts` (root); the Ctrl+X copy test
+  now runs as macOS.
