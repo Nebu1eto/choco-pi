@@ -484,16 +484,16 @@ Tool arguments and tool result text are snake_case (user decision; no aliases). 
 
 ## 2026-11-17 choco-pi patch: select all and cut in the editor selection
 
-- `extensions/zentui/editor-selection.ts`: Cmd+A (`super+a`) selects the whole
-  draft, and Cmd+X (`super+x`) cuts a selection: it copies the selected text as
-  a copy key does, then removes it as a deleting key does. Outside macOS
-  (`process.platform !== "darwin"`, read at each key) Ctrl+A and Ctrl+X do the
-  same, since Ctrl is the command modifier there. There Ctrl+A no longer
-  reaches the editor's line start (Home still does), and Ctrl+X with a
-  selection cuts instead of copying. On macOS Ctrl+A stays the line start and
-  Ctrl+X still copies. Without a selection a cut key keeps its usual meaning
-  (Ctrl+X runs Pi's `app.message.copy`). The select-all key is used up even on
-  an empty draft.
+- `extensions/zentui/editor-selection.ts`: Ctrl+A or Cmd+A (`super+a`) selects
+  the whole draft, and Ctrl+X or Cmd+X (`super+x`) cuts a selection: it copies
+  the selected text as a copy key does, then removes it as a deleting key does.
+  Ctrl does this on every platform, macOS included: Rex's Edit menu takes a
+  real Cmd+A, Cmd+C and Cmd+X before any terminal program or `init.lua`
+  binding sees them, while Ctrl reaches choco-pi. So Ctrl+A no longer reaches
+  the editor's line start (Home still does), and Ctrl+X with a selection cuts
+  instead of running Pi's `app.message.copy`. Without a selection a cut key
+  keeps its usual meaning (Ctrl+X runs `app.message.copy`). The select-all
+  key is used up even on an empty draft.
 - Select-all moves the cursor with the editor's own keys: Page Down (Down when
   Page Down is unbound) until the last line, then the line-end key, so the
   cursor is on the selection's end as the selection requires. pi-tui rebuilds
@@ -507,6 +507,8 @@ Tool arguments and tool result text are snake_case (user decision; no aliases). 
   shown only in fullscreen; the editor's undo restores the text, one removal
   key per step, as after deleting a selection.
 - Cmd keys reach the editor only from a terminal that passes them on in the
-  Kitty keyboard protocol; Rex sends Cmd+A as `ESC[97;9u`.
-- Tests: `tests/zentui-editor-selection.test.ts` (root); the Ctrl+X copy test
-  now runs as macOS.
+  Kitty keyboard protocol (Rex's `rex send-key cmd+a` sends `ESC[97;9u`, but
+  a real key press goes to its menu). With a Korean input source Rex sends
+  Ctrl+A as `ESC[12609::97;5u` (Hangul key, base-layout `a`), which pi-tui
+  matches as `ctrl+a`.
+- Tests: `tests/zentui-editor-selection.test.ts` (root).

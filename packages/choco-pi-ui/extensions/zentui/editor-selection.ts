@@ -13,22 +13,24 @@
  * the editor does and checking every row against what the editor drew: when
  * they disagree the selection is dropped, never drawn in the wrong place.
  *
- * A copy key (pi-tui's `tui.input.copy`, Ctrl+C; Pi's `app.message.copy`,
- * Ctrl+X; or Cmd+C where the terminal passes it on) copies the selected text
- * and keeps the draft and the selection; without a selection it keeps its
- * usual meaning. The text copied is the editor's own text between the ends,
+ * A copy key (pi-tui's `tui.input.copy`, Ctrl+C; Pi's `app.message.copy`
+ * when it is bound to a key other than the cut key; or Cmd+C where the
+ * terminal passes it on) copies the selected text and keeps the draft and the
+ * selection; without a selection it keeps its usual meaning. The text copied
+ * is the editor's own text between the ends,
  * the same text a deleting key removes, so a paste marker is copied as the
  * marker the editor shows. The bindings come from pi-tui's keybindings, which
  * Pi replaces with its own that know the `app.*` actions and the user's
  * changes. The write is left to run: its outcome goes to the clipboard's
  * report, and a failure is never thrown back into the key handling.
  *
- * Cmd+A selects the whole text and Cmd+X cuts the selection: it copies the
- * text as a copy key does and removes it as a deleting key does. Outside
- * macOS, Ctrl+A and Ctrl+X do the same, as Ctrl is the command modifier
- * there; on macOS they keep the editor's line start and Pi's copy. Without a
- * selection a cut key keeps its usual meaning, and the select-all key is used
- * up even when there is no text to select.
+ * Ctrl+A or Cmd+A selects the whole text, and Ctrl+X or Cmd+X cuts the
+ * selection: it copies the text as a copy key does and removes it as a
+ * deleting key does. Ctrl does this on every platform, macOS included, since
+ * a macOS terminal such as Rex keeps Cmd+A and Cmd+X for its own menu; Home
+ * still moves to the line start. Without a selection a cut key keeps its
+ * usual meaning (Ctrl+X is Pi's `app.message.copy`), and the select-all key
+ * is used up even when there is no text to select.
  */
 import type { AppKeybinding } from "@earendil-works/pi-coding-agent";
 import {
@@ -227,19 +229,14 @@ function copies(data: string): boolean {
   );
 }
 
-/** Cmd is the command modifier on macOS; elsewhere Ctrl is, read at each key so a test can change it. */
-function ctrlIsCommand(): boolean {
-  return process.platform !== "darwin";
-}
-
-/** Whether `data` is the key that selects all the text: Cmd+A, or Ctrl+A outside macOS. */
+/** Whether `data` is the key that selects all the text: Ctrl+A or Cmd+A. */
 function selectsAll(data: string): boolean {
-  return matchesKey(data, "super+a") || (ctrlIsCommand() && matchesKey(data, "ctrl+a"));
+  return matchesKey(data, "ctrl+a") || matchesKey(data, "super+a");
 }
 
-/** Whether `data` is the key that cuts a selection: Cmd+X, or Ctrl+X outside macOS. */
+/** Whether `data` is the key that cuts a selection: Ctrl+X or Cmd+X. */
 function cuts(data: string): boolean {
-  return matchesKey(data, "super+x") || (ctrlIsCommand() && matchesKey(data, "ctrl+x"));
+  return matchesKey(data, "ctrl+x") || matchesKey(data, "super+x");
 }
 
 /** A printable key from a terminal in modifyOtherKeys mode: no modifier, or Shift alone. */
