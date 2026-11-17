@@ -714,7 +714,7 @@ test("the repository table offers xai/grok-4.7 only after every first-party cand
         { provider: "openai", id: "gpt-6.1-sol" },
         { available, scoped: [], isClosed: closedOnly("openai", "anthropic") },
       ),
-      { provider: "openai-codex", id: "gpt-6.1-sol" },
+      { provider: "openai-codex", id: "gpt-6.2-sol" },
     );
 
     // (b) Every tier candidate closed: Grok 4.7 before Kimi K3.1 Pro.
@@ -1130,16 +1130,21 @@ test("the repository fallback table loads and mirrors the model-guidance tiers",
     const table = await loadModelFallbacks(agentDir);
     assert.deepEqual(table.tiers.flagship?.primary, [
       "anthropic/claude-fable-5-2",
-      "openai-codex/gpt-6-astra",
+      "openai-codex/gpt-6.2-astra",
     ]);
     assert.deepEqual(table.tiers.flagship?.secondary, [
       "anthropic/claude-mythos-5-2",
       "anthropic/claude-fable-5-1",
       "anthropic/claude-mythos-5-1",
+      "openai-codex/gpt-6-astra",
     ]);
     assert.deepEqual(table.tiers.workhorse, {
-      primary: ["anthropic/claude-opus-5-5", "openai-codex/gpt-6.1-sol"],
-      secondary: ["anthropic/claude-opus-5", "openai-codex/gpt-5.6-sol"],
+      primary: ["anthropic/claude-opus-5-5", "openai-codex/gpt-6.2-sol"],
+      secondary: [
+        "anthropic/claude-opus-5",
+        "openai-codex/gpt-6.1-sol",
+        "openai-codex/gpt-5.6-sol",
+      ],
     });
     assert.deepEqual(table.tiers.utility, {
       primary: ["anthropic/claude-sonnet-5-5", "openai-codex/gpt-6.1-terra"],

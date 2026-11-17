@@ -206,17 +206,25 @@ test("spawn results explain discarded overrides and unavailable role models", as
 test("fallbacks and role defaults route OpenAI through openai-codex only", async () => {
   const fallbacks = await readFile(resolve("profile/model-fallbacks.json"), "utf8");
   assert.doesNotMatch(fallbacks, /"openai\//u, "no openai/* fallback defaults");
-  for (const id of ["gpt-6-astra", "gpt-6.1-sol", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-luna"]) {
+  for (const id of [
+    "gpt-6.2-astra",
+    "gpt-6.2-sol",
+    "gpt-6-astra",
+    "gpt-6.1-sol",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-6-luna",
+  ]) {
     assert.ok(fallbacks.includes(`"openai-codex/${id}"`), id);
   }
   const files = (await readdir(resolve("profile/agents"))).filter((file) => file.endsWith(".md"));
   assert.ok(files.length > 0);
   const expectedOpenAI = new Map([
-    ["general.md", "openai-codex/gpt-6.1-sol"],
-    ["explore.md", "openai-codex/gpt-6.1-sol"],
-    ["handoff.md", "openai-codex/gpt-6.1-sol"],
-    ["reviewer.md", "openai-codex/gpt-6-astra"],
-    ["verifier.md", "openai-codex/gpt-6.1-sol"],
+    ["general.md", "openai-codex/gpt-6.2-sol"],
+    ["explore.md", "openai-codex/gpt-6.2-sol"],
+    ["handoff.md", "openai-codex/gpt-6.2-sol"],
+    ["reviewer.md", "openai-codex/gpt-6.2-astra"],
+    ["verifier.md", "openai-codex/gpt-6.2-sol"],
   ]);
   for (const file of expectedOpenAI.keys()) assert.ok(files.includes(file), file + " exists");
   for (const file of files) {

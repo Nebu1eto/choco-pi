@@ -1,6 +1,6 @@
 ---
 description: Fast read-only codebase explorer that locates files, symbols, and behavior and reports findings with exact paths
-model: openai-codex/gpt-6.1-sol
+model: openai-codex/gpt-6.2-sol
 thinking: low
 prompt_mode: append
 skills: false

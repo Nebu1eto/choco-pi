@@ -186,6 +186,8 @@ export const DEFAULT_PROFILE_ENABLED_MODELS: readonly string[] = [
   "anthropic/claude-opus-4-6",
   "anthropic/claude-sonnet-5-5",
   "anthropic/claude-haiku-5-5",
+  "openai-codex/gpt-6.2-astra",
+  "openai-codex/gpt-6.2-sol",
   "openai-codex/gpt-6-astra",
   "openai-codex/gpt-6.1-sol",
   "openai-codex/gpt-6.1-terra",
@@ -240,6 +242,8 @@ export const DEFAULT_PROFILE_MODEL_THINKING_LEVELS = {
   "anthropic/claude-mythos-5-2": "high",
   "synthetic/hf:moonshotai/Kimi-K3.1-Pro": "high",
   "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash-1017": "high",
+  "openai-codex/gpt-6.2-astra": "medium",
+  "openai-codex/gpt-6.2-sol": "low",
 } as const satisfies Readonly<Record<string, string>>;
 
 /**

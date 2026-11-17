@@ -1,6 +1,6 @@
 ---
 description: Fresh-context verifier that tries to reproduce review claims against an exact checkout snapshot, writing only to scratch
-model: openai-codex/gpt-6.1-sol
+model: openai-codex/gpt-6.2-sol
 thinking: medium
 prompt_mode: append
 skills: true

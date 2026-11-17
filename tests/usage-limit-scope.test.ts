@@ -179,7 +179,7 @@ test("a Fable closure blocks only Fable and Mythos models", () => {
   assert.equal(policy.isClosed("anthropic", "acct", NOW + DAY, "claude-fable-5-2"), false);
 });
 
-test("a Fable limit falls back to gpt-6-astra, then to Opus before any last resort", async () => {
+test("a Fable limit falls back to gpt-6.2-astra, then to Opus before any last resort", async () => {
   const agentDir = await mkdtemp(join(tmpdir(), "choco-pi-fallbacks-scope-"));
   try {
     const table = await loadModelFallbacks(agentDir);
@@ -199,7 +199,7 @@ test("a Fable limit falls back to gpt-6-astra, then to Opus before any last reso
     const pick = (isClosed: (provider: string, account: string, modelId?: string) => boolean) =>
       pickFallback(table, current, { available, scoped: [], isClosed });
 
-    assert.deepEqual(pick(fableClosed), { provider: "openai-codex", id: "gpt-6-astra" });
+    assert.deepEqual(pick(fableClosed), { provider: "openai-codex", id: "gpt-6.2-astra" });
     // Codex closed as well: Opus on the same provider, never xai first.
     assert.deepEqual(
       pick((provider, account, modelId) =>
@@ -303,7 +303,7 @@ test("after a switch to astra, an astra limit still reaches Opus before the last
         /^claude-(fable|mythos)(-|$)/.test(modelId));
     const picked = pickFallback(
       table,
-      { provider: "openai-codex", id: "gpt-6-astra" },
+      { provider: "openai-codex", id: "gpt-6.2-astra" },
       { available, scoped: [], isClosed },
     );
     assert.deepEqual(picked, { provider: "anthropic", id: "claude-opus-5-5" });
