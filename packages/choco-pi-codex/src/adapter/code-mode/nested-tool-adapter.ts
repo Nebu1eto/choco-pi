@@ -169,10 +169,12 @@ export function toNestedTool<TParams extends HostSchema, TDetails, TState>(
         );
       }
       const parsedInput = isBoundaryValue(input) ? input : undefined;
-      const schemaInput =
-        parsedInput === undefined && parameterValidator(tool.parameters).check({})
-          ? {}
-          : parsedInput;
+      // The host sends `null` for a call without arguments (`tools.name()`). Both mean "no
+      // arguments" for a schema that takes `{}`, unless the schema itself takes `null`.
+      const validator = parameterValidator(tool.parameters);
+      const noArguments =
+        parsedInput === undefined || (parsedInput === null && !validator.check(null));
+      const schemaInput = noArguments && validator.check({}) ? {} : parsedInput;
       const toolInput = prepareInput(schemaInput);
       const prepared = tool.prepareArguments ? tool.prepareArguments(toolInput) : toolInput;
       const validation = validateBridgedArguments(

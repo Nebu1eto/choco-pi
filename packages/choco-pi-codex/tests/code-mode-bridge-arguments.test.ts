@@ -87,6 +87,65 @@ test("explicit null and missing required arguments are not normalized", async ()
   assert.equal(executions, 0);
 });
 
+test("a call without arguments, which the host sends as null, runs with {} on both dispatch paths", async () => {
+  const received: unknown[] = [];
+  const definition: ToolDefinition = {
+    name: "list_docs",
+    label: "list_docs",
+    description: "A tool that takes no arguments, like an MCP tool with an empty input schema",
+    parameters: hostParams(obj({ before: opt(str()) })),
+    async execute(_id, params) {
+      received.push(params);
+      return success("listed");
+    },
+  };
+  const tool = bridge(definition);
+  for (const input of [null, undefined]) {
+    assert.equal(await tool.invoke(input, context, new AbortController().signal), "listed");
+  }
+  assert.deepEqual(received, [{}, {}], "the direct path runs the definition with {}");
+
+  // A tool the session lists as callable goes through executeTool, as MCP tools do.
+  const sessionArgs: unknown[] = [];
+  const sessionContext = {
+    cwd: "/tmp",
+    extensionContext: createToolContextFixture({
+      tools: [
+        {
+          name: definition.name,
+          label: definition.label,
+          description: definition.description,
+          parameters: definition.parameters,
+          execute: async () => success("listed"),
+        },
+      ],
+      async executeTool(name, args) {
+        sessionArgs.push(args);
+        const toolCall = { type: "toolCall" as const, id: "call-1", name, arguments: {} };
+        return { toolCall, result: success("listed"), isError: false };
+      },
+    }),
+  };
+  assert.equal(await tool.invoke(null, sessionContext, new AbortController().signal), "listed");
+  assert.deepEqual(sessionArgs, [{}], "executeTool gets {} instead of null");
+});
+
+test("a schema that takes null keeps an explicit null", async () => {
+  const received: unknown[] = [];
+  const tool = bridge({
+    name: "nullable_root",
+    label: "nullable_root",
+    description: "nullable_root",
+    parameters: hostParams(nullableSchema(obj({ value: opt(str()) }))),
+    async execute(_id, params) {
+      received.push(params);
+      return success("ran");
+    },
+  });
+  assert.equal(await tool.invoke(null, context, new AbortController().signal), "ran");
+  assert.deepEqual(received, [null]);
+});
+
 test("nullable input still reaches prepareArguments unchanged", async () => {
   let sawNull = false;
   let executions = 0;

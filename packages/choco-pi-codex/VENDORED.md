@@ -1353,3 +1353,8 @@ The root `package.json` now pins `pnpm@12.21.0` (the toolchain `mise.toml` insta
 ## 2026-11-15 choco-pi patch: `@choco-pi` package name
 
 - `package.json` `name`: `choco-pi-codex` → `@choco-pi/codex`; `version`: `0.1.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-codex`, so path-based settings entries, imports, and the path-derived extension name are unchanged. `tests/code-mode-probe-events.test.ts` and `tests/code-mode-first.e2e.ts` expect the new root and package names and version.
+
+## 2026-11-17 choco-pi patch: a code-mode call without arguments runs
+
+- The code-mode host sends `input: null` for a call without arguments (`tools.get_goal()`, `tools.mcp__<server>__<tool>()`). `toNestedTool` in `src/adapter/code-mode/nested-tool-adapter.ts` treated only a missing input as "no arguments", so every such call failed with `[invalid_arguments] … (root: expected object, got null)` while its own hint showed the same call. A `null` input now runs with `{}` when the tool's schema accepts `{}` and does not itself accept `null`; a schema with required properties still rejects `null`, and a `null`-accepting schema still receives `null`. The `{}` input reaches both `prepareArguments` and `ctx.executeTool()`.
+- Tests: `tests/code-mode-bridge-arguments.test.ts`.
