@@ -631,6 +631,20 @@ const SUPER_X = "\x1b[120;9u";
 /** Ctrl+A and Ctrl+X as Rex sends them with a Korean input source: the key's Hangul, then its base key. */
 const REX_CTRL_A = "\x1b[12609::97;5u";
 const REX_CTRL_X = "\x1b[12620::120;5u";
+/** Ctrl+A in the Kitty keyboard protocol, which Rex's default Cmd+Left binding sends. */
+const KITTY_CTRL_A = "\x1b[97;5u";
+
+/** Run `body` as if on `platform`, which the select-all key depends on. */
+async function onPlatform(platform: NodeJS.Platform, body: () => Promise<void>): Promise<void> {
+  const previous = Object.getOwnPropertyDescriptor(process, "platform");
+  assert.ok(previous, "process.platform is an own property");
+  Object.defineProperty(process, "platform", { ...previous, value: platform });
+  try {
+    await body();
+  } finally {
+    Object.defineProperty(process, "platform", previous);
+  }
+}
 
 /** Run `body` with Pi's keybindings installed as pi-tui's, as Pi's interactive mode does. */
 async function withPiKeybindings(body: () => Promise<void>): Promise<void> {
@@ -852,86 +866,122 @@ test(
 );
 
 test(
-  "Ctrl+A or Cmd+A selects the whole draft, and Ctrl+X or Cmd+X cuts it, on every platform",
+  "Cmd+A, or Ctrl+A outside macOS, selects the whole draft, and Ctrl+X or Cmd+X cuts it",
   { skip: SKIP_WITHOUT_ZENTUI },
   async () => {
     // A first line that wraps over several rows, so reaching the end takes more than one Down.
     const WRAPPED = `${"word ".repeat(30)}end\nlast line`;
-    // Each select key is paired with the cut key of the same form.
-    const keyPairs = [
-      [CTRL_A, CTRL_X],
-      [REX_CTRL_A, REX_CTRL_X],
-      [SUPER_A, SUPER_X],
+    // Each select key is paired with a cut key; on macOS Ctrl+A is the line start, so Cmd+A selects.
+    const cases = [
+      {
+        platform: "darwin",
+        keyPairs: [
+          [SUPER_A, CTRL_X],
+          [SUPER_A, REX_CTRL_X],
+          [SUPER_A, SUPER_X],
+        ],
+      },
+      {
+        platform: "linux",
+        keyPairs: [
+          [CTRL_A, CTRL_X],
+          [REX_CTRL_A, REX_CTRL_X],
+          [KITTY_CTRL_A, CTRL_X],
+          [SUPER_A, SUPER_X],
+        ],
+      },
     ] as const;
-    await withPiKeybindings(async () => {
-      const make = await zentui("opencode", "both");
-      const wrappedClipboard = testClipboard();
-      const recorded = await recordedEditor(wrappedClipboard.clipboard);
-      const polishedClipboard = testClipboard();
-      const polished = make.polished(polishedClipboard.clipboard);
-      const polishedReceived: string[] = [];
-      polished.onExtensionShortcut = (data) => {
-        polishedReceived.push(data);
-        return false;
-      };
-      polished.focused = true;
-      for (const [name, editor, clipboard, received] of [
-        ["wrapped", recorded.editor, wrappedClipboard, recorded.received],
-        ["polished", polished, polishedClipboard, polishedReceived],
-      ] as const) {
-        for (const [selectKey, cutKey] of keyPairs) {
-          for (const draft of [TEXT, WRAPPED]) {
-            const where = `${name}, ${JSON.stringify(selectKey)} then ${JSON.stringify(cutKey)}`;
-            editor.setText(draft);
-            // The cursor starts on the first line, away from the end.
-            editor.handleMouse(at(editor, draft === TEXT ? "world" : "word"));
-            received.length = 0;
-            clipboard.copied.length = 0;
-            editor.handleInput(selectKey);
-            assert.deepEqual(
-              received,
-              [PAGE_DOWN, LINE_END],
-              `${where}: one Page Down covers the wrapped rows, not one Down per row`,
-            );
-            const lines = draft.split("\n");
-            assert.deepEqual(
-              editor.getCursor(),
-              { line: lines.length - 1, col: lines.at(-1)?.length },
-              `${where}: the cursor is at the end`,
-            );
-            if (draft === TEXT) {
-              assert.deepEqual(selected(editor), ["hello world ", "second line"], where);
+    for (const { platform, keyPairs } of cases) {
+      await onPlatform(platform, () => selectAndCut(platform, keyPairs));
+    }
+
+    async function selectAndCut(
+      platform: NodeJS.Platform,
+      keyPairs: readonly (readonly [string, string])[],
+    ): Promise<void> {
+      await withPiKeybindings(async () => {
+        const make = await zentui("opencode", "both");
+        const wrappedClipboard = testClipboard();
+        const recorded = await recordedEditor(wrappedClipboard.clipboard);
+        const polishedClipboard = testClipboard();
+        const polished = make.polished(polishedClipboard.clipboard);
+        const polishedReceived: string[] = [];
+        polished.onExtensionShortcut = (data) => {
+          polishedReceived.push(data);
+          return false;
+        };
+        polished.focused = true;
+        for (const [name, editor, clipboard, received] of [
+          ["wrapped", recorded.editor, wrappedClipboard, recorded.received],
+          ["polished", polished, polishedClipboard, polishedReceived],
+        ] as const) {
+          for (const [selectKey, cutKey] of keyPairs) {
+            for (const draft of [TEXT, WRAPPED]) {
+              const where = `${name} on ${platform}, ${JSON.stringify(selectKey)} then ${JSON.stringify(cutKey)}`;
+              editor.setText(draft);
+              // The cursor starts on the first line, away from the end.
+              editor.handleMouse(at(editor, draft === TEXT ? "world" : "word"));
+              received.length = 0;
+              clipboard.copied.length = 0;
+              editor.handleInput(selectKey);
+              assert.deepEqual(
+                received,
+                [PAGE_DOWN, LINE_END],
+                `${where}: one Page Down covers the wrapped rows, not one Down per row`,
+              );
+              const lines = draft.split("\n");
+              assert.deepEqual(
+                editor.getCursor(),
+                { line: lines.length - 1, col: lines.at(-1)?.length },
+                `${where}: the cursor is at the end`,
+              );
+              if (draft === TEXT) {
+                assert.deepEqual(selected(editor), ["hello world ", "second line"], where);
+              }
+              editor.handleInput(CTRL_C);
+              assert.deepEqual(clipboard.copied, [draft], `${where}: Ctrl+C copies it all`);
+              assert.equal(editor.getText(), draft, `${where}: a copy keeps the draft`);
+              editor.handleInput(cutKey);
+              assert.deepEqual(clipboard.copied, [draft, draft], `${where}: the cut copies`);
+              assert.equal(editor.getText(), "", `${where}: the cut removes it`);
+              assert.deepEqual(selected(editor), [], where);
+              assert.deepEqual(
+                received.filter((key) => key === selectKey || key === cutKey || key === CTRL_C),
+                [],
+                `${where}: the keys go no further`,
+              );
+              await settled();
+              assert.deepEqual(clipboard.reports.slice(-2), Array(2).fill({ copied: true }));
             }
-            editor.handleInput(CTRL_C);
-            assert.deepEqual(clipboard.copied, [draft], `${where}: Ctrl+C copies it all`);
-            assert.equal(editor.getText(), draft, `${where}: a copy keeps the draft`);
-            editor.handleInput(cutKey);
-            assert.deepEqual(clipboard.copied, [draft, draft], `${where}: the cut copies`);
-            assert.equal(editor.getText(), "", `${where}: the cut removes it`);
-            assert.deepEqual(selected(editor), [], where);
-            assert.deepEqual(
-              received.filter((key) => key === selectKey || key === cutKey || key === CTRL_C),
-              [],
-              `${where}: the keys go no further`,
-            );
-            await settled();
-            assert.deepEqual(clipboard.reports.slice(-2), Array(2).fill({ copied: true }));
+          }
+
+          // Nothing to select: the key is used up and the draft stays empty.
+          editor.setText("");
+          received.length = 0;
+          editor.handleInput(SUPER_A);
+          assert.equal(editor.getText(), "", name);
+          assert.deepEqual(received, [], `${name}: an empty select-all goes no further`);
+
+          // Home moves to the line start on every platform.
+          editor.setText(TEXT);
+          editor.handleInput("\x1b[H");
+          assert.deepEqual(editor.getCursor(), { line: 1, col: 0 }, `${name}: Home`);
+
+          // On macOS Ctrl+A, which Cmd+Left sends, reaches the line start and selects nothing.
+          if (platform === "darwin") {
+            for (const lineStart of [CTRL_A, KITTY_CTRL_A, REX_CTRL_A]) {
+              const where = `${name} on darwin, ${JSON.stringify(lineStart)}`;
+              editor.setText(TEXT);
+              received.length = 0;
+              editor.handleInput(lineStart);
+              assert.deepEqual(editor.getCursor(), { line: 1, col: 0 }, `${where}: line start`);
+              assert.deepEqual(selected(editor), [], `${where}: nothing selected`);
+              assert.deepEqual(received, [lineStart], `${where}: the key reaches the editor`);
+            }
           }
         }
-
-        // Nothing to select: the key is used up and the draft stays empty.
-        editor.setText("");
-        received.length = 0;
-        editor.handleInput(CTRL_A);
-        assert.equal(editor.getText(), "", name);
-        assert.deepEqual(received, [], `${name}: an empty select-all goes no further`);
-
-        // Home still moves to the line start that Ctrl+A no longer reaches.
-        editor.setText(TEXT);
-        editor.handleInput("\x1b[H");
-        assert.deepEqual(editor.getCursor(), { line: 1, col: 0 }, `${name}: Home`);
-      }
-    });
+      });
+    }
   },
 );
 

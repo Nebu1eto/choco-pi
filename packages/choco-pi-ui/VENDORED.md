@@ -512,3 +512,15 @@ Tool arguments and tool result text are snake_case (user decision; no aliases). 
   Ctrl+A as `ESC[12609::97;5u` (Hangul key, base-layout `a`), which pi-tui
   matches as `ctrl+a`.
 - Tests: `tests/zentui-editor-selection.test.ts` (root).
+
+## 2026-11-18 choco-pi patch: Cmd+Left reaches the line start on macOS again
+
+- `extensions/zentui/editor-selection.ts`: on macOS (`process.platform ===
+"darwin"`, read at each key) Ctrl+A is no longer select-all and reaches the
+  editor's line start again. Rex's default `cmd+left` binding runs
+  `pane.send_key` with `ctrl+a` (as `cmd+right` sends `ctrl+e`), which
+  arrives as `ESC[97;5u` under the Kitty keyboard protocol, the same bytes as
+  a real Ctrl+A, so Cmd+Left selected the whole draft. Cmd+A still selects all
+  on every platform and Ctrl+A outside macOS; Ctrl+X and Cmd+X still cut. Rex's
+  Edit menu takes a real Cmd+A, so on macOS in Rex no key selects all.
+- Tests: `tests/zentui-editor-selection.test.ts` (root).

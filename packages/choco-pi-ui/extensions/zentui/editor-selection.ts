@@ -24,13 +24,13 @@
  * changes. The write is left to run: its outcome goes to the clipboard's
  * report, and a failure is never thrown back into the key handling.
  *
- * Ctrl+A or Cmd+A selects the whole text, and Ctrl+X or Cmd+X cuts the
- * selection: it copies the text as a copy key does and removes it as a
- * deleting key does. Ctrl does this on every platform, macOS included, since
- * a macOS terminal such as Rex keeps Cmd+A and Cmd+X for its own menu; Home
- * still moves to the line start. Without a selection a cut key keeps its
- * usual meaning (Ctrl+X is Pi's `app.message.copy`), and the select-all key
- * is used up even when there is no text to select.
+ * Cmd+A selects the whole text, and Ctrl+X or Cmd+X cuts the selection: it
+ * copies the text as a copy key does and removes it as a deleting key does.
+ * Outside macOS Ctrl+A selects the whole text too. On macOS Ctrl+A stays the
+ * editor's line start, because macOS terminals such as Rex send Cmd+Left as
+ * Ctrl+A, in the same bytes as a real Ctrl+A. Without a selection a cut key
+ * keeps its usual meaning (Ctrl+X is Pi's `app.message.copy`), and the
+ * select-all key is used up even when there is no text to select.
  */
 import type { AppKeybinding } from "@earendil-works/pi-coding-agent";
 import {
@@ -229,9 +229,11 @@ function copies(data: string): boolean {
   );
 }
 
-/** Whether `data` is the key that selects all the text: Ctrl+A or Cmd+A. */
+/** Whether `data` is the key that selects all the text: Cmd+A, or Ctrl+A outside macOS (read at each key so a test can change it). */
 function selectsAll(data: string): boolean {
-  return matchesKey(data, "ctrl+a") || matchesKey(data, "super+a");
+  return (
+    matchesKey(data, "super+a") || (process.platform !== "darwin" && matchesKey(data, "ctrl+a"))
+  );
 }
 
 /** Whether `data` is the key that cuts a selection: Ctrl+X or Cmd+X. */
