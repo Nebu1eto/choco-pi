@@ -157,11 +157,32 @@ export interface TierRequestOptions {
   timeoutMs?: number | undefined;
 }
 
+/**
+ * Google AI Ultra comes in two plans that loadCodeAssist names identically ("Google AI Ultra");
+ * only the tier id tells them apart. agy 1.5.14 knows exactly two consumer Ultra tiers
+ * (G1_ULTRA_TIER, G1_ULTRA_LITE_TIER), and an ultra-lite account is offered "a higher Google AI
+ * Ultra plan". The account owner confirmed ultra-lite is the 5x plan, so the other is 20x.
+ */
+const ULTRA_PLAN_SUFFIX = new Map([
+  ["g1-ultra-lite-tier", "5x"],
+  ["g1-ultra-tier", "20x"],
+]);
+
+/** The display label for a tier: Google's name, with the Ultra plan size when the id names it. */
+export function planLabelFor(name: string, tierId: string | undefined): string {
+  const suffix = tierId === undefined ? undefined : ULTRA_PLAN_SUFFIX.get(tierId);
+  return suffix === undefined ? name : `${name} (${suffix})`;
+}
+
 /** The plan label and AI credit balance from loadCodeAssist. */
 export async function readTier(options: TierRequestOptions): Promise<AntigravityTier> {
   const response = await loadCodeAssist(options);
+  const paid = response.paidTier;
   return {
-    planLabel: response.paidTier?.name ?? response.currentTier?.name ?? "Antigravity",
+    planLabel:
+      paid?.name !== undefined
+        ? planLabelFor(paid.name, paid.id)
+        : planLabelFor(response.currentTier?.name ?? "Antigravity", response.currentTier?.id),
     tierId: response.currentTier?.id,
     paidTierId: response.paidTier?.id,
     credits: creditsOf(response.paidTier) ?? creditsOf(response.currentTier),

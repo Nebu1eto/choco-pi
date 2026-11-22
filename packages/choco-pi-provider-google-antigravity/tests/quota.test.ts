@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readQuotaSummary, readTier } from "../src/client/quota.ts";
+import { planLabelFor, readQuotaSummary, readTier } from "../src/client/quota.ts";
 import { AntigravityError } from "../src/errors.ts";
 import { fakeFetch, fixture, json } from "./helpers.ts";
 
@@ -76,11 +76,31 @@ test("readTier prefers the paid tier and reports AI credits", async () => {
   const body = await fixture("load-code-assist.json");
   const fake = fakeFetch(() => json(200, body));
   assert.deepEqual(await readTier({ token: "fake", fetch: fake.fetch, endpoints: ENDPOINTS }), {
-    planLabel: "Google AI Ultra",
+    planLabel: "Google AI Ultra (5x)",
     tierId: "free-tier",
     paidTierId: "g1-ultra-lite-tier",
     credits: [
       { creditType: "GOOGLE_ONE_AI", creditAmount: undefined, minimumCreditAmountForUsage: 50 },
     ],
   });
+});
+
+test("planLabelFor names the Ultra plan size by tier id and leaves other tiers alone", () => {
+  assert.equal(planLabelFor("Google AI Ultra", "g1-ultra-lite-tier"), "Google AI Ultra (5x)");
+  assert.equal(planLabelFor("Google AI Ultra", "g1-ultra-tier"), "Google AI Ultra (20x)");
+  assert.equal(planLabelFor("Google AI Pro", "g1-pro-tier"), "Google AI Pro");
+  assert.equal(planLabelFor("Google AI Ultra", "g1-ultra-business-tier"), "Google AI Ultra");
+  assert.equal(planLabelFor("Antigravity", "free-tier"), "Antigravity");
+  assert.equal(planLabelFor("Antigravity", undefined), "Antigravity");
+});
+
+test("readTier labels a 20x Ultra account from its tier id", async () => {
+  const body = (await fixture("load-code-assist.json")).replace(
+    '"g1-ultra-lite-tier"',
+    '"g1-ultra-tier"',
+  );
+  const fake = fakeFetch(() => json(200, body));
+  const tier = await readTier({ token: "fake", fetch: fake.fetch, endpoints: ENDPOINTS });
+  assert.equal(tier.planLabel, "Google AI Ultra (20x)");
+  assert.equal(tier.paidTierId, "g1-ultra-tier");
 });
