@@ -46,6 +46,7 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 옮깁니다. 대화 기록�
     "/path/to/choco-pi/packages/choco-pi-web-search",
     "/path/to/choco-pi/packages/choco-pi-web-access",
     "/path/to/choco-pi/packages/choco-pi-provider-synthetic",
+    "/path/to/choco-pi/packages/choco-pi-provider-google-antigravity",
     "/path/to/choco-pi/packages/choco-pi-ui",
     "/path/to/choco-pi/packages/choco-pi-shells",
     "/path/to/choco-pi/packages/choco-pi-hooks",

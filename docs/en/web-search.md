@@ -27,7 +27,7 @@ The OpenAI Codex and OpenAI Responses routes are separate transports within the 
 
 ## Provider selection and precedence
 
-A request's `provider` field takes precedence over all other routing. It accepts `auto`, `all`, one family, or a non-empty list of families. The public families are `openai`, `exa`, `kagi`, `synthetic`, `brave`, and `xai`. An explicit list of families and `all` fan out: they query every listed provider. `searchRouting.providers`, by contrast, is an ordered fallback sequence and does not fan out.
+A request's `provider` field takes precedence over all other routing. It accepts `auto`, `all`, one family, or a non-empty list of families. The public families are `openai`, `exa`, `kagi`, `synthetic`, `brave`, `google`, and `xai`. An explicit list of families and `all` fan out: they query every listed provider. `searchRouting.providers`, by contrast, is an ordered fallback sequence and does not fan out.
 
 When a request does not override the provider, `web-search.json` can set either a fixed `searchProvider` (the legacy `provider` key is also accepted) or `searchRouting`. Setting both is an error. This check is a deliberate breaking change: if your configuration contains both `searchProvider`/`provider` and `searchRouting`, remove `searchRouting` to keep the old fixed provider, or remove the fixed provider key to use ordered routing.
 
@@ -62,6 +62,12 @@ Besides ordinary queries, the canonical tool supports image search and navigatio
 The `xai` family is explicit-only: automatic routing and `all` never use it. It runs only when a request's `provider` (a single family or a list of families) or `searchRouting.providers` names `xai`. Every call is billed by xAI, which is why it is never chosen automatically.
 
 Its adapter is registered only while Pi's model registry reports configured `xai` credentials, from `/login xai` (OAuth) or `XAI_API_KEY`. If you sign in during a session, the adapter is picked up at the next session start, tree navigation, or model selection. Each search sends one Responses request with the `web_search` tool to `grok-4.3` at the `xai` provider's base URL and returns the cited sources. Domain filters accept up to five allowed domains or up to five excluded domains, never both in one request.
+
+## Google search (Antigravity)
+
+The `google` family is explicit-only, like `xai`: automatic routing and `all` never use it, and it runs only when a request's `provider` or `searchRouting.providers` names `google`. Each call spends your Google Antigravity subscription quota, which is subject to Google's Antigravity terms of service, so it is never chosen automatically.
+
+Its adapter is registered only inside the canonical unified search and only while Pi reports a stored Google Antigravity sign-in for the `google` provider (`/login google`, then choose Google Antigravity); a Gemini API key, stored or from `GEMINI_API_KEY`, does not count. Sign-in during a session is picked up at the next session start, tree navigation, or model selection. Each search sends one Cloud Code Assist `generateContent` request with the Google Search tool on the catalog's web-search model (`gemini-3.5-flash-lite` when the catalog names none) and returns the answer with numbered citations and the grounding source links as Google returns them. Allowed and excluded domains and recency filters are supported; URL opening is not. Details and unverified assumptions: `packages/choco-pi-provider-google-antigravity/docs/search.md`.
 
 ## Fallback, errors, and billing
 

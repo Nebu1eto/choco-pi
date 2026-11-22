@@ -78,3 +78,14 @@ Model-visible search messages name the `web_search` tool parameters, which are s
 ## 2026-11-20 choco-pi patch: Pi SDK range ~1.6.0
 
 Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`), so later 1.6 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
+
+## 2026-11-22 choco-pi patch: Google provider family
+
+`searchProviderFamilies` inserts `google` before `xai`, so the default order is OpenAI, Exa,
+Kagi, Synthetic, Brave, Google, xAI and xAI stays last. The core still imports no backend;
+the `google-antigravity.grounding` adapter lives in
+`packages/choco-pi-provider-google-antigravity/src/search/adapter.ts` and is explicit-only,
+so `auto` and `all` never reach it. The `web_search` provider enum grows by one value.
+Tests: `tests/core.test.ts` (family order; google and xai both explicit-only) and
+`tests/schema.test.ts` (`google` is now a valid provider; the unknown-value probe uses
+`bing`).

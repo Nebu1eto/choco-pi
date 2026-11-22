@@ -34,6 +34,7 @@ export interface CuratorServerOptions {
     kagi: boolean;
     synthetic: boolean;
     brave: boolean;
+    google: boolean;
     xai: boolean;
   };
   defaultProvider: string;
@@ -332,6 +333,7 @@ export function startCuratorServer(
     if (provider === "kagi") return availableProviders.kagi;
     if (provider === "synthetic") return availableProviders.synthetic;
     if (provider === "brave") return availableProviders.brave;
+    if (provider === "google") return availableProviders.google;
     if (provider === "xai") return availableProviders.xai;
     return false;
   }

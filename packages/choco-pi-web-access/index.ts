@@ -219,6 +219,7 @@ export interface ProviderAvailability {
   kagi: boolean;
   synthetic: boolean;
   brave: boolean;
+  google: boolean;
   xai: boolean;
 }
 
@@ -644,10 +645,12 @@ async function getProviderAvailability(ctx: ExtensionContext): Promise<ProviderA
       (adapter) => adapter.family === "synthetic",
     ),
     brave: [...(scope?.adapters.values() ?? [])].some((adapter) => adapter.family === "brave"),
+    google: [...(scope?.adapters.values() ?? [])].some((adapter) => adapter.family === "google"),
     xai: [...(scope?.adapters.values() ?? [])].some((adapter) => adapter.family === "xai"),
   };
-  // xAI is explicit-only: the shared router never includes it in "all", so it cannot enable "all".
-  const { xai: _explicitOnlyXai, ...fanoutProviders } = providers;
+  // Google and xAI are explicit-only: the shared router never includes them in "all", so they
+  // cannot enable "all".
+  const { google: _explicitOnlyGoogle, xai: _explicitOnlyXai, ...fanoutProviders } = providers;
   return { all: Object.values(fanoutProviders).some(Boolean), ...providers };
 }
 

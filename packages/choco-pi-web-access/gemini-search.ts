@@ -458,12 +458,22 @@ async function isResolvedProviderAvailable(
 }
 
 function providerLabel(provider: ResolvedSearchProvider): string {
-  if (provider === "openai") return "OpenAI";
-  if (provider === "kagi") return "Kagi";
-  if (provider === "exa") return "Exa";
-  if (provider === "synthetic") return "Synthetic";
-  if (provider === "brave") return "Brave";
-  return "xAI";
+  switch (provider) {
+    case "openai":
+      return "OpenAI";
+    case "kagi":
+      return "Kagi";
+    case "exa":
+      return "Exa";
+    case "synthetic":
+      return "Synthetic";
+    case "brave":
+      return "Brave";
+    case "google":
+      return "Google";
+    case "xai":
+      return "xAI";
+  }
 }
 
 async function searchWithProviders(

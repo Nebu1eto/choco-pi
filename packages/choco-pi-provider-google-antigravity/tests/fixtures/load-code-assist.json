@@ -1,0 +1,50 @@
+{
+  "currentTier": {
+    "id": "free-tier",
+    "name": "Antigravity",
+    "description": "Gemini-powered code suggestions and chat in multiple IDEs",
+    "privacyNotice": {
+      "showNotice": true,
+      "noticeText": "<trimmed>"
+    },
+    "upgradeSubscriptionUri": "https://example.invalid/redacted",
+    "upgradeSubscriptionText": "Upgrade to get 1,500 model requests per day with Gemini CLI and Gemini Code Assist's agent mode with Google AI Pro.",
+    "upgradeSubscriptionType": "GOOGLE_ONE"
+  },
+  "allowedTiers": [
+    {
+      "id": "free-tier",
+      "name": "Antigravity",
+      "description": "Gemini-powered code suggestions and chat in multiple IDEs",
+      "privacyNotice": {
+        "showNotice": true,
+        "noticeText": "<trimmed>"
+      },
+      "isDefault": true
+    },
+    {
+      "id": "standard-tier",
+      "name": "Antigravity",
+      "description": "Unlimited coding assistant with the most powerful Gemini models",
+      "userDefinedCloudaicompanionProject": true,
+      "privacyNotice": {},
+      "usesGcpTos": true
+    }
+  ],
+  "cloudaicompanionProject": "aicode-consumers",
+  "gcpManaged": false,
+  "upgradeSubscriptionUri": "https://example.invalid/redacted",
+  "paidTier": {
+    "id": "g1-ultra-lite-tier",
+    "name": "Google AI Ultra",
+    "description": "Google AI Ultra",
+    "upgradeSubscriptionUri": "https://example.invalid/redacted",
+    "upgradeSubscriptionText": "You can upgrade to a higher Google AI Ultra plan to receive the highest rate limits.",
+    "availableCredits": [
+      {
+        "creditType": "GOOGLE_ONE_AI",
+        "minimumCreditAmountForUsage": "50"
+      }
+    ]
+  }
+}

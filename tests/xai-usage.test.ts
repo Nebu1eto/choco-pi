@@ -68,6 +68,7 @@ function registry(credentials: Partial<Record<string, Credential>>): Fixture {
     { provider: "openai", id: "gpt-6.1-sol" },
     { provider: "anthropic", id: "claude-opus-5-5" },
     { provider: "synthetic", id: "syn-1" },
+    { provider: "google", id: "gemini-3.8-flash" },
   ];
   const ctx = reinterpretHostValue<ExtensionContext>({
     modelRegistry: {
@@ -294,7 +295,7 @@ test("a Grok OAuth sign-in reads the billing endpoint with its bearer token", as
   assert.equal(grok.usage.plan, undefined);
   assert.equal(grok.usage.windows[0]?.label, "Weekly");
   assert.equal(grok.usage.windows[0]?.percent, 2);
-  assert.deepEqual(report.absent, ["Claude", "ChatGPT", "Synthetic"]);
+  assert.deepEqual(report.absent, ["Claude", "ChatGPT", "Synthetic", "Google"]);
   assert.ok(hasUsageWindows(report));
   const text = formatUsageReport(report);
   assert.match(text, /^Grok\n {2}Weekly\n/);
@@ -305,7 +306,7 @@ test("a Grok OAuth sign-in reads the billing endpoint with its bearer token", as
   const frame = usageReportFrame("session-xai", report);
   assert.equal(frame.usage?.providers[0]?.windows[0]?.detail, "Bot 23% · API 5% · Build 1%");
   assert.match(frame.sections[0]?.rows[0]?.hint ?? "", /(?:^|· )Bot 23% · API 5% · Build 1%$/);
-  assert.match(text, /\n\nNot signed in: Claude, ChatGPT, Synthetic$/);
+  assert.match(text, /\n\nNot signed in: Claude, ChatGPT, Synthetic, Google$/);
   assert.doesNotMatch(text, new RegExp(XAI_TOKEN));
 });
 
@@ -492,8 +493,11 @@ test("an absent xai credential is neither fetched nor shown as a row", async (t)
   assert.equal(await grokUsage(ctx, createUsageCache()), undefined);
   const report = await grokReading(ctx);
   assert.deepEqual(report.providers, []);
-  assert.deepEqual(report.absent, ["Claude", "ChatGPT", "Synthetic", "Grok"]);
-  assert.equal(formatUsageReport(report), "Not signed in: Claude, ChatGPT, Synthetic, Grok");
+  assert.deepEqual(report.absent, ["Claude", "ChatGPT", "Synthetic", "Grok", "Google"]);
+  assert.equal(
+    formatUsageReport(report),
+    "Not signed in: Claude, ChatGPT, Synthetic, Grok, Google",
+  );
   assert.deepEqual(calls, []);
   assert.deepEqual(tokenRequests, []);
   // Usage-limit corroboration is unchanged: xai has no snapshot reader.
@@ -523,9 +527,10 @@ test("absent providers: none, one, and three", async (t) => {
       openai: "oauth",
       synthetic: "api_key",
       xai: "oauth",
+      google: "oauth",
     }).ctx,
   );
-  assert.deepEqual(names(none), ["Claude", "ChatGPT", "Synthetic", "Grok"]);
+  assert.deepEqual(names(none), ["Claude", "ChatGPT", "Synthetic", "Grok", "Google"]);
   assert.deepEqual(none.absent, []);
   assert.doesNotMatch(formatUsageReport(none), /Not signed in/);
   const style = {
@@ -537,13 +542,13 @@ test("absent providers: none, one, and three", async (t) => {
     registry({ anthropic: "oauth", openai: "oauth", synthetic: "api_key" }).ctx,
   );
   assert.deepEqual(names(one), ["Claude", "ChatGPT", "Synthetic"]);
-  assert.deepEqual(one.absent, ["Grok"]);
-  assert.match(formatUsageReport(one), /\n\nNot signed in: Grok$/);
-  assert.match(formatUsageReport(one, style), /\n\n<dim>Not signed in: Grok<\/dim>$/);
+  assert.deepEqual(one.absent, ["Grok", "Google"]);
+  assert.match(formatUsageReport(one), /\n\nNot signed in: Grok, Google$/);
+  assert.match(formatUsageReport(one, style), /\n\n<dim>Not signed in: Grok, Google<\/dim>$/);
 
   const three = await grokReading(registry({ xai: "oauth" }).ctx);
   assert.deepEqual(names(three), ["Grok"]);
-  assert.deepEqual(three.absent, ["Claude", "ChatGPT", "Synthetic"]);
+  assert.deepEqual(three.absent, ["Claude", "ChatGPT", "Synthetic", "Google"]);
   const text = formatUsageReport(three);
   assert.equal(text.match(/Not signed in/g)?.length, 1);
   assert.doesNotMatch(text, /not connected/);

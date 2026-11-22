@@ -18,6 +18,8 @@ import type {
   QuotasResponse,
   SyntheticQuotasSnapshotPayload,
 } from "../../../packages/choco-pi-provider-synthetic/src/types/quotas.ts";
+import { parseAntigravityErrorMessage } from "../../../packages/choco-pi-provider-google-antigravity/src/errors.ts";
+import type { AntigravityErrorFields } from "../../../packages/choco-pi-provider-google-antigravity/src/errors.ts";
 import { providerUsageSnapshot } from "../provider-usage.ts";
 import type { ProviderUsageSnapshot } from "../provider-usage.ts";
 import {
@@ -141,6 +143,13 @@ export function classifyUsageLimit(
   const { provider, modelId, errorMessage } = input;
   const base = { provider, modelId };
   if (provider === "openai") return classifyOpenAI(base, errorMessage);
+  // Before the billing words: its quota wording ("quota exceeded") is on the host's billing list.
+  // Only a message the Google Antigravity transport formatted takes this branch; any other
+  // `google` text (Pi's built-in Gemini API-key provider) keeps the generic path below.
+  if (provider === "google") {
+    const fields = parseAntigravityErrorMessage(errorMessage);
+    if (fields !== undefined) return classifyGoogleAntigravity(base, fields);
+  }
   if (BILLING_PATTERN.test(errorMessage)) {
     return { ...base, kind: "billing", confidence: "inferred" };
   }
@@ -194,6 +203,38 @@ function classifyOpenAI(
   return OPENAI_LIMIT_PATTERN.test(errorMessage)
     ? { ...base, kind: "quota", confidence: "inferred" }
     : undefined;
+}
+
+/**
+ * Provider `google` through the Google Antigravity transport, which formats every failure as one
+ * `Google Antigravity <phrase> (kind=...; resets_at=...)` line
+ * (`formatAntigravityErrorMessage`), so the parsed kind decides, never the
+ * phrase: an exhausted weekly or 5-hour quota is a quota limit, with its reset
+ * when the backend reported one; exhausted AI credits are billing; capacity,
+ * rate, server and network failures are transient. Any other kind is not a
+ * usage limit.
+ */
+function classifyGoogleAntigravity(
+  base: { provider: string; modelId: string },
+  fields: AntigravityErrorFields,
+): UsageLimitClassification | undefined {
+  switch (fields.kind) {
+    case "quota_exhausted": {
+      const resetAt = parseTime(fields.resetsAt);
+      return resetAt === undefined
+        ? { ...base, kind: "quota", confidence: "inferred" }
+        : { ...base, kind: "quota", confidence: "parsed", resetAt };
+    }
+    case "credits_exhausted":
+      return { ...base, kind: "billing", confidence: "inferred" };
+    case "capacity":
+    case "rate_limited":
+    case "server":
+    case "network":
+      return { ...base, kind: "transient", confidence: "inferred" };
+    default:
+      return undefined;
+  }
 }
 
 /**

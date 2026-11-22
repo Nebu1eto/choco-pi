@@ -23,6 +23,7 @@ export const searchProviderFamilies = Object.freeze([
   "kagi",
   "synthetic",
   "brave",
+  "google",
   "xai",
 ] as const);
 export const defaultSearchFamilyOrder: readonly SearchProviderFamily[] = searchProviderFamilies;

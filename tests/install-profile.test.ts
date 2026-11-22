@@ -52,6 +52,7 @@ const BUNDLED_PACKAGES = [
   "choco-pi-web-search",
   "choco-pi-web-access",
   "choco-pi-provider-synthetic",
+  "choco-pi-provider-google-antigravity",
   "choco-pi-ui",
   "choco-pi-shells",
   "choco-pi-hooks",

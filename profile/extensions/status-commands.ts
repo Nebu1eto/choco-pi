@@ -1461,7 +1461,7 @@ export default function statusCommands(pi: ExtensionAPI): void {
   overrideSessionCommand();
   const usageCommand = {
     description:
-      "Show connected Claude, ChatGPT, and Synthetic usage (Status/Context/Usage/Statistics tabs)",
+      "Show connected Claude, ChatGPT, Synthetic, Grok, and Google usage (Status/Context/Usage/Statistics tabs)",
     handler: async (_args: string, ctx: ExtensionCommandContext) =>
       showTab(ctx, pi.getThinkingLevel(), "usage"),
   };

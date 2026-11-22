@@ -371,7 +371,7 @@ test("rpc /usage and /quota publish the usage report before the plain-text notic
       [],
       "a user-invoked report is sent even when no provider is signed in",
     );
-    assert.equal(calls[1].text, "Not signed in: Claude, ChatGPT, Synthetic, Grok");
+    assert.equal(calls[1].text, "Not signed in: Claude, ChatGPT, Synthetic, Grok, Google");
   }
 });
 

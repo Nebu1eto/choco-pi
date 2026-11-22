@@ -303,3 +303,20 @@ Standalone mode is the `choco-pi` launcher's env contract (`CHOCO_PI_STANDALONE=
 ## 2026-11-20 choco-pi patch: Pi SDK range ~1.6.0
 
 Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`), so later 1.6 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
+
+## 2026-11-22 choco-pi patch: Google logical search family
+
+The shared core adds `google` before `xai`. This package gains no Google or Antigravity
+transport, credential, or configuration; the `google-antigravity.grounding` adapter is
+registered by `packages/choco-pi-provider-google-antigravity` and reached only through the
+shared router. Display-only edits so the new family type-checks and renders:
+
+- `index.ts`: `ProviderAvailability.google` (true when a `google` adapter is registered in the
+  session scope; the provider package registers it only while Pi reports a Google Antigravity
+  OAuth credential for the `google` provider). The adapter is explicit-only in the shared router, so `google` is excluded
+  from the `all` availability flag and from `firstAvailableProvider`, like `xai`.
+- `gemini-search.ts`: `providerLabel` is an exhaustive switch; `google` reads "Google" and
+  `xai` no longer is the catch-all.
+- `curator-page.ts` / `curator-server.ts`: Google provider button, client provider list and
+  label, and server-side availability check.
+- `tests/search-routing.test.ts`: provider-list and schema expectations include `google`.

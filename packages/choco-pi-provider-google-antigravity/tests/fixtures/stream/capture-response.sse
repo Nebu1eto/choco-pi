@@ -1,0 +1,4 @@
+data: {"response": {"candidates": [{"content": {"role": "model","parts": [{"text": "OK"}]}}],"usageMetadata": {"promptTokenCount": 8697,"candidatesTokenCount": 1,"totalTokenCount": 8698},"modelVersion": "gemini-3.8-flash","responseId": "redacted-response-id"},"traceId": "redacted-trace-id","metadata": {}}
+
+data: {"response": {"candidates": [{"content": {"role": "model","parts": [{"thoughtSignature": "RkFLRS1USE9VR0hULVNJR05BVFVSRS0wMDE=","text": ""}]},"finishReason": "STOP"}],"usageMetadata": {"promptTokenCount": 8697,"candidatesTokenCount": 1,"totalTokenCount": 8698},"modelVersion": "gemini-3.8-flash","responseId": "redacted-response-id"},"traceId": "redacted-trace-id","metadata": {}}
+

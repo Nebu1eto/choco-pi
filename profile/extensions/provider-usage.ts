@@ -4,12 +4,20 @@ import {
   createUsageCache,
   fetchUsageJson,
   identityKey,
+  UsageHttpError,
   UsageThrottledError,
   type UsageCache,
   type UsageRequestPolicy,
   type UsageRequestResult,
 } from "./lib/usage-cache.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { readAntigravityApiKey } from "../../packages/choco-pi-provider-google-antigravity/src/auth/oauth.ts";
+import { SIGN_IN_HINT as GOOGLE_SIGN_IN_HINT } from "../../packages/choco-pi-provider-google-antigravity/src/config.ts";
+import {
+  readQuotaSummary,
+  readTier,
+} from "../../packages/choco-pi-provider-google-antigravity/src/client/quota.ts";
+import { AntigravityError } from "../../packages/choco-pi-provider-google-antigravity/src/errors.ts";
 import { compile, obj, opt, str, type Static } from "@earendil-works/pi-schema";
 import { createCodexResetClient, runCodexResetFlow } from "./lib/codex-resets.ts";
 
@@ -917,6 +925,169 @@ export async function grokUsage(
   return withCacheNote(plan === undefined ? reading : { ...reading, plan }, usage.value);
 }
 
+export const GOOGLE_ANTIGRAVITY_USAGE_NAME = "Google";
+const GOOGLE_ANTIGRAVITY_PROVIDER = "google";
+/** Status of an account whose tier has no quota summary (403 SUBSCRIPTION_REQUIRED). */
+export const GOOGLE_ANTIGRAVITY_NO_QUOTA_STATUS = "no quota summary for this plan";
+
+/** Fixed lengths of the bucket windows the quota summary names. */
+const ANTIGRAVITY_WINDOW_SECONDS = recordOf<string, number>()({
+  weekly: 7 * DAY_SECONDS,
+  "5h": 5 * HOUR_SECONDS,
+});
+
+/**
+ * Converts the `retrieveUserQuotaSummary` reading (or the stored copy of one)
+ * into a Usage row: one window per enabled bucket of every model group,
+ * labelled `<group> <window>`. Google reports the share remaining; the row
+ * shows the share used, as every other provider does, so pace and exhaustion
+ * read the same way. A bucket reporting only an absolute amount has no share
+ * and is skipped. A tier without a quota summary yields a status-only row.
+ */
+export function normalizeGoogleAntigravityUsage(payload: RuntimeValue): ProviderUsage {
+  if (isRecord(payload) && payload.kind === "no_quota_for_tier") {
+    return {
+      name: GOOGLE_ANTIGRAVITY_USAGE_NAME,
+      status: GOOGLE_ANTIGRAVITY_NO_QUOTA_STATUS,
+      windows: [],
+    };
+  }
+  const groups = isRecord(payload) && Array.isArray(payload.groups) ? payload.groups : [];
+  const windows: UsageWindow[] = [];
+  for (const group of groups) {
+    if (!isRecord(group) || !Array.isArray(group.buckets)) continue;
+    const groupName = stringValue(group.displayName);
+    for (const bucket of group.buckets) {
+      if (!isRecord(bucket) || bucket.disabled === true) continue;
+      const remaining = numberValue(bucket.remainingFraction);
+      const windowName = stringValue(bucket.window) ?? stringValue(bucket.displayName);
+      if (remaining === undefined || windowName === undefined) continue;
+      const window: UsageWindow = {
+        label: groupName === undefined ? windowName : `${groupName} ${windowName}`,
+        percent: clampPercent((1 - remaining) * 100),
+        qualifier: "used",
+        eventAt: dateValue(bucket.resetTime),
+        eventLabel: "resets",
+      };
+      const windowSeconds = ANTIGRAVITY_WINDOW_SECONDS[windowName];
+      if (windowSeconds !== undefined) window.windowSeconds = windowSeconds;
+      // Each group's buckets limit only the models of that group.
+      if (groupName !== undefined) window.scope = groupName;
+      windows.push(window);
+    }
+  }
+  return { name: GOOGLE_ANTIGRAVITY_USAGE_NAME, windows };
+}
+
+/** Plan label and AI credit balance of a Google Antigravity account. */
+export type GoogleAntigravityPlan = { plan?: string; credits?: string };
+
+/** Reads {@link GoogleAntigravityPlan} from the stored `loadCodeAssist` summary. */
+export function googleAntigravityPlan(payload: RuntimeValue): GoogleAntigravityPlan {
+  if (!isRecord(payload)) return {};
+  const result: GoogleAntigravityPlan = {};
+  const plan = stringValue(payload.planLabel);
+  if (plan !== undefined) result.plan = plan;
+  const credits = Array.isArray(payload.credits) ? payload.credits : [];
+  const amounts = credits.flatMap((credit) => {
+    const amount = isRecord(credit) ? formatCredits(credit.creditAmount) : undefined;
+    return amount === undefined ? [] : [amount];
+  });
+  if (amounts.length > 0) result.credits = `${amounts.join(" + ")} AI credits`;
+  return result;
+}
+
+/**
+ * The client's error carries Google's sanitized detail; the cache keeps only a
+ * status (so a 401 is not retried with backoff) or the error kind.
+ */
+async function antigravityRequest<T>(read: () => Promise<T>): Promise<T> {
+  try {
+    return await read();
+  } catch (error) {
+    if (error instanceof AntigravityError && error.status !== undefined) {
+      throw new UsageHttpError(error.status, error.retryAfterMs);
+    }
+    if (error instanceof AntigravityError) throw new Error(`Google Antigravity ${error.kind}`);
+    throw error;
+  }
+}
+
+/**
+ * The Google entry (provider `google`, signed in with Google Antigravity OAuth).
+ * The registry key packs the rotating OAuth access token, the Cloud Code Assist project and
+ * a non-reversible account key derived from the refresh token. Consumer
+ * accounts share one project, so both cache slots are keyed by the account key,
+ * as Codex's are by its account id: switching accounts inside the cache gate
+ * never shows the previous account's quota or plan. A key without an account
+ * key (not packed by this provider) falls back to one shared slot. Neither the
+ * token, the account key nor the project appears in a cache key or the report.
+ * The plan is read far less often and only decorates the row. Resolves
+ * `undefined` when the provider is not signed in with Google Antigravity OAuth:
+ * Pi's inherited Gemini API-key auth (a stored API key or GEMINI_API_KEY) also
+ * configures `google`, but such a key cannot read the quota, so the row is
+ * listed as not signed in. A host that reports API-key auth never has the key
+ * resolved; a key that resolves but is not this provider's packed format is
+ * treated the same way. Only a confirmed OAuth sign-in whose key is unusable
+ * is a failure reading.
+ */
+export async function googleAntigravityUsage(
+  ctx: ExtensionContext,
+  cache: UsageCache = usageCache,
+): Promise<ProviderUsage | undefined> {
+  if (!providerConfigured(ctx, GOOGLE_ANTIGRAVITY_PROVIDER)) return undefined;
+  const oauth = providerUsesOAuth(ctx, GOOGLE_ANTIGRAVITY_PROVIDER);
+  if (oauth === false) return undefined;
+  const apiKey = await providerToken(ctx, GOOGLE_ANTIGRAVITY_PROVIDER);
+  if (!apiKey) return undefined;
+  const credential = readAntigravityApiKey(apiKey);
+  if (credential === undefined) {
+    if (oauth === true) {
+      throw new Error(`Google Antigravity credential is unusable; ${GOOGLE_SIGN_IN_HINT}`);
+    }
+    return undefined;
+  }
+  const { token, projectId, accountKey } = credential;
+  const slot = accountKey === undefined ? "" : `:${identityKey(accountKey)}`;
+  const [usage, tier] = await Promise.allSettled([
+    cache.request(
+      `google:quota${slot}`,
+      () =>
+        antigravityRequest(async () => {
+          const summary = await readQuotaSummary({ token, projectId });
+          // The no-quota detail is backend text; the store keeps only the verdict.
+          return summary.kind === "summary" ? summary : { kind: summary.kind };
+        }),
+      USAGE_POLICY,
+    ),
+    cache.request(
+      `google:profile${slot}`,
+      async () => {
+        const { planLabel, credits } = await antigravityRequest(() => readTier({ token }));
+        return {
+          planLabel,
+          credits: (credits ?? []).map((credit) => ({
+            creditType: credit.creditType,
+            creditAmount: credit.creditAmount,
+          })),
+        };
+      },
+      PROFILE_POLICY,
+    ),
+  ]);
+  if (usage.status === "rejected") throw usage.reason;
+  const reading = normalizeGoogleAntigravityUsage(usage.value.payload);
+  // Best effort: a failed `loadCodeAssist` read only omits the plan and credits.
+  const { plan, credits } =
+    tier.status === "fulfilled" ? googleAntigravityPlan(tier.value.payload) : {};
+  const status = [reading.status, credits].filter(Boolean).join(" · ");
+  const row: ProviderUsage = { ...reading };
+  if (plan !== undefined) row.plan = plan;
+  if (status) row.status = status;
+  else delete row.status;
+  return withCacheNote(row, usage.value);
+}
+
 /**
  * Quota windows of one provider together with the epoch ms they were read. A
  * reading served from the store carries the time it was originally fetched, so
@@ -1166,7 +1337,13 @@ export function formatProviderUsage(
   return [heading, ...windows].join("\n");
 }
 
-const PROVIDER_NAMES = ["Claude", CHATGPT_USAGE_NAME, "Synthetic", GROK_USAGE_NAME] as const;
+const PROVIDER_NAMES = [
+  "Claude",
+  CHATGPT_USAGE_NAME,
+  "Synthetic",
+  GROK_USAGE_NAME,
+  GOOGLE_ANTIGRAVITY_USAGE_NAME,
+] as const;
 
 /**
  * Describes why a provider produced nothing: a throttled request also reports
@@ -1197,8 +1374,9 @@ export type ProviderUsageReport = {
 };
 
 /**
- * Queries Claude, ChatGPT (`openai-codex` or `openai`), Synthetic, and Grok
- * (`xai`) once. A provider without a credential is listed in `absent`
+ * Queries Claude, ChatGPT (`openai-codex` or `openai`), Synthetic, Grok
+ * (`xai`), and Google (`google` with Google Antigravity OAuth) once; the list and
+ * `PROVIDER_NAMES` are index-coupled. A provider without a credential is listed in `absent`
  * instead of producing a reading; a signed-in provider that fails becomes a
  * reading with its failure message, so this never rejects. The Usage tab and
  * the structured host report both render from one result.
@@ -1213,6 +1391,7 @@ export async function readProviderUsages(
     chatgptUsage(ctx, cache),
     syntheticUsage(ctx, cache),
     grokUsage(ctx, cache),
+    googleAntigravityUsage(ctx, cache),
   ]);
   const providers: ProviderUsageReading[] = [];
   const absent: string[] = [];

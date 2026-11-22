@@ -77,7 +77,7 @@ test("the usage tab paints its own body instead of one flat colour", async () =>
     true,
   );
   // No provider is signed in: no rows, only the dim footer naming them once.
-  assert.equal(body, "<dim>Not signed in: Claude, ChatGPT, Synthetic, Grok</dim>");
+  assert.equal(body, "<dim>Not signed in: Claude, ChatGPT, Synthetic, Grok, Google</dim>");
 });
 
 test("registers /quota as a plain-text alias for /usage outside the TUI", async () => {
@@ -115,7 +115,7 @@ test("registers /quota as a plain-text alias for /usage outside the TUI", async 
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0]?.[1], "info");
   // Hosts without a terminal render notices verbatim, so no theme styling is applied.
-  assert.equal(notifications[0]?.[0], "Not signed in: Claude, ChatGPT, Synthetic, Grok");
+  assert.equal(notifications[0]?.[0], "Not signed in: Claude, ChatGPT, Synthetic, Grok, Google");
 });
 
 test("closes an open status dialog when reload starts before its context becomes stale", async () => {
@@ -802,12 +802,12 @@ test("signed-in openai reports no quota window and never resolves a token", asyn
     ),
     [["ChatGPT", "signed in; quota window not available on api.openai.com"]],
   );
-  assert.deepEqual(report.absent, ["Claude", "Synthetic", "Grok"]);
+  assert.deepEqual(report.absent, ["Claude", "Synthetic", "Grok", "Google"]);
   assert.match(
     formatUsageReport(report),
     /^ChatGPT — signed in; quota window not available on api\.openai\.com$/m,
   );
-  assert.match(formatUsageReport(report), /\n\nNot signed in: Claude, Synthetic, Grok$/);
+  assert.match(formatUsageReport(report), /\n\nNot signed in: Claude, Synthetic, Grok, Google$/);
   assert.deepEqual(tokenRequests, []);
   assert.deepEqual(fetches, []);
   assert.equal(await providerUsageWindows(ctx, "openai"), undefined);
@@ -859,7 +859,7 @@ test("a Codex sign-in without an account id falls back to the openai state", asy
   );
   // An unusable Codex credential with no openai sign-in is listed as absent, not a row.
   assert.deepEqual(signedOut.providers, []);
-  assert.deepEqual(signedOut.absent, ["Claude", "ChatGPT", "Synthetic", "Grok"]);
+  assert.deepEqual(signedOut.absent, ["Claude", "ChatGPT", "Synthetic", "Grok", "Google"]);
 });
 
 test("an active openai model leaves a configured Codex credential unresolved", async (t) => {

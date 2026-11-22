@@ -46,6 +46,7 @@ A complete global file looks like this. Replace `/path/to/choco-pi` with your ch
     "/path/to/choco-pi/packages/choco-pi-web-search",
     "/path/to/choco-pi/packages/choco-pi-web-access",
     "/path/to/choco-pi/packages/choco-pi-provider-synthetic",
+    "/path/to/choco-pi/packages/choco-pi-provider-google-antigravity",
     "/path/to/choco-pi/packages/choco-pi-ui",
     "/path/to/choco-pi/packages/choco-pi-shells",
     "/path/to/choco-pi/packages/choco-pi-hooks",

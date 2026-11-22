@@ -27,7 +27,7 @@ OpenAI Codex 경로와 OpenAI Responses 경로는 같은 `openai` 계열에 속�
 
 ## 공급자 선택과 우선순위
 
-라우팅에서 가장 우선하는 것은 요청의 `provider` 필드입니다. 이 필드에는 `auto`, `all`, 계열 하나, 또는 비어 있지 않은 계열 목록을 넣을 수 있습니다. 공개된 계열은 `openai`, `exa`, `kagi`, `synthetic`, `brave`, `xai`입니다. 계열 목록을 명시하거나 `all`을 쓰면 나열된 공급자 모두에 동시에 요청합니다(fan out). 반면 `searchRouting.providers`는 순서대로 하나씩 시도하는 fallback 목록이며, 동시에 요청하지 않습니다.
+라우팅에서 가장 우선하는 것은 요청의 `provider` 필드입니다. 이 필드에는 `auto`, `all`, 계열 하나, 또는 비어 있지 않은 계열 목록을 넣을 수 있습니다. 공개된 계열은 `openai`, `exa`, `kagi`, `synthetic`, `brave`, `google`, `xai`입니다. 계열 목록을 명시하거나 `all`을 쓰면 나열된 공급자 모두에 동시에 요청합니다(fan out). 반면 `searchRouting.providers`는 순서대로 하나씩 시도하는 fallback 목록이며, 동시에 요청하지 않습니다.
 
 요청에서 공급자를 지정하지 않았다면 `web-search.json`에 고정 공급자 `searchProvider`(예전 키인 `provider`도 허용)와 `searchRouting` 중 하나를 설정할 수 있습니다. 둘 다 설정하면 오류입니다. 이 검사는 의도적으로 하위 호환성을 깬 부분입니다. 지금 설정에 `searchProvider`/`provider`와 `searchRouting`이 모두 있다면, 기존 고정 공급자를 계속 쓰려면 `searchRouting`을 지우고, 순서대로 시도하는 라우팅을 쓰려면 고정 공급자 키를 지우세요.
 
@@ -62,6 +62,12 @@ OpenAI Codex 경로와 OpenAI Responses 경로는 같은 `openai` 계열에 속�
 `xai` 계열은 명시적으로 지정해야만 씁니다. 자동 라우팅과 `all`은 이 계열을 쓰지 않으며, 요청의 `provider`(계열 하나 또는 계열 목록)나 `searchRouting.providers`에 `xai`가 들어 있을 때만 실행됩니다. 호출할 때마다 xAI 요금이 부과되므로 자동으로 선택되는 일은 없습니다.
 
 이 어댑터는 Pi 모델 레지스트리에 `xai` 인증 정보가 설정되어 있을 때만 등록됩니다. 인증 정보는 `/login xai`(OAuth)나 `XAI_API_KEY`로 설정합니다. 세션 도중에 로그인하면 다음에 세션을 시작하거나, 트리를 탐색하거나, 모델을 고를 때 어댑터가 등록됩니다. 검색할 때마다 `xai` 공급자 base URL의 `grok-4.3`에 `web_search` 도구를 포함한 Responses 요청을 한 번 보내고, 인용된 출처를 돌려줍니다. 도메인 필터에는 허용할 도메인을 최대 다섯 개, 또는 제외할 도메인을 최대 다섯 개 지정할 수 있으며, 한 요청에서 둘을 함께 쓸 수는 없습니다.
+
+## Google 검색 (Antigravity)
+
+`google` 계열도 `xai`처럼 명시적으로 지정해야만 씁니다. 자동 라우팅과 `all`은 이 계열을 쓰지 않으며, 요청의 `provider`나 `searchRouting.providers`에 `google`이 들어 있을 때만 실행됩니다. 호출할 때마다 Google Antigravity 구독 할당량을 쓰고, 이 사용에는 Google의 Antigravity 서비스 약관이 적용되므로 자동으로 선택되는 일은 없습니다.
+
+이 어댑터는 정식 통합 검색 안에서만, 그리고 `google` 공급자에 저장된 Google Antigravity 로그인(`/login google` 후 Google Antigravity 선택)이 Pi에 있을 때만 등록됩니다. 저장된 Gemini API 키나 `GEMINI_API_KEY`는 여기에 해당하지 않습니다. 세션 도중에 로그인하면 다음에 세션을 시작하거나, 트리를 탐색하거나, 모델을 고를 때 반영됩니다. 검색할 때마다 카탈로그의 웹 검색 모델(카탈로그에 없으면 `gemini-3.5-flash-lite`)에 Google Search 도구를 포함한 Cloud Code Assist `generateContent` 요청을 한 번 보내고, 번호가 붙은 인용과 Google이 준 그대로의 출처 링크를 함께 돌려줍니다. 허용·제외 도메인과 최신성 필터는 지원하지만 URL 열기는 지원하지 않습니다. 자세한 내용과 아직 검증되지 않은 가정은 `packages/choco-pi-provider-google-antigravity/docs/search.md`에 있습니다.
 
 ## Fallback, 오류, 요금
 

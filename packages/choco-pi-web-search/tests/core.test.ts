@@ -1535,6 +1535,7 @@ test("xai is the last default family and its explicit-only adapter never runs im
     "kagi",
     "synthetic",
     "brave",
+    "google",
     "xai",
   ]);
   assert.equal(searchProviderFamilies.at(-1), "xai");
@@ -1618,4 +1619,60 @@ test("xai is the last default family and its explicit-only adapter never runs im
   );
   assert.equal(routed.provider, "xai");
   assert.deepEqual(calls, ["xai"]);
+});
+
+test("google sits before xai and both explicit-only families stay out of auto and all", async () => {
+  assert.deepEqual(defaultSearchFamilyOrder.slice(-2), ["google", "xai"]);
+  assert.equal(isCanonicalParams({ query: "q", provider: "google" }), true);
+
+  const { scope } = setup();
+  const calls: string[] = [];
+  for (const family of ["google", "xai", "brave"] as const) {
+    registerSearchAdapter(
+      scope,
+      adapter(`${family}-fixture`, family, {
+        explicitOnly: family !== "brave",
+        execute: async () => {
+          calls.push(family);
+          return result(family);
+        },
+      }),
+    );
+  }
+
+  const auto = await search({ query: "fixture" }, { scope });
+  assert.equal(auto.provider, "brave");
+  assert.deepEqual(calls, ["brave"]);
+  assert.deepEqual(
+    auto.attempts
+      .filter(({ outcome }) => outcome === "disabled")
+      .map(({ family, reason }) => ({ family, reason }))
+      .toSorted((left, right) => left.family.localeCompare(right.family)),
+    [
+      { family: "google", reason: "explicit selection only" },
+      { family: "xai", reason: "explicit selection only" },
+    ],
+  );
+
+  calls.length = 0;
+  const all = await search({ query: "fixture", provider: "all" }, { scope });
+  assert.deepEqual(calls, ["brave"]);
+  assert.equal(
+    all.providerErrors?.some(({ provider }) => provider === "google"),
+    false,
+  );
+
+  calls.length = 0;
+  const explicit = await search({ query: "fixture", provider: "google" }, { scope });
+  assert.equal(explicit.provider, "google");
+  assert.equal(explicit.adapterId, "google-fixture");
+  assert.deepEqual(calls, ["google"]);
+
+  calls.length = 0;
+  const routed = await search(
+    { query: "fixture" },
+    { scope, routing: { providers: ["google", "brave"] } },
+  );
+  assert.equal(routed.provider, "google");
+  assert.deepEqual(calls, ["google"]);
 });

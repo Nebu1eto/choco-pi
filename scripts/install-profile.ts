@@ -133,6 +133,7 @@ export const DEFAULT_PROFILE_PACKAGES: readonly string[] = [
   "./packages/choco-pi-web-search",
   "./packages/choco-pi-web-access",
   "./packages/choco-pi-provider-synthetic",
+  "./packages/choco-pi-provider-google-antigravity",
   "./packages/choco-pi-ui",
   "./packages/choco-pi-shells",
   "./packages/choco-pi-hooks",

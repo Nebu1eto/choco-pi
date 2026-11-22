@@ -1,0 +1,25 @@
+{
+  "name": "@choco-pi/provider-google-antigravity",
+  "version": "1.0.0-alpha.1",
+  "private": true,
+  "description": "Google Antigravity (Cloud Code Assist v1internal) subscription provider for choco-pi.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "~1.6.0",
+    "@earendil-works/pi-coding-agent": "~1.6.0",
+    "@earendil-works/pi-schema": "~1.6.0"
+  },
+  "chocoPi": {
+    "supersedes": []
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/provider/index.ts",
+      "./extensions/web-search/index.ts"
+    ]
+  }
+}

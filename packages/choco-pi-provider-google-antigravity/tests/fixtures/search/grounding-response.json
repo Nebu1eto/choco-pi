@@ -1,0 +1,104 @@
+{
+  "_comment": "Synthetic fixture. No search response was captured; shapes follow the aiplatform content.proto descriptors (GroundingMetadata, GroundingChunk.Web, GroundingSupport, Segment) and the v1internal GenerateContentResponse wrapper in proto3 JSON. All URLs and ids are fake.",
+  "response": {
+    "candidates": [
+      {
+        "content": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Planning the search.",
+              "thought": true
+            },
+            {
+              "text": "Antigravity is a Google agent IDE. "
+            },
+            {
+              "text": "It runs Gemini models through Cloud Code Assist."
+            },
+            {
+              "text": "",
+              "thoughtSignature": "<redacted>"
+            }
+          ]
+        },
+        "finishReason": "STOP",
+        "groundingMetadata": {
+          "webSearchQueries": ["what is google antigravity"],
+          "searchEntryPoint": {
+            "renderedContent": "<div>fixture</div>"
+          },
+          "groundingChunks": [
+            {
+              "web": {
+                "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/FAKE-REDIRECT-A",
+                "title": "antigravity.example",
+                "domain": "antigravity.example"
+              }
+            },
+            {
+              "web": {
+                "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/FAKE-REDIRECT-B",
+                "title": "Cloud Code Assist overview"
+              }
+            },
+            {
+              "web": {
+                "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/FAKE-REDIRECT-A",
+                "title": "antigravity.example"
+              }
+            },
+            {
+              "retrievedContext": {
+                "uri": "gs://fake-bucket/doc",
+                "title": "not a web chunk"
+              }
+            },
+            {
+              "web": {
+                "uri": "ftp://files.example/fake",
+                "title": "not http"
+              }
+            }
+          ],
+          "groundingSupports": [
+            {
+              "segment": {
+                "startIndex": 0,
+                "endIndex": 34,
+                "text": "Antigravity is a Google agent IDE."
+              },
+              "groundingChunkIndices": [0],
+              "confidenceScores": [0.9]
+            },
+            {
+              "segment": {
+                "partIndex": 1,
+                "startIndex": 35,
+                "endIndex": 83,
+                "text": "It runs Gemini models through Cloud Code Assist."
+              },
+              "groundingChunkIndices": [1, 2],
+              "confidenceScores": [0.8, 0.7]
+            },
+            {
+              "segment": {
+                "text": "unlocated text"
+              },
+              "groundingChunkIndices": [3, 4]
+            }
+          ]
+        }
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 42,
+      "candidatesTokenCount": 24,
+      "totalTokenCount": 66
+    },
+    "modelVersion": "gemini-3.5-flash-lite",
+    "responseId": "fake-response-id"
+  },
+  "traceId": "fake-trace-id",
+  "metadata": {}
+}

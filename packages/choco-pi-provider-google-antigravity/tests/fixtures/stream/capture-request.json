@@ -1,0 +1,104 @@
+{
+  "project": "aicode-consumers",
+  "requestId": "agent/00000000-0000-4000-8000-000000000001/1700000000000/00000000-0000-4000-8000-000000000002/1",
+  "request": {
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "<redacted user turn>"
+          }
+        ]
+      }
+    ],
+    "systemInstruction": {
+      "role": "user",
+      "parts": [
+        {
+          "text": "<redacted system instruction, 15837 characters>"
+        }
+      ]
+    },
+    "tools": [
+      {
+        "functionDeclarations": [
+          {
+            "name": "read_file",
+            "description": "Read the contents of a text, image, pdf, video, or audio file. Each read returns at most 800 lines or 46080 bytes.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "ByteOffset": {
+                  "type": "INTEGER",
+                  "description": "Byte offset into the line range. Use to continue reading when content is truncated by the byte limit."
+                },
+                "EndLine": {
+                  "type": "INTEGER",
+                  "description": "End line to read (inclusive). Omit to read until the end of the file, within the per-read limits."
+                },
+                "Path": {
+                  "type": "STRING",
+                  "description": "The absolute path of the file to read."
+                },
+                "StartLine": {
+                  "type": "INTEGER",
+                  "description": "Start line to read (inclusive). Omit to read from the beginning of the file."
+                }
+              },
+              "required": ["Path"]
+            }
+          },
+          {
+            "name": "run_command",
+            "description": "Execute a command in the workspace. Operating System: mac. Shell: zsh. Each command runs in a new session (working directory changes and environment variables do not persist across calls). Commands that do not finish within the specified wait time continue running in the background as tasks; the system will notify you when they finish, so do not poll their status or set timers to check on them.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "CommandLine": {
+                  "type": "STRING",
+                  "description": "The exact command line string to execute."
+                },
+                "IsDaemon": {
+                  "type": "BOOLEAN",
+                  "description": "Set to true for long-running support processes that are meant to keep running in the background indefinitely and are not expected to finish on their own (e.g., dev servers, file watchers, tunnels). Leave false (the default) for normal commands that are expected to terminate."
+                },
+                "WaitMsBeforeAsync": {
+                  "type": "INTEGER",
+                  "description": "Milliseconds to wait for the command to finish before backgrounding it (500 to 10000). Set to a larger value (e.g. 5000-10000) for commands expected to finish synchronously; set to 500 for commands intended to run in the background."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the command task. Capitalize like a sentence. Some examples: 'Git status check', 'Unit test execution', 'Package build', 'Dev server startup'."
+                }
+              },
+              "required": ["CommandLine", "toolSummary", "WaitMsBeforeAsync"]
+            }
+          }
+        ]
+      }
+    ],
+    "labels": {
+      "cascade_id": "00000000-0000-4000-8000-000000000001",
+      "last_step_index": "0",
+      "model_enum": "MODEL_PLACEHOLDER_REDACTED",
+      "request_id": "00000000-0000-4000-8000-000000000002-0",
+      "root_cascade_id": "00000000-0000-4000-8000-000000000001",
+      "trajectory_id": "00000000-0000-4000-8000-000000000002",
+      "used_claude": "false",
+      "used_claude_conservative": "false",
+      "used_non_gemini_model": "false"
+    },
+    "generationConfig": {
+      "maxOutputTokens": 65536,
+      "thinkingConfig": {
+        "includeThoughts": true,
+        "thinkingLevel": "LOW"
+      }
+    },
+    "sessionId": "-1"
+  },
+  "model": "gemini-3.8-flash-low",
+  "userAgent": "antigravity",
+  "requestType": "agent"
+}

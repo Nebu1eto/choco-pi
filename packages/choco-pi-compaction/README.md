@@ -296,7 +296,11 @@ usage in the prefix (prompt tokens over the characters sent, clamped to
 else by chars/4. With `countTokens` on, Synthetic and Anthropic (API-key auth)
 owner models are counted by the provider's free `messages/count_tokens`
 endpoint inside the preparation slot (10 s timeout); the count replaces the
-estimate. Other providers are not counted. A failed count falls back to the
+estimate. Google Antigravity owner models (provider `google`) are counted by Cloud Code Assist
+`v1internal:countTokens` for the model's runtime id only when
+`CHOCO_PI_ANTIGRAVITY_COUNT_TOKENS=1` is set when the owner's counter is created; without
+it they keep the estimate and make no request. A `google` credential that is a Gemini API
+key rather than a Google Antigravity sign-in is skipped the same way. Other providers are not counted. A failed count falls back to the
 estimate and records `detail` such as `count-tokens: http 500`; a 5xx,
 malformed, or auth failure suppresses further requests for that
 `provider|baseUrl|model` for 10 minutes (`(cached)`), while timeouts, network

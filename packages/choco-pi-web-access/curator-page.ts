@@ -15,6 +15,7 @@ function buildProviderButtons(
     kagi: boolean;
     synthetic: boolean;
     brave: boolean;
+    google: boolean;
     xai: boolean;
   },
   selected: string,
@@ -27,6 +28,7 @@ function buildProviderButtons(
     { value: "kagi", label: "Kagi", available: available.kagi },
     { value: "synthetic", label: "Synthetic", available: available.synthetic },
     { value: "brave", label: "Brave", available: available.brave },
+    { value: "google", label: "Google", available: available.google },
     { value: "xai", label: "xAI", available: available.xai },
   ];
 
@@ -55,6 +57,7 @@ export function generateCuratorPage(
     kagi: boolean;
     synthetic: boolean;
     brave: boolean;
+    google: boolean;
     xai: boolean;
   },
   defaultProvider: string,
@@ -1405,7 +1408,7 @@ const SCRIPT = `(function() {
   var token = DATA.sessionToken;
   var timeoutSec = DATA.timeout;
   var queries = Array.isArray(DATA.queries) ? DATA.queries : [];
-  var providers = ["all", "openai", "exa", "kagi", "synthetic", "brave", "xai"];
+  var providers = ["all", "openai", "exa", "kagi", "synthetic", "brave", "google", "xai"];
   var availProviders = DATA.availableProviders && typeof DATA.availableProviders === "object" ? DATA.availableProviders : {};
   var workflow = "summary-review";
   var initialDefaultProvider = typeof DATA.defaultProvider === "string" ? DATA.defaultProvider : "exa";
@@ -1614,6 +1617,7 @@ const SCRIPT = `(function() {
     if (provider === "kagi") return "Kagi";
     if (provider === "synthetic") return "Synthetic";
     if (provider === "brave") return "Brave";
+    if (provider === "google") return "Google";
     if (provider === "xai") return "xAI";
     return "Unknown";
   }

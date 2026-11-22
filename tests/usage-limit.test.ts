@@ -16,6 +16,8 @@ import {
   type SyntheticQuotaEvents,
 } from "../profile/extensions/lib/usage-limit.ts";
 import type { UsageLimitClassification } from "../profile/extensions/lib/usage-limit-contract.ts";
+import { formatAntigravityErrorMessage } from "../packages/choco-pi-provider-google-antigravity/src/errors.ts";
+import type { AntigravityErrorFields } from "../packages/choco-pi-provider-google-antigravity/src/errors.ts";
 import type { ProviderUsageSnapshot, UsageWindow } from "../profile/extensions/provider-usage.ts";
 import {
   reinterpretHostValue,
@@ -206,6 +208,94 @@ test("an xai quota has no usage data: corroboration degrades to unavailable with
     {
       now: () => NOW,
       events,
+      usageSnapshot: () => Promise.reject(new Error("must not be read")),
+    },
+    classified,
+  );
+  assert.deepEqual(result, { ready: false, classification: classified, evidence: "unavailable" });
+});
+
+const antigravity = (fields: AntigravityErrorFields): UsageLimitClassification | undefined =>
+  classify("google", formatAntigravityErrorMessage(fields));
+
+test("google (Antigravity): the provider's formatted kind decides the classification", () => {
+  const resetsAt = "2026-05-01T17:00:00.000Z";
+  const quotaMessage = formatAntigravityErrorMessage({
+    kind: "quota_exhausted",
+    status: 429,
+    reason: "QUOTA_EXHAUSTED",
+    resetsAt,
+    detail: "You have exhausted your capacity on this model. Your quota will reset after 5h.",
+  });
+  // The provider's quota wording is on the host billing list; it must still be a quota.
+  assert.match(quotaMessage, /quota exceeded/);
+  assert.deepEqual(classify("google", quotaMessage), {
+    provider: "google",
+    modelId: "m",
+    kind: "quota",
+    confidence: "parsed",
+    resetAt: Date.parse(resetsAt),
+  });
+  assert.deepEqual(antigravity({ kind: "quota_exhausted", status: 429 }), {
+    provider: "google",
+    modelId: "m",
+    kind: "quota",
+    confidence: "inferred",
+  });
+  // provider-retry.js may wrap the formatted message; the reset still comes from the message.
+  const wrapped = classify("google", wrap(90, quotaMessage));
+  assert.equal(wrapped?.kind, "quota");
+  assert.equal(wrapped?.resetAt, Date.parse(resetsAt));
+
+  assert.deepEqual(
+    antigravity({ kind: "credits_exhausted", status: 429, reason: "INSUFFICIENT_G1_CREDITS" }),
+    { provider: "google", modelId: "m", kind: "billing", confidence: "inferred" },
+  );
+  for (const kind of ["capacity", "rate_limited", "server", "network"] as const) {
+    assert.equal(antigravity({ kind, status: 503 })?.kind, "transient", kind);
+  }
+  for (const kind of [
+    "auth",
+    "permission",
+    "validation_required",
+    "unsupported_client",
+    "model_unavailable",
+    "invalid_request",
+    "context_overflow",
+    "malformed_response",
+  ] as const) {
+    assert.equal(antigravity({ kind, status: 400 }), undefined, kind);
+  }
+  // Text the Antigravity transport did not format comes from Pi's built-in Gemini API-key
+  // provider and keeps the generic path `google` always had: host billing words are billing,
+  // anything else is not a limit.
+  assert.deepEqual(classify("google", "Quota exceeded for this project"), {
+    provider: "google",
+    modelId: "m",
+    kind: "billing",
+    confidence: "inferred",
+  });
+  assert.equal(classify("google", "429 status code (no body)"), undefined);
+  assert.equal(classify("google", "Connection error."), undefined);
+  // The formatted text on another provider is classified by that provider's rules.
+  assert.equal(classify("anthropic", quotaMessage)?.kind, "billing");
+});
+
+test("a Google Antigravity quota has no usage data: corroboration degrades to unavailable", async () => {
+  const classified = antigravity({
+    kind: "quota_exhausted",
+    status: 429,
+    resetsAt: "2026-05-01T17:00:00.000Z",
+  });
+  assert.ok(classified);
+  const result = await corroborateUsageLimit(
+    {
+      now: () => NOW,
+      events: {
+        emit: () => {
+          throw new Error("must not be emitted");
+        },
+      },
       usageSnapshot: () => Promise.reject(new Error("must not be read")),
     },
     classified,

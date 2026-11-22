@@ -2,9 +2,12 @@
  * Provider prompt token counters for background compaction admission.
  *
  * Selected by the owner model's provider: Synthetic and Anthropic expose a
- * free `messages/count_tokens` endpoint; every other provider is uncounted
- * and admission keeps its estimate. A counter never throws: every failure
- * resolves to undefined plus a short `count-tokens: <code>` diagnostic.
+ * free `messages/count_tokens` endpoint, and `google` signed in with Google
+ * Antigravity OAuth a `v1internal:countTokens` method that is used only when
+ * `CHOCO_PI_ANTIGRAVITY_COUNT_TOKENS=1` is set; every other provider, and a
+ * `google` Gemini API key, is uncounted and admission keeps its estimate. A
+ * counter never throws: every failure resolves to undefined plus a short
+ * `count-tokens: <code>` diagnostic.
  */
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -15,6 +18,9 @@ import {
   type CountTokensResult,
   countSyntheticTokens,
 } from "../../../choco-pi-provider-synthetic/src/client/count-tokens.ts";
+import { readAntigravityApiKey } from "../../../choco-pi-provider-google-antigravity/src/auth/oauth.ts";
+import { resolveRuntimeModel } from "../../../choco-pi-provider-google-antigravity/src/catalog/group.ts";
+import { countAntigravityTokens } from "../../../choco-pi-provider-google-antigravity/src/client/count-tokens.ts";
 import { finiteInt } from "../guards.ts";
 import { authModeOf, normalizeBaseUrl } from "../anthropic/capability.ts";
 import type { TokenCounter } from "../background/contract.ts";
@@ -23,6 +29,10 @@ import type { TokenCounter } from "../background/contract.ts";
 export const COUNT_TOKENS_TIMEOUT_MS = 10_000;
 /** How long a deterministic failure (5xx, malformed, auth) suppresses requests for one model. */
 export const COUNT_TOKENS_NEGATIVE_TTL_MS = 600_000;
+/** Opt-in switch for Google Antigravity counting; only the value `1` enables it. */
+export const ANTIGRAVITY_COUNT_TOKENS_ENV = "CHOCO_PI_ANTIGRAVITY_COUNT_TOKENS";
+/** The Google Antigravity provider's Pi id; it replaces Pi's built-in Gemini `google`. */
+const ANTIGRAVITY_PROVIDER = "google";
 
 const ANTHROPIC_VERSION = "2023-06-01";
 const ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com";
@@ -45,12 +55,18 @@ export interface ProviderTokenCounterOptions {
   readonly now?: () => number;
   readonly timeoutMs?: number;
   readonly cache?: CountTokensNegativeCache;
+  /**
+   * Count Google Antigravity prompts. Defaults to whether
+   * `CHOCO_PI_ANTIGRAVITY_COUNT_TOKENS` is `1` when the counter is created.
+   */
+  readonly antigravityCountTokens?: boolean;
 }
 
 interface CountContext {
   readonly registry: CountRegistry;
   readonly fetch: typeof globalThis.fetch;
   readonly timeoutMs: number;
+  readonly antigravity: boolean;
 }
 
 /** One count attempt: a token figure, or a diagnostic and whether it is worth caching. */
@@ -194,6 +210,9 @@ function parseAnthropicCount(text: string, status: number): CountOutcome {
 
 async function countFor(context: CountContext, input: CountInput): Promise<CountOutcome> {
   const provider = input.model.provider;
+  if (provider === ANTIGRAVITY_PROVIDER) {
+    return context.antigravity ? countAntigravity(context, input) : { skipped: true };
+  }
   if (provider !== "synthetic" && provider !== "anthropic") return { skipped: true };
   const auth = await context.registry.getApiKeyAndHeaders(input.model);
   if (!auth.ok) return { detail: "count-tokens: auth-unresolved", cache: false };
@@ -206,14 +225,49 @@ async function countFor(context: CountContext, input: CountInput): Promise<Count
   return countAnthropic(context, input, { apiKey, headers: auth.headers }, baseUrl);
 }
 
+/**
+ * Google Antigravity: the registry key is the packed `{token, project_id}`
+ * credential, and the request names the runtime model id agy would send for
+ * the base model's first advertised level (the level does not change the count).
+ * Any other key, such as a Gemini API key Pi's inherited `google` API-key auth
+ * resolved (GEMINI_API_KEY or a stored API key), is skipped without a request.
+ */
+async function countAntigravity(context: CountContext, input: CountInput): Promise<CountOutcome> {
+  const auth = await context.registry.getApiKeyAndHeaders(input.model);
+  if (!auth.ok) return { detail: "count-tokens: auth-unresolved", cache: false };
+  const apiKey = auth.apiKey?.trim() ?? "";
+  if (apiKey.length === 0) return { detail: "count-tokens: no-api-key", cache: false };
+  const credential = readAntigravityApiKey(apiKey);
+  if (credential === undefined) return { skipped: true };
+  const { token } = credential;
+  let runtimeId: string;
+  try {
+    runtimeId = resolveRuntimeModel(input.model.id, undefined).runtimeId;
+  } catch {
+    return { detail: "count-tokens: model-unavailable", cache: true };
+  }
+  return fromResult(
+    await countAntigravityTokens({
+      token,
+      model: runtimeId,
+      system: input.system,
+      promptText: input.promptText,
+      fetch: context.fetch,
+      signal: input.signal,
+      timeoutMs: context.timeoutMs,
+    }),
+  );
+}
+
 function cacheKey(model: Model<Api>): string {
   return [model.provider, normalizeBaseUrl(model.baseUrl), model.id].join("|");
 }
 
 /**
- * Counter for Synthetic and Anthropic owner models; undefined for every other
- * provider, without network. Deterministic failures are remembered per
- * `provider|baseUrl|model` for {@link COUNT_TOKENS_NEGATIVE_TTL_MS}.
+ * Counter for Synthetic, Anthropic and (opt-in) Google Antigravity owner
+ * models; undefined for every other provider, without network. Deterministic
+ * failures are remembered per `provider|baseUrl|model` for
+ * {@link COUNT_TOKENS_NEGATIVE_TTL_MS}.
  */
 export function createProviderTokenCounter(options: ProviderTokenCounterOptions): TokenCounter {
   const now = options.now ?? Date.now;
@@ -222,6 +276,8 @@ export function createProviderTokenCounter(options: ProviderTokenCounterOptions)
     registry: options.registry,
     fetch: options.fetch ?? globalThis.fetch,
     timeoutMs: options.timeoutMs ?? COUNT_TOKENS_TIMEOUT_MS,
+    antigravity:
+      options.antigravityCountTokens ?? process.env[ANTIGRAVITY_COUNT_TOKENS_ENV] === "1",
   };
   return {
     async countTokens(input) {

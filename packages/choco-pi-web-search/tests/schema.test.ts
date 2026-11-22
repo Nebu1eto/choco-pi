@@ -46,9 +46,12 @@ test("canonicalSearchParams rejects unknown keys, bad bounds, enums, and duplica
 test("searchProviderSchema accepts a selection or a unique family list only", () => {
   assert.equal(isProvider("auto"), true);
   assert.equal(isProvider(["brave", "xai"]), true);
+  assert.equal(isProvider("google"), true);
+  assert.equal(isProvider(["google", "xai"]), true);
   assert.equal(isProvider([]), false);
   assert.equal(isProvider(["brave", "brave"]), false);
-  assert.equal(isProvider("google"), false);
+  assert.equal(isProvider("bing"), false);
+  assert.equal(isProvider("google-antigravity"), false);
   assert.equal(isProvider(["auto"]), false);
   assert.equal(searchProviderSchema("d").description, "d");
 });
