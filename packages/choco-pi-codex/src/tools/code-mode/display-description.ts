@@ -52,7 +52,7 @@ export function describedTitle(
   const text = new Text("", 0, 0);
   let drawnWidth: number | undefined;
   return {
-    render(width: number): string[] {
+    render(width: number): readonly string[] {
       if (width !== drawnWidth) {
         drawnWidth = width;
         const fitted = fitDisplayDescription(description, width - taken);

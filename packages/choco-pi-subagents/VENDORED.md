@@ -2546,3 +2546,9 @@ Anthropic's Fable weekly limit covers only the Claude Fable and Claude Mythos se
 - Missing usage data never closes other models. `closureScopeFor` (copied from the root contract) gives a quota limit that corroboration did not confirm an exact scope named `unconfirmed` on the failed model. That covers no reading, a stale reading, and a policy that threw or timed out. Only confirmed evidence closes the account. The transient registry in `src/provider-health.ts` is keyed by provider and model: `recordFailure`, `recordSuccess` and `isAvailable` take the model id, and `transientBlockLevel` reports which entry blocks. A model-level transient block is refused as `Model <provider>/<id> unavailable`, so a workflow skips only that model's steps.
 - `providerBlock` returns `modelOnly`, and `providerUnavailableMessage(..., modelOnly)` uses it. A policy closure that covers only the requested model, held only by the policy, is refused as `Model <provider>/<id>`, never as a provider refusal. `closuresRewritten` also treats a closure removed during a re-check (a success reopened it) as newer evidence, so the re-check's older answer cannot recreate it.
 - Tests: new `tests/usage-limit-scope.test.ts`, and two model-level gate cases in `tests/workflow.test.ts`.
+
+## 2026-11-20 choco-pi patch: Pi SDK range ~1.6.0
+
+Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`), so later 1.6 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow. The opt-in e2e-revival runner accepts any launcher in that range and requires an explicit launcher via --pi.
+
+- 2026-11-20: Delegation render caches, focus-mode render targets, and verdict assertions accept readonly Pi render rows.

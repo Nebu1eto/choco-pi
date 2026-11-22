@@ -28,6 +28,25 @@ const LAUNCHER = path.join(ROOT, "bin", "choco-pi");
 const NODE_DIR = path.dirname(process.execPath);
 const isTheme = compile(obj({ name: str() }, { open: true })).check;
 
+/**
+ * Pi's login guidance for a start without any usable model, which Pi 1.6 reports as a startup
+ * warning in RPC mode: its agent's placeholder model passes the check meant to keep the guidance
+ * out of the diagnostics. A start without credentials has no models, so this is expected, and it
+ * names the docs of the Pi package the launcher runs, which the launcher resolves itself.
+ */
+const NO_MODELS_WARNING = (() => {
+  const piPackage = path.dirname(
+    path.dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"))),
+  );
+  const docs = path.join(piPackage, "docs");
+  return [
+    "Warning: No models available. Use /login to log into a provider via OAuth or API key. See:",
+    `  ${path.join(docs, "providers.md")}`,
+    `  ${path.join(docs, "models.md")}`,
+    "",
+  ].join("\n");
+})();
+
 async function scratch(t: test.TestContext): Promise<string> {
   const directory = await realpath(await mkdtemp(path.join(tmpdir(), "choco-pi-seed-")));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -361,5 +380,10 @@ test("a fresh standalone setup prints next steps once and starts in RPC mode wit
   if (child.exitCode === null) await once(child, "exit");
   assert.equal(await stopBridges(environment.HOME), "", "no bridge left running");
   assert.doesNotMatch(stderr, /No models match pattern/);
-  assert.doesNotMatch(stderr, /warning/i, `stderr of a fresh start:\n${stderr}`);
+  // Only Pi's expected no-login guidance, at most once; choco-pi's setup adds no warning.
+  assert.doesNotMatch(
+    stderr.replace(NO_MODELS_WARNING, ""),
+    /warning/i,
+    `stderr of a fresh start:\n${stderr}`,
+  );
 });

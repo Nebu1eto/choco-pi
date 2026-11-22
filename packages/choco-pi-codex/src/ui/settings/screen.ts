@@ -204,7 +204,7 @@ function formatFooter(activeTab: SettingsTab): string {
   return "  Tab to switch sections · Esc to close";
 }
 
-function withSettingsFooter(lines: string[], theme: Theme): string[] {
+function withSettingsFooter(lines: readonly string[], theme: Theme): string[] {
   const next = [...lines];
   for (let index = next.length - 1; index >= 0; index -= 1) {
     if (next[index]?.includes("Enter/Space")) {
@@ -219,7 +219,7 @@ function withSettingsFooter(lines: string[], theme: Theme): string[] {
 }
 
 function withConfigScopeDetails(
-  lines: string[],
+  lines: readonly string[],
   theme: Theme,
   scope: CodexConversionConfigScope,
 ): string[] {

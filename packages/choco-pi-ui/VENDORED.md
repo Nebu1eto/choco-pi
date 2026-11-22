@@ -524,3 +524,9 @@ Tool arguments and tool result text are snake_case (user decision; no aliases). 
   on every platform and Ctrl+A outside macOS; Ctrl+X and Cmd+X still cut. Rex's
   Edit menu takes a real Cmd+A, so on macOS in Rex no key selects all.
 - Tests: `tests/zentui-editor-selection.test.ts` (root).
+
+## 2026-11-20 choco-pi patch: Pi SDK range ~1.6.0
+
+Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`), so later 1.6 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
+
+- 2026-11-20: Zentui treats Pi editor, Markdown, settings, and selector render rows as readonly. Decorations that write rows continue to use their own arrays.

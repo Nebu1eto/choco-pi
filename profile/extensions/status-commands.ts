@@ -1016,7 +1016,7 @@ async function showTabOnce(
      */
     let statsTop = 0;
     let statsWindow: { top: number; height: number; total: number } | undefined;
-    const windowed = (lines: string[], chromeRows: number): string[] => {
+    const windowed = (lines: readonly string[], chromeRows: number): readonly string[] => {
       statsWindow = undefined;
       if (active !== "stats") return lines;
       const height = statsViewportRows(tui.terminal.rows, chromeRows);
@@ -1037,7 +1037,9 @@ async function showTabOnce(
      * What the last text-tab frame drew, for the mouse: the header rows and
      * the body rows on screen, in the body view's own rows.
      */
-    let textFrame: { header: string[]; bodyTop: number; body: string[] } | undefined;
+    let textFrame:
+      | { header: readonly string[]; bodyTop: number; body: readonly string[] }
+      | undefined;
     const bodyView: Component = {
       render: (width) => {
         if (!isString(painted) && width !== paintedWidth) {

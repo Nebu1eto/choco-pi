@@ -43,7 +43,7 @@ function makeMarkdownTheme(theme: Theme | undefined): MarkdownTheme {
   };
 }
 
-function renderMarkdown(text: string, width: number, theme: Theme | undefined): string[] {
+function renderMarkdown(text: string, width: number, theme: Theme | undefined): readonly string[] {
   const renderer = new Markdown(text, 0, 0, makeMarkdownTheme(theme), {
     color: (content) => themeFg(theme, "userMessageText", content),
   });

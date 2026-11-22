@@ -78,7 +78,7 @@ import {
   writeTextAtomically,
 } from "./settings-seed.ts";
 
-/** Pi 1.5.2's ModelThinkingLevelSchema (pi-ai providers/model-schema). */
+/** Pi 1.6.0's ModelThinkingLevelSchema (pi-ai providers/model-schema). */
 const THINKING_LEVEL = oneOf(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const NON_NEGATIVE_INT = int({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
 const TIMEOUT = union([num({ minimum: 0 }), lit("disabled")]);
@@ -86,16 +86,16 @@ const NAME = str({ minLength: 1 });
 
 /**
  * Every key the import may copy, with the values its reader accepts. Pi keys
- * mirror Pi 1.5.2's SettingsSchema (pi-coding-agent dist/core/settings-schema.js)
+ * mirror Pi 1.6.0's SettingsSchema (pi-coding-agent dist/core/settings-schema.js)
  * as closed objects; choco-pi keys mirror their readers in
  * profile/extensions/lib/agent-preferences.ts, profile/extensions/prompt-editor.ts
  * and packages/choco-pi-compaction/src/{anthropic,xai}/mode.ts. No key here is
  * path-valued, an identity, a trust decision, a command, or a credential;
- * tests/standalone-settings-import.test.ts checks that every Pi 1.5.2 key is
+ * tests/standalone-settings-import.test.ts checks that every Pi 1.6.0 key is
  * either here or in EXCLUDED_SETTINGS.
  */
 export const IMPORTABLE_SETTINGS = {
-  // Pi 1.5.2
+  // Pi 1.6.0
   defaultProvider: NAME,
   defaultModel: NAME,
   defaultThinkingLevel: THINKING_LEVEL,

@@ -109,15 +109,15 @@ test("installer records an explicitly selected launcher and harness rechecks it 
         launcher,
         version: PI_SDK_MINIMUM,
       });
-    await fakeLauncher(path.dirname(launcher), "1.5.3");
+    await fakeLauncher(path.dirname(launcher), "1.6.3");
     const patched = await executeHarnessCheck({ mode: "automatic" }, undefined, dependencies);
     assert.equal(patched.status, "pass");
-    await fakeLauncher(path.dirname(launcher), "1.6.0");
+    await fakeLauncher(path.dirname(launcher), "1.7.0");
     const stale = await executeHarnessCheck({ mode: "automatic" }, undefined, dependencies);
     assert.equal(stale.status, "warn");
     assert.match(
       stale.checks.find((check) => check.id === "profile-launcher")?.detail ?? "",
-      /1\.6\.0/,
+      /1\.7\.0/,
     );
     const incompatible = await installProfile({
       root,

@@ -314,3 +314,11 @@ This package is now a member of the root pnpm workspace (`packages/*`) and insta
 ## 2026-11-15 choco-pi patch: `@choco-pi` package name
 
 - `package.json` `name`: `choco-pi-provider-synthetic` → `@choco-pi/provider-synthetic`; `version`: `0.1.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-provider-synthetic`, so path-based settings entries, imports, and the path-derived extension name are unchanged. The pending `.changeset/*.md` files name the new package.
+
+## 2026-11-20 choco-pi patch: Pi SDK range ~1.6.0
+
+Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`), so later 1.6 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow. The root workspace overrides for pi-ai and pi-tui take the same range.
+
+## 2026-11-20 choco-pi patch: readonly render types in the @aliou runtime deps
+
+Pi 1.6.0 types `Component.render()` as `readonly string[]`. The runtime deps `@aliou/pi-utils-settings@0.15.1` and `@aliou/pi-utils-ui@0.4.1` ship TypeScript sources that this package's typecheck compiles, and four of their `render()` methods return a child component's result under a mutable `string[]` signature: `SectionedSettings` and `SettingsDetailEditor` (settings), `DataTable` and `ToolCallHeader` (ui). None of them mutates that array, so behavior is unchanged; only the declared return type is wrong. The latest releases (settings 0.24.2, ui 0.6.0) still return a child result from a `string[]` signature. The root `pnpm-workspace.yaml` `patchedDependencies` applies `patches/@aliou__pi-utils-settings@0.15.1.patch` and `patches/@aliou__pi-utils-ui@0.4.1.patch`, which change only those four signatures to `readonly string[]`. Drop each patch once an upstream release declares the readonly return and this package moves to it.

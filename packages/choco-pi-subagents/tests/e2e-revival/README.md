@@ -1,19 +1,20 @@
-# e2e-revival: durable subagent revival against a real Pi 1.5.x (>=1.5.2)
+# e2e-revival: durable subagent revival against a real Pi 1.6.x
 
-Opt-in harness. It is not part of `pnpm test` (no file ends in `.test.ts`).
-It starts a real Pi 1.5.x (>=1.5.2) process in RPC mode with a scripted faux model
+This harness is not part of `pnpm test` (no file ends in `.test.ts`).
+It starts a real Pi 1.6.x process in RPC mode with a scripted faux model
 provider, so it is deterministic, needs no network, and spends no model credit.
 
+Set `PI_LAUNCHER` to your Pi launcher path before running these commands.
+
 ```bash
-node packages/choco-pi-subagents/tests/e2e-revival/run.ts --dry-run
-node packages/choco-pi-subagents/tests/e2e-revival/run.ts                  # S1..S5
-node packages/choco-pi-subagents/tests/e2e-revival/run.ts --scenario S1 --scenario S3
+node packages/choco-pi-subagents/tests/e2e-revival/run.ts --pi "$PI_LAUNCHER" --dry-run
+node packages/choco-pi-subagents/tests/e2e-revival/run.ts --pi "$PI_LAUNCHER"                  # S1..S5
+node packages/choco-pi-subagents/tests/e2e-revival/run.ts --pi "$PI_LAUNCHER" --scenario S1 --scenario S3
 ```
 
 Options:
 
-- `--pi <path>`: Pi binary. Defaults to `~/.local/pi-1.5.2/node_modules/.bin/pi`
-  (absolute path in `run.ts`); any binary whose `--version` is outside `>=1.5.2 <1.6.0` is refused.
+- Required: `--pi <path>` to a Pi launcher that reports a stable version in `>=1.6.0 <1.7.0`.
 - `--scenario S1[,S2]`: select scenarios (repeatable). Default: all.
 - `--out <dir>`: base directory; each run gets `<dir>/<run-id>/<scenario>/`.
   Default: `/tmp/choco-pi/$PI_SESSION_ID/e2e` (or `/tmp/choco-pi/e2e-revival/e2e`).
@@ -94,7 +95,7 @@ mechanics against `HEAD`:
 S=/tmp/choco-pi/e2e-revival/head-snapshot
 mkdir -p "$S" && git archive HEAD packages | tar -x -C "$S"
 for d in packages/*/; do n=$(basename "$d"); [ -d "$d/node_modules" ] && [ ! -e "$S/packages/$n/node_modules" ] && ln -s "$PWD/$d/node_modules" "$S/packages/$n/node_modules"; done
-node packages/choco-pi-subagents/tests/e2e-revival/run.ts --subagents "$S/packages/choco-pi-subagents/src/index.ts"
+node packages/choco-pi-subagents/tests/e2e-revival/run.ts --pi "$PI_LAUNCHER" --subagents "$S/packages/choco-pi-subagents/src/index.ts"
 ```
 
 ## Cleanup

@@ -49,7 +49,7 @@ type Rendered = { raw: number; overWidth: number; mentions: boolean };
  */
 const PI_TUI_RESET = "\u001b[0m";
 
-/** pi-tui 1.5.1's fake-cursor APC markers (`dist/tui.js`, not exported); the TUI consumes them before output. */
+/** pi-tui 1.6.0's fake-cursor APC markers (`dist/tui.js`, not exported at the package root). */
 const FAKE_CURSOR_START = "\u001b_pi:fc\u0007";
 const FAKE_CURSOR_END = "\u001b_pi:/fc\u0007";
 

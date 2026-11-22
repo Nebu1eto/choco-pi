@@ -330,3 +330,7 @@ Standalone mode is the `choco-pi` launcher's env contract (`CHOCO_PI_STANDALONE=
 ## 2026-11-15 choco-pi patch: `@choco-pi` package name
 
 - `package.json` `name`: `choco-pi-mcp` → `@choco-pi/mcp`; `version`: `0.1.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-mcp`, so path-based settings entries, imports, and the path-derived extension name are unchanged. `pi.changelogPath` is `""`, which Pi documents as disabling the package changelog: the upstream `CHANGELOG.md` stays as history, but Pi no longer prints an "Updated … to v…" notice for this package at startup.
+
+## 2026-11-20 choco-pi patch: Pi SDK range ~1.6.0
+
+Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`), so later 1.6 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.

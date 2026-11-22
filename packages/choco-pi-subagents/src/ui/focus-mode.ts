@@ -38,7 +38,7 @@ type EditorLike = {
 };
 
 type RenderTarget = {
-  render(width: number): string[];
+  render(width: number): readonly string[];
   handleMouse?: TUI["handleMouse"];
 };
 
@@ -224,8 +224,7 @@ function findDocument(tui: TUI): RenderTarget | undefined {
 
 /** Pi mounts pending messages immediately after the transcript document. */
 function findPendingMessages(tui: TUI, document: RenderTarget): RenderTarget | undefined {
-  // SAFETY: findDocument returns this value directly from tui.children after checking render().
-  const documentIndex = tui.children.indexOf(document as TUI["children"][number]);
+  const documentIndex = tui.children.findIndex((child) => child === document);
   const candidate = documentIndex < 0 ? undefined : tui.children[documentIndex + 1];
   if (!isRenderTarget(candidate)) return undefined;
   // Small host fixtures and alternate renderers may put the editor directly

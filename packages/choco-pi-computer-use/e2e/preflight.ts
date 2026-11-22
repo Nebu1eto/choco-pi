@@ -21,10 +21,9 @@ export interface PreflightResult {
   baseline?: string;
 }
 
-/** Stable 1.5 patch releases from 1.5.2, matching the package's `~1.5.2` SDK range. */
+/** Stable 1.6 patch releases, matching the package's `~1.6.0` SDK range. */
 function supportedPiVersion(version: string): boolean {
-  const match = /^1\.5\.(0|[1-9]\d*)$/.exec(version);
-  return match !== null && Number(match[1]) >= 2;
+  return /^1\.6\.(0|[1-9]\d*)$/.test(version);
 }
 
 export class GateError extends Error {
@@ -131,7 +130,7 @@ export async function preflight(options: {
   if (resolve(executable) !== piPath)
     throw new GateError(
       "PI_VERSION_MISMATCH",
-      `${executable} is not the pinned Pi ~1.5.2 launcher`,
+      `${executable} is not the pinned Pi ~1.6.0 launcher`,
     );
   if (!baseline && (requireBaseline || requestedWaivers.size > 0))
     throw new GateError("BASELINE_GATES", "provide --baseline with root gate evidence");

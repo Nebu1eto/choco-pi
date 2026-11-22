@@ -29,7 +29,7 @@
 # --no-install and the app's empty bunfig.toml, so a project's .env,
 # bunfig.toml preloads or Bun auto-install never reach Pi's process.
 #
-# Every PI_* variable Pi 1.5.2 reads (pi-coding-agent, pi-ai, pi-tui,
+# Every PI_* variable Pi 1.6.0 reads (pi-coding-agent, pi-ai, pi-tui,
 # pi-agent-core dist), classified:
 #   unset (Pi state or Pi install location):
 #     PI_CODING_AGENT_SESSION_DIR  session storage directory

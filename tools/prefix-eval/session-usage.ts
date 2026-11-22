@@ -34,7 +34,7 @@ const SessionRecordSchema = obj(
           role: opt(str()),
           toolName: opt(str()),
           isError: opt(bool()),
-          // Pi 1.5.1 records the system prompt as a role "system" message with string content.
+          // Pi system messages can have string content.
           content: opt(union([str(), arr(MessageBlockSchema)])),
           usage: opt(UsagePayloadSchema),
         },

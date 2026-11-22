@@ -172,19 +172,23 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@earendil-works/pi-ai': ~1.5.2
-  '@earendil-works/pi-tui': ~1.5.2
+  '@earendil-works/pi-ai': ~1.6.0
+  '@earendil-works/pi-tui': ~1.6.0
+
+patchedDependencies:
+  '@aliou/pi-utils-settings@0.15.1': 5cc9728250aac3a1a3f1dd3a3e69131a4118c21ed4fc7f7df4300523a917149c
+  '@aliou/pi-utils-ui@0.4.1': 829d06235d0bb20e7d4ae7fd20dfe3ae1969ab88a89e9809bb59a8eb5d9f5a8f
 
 importers:
 
   .:
     dependencies:
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       '@logtape/logtape':
         specifier: 2.4.2
         version: 2.4.2
@@ -199,14 +203,14 @@ importers:
         version: 7.0.2
     devDependencies:
       '@earendil-works/pi-agent-core':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-ai':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-tui':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       '@oxlint/plugins':
         specifier: 1.79.0
         version: 1.79.0
@@ -238,17 +242,17 @@ importers:
   packages/choco-pi-advisor:
     dependencies:
       '@earendil-works/pi-ai':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       '@earendil-works/pi-tui':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       typebox:
         specifier: ^1.3.29
         version: 1.3.29
@@ -256,17 +260,17 @@ importers:
   packages/choco-pi-agent-browser:
     dependencies:
       '@earendil-works/pi-ai':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       '@earendil-works/pi-tui':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       typebox:
         specifier: '*'
         version: 1.3.29
@@ -274,32 +278,32 @@ importers:
   packages/choco-pi-agents-md:
     dependencies:
       '@earendil-works/pi-ai':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
 
   packages/choco-pi-codex:
     dependencies:
       '@earendil-works/pi-agent-core':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.10.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.10.0)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-ai':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.10.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.10.0)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       '@earendil-works/pi-tui':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       base64-js:
         specifier: 1.5.1
         version: 1.5.1
@@ -340,14 +344,14 @@ importers:
   packages/choco-pi-compaction:
     dependencies:
       '@earendil-works/pi-ai':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       typebox:
         specifier: '*'
         version: 1.3.29
@@ -355,14 +359,14 @@ importers:
   packages/choco-pi-computer-use:
     dependencies:
       '@earendil-works/pi-ai':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       typebox:
         specifier: '*'
         version: 1.3.29
@@ -370,29 +374,29 @@ importers:
   packages/choco-pi-editor-context:
     dependencies:
       '@earendil-works/pi-agent-core':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-ai':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
 
   packages/choco-pi-goal:
     dependencies:
       '@earendil-works/pi-ai':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       typebox:
         specifier: '*'
         version: 1.3.29
@@ -400,14 +404,14 @@ importers:
   packages/choco-pi-hooks:
     dependencies:
       '@earendil-works/pi-ai':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       typebox:
         specifier: '>=1.3.29'
         version: 1.3.29
@@ -418,14 +422,14 @@ importers:
         specifier: 0.45.1
         version: 0.45.1
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       '@earendil-works/pi-tui':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       js-yaml:
         specifier: 5.2.3
         version: 5.2.3
@@ -486,17 +490,17 @@ importers:
         version: 1.3.29
     devDependencies:
       '@earendil-works/pi-ai':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       '@earendil-works/pi-tui':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       '@types/cross-spawn':
         specifier: 6.0.6
         version: 6.0.6
@@ -514,26 +518,26 @@ importers:
     dependencies:
       '@aliou/pi-utils-settings':
         specifier: ^0.15.0
-        version: 0.15.1(@earendil-works/pi-coding-agent@1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-tui@1.5.2)
+        version: 0.15.1(patch_hash=5cc9728250aac3a1a3f1dd3a3e69131a4118c21ed4fc7f7df4300523a917149c)(@earendil-works/pi-coding-agent@1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-tui@1.6.0)
       '@aliou/pi-utils-ui':
         specifier: ^0.4.0
-        version: 0.4.1(@earendil-works/pi-coding-agent@1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-tui@1.5.2)
+        version: 0.4.1(patch_hash=829d06235d0bb20e7d4ae7fd20dfe3ae1969ab88a89e9809bb59a8eb5d9f5a8f)(@earendil-works/pi-coding-agent@1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-tui@1.6.0)
     devDependencies:
       '@changesets/cli':
         specifier: ^2.27.11
         version: 2.31.1(@types/node@25.9.5)
       '@earendil-works/pi-ai':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       '@earendil-works/pi-tui':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       '@types/node':
         specifier: ^25.0.10
         version: 25.9.5
@@ -562,14 +566,14 @@ importers:
   packages/choco-pi-shells:
     dependencies:
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       '@earendil-works/pi-tui':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       typebox:
         specifier: '*'
         version: 1.3.29
@@ -577,17 +581,17 @@ importers:
   packages/choco-pi-subagents:
     dependencies:
       '@earendil-works/pi-ai':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       '@earendil-works/pi-tui':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       croner:
         specifier: 10.0.1
         version: 10.0.1
@@ -601,17 +605,17 @@ importers:
   packages/choco-pi-ui:
     devDependencies:
       '@earendil-works/pi-ai':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       '@earendil-works/pi-tui':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       '@types/node':
         specifier: ^26.0.0
         version: 26.2.0
@@ -628,17 +632,17 @@ importers:
   packages/choco-pi-web-access:
     dependencies:
       '@earendil-works/pi-ai':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       '@earendil-works/pi-tui':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       '@mozilla/readability':
         specifier: 0.6.0
         version: 0.6.0
@@ -668,11 +672,11 @@ importers:
   packages/choco-pi-web-search:
     dependencies:
       '@earendil-works/pi-coding-agent':
-        specifier: ~1.5.2
-        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+        specifier: ~1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-schema':
-        specifier: ~1.5.2
-        version: 1.5.2
+        specifier: ~1.6.0
+        version: 1.6.0
       typebox:
         specifier: ^1.3.29
         version: 1.3.29
@@ -696,7 +700,7 @@ packages:
     resolution: {integrity: sha512-1oJraVjjlZD8UM41472MF1O8a41/4OvAxdH/HlQsahZH/gBkhahGw/EjlcVqXTWnCQfo+4X6PksRz63erNsPwQ==}
     peerDependencies:
       '@earendil-works/pi-coding-agent': '>=0.74.0 <1'
-      '@earendil-works/pi-tui': ~1.5.2
+      '@earendil-works/pi-tui': ~1.6.0
     peerDependenciesMeta:
       '@earendil-works/pi-coding-agent':
         optional: true
@@ -913,38 +917,38 @@ packages:
   '@changesets/write@0.4.0':
     resolution: {integrity: sha512-CdTLvIOPiCNuH71pyDu3rA+Q0n65cmAbXnwWH84rKGiFumFzkmHNT8KHTMEchcxN+Kl8I54xGUhJ7l3E7X396Q==}
 
-  '@earendil-works/pi-agent-core@1.5.2':
-    resolution: {integrity: sha512-ie5mejS7mGfXt//9As7i3LfxVXdktZvF1JP4EQsUXTp4mU437h23MNGx7wXZ5VYs3YiG/Qnj3e7OZ2HC069OMw==}
+  '@earendil-works/pi-agent-core@1.6.0':
+    resolution: {integrity: sha512-IU/x+2XtE4KIdIkEndZssdLPbIUR38Btj+Q7vjIIXIK7GSamLtDH5jOw/dzBWAvWFAgZ2dslF5sPc6GcGOnS+w==}
     engines: {node: '>=22.19.0'}
 
-  '@earendil-works/pi-ai@1.5.2':
-    resolution: {integrity: sha512-2tWPSnV3qzfiDIY3aWluBag3vC++Vs+VsXt/UquSU5onPMohPih72FUhIhaqmDdMYubOgB3Byl9uF4Vk40JLvQ==}
-    engines: {node: '>=22.19.0'}
-    hasBin: true
-
-  '@earendil-works/pi-codemode@1.5.2':
-    resolution: {integrity: sha512-HoZQ40a9RgdZ1VgmrX6x8887cNXedaRJT1l+Ie5YRIMK4gY7v0EpsiNqf6dmixrKylZlTgUSyR+vE8xhjfkr+w==}
-    engines: {node: '>=22.19.0'}
-
-  '@earendil-works/pi-coding-agent@1.5.2':
-    resolution: {integrity: sha512-mUWI04rqF1Vd/m1q+Ps1XeWsTXEVvRUnsmRa83I3Dzua0Tx5bYS93imeqtIfrXf7PkkaR6ERz+AuQhIJlom5yA==}
+  '@earendil-works/pi-ai@1.6.0':
+    resolution: {integrity: sha512-9hL+eygFDEiFp//cydeUfmFsKmEqpmvsNPb10Y1W8+m5K9O+sx1hMStfu6nukrBD5sl6mP4RykCYBBNEgsVLfw==}
     engines: {node: '>=22.19.0'}
     hasBin: true
 
-  '@earendil-works/pi-mcp@1.5.2':
-    resolution: {integrity: sha512-zU1UgeXDlbixPqGEWD7Ql0brEMIpYr7aEWjoEE5h5enJbM/kQ2jIr7lN8JoR80oUnq1fJSU7SC8kLx2Fx/IZYg==}
+  '@earendil-works/pi-codemode@1.6.0':
+    resolution: {integrity: sha512-GAgAy7iJCVbeiuqq2dTIuNj3aXTMUeTF8Nu8LZs72e8ueGGDU5L3/D8VxzTHALIpQ1/q8u1tfmB3iYS2Nopchw==}
     engines: {node: '>=22.19.0'}
 
-  '@earendil-works/pi-schema@1.5.2':
-    resolution: {integrity: sha512-hJoyCXWUhsSrXY5wJo2Q4kHXUsR51pNhkJHAMkWRwVMLDRtMDPkKNaa+JlVRVqTw1hjdSxcVVaFLSDbKlaTXEQ==}
+  '@earendil-works/pi-coding-agent@1.6.0':
+    resolution: {integrity: sha512-zX1BVEsshx7A2MRuQ6jfr3RJGWw4Wn+vLq5ZfmlvS1RskhRmByaSZVXH/zcwRrWHO7qPgs98pNCbPOEti/t0fQ==}
+    engines: {node: '>=22.19.0'}
+    hasBin: true
+
+  '@earendil-works/pi-mcp@1.6.0':
+    resolution: {integrity: sha512-dhqAR6MP8Fp3b8LEcBFOyxMZpGSozUAdzF0Dbl7OvojsjZrQsDV3ZKn85WRbwjHb4WjQUCVBsIZXwoyQxXeunw==}
     engines: {node: '>=22.19.0'}
 
-  '@earendil-works/pi-telemetry@1.5.2':
-    resolution: {integrity: sha512-m+cumjIqNh1aMISi/9ttcG3ZOwIdriPbz/eMyWmRMJCGa/WcgY1RX4lrb7HvsHhSfI/JUeBESA4nOCr8C3y5ow==}
+  '@earendil-works/pi-schema@1.6.0':
+    resolution: {integrity: sha512-jD0VRCUcFzWQ5zN82pOuoHNN42/3pu4E5krtpiKknvPq4g2m+fuO38lj+xnZhuVpYcd2G0qlmr8lE6ZMzkad7Q==}
     engines: {node: '>=22.19.0'}
 
-  '@earendil-works/pi-tui@1.5.2':
-    resolution: {integrity: sha512-WK8ih+c88GWizaB79y7Pq3PV7ySf5VI1pZ1i/6aBBjDOAiG2EE3ojKjl+pxQqLfyQGnzHYu4VfakOBJgumuoyw==}
+  '@earendil-works/pi-telemetry@1.6.0':
+    resolution: {integrity: sha512-MNL0TvtpgoSfX7mBLSVgzxTW6yvT8VLEpHvbWnZsIp92FtqVvx+4q9DxWZdX8KvcQqBs0GseAgVnLdVFinjN9Q==}
+    engines: {node: '>=22.19.0'}
+
+  '@earendil-works/pi-tui@1.6.0':
+    resolution: {integrity: sha512-nVtWZ4rYr3KHDla3skGAWG5XoITEUJCoEx1AsWv1yKxV7+v86ulD2hxVn/P+COI6jsoeQmj3orqHbCHZwAUsUg==}
     engines: {node: '>=22.19.0'}
 
   '@emnapi/core@2.0.0-beta.2':
@@ -1268,8 +1272,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@google/genai@2.21.0':
-    resolution: {integrity: sha512-+PDtco2/Z0ONdzCGekCoCT+O1VJS9xJQNN4XzQpXG/t3El/SWWMkCWlFRO1KmivOHPa4Q0VjUYu1HBKCZ/v33Q==}
+  '@google/genai@2.32.0':
+    resolution: {integrity: sha512-60c79uXpR0a47bmGqDxbXEBuQUalNmwo5mx5kqb91jIW4FoqpsLSt86DeVhRhtH5+s/16Wqxt3sXzFQn2U1OHQ==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
       '@modelcontextprotocol/sdk': ^1.25.2
@@ -3054,13 +3058,14 @@ packages:
       zod:
         optional: true
 
-  openai@7.19.0:
-    resolution: {integrity: sha512-MX2s3u2L5racTO0CC/SWpCOasJQBCJrqLKXK+l82cAhdeF8mPMBEe/gxMm0ZFa2xpKpOFLRjxv5afYEZbBXmbQ==}
+  openai@7.59.0:
+    resolution: {integrity: sha512-wPYKJkLPFEdNJ2tThSg4jE1Ptsv4X3u8g8LIvu0Qz/UIhsKeCzl73rl48PtQsDVrJL/ku0liXOsbyd2TsRsPJw==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       '@aws-sdk/credential-provider-node': '>=3.972.0 <4'
       '@smithy/hash-node': '>=4.3.0 <5'
       '@smithy/signature-v4': '>=5.4.0 <6'
+      google-auth-library: '>=9.15.1 <12'
       undici: '>=5 <9'
       ws: ^8.21.0
       zod: ^3.25 || ^4.0
@@ -3070,6 +3075,8 @@ packages:
       '@smithy/hash-node':
         optional: true
       '@smithy/signature-v4':
+        optional: true
+      google-auth-library:
         optional: true
       undici:
         optional: true
@@ -3598,8 +3605,8 @@ packages:
     resolution: {integrity: sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==}
     engines: {node: '>=22.19.0'}
 
-  undici@8.12.3:
-    resolution: {integrity: sha512-+fdndUTwBP86cVjihTp21hZHo7d6oj1c/47XPA3lL8mM0XHs+C4EkcjmgRsFnFk2f/UONGDy9ItBItmXsLOQHw==}
+  undici@8.12.4:
+    resolution: {integrity: sha512-8Mx+uNKKER2bA4AdtedkqRbwUCIJFr2nJckXRe5yrDqzePqwLP7VNcctN8/XdmDSbF7mS+jJKIszlL+vbam1VA==}
     engines: {node: '>=22.19.0'}
 
   universalify@0.1.2:
@@ -3797,18 +3804,18 @@ snapshots:
     dependencies:
       zod: 3.25.76
 
-  '@aliou/pi-utils-settings@0.15.1(@earendil-works/pi-coding-agent@1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-tui@1.5.2)':
+  '@aliou/pi-utils-settings@0.15.1(patch_hash=5cc9728250aac3a1a3f1dd3a3e69131a4118c21ed4fc7f7df4300523a917149c)(@earendil-works/pi-coding-agent@1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-tui@1.6.0)':
     dependencies:
-      '@aliou/pi-utils-ui': 0.4.1(@earendil-works/pi-coding-agent@1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-tui@1.5.2)
+      '@aliou/pi-utils-ui': 0.4.1(patch_hash=829d06235d0bb20e7d4ae7fd20dfe3ae1969ab88a89e9809bb59a8eb5d9f5a8f)(@earendil-works/pi-coding-agent@1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-tui@1.6.0)
     optionalDependencies:
-      '@earendil-works/pi-coding-agent': 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+      '@earendil-works/pi-coding-agent': 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
     transitivePeerDependencies:
       - '@earendil-works/pi-tui'
 
-  '@aliou/pi-utils-ui@0.4.1(@earendil-works/pi-coding-agent@1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-tui@1.5.2)':
+  '@aliou/pi-utils-ui@0.4.1(patch_hash=829d06235d0bb20e7d4ae7fd20dfe3ae1969ab88a89e9809bb59a8eb5d9f5a8f)(@earendil-works/pi-coding-agent@1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-tui@1.6.0)':
     optionalDependencies:
-      '@earendil-works/pi-coding-agent': 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
-      '@earendil-works/pi-tui': 1.5.2
+      '@earendil-works/pi-coding-agent': 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)
+      '@earendil-works/pi-tui': 1.6.0
 
   '@anthropic-ai/sdk@0.129.0(zod@4.4.3)':
     dependencies:
@@ -4183,16 +4190,17 @@ snapshots:
       human-id: 4.2.2
       prettier: 2.8.8
 
-  '@earendil-works/pi-agent-core@1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.10.0)(ws@8.21.3)(zod@4.4.3)':
+  '@earendil-works/pi-agent-core@1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.10.0)(ws@8.21.3)(zod@4.4.3)':
     dependencies:
-      '@earendil-works/pi-ai': 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.10.0)(ws@8.21.3)(zod@4.4.3)
-      '@earendil-works/pi-schema': 1.5.2
+      '@earendil-works/pi-ai': 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.10.0)(ws@8.21.3)(zod@4.4.3)
+      '@earendil-works/pi-schema': 1.6.0
     transitivePeerDependencies:
       - '@aws-sdk/credential-provider-node'
       - '@modelcontextprotocol/sdk'
       - '@smithy/hash-node'
       - '@smithy/signature-v4'
       - bufferutil
+      - google-auth-library
       - kerberos
       - supports-color
       - undici
@@ -4200,16 +4208,17 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-agent-core@1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)':
+  '@earendil-works/pi-agent-core@1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)':
     dependencies:
-      '@earendil-works/pi-ai': 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
-      '@earendil-works/pi-schema': 1.5.2
+      '@earendil-works/pi-ai': 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
+      '@earendil-works/pi-schema': 1.6.0
     transitivePeerDependencies:
       - '@aws-sdk/credential-provider-node'
       - '@modelcontextprotocol/sdk'
       - '@smithy/hash-node'
       - '@smithy/signature-v4'
       - bufferutil
+      - google-auth-library
       - kerberos
       - supports-color
       - undici
@@ -4217,17 +4226,17 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.10.0)(ws@8.21.3)(zod@4.4.3)':
+  '@earendil-works/pi-ai@1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.10.0)(ws@8.21.3)(zod@4.4.3)':
     dependencies:
       '@anthropic-ai/sdk': 0.129.0(zod@4.4.3)
       '@aws-sdk/client-bedrock-runtime': 3.1127.0
-      '@earendil-works/pi-schema': 1.5.2
-      '@earendil-works/pi-telemetry': 1.5.2
-      '@google/genai': 2.21.0(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))
+      '@earendil-works/pi-schema': 1.6.0
+      '@earendil-works/pi-telemetry': 1.6.0
+      '@google/genai': 2.32.0(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))
       '@smithy/node-http-handler': 4.12.1
       http-proxy-agent: 9.1.0
       https-proxy-agent: 9.1.0
-      openai: 7.19.0(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.0)(undici@8.10.0)(ws@8.21.3)(zod@4.4.3)
+      openai: 7.59.0(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.10.0)(ws@8.21.3)(zod@4.4.3)
       partial-json: 0.1.7
     transitivePeerDependencies:
       - '@aws-sdk/credential-provider-node'
@@ -4235,6 +4244,7 @@ snapshots:
       - '@smithy/hash-node'
       - '@smithy/signature-v4'
       - bufferutil
+      - google-auth-library
       - kerberos
       - supports-color
       - undici
@@ -4242,17 +4252,17 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)':
+  '@earendil-works/pi-ai@1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)':
     dependencies:
       '@anthropic-ai/sdk': 0.129.0(zod@4.4.3)
       '@aws-sdk/client-bedrock-runtime': 3.1127.0
-      '@earendil-works/pi-schema': 1.5.2
-      '@earendil-works/pi-telemetry': 1.5.2
-      '@google/genai': 2.21.0(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))
+      '@earendil-works/pi-schema': 1.6.0
+      '@earendil-works/pi-telemetry': 1.6.0
+      '@google/genai': 2.32.0(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))
       '@smithy/node-http-handler': 4.12.1
       http-proxy-agent: 9.1.0
       https-proxy-agent: 9.1.0
-      openai: 7.19.0(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
+      openai: 7.59.0(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
       partial-json: 0.1.7
     transitivePeerDependencies:
       - '@aws-sdk/credential-provider-node'
@@ -4260,6 +4270,7 @@ snapshots:
       - '@smithy/hash-node'
       - '@smithy/signature-v4'
       - bufferutil
+      - google-auth-library
       - kerberos
       - supports-color
       - undici
@@ -4267,17 +4278,17 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-codemode@1.5.2':
+  '@earendil-works/pi-codemode@1.6.0':
     dependencies:
       quickjs-wasi: 3.6.2
 
-  '@earendil-works/pi-coding-agent@1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)':
+  '@earendil-works/pi-coding-agent@1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(ws@8.21.3)(zod@4.4.3)':
     dependencies:
-      '@earendil-works/pi-agent-core': 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
-      '@earendil-works/pi-ai': 1.5.2(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3)
-      '@earendil-works/pi-codemode': 1.5.2
-      '@earendil-works/pi-mcp': 1.5.2
-      '@earendil-works/pi-tui': 1.5.2
+      '@earendil-works/pi-agent-core': 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
+      '@earendil-works/pi-ai': 1.6.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3)
+      '@earendil-works/pi-codemode': 1.6.0
+      '@earendil-works/pi-mcp': 1.6.0
+      '@earendil-works/pi-tui': 1.6.0
       '@silvia-odwyer/photon-node': 0.3.4
       brace-expansion: 5.0.12
       chalk: 6.0.0
@@ -4293,7 +4304,7 @@ snapshots:
       quickjs-wasi: 3.6.2
       semver: 7.8.5
       typebox: 1.3.27
-      undici: 8.12.3
+      undici: 8.12.4
       yaml: 2.9.0
     transitivePeerDependencies:
       - '@aws-sdk/credential-provider-node'
@@ -4301,21 +4312,22 @@ snapshots:
       - '@smithy/hash-node'
       - '@smithy/signature-v4'
       - bufferutil
+      - google-auth-library
       - kerberos
       - supports-color
       - utf-8-validate
       - ws
       - zod
 
-  '@earendil-works/pi-mcp@1.5.2':
+  '@earendil-works/pi-mcp@1.6.0':
     dependencies:
       cross-spawn: 7.0.6
 
-  '@earendil-works/pi-schema@1.5.2': {}
+  '@earendil-works/pi-schema@1.6.0': {}
 
-  '@earendil-works/pi-telemetry@1.5.2': {}
+  '@earendil-works/pi-telemetry@1.6.0': {}
 
-  '@earendil-works/pi-tui@1.5.2':
+  '@earendil-works/pi-tui@1.6.0':
     dependencies:
       get-east-asian-width: 1.6.0
       marked: 18.0.11
@@ -4493,7 +4505,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@google/genai@2.21.0(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))':
+  '@google/genai@2.32.0(@modelcontextprotocol/sdk@1.32.2(zod@4.4.3))':
     dependencies:
       google-auth-library: 10.9.1
       p-retry: 4.6.2
@@ -6119,19 +6131,21 @@ snapshots:
       ws: 8.21.3
       zod: 4.4.3
 
-  openai@7.19.0(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.0)(undici@8.10.0)(ws@8.21.3)(zod@4.4.3):
+  openai@7.59.0(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.10.0)(ws@8.21.3)(zod@4.4.3):
     optionalDependencies:
       '@aws-sdk/credential-provider-node': 3.972.83
       '@smithy/signature-v4': 5.7.0
+      google-auth-library: 10.9.1
       undici: 8.10.0
       ws: 8.21.3
       zod: 4.4.3
 
-  openai@7.19.0(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.0)(undici@8.12.3)(ws@8.21.3)(zod@4.4.3):
+  openai@7.59.0(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.0)(google-auth-library@10.9.1)(undici@8.12.4)(ws@8.21.3)(zod@4.4.3):
     optionalDependencies:
       '@aws-sdk/credential-provider-node': 3.972.83
       '@smithy/signature-v4': 5.7.0
-      undici: 8.12.3
+      google-auth-library: 10.9.1
+      undici: 8.12.4
       ws: 8.21.3
       zod: 4.4.3
 
@@ -6733,7 +6747,7 @@ snapshots:
 
   undici@8.10.0: {}
 
-  undici@8.12.3: {}
+  undici@8.12.4: {}
 
   universalify@0.1.2: {}
 

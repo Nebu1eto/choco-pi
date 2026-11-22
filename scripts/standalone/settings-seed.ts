@@ -69,7 +69,7 @@ function seedEntry<Value>(value: Schema<Value>) {
 }
 
 /**
- * The keys a seed may set, each with the values its reader accepts: Pi 1.5.2's
+ * The keys a seed may set, each with the values its reader accepts: Pi 1.6.0's
  * settings schema (dist/core/settings-schema.js) and, for fuzzyFileMentions,
  * profile/extensions/prompt-editor.ts. The object is closed, so any other key
  * is refused.

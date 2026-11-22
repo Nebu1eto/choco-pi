@@ -87,7 +87,7 @@ type PolishedFrameProvenance = {
   split: PolishedFrameSplit;
 };
 
-const POLISHED_FRAME_SPLITS = new WeakMap<string[], PolishedFrameProvenance>();
+const POLISHED_FRAME_SPLITS = new WeakMap<readonly string[], PolishedFrameProvenance>();
 
 type AutocompleteListInternals = Pick<Component, "render">;
 
@@ -164,7 +164,7 @@ export type PolishedEditorFrameOptions = {
 
 type PolishedFrameOptions = {
   width: number;
-  baseRendered: string[];
+  baseRendered: readonly string[];
   autocompleteSource: AutocompleteEditorInternals;
   autocompleteCapture?: AutocompleteCapture;
   uiTheme: Theme;
@@ -275,7 +275,7 @@ function frameMouse(
 
 type MinimalistFrameAdapterOptions = {
   width: number;
-  baseRendered: string[];
+  baseRendered: readonly string[];
   autocompleteSource: AutocompleteEditorInternals;
   autocompleteCapture?: AutocompleteCapture;
   uiTheme: Theme;
@@ -431,7 +431,7 @@ export function renderWithAutocompleteCapture<T>(
   }
 }
 
-function clampRenderedLines(lines: string[], width: number): string[] {
+function clampRenderedLines(lines: readonly string[], width: number): string[] {
   const maxWidth = Math.max(0, width);
   return lines.map((line) => truncateToWidth(line, maxWidth, ""));
 }
@@ -536,7 +536,7 @@ function renderEditorBorder(
 }
 
 function unwrapPolishedFrameOnly(
-  lines: string[],
+  lines: readonly string[],
   config: ZentuiConfig,
   uiTheme: Theme,
 ): { editorLines: string[]; viewport: ViewportCounts } | undefined {
@@ -582,7 +582,7 @@ function unwrapPolishedFrameOnly(
 }
 
 function splitPolishedFrame(
-  lines: string[],
+  lines: readonly string[],
   config: ZentuiConfig,
   uiTheme: Theme,
 ): PolishedFrameSplit | undefined {
@@ -598,7 +598,7 @@ function splitPolishedFrame(
 
 function inspectPolishedFrameProvenance(
   base: WrappedEditor,
-  rendered: string[],
+  rendered: readonly string[],
   config: ZentuiConfig,
   uiTheme: Theme,
 ): PolishedFrameInspection {
@@ -960,7 +960,7 @@ export class PolishedEditor extends CustomEditor {
   }
 
   /** The base editor's frame at `width`, with the mouse selection drawn on its text. */
-  private renderBase(width: number): string[] {
+  private renderBase(width: number): readonly string[] {
     return this.selection.decorate(width, super.render(width));
   }
 
@@ -1189,7 +1189,7 @@ export class WrappedPolishedEditor implements EditorComponent {
   }
 
   /** The base editor's frame at `width`, with the mouse selection drawn on its text. */
-  private renderBase(width: number): string[] {
+  private renderBase(width: number): readonly string[] {
     return this.selection.decorate(width, this.base.render(width));
   }
 
@@ -1205,7 +1205,7 @@ export class WrappedPolishedEditor implements EditorComponent {
         this.reportMinimalistDecoration(false);
         return clampRenderedLines(this.renderBase(width), width);
       }
-      let captured: { value: string[]; capture?: AutocompleteCapture };
+      let captured: { value: readonly string[]; capture?: AutocompleteCapture };
       try {
         captured = renderWithAutocompleteCapture(this.base, () =>
           this.renderBase(Math.max(0, width - 4)),
@@ -1251,7 +1251,7 @@ export class WrappedPolishedEditor implements EditorComponent {
 
     const { railWidth } = getEditorChromeWidths(config, this.uiTheme, "\x1b[0m");
     const innerWidth = Math.max(0, width - railWidth);
-    let captured: { value: string[]; capture?: AutocompleteCapture };
+    let captured: { value: readonly string[]; capture?: AutocompleteCapture };
     try {
       captured = renderWithAutocompleteCapture(this.base, () => this.renderBase(innerWidth));
     } catch {

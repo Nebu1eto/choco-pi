@@ -269,12 +269,13 @@ apply-patch-display protocol strings, code-mode host cache path) are kept
 verbatim for protocol parity.
 
 `src/providers/openai-codex/model-catalog.ts` only adds models missing from the
-host's built-in `openai-codex` catalog (currently the Daybreak entries and,
-since 2026-11-18, `gpt-6.2-astra` and `gpt-6.2-sol`, which pi 1.5.2 and the
-pi.dev catalog do not carry; remove them once the host ships them). Their
-context windows (272,000 and 500,000) come from the Codex
-`/backend-api/codex/models` catalog and their prices from OpenAI's model pages;
-`profile/models.json` overrides both windows to 1,050,000. The
+host's built-in `openai-codex` catalog (currently only the Daybreak entries);
+an entry the host ships is dropped by id, so host metadata wins. `gpt-6.2-astra`
+and `gpt-6.2-sol` come from the host catalog since Pi 1.6.0 (272,000 and
+500,000 context, 128,000 output, `off` unsupported, `minimal` mapped to `low`,
+`supportsMidConvoEffort`); the local fallback added on 2026-11-18 was removed
+on 2026-11-20. `profile/models.json` still overrides both windows to
+1,050,000. The
 temporary `gpt-6-astra` registration was removed once pi 0.85.1 shipped the
 model in the host catalog (272,000-token Codex context limit, `max` effort).
 
@@ -1367,3 +1368,16 @@ The root `package.json` now pins `pnpm@12.21.0` (the toolchain `mise.toml` insta
 
 - The code-mode host sends `input: null` for a call without arguments (`tools.get_goal()`, `tools.mcp__<server>__<tool>()`). `toNestedTool` in `src/adapter/code-mode/nested-tool-adapter.ts` treated only a missing input as "no arguments", so every such call failed with `[invalid_arguments] … (root: expected object, got null)` while its own hint showed the same call. A `null` input now runs with `{}` when the tool's schema accepts `{}` and does not itself accept `null`; a schema with required properties still rejects `null`, and a `null`-accepting schema still receives `null`. The `{}` input reaches both `prepareArguments` and `ctx.executeTool()`.
 - Tests: `tests/code-mode-bridge-arguments.test.ts`.
+
+## 2026-11-20 choco-pi patch: Pi SDK range ~1.6.0
+
+Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`), so later 1.6 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
+
+## 2026-11-20 choco-pi patch: Pi 1.6 catalog, readonly render results, and stock Codex transport changes
+
+- `src/providers/openai-codex/model-catalog.ts`: the local `gpt-6.2-astra` / `gpt-6.2-sol` fallback is removed; Pi 1.6.0's built-in `openai-codex` catalog carries both with the same limits and prices. `tests/model-catalog.test.ts` now asserts the registered entries are the host catalog objects and advertise `supportsMidConvoEffort`.
+- Pi 1.6 declares `Component.render` results `readonly string[]`. `src/tools/code-mode/display-description.ts` (`describedTitle`) and `src/tools/exec/command-tool.ts` (`renderCollapsedOutput` and its width cache) return `readonly string[]`; `src/ui/settings/screen.ts` `withSettingsFooter` and `withConfigScopeDetails` accept readonly input and still copy before editing. No behavior change.
+- Not ported: Pi 1.6.0's stock `openai-codex` request changes. choco-pi replaces the stock `streamSimple`, so they do not apply automatically; `src/providers/openai-codex/request-body.ts` keeps the 1.5 shape on purpose.
+  - Leading developer-role system prompt instead of top-level `instructions` (stock `openai-codex-responses.js` `buildRequestBody`). Blocked by remote compaction v2: `adapter/compaction/remote-v2-client.ts` `prepareAttemptPayload` replaces the payload input with the serialized session (`serializer.ts` leaves the system prompt out) and takes the system prompt only from `requestBody.instructions`. Compaction requests would lose it. Canonical compaction replay (`session-continuity.ts` `responsesLiteRequestPrefixLength`) also recognizes only an `additional_tools`-led prefix, so a developer-led request would always fall back to reconstruction. Native replay (`adapter/replay`) does accept a developer-led payload, as an offline probe showed. Default Code Mode is unaffected: Responses Lite (`responses-lite.ts` `applyResponsesLiteRequest`) already removes `instructions` and sends the system prompt as a developer input item. Only native-tools mode still sends top-level `instructions`.
+  - Mid-conversation effort through `configuration_update` items (stock `getConfigurationUpdateEffort`, fixed `reasoning.effort: "medium"`). Blocked by two readers. First, canonical compaction history (`session-continuity.ts` `materializedInput`) would carry the foreground `configuration_update` items into compaction requests, which set their effort through `reasoning` from `buildCompactionReasoning`. Which of the two the server applies cannot be tested offline. Second, native steering (`native-steering.ts`, successor resolution) treats any non-user delta item as new input, so the trailing `configuration_update` would force a reconnect on every steer. Native replay accepted a payload with these items in the same probe. Changing thinking level therefore still changes `reasoning.effort`, and the WebSocket continuation sends full context for that one request.
+  - `max_output_tokens` stays omitted (`request-body.ts`); the Codex ChatGPT endpoint rejected it.

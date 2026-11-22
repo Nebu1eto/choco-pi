@@ -49,7 +49,7 @@ async function standaloneFixture(): Promise<StandaloneFixture> {
   const launcher = join(app, "bin", "choco-pi");
   const calls = join(root, "launcher-calls.txt");
   await mkdir(join(app, "bin"), { recursive: true });
-  await writeFile(launcher, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\necho 1.5.2\n`);
+  await writeFile(launcher, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\necho 1.6.0\n`);
   await chmod(launcher, 0o755);
   // A different `pi` on PATH that standalone mode must never pick.
   const pathBin = join(root, "path-bin");
@@ -128,7 +128,7 @@ test("standalone: Pi launches through the launcher, never a PATH pi", async (t) 
     argsPrefix: [],
   });
 
-  assert.equal(await readPiVersion(undefined, env), "1.5.2");
+  assert.equal(await readPiVersion(undefined, env), "1.6.0");
   assert.equal(await readFile(fixture.calls, "utf8"), "--version\n");
   assert.equal(
     await findPiChangelog(undefined, env),
@@ -369,7 +369,7 @@ test("standalone: session/new startup info comes from the launcher and CHOCO_PI_
 
   const response = await agent.newSession({ cwd, mcpServers: [] });
   const startupInfo = String(response._meta.piAcp.startupInfo ?? "");
-  assert.match(startupInfo, /^pi v1\.5\.2$/m);
+  assert.match(startupInfo, /^pi v1\.6\.0$/m);
   assert.match(startupInfo, /^- \/sentinel-prompt$/m);
   assert.ok(startupInfo.includes(join(agentDir, "extensions", "sentinel-ext.ts")), startupInfo);
   assert.doesNotMatch(startupInfo, /New version available|\.pi\/agent/);

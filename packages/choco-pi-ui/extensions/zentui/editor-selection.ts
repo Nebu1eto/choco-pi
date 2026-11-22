@@ -331,7 +331,7 @@ export class EditorSelection {
    * inverted. With a selection the editor's block cursor is not drawn: what is
    * inverted is exactly what a key removes.
    */
-  decorate(width: number, frame: string[]): string[] {
+  decorate(width: number, frame: readonly string[]): readonly string[] {
     this.drawn = { width, frame };
     const range = this.range();
     if (!range) return frame;

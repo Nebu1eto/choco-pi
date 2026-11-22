@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { openAICodexModelsWithDaybreak } from "../src/providers/openai-codex/model-catalog.ts";
 
 test("OpenAI Codex catalog exposes the host GPT-6 Astra entry exactly once", () => {
@@ -17,8 +18,9 @@ test("OpenAI Codex catalog exposes the host GPT-6 Astra entry exactly once", () 
   assert.ok(models.some(({ id }) => id === "gpt-daybreak-blue-latest"));
 });
 
-test("OpenAI Codex catalog exposes GPT-6.2 Astra and Sol exactly once with Codex limits", () => {
+test("OpenAI Codex catalog exposes the host GPT-6.2 Astra and Sol entries exactly once with Codex limits", () => {
   const models = openAICodexModelsWithDaybreak();
+  const host = getBuiltinModels("openai-codex");
   for (const [id, contextWindow, input] of [
     ["gpt-6.2-astra", 272_000, 8],
     ["gpt-6.2-sol", 500_000, 2],
@@ -27,6 +29,12 @@ test("OpenAI Codex catalog exposes GPT-6.2 Astra and Sol exactly once with Codex
     const model = entries[0];
     assert.equal(entries.length, 1, id);
     assert.ok(model);
+    // The host catalog (Pi 1.6+) owns these entries; choco-pi adds no fallback.
+    assert.equal(
+      host.find((candidate) => candidate.id === id),
+      model,
+      id,
+    );
     assert.equal(model.provider, "openai-codex");
     assert.equal(model.api, "openai-codex-responses");
     assert.equal(model.contextWindow, contextWindow);
@@ -35,5 +43,8 @@ test("OpenAI Codex catalog exposes GPT-6.2 Astra and Sol exactly once with Codex
     assert.equal(model.thinkingLevelMap?.off, null);
     assert.equal(model.thinkingLevelMap?.minimal, "low");
     assert.equal(model.thinkingLevelMap?.max, "max");
+    const compat = model.compat;
+    assert.ok(compat && "supportsMidConvoEffort" in compat, id);
+    assert.equal(compat.supportsMidConvoEffort, true, id);
   }
 });

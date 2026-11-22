@@ -14,7 +14,7 @@ interface PackageManifest {
 }
 
 const ROOT = new URL("../", import.meta.url);
-const RANGE = "~1.5.2";
+const RANGE = "~1.6.0";
 const SDK_NAMES = ["pi-ai", "pi-agent-core", "pi-coding-agent", "pi-schema", "pi-tui"];
 const PACKAGE_PATHS = [
   "",

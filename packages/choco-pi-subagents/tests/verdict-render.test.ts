@@ -241,7 +241,10 @@ function notification(
   };
 }
 
-function lines(component: { render(width: number): string[] } | undefined, width = 170): string[] {
+function lines(
+  component: { render(width: number): readonly string[] } | undefined,
+  width = 170,
+): string[] {
   assert.ok(component);
   return component.render(width).map((line) => stripVTControlCharacters(line).trimEnd());
 }

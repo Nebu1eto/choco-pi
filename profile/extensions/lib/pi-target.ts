@@ -1,11 +1,11 @@
 /**
  * The Pi SDK releases choco-pi's contracts, readiness check, and profile marker accept:
- * stable patch releases of one minor line from a minimum (`~1.5.2`, that is
- * `>=1.5.2 <1.6.0`). A new minor release must be reviewed before it is accepted.
+ * stable patch releases of one minor line from a minimum (`~1.6.0`, that is
+ * `>=1.6.0 <1.7.0`). A new minor release must be reviewed before it is accepted.
  */
 const SUPPORTED_MAJOR = 1;
-const SUPPORTED_MINOR = 5;
-const MINIMUM_PATCH = 2;
+const SUPPORTED_MINOR = 6;
+const MINIMUM_PATCH = 0;
 
 /** Oldest accepted release; also the version fixtures use as a supported runtime. */
 export const PI_SDK_MINIMUM = `${SUPPORTED_MAJOR}.${SUPPORTED_MINOR}.${MINIMUM_PATCH}`;

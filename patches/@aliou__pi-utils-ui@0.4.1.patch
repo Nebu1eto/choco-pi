@@ -1,0 +1,26 @@
+diff --git a/src/data/data-table.ts b/src/data/data-table.ts
+index c1020a68d09785b29debbe37b72ebb5fb4bdc5f6..0c64708fa4c63e959d51e85b43466976c25f04b4 100644
+--- a/src/data/data-table.ts
++++ b/src/data/data-table.ts
+@@ -47,7 +47,7 @@ export class DataTable<T> implements Component {
+     this.rows = rows;
+   }
+ 
+-  render(width: number): string[] {
++  render(width: number): readonly string[] {
+     if (this.rows.length === 0) {
+       return this.emptyState.render(width);
+     }
+diff --git a/src/tools/tool-call-header.ts b/src/tools/tool-call-header.ts
+index 1c2d22b1f2c32835978d2a0bd45382b425629ac5..c6079c4baa3b30a3f7fb30a66aeaebb5840fdd30 100644
+--- a/src/tools/tool-call-header.ts
++++ b/src/tools/tool-call-header.ts
+@@ -43,7 +43,7 @@ export class ToolCallHeader implements Component {
+     this.config = config;
+   }
+ 
+-  render(width: number): string[] {
++  render(width: number): readonly string[] {
+     const th = this.theme;
+     const showColon = this.config.showColon ?? Boolean(this.config.action);
+     const toolName = showColon

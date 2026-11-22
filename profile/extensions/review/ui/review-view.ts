@@ -537,7 +537,7 @@ function chatBodyLines(
   focused: boolean,
   theme: Theme,
   markdownTheme: MarkdownTheme,
-  renderTool: (entry: ReviewChatToolCall, width: number) => string[],
+  renderTool: (entry: ReviewChatToolCall, width: number) => readonly string[],
   scrollOffset: number,
 ): ChatBody {
   let heading = focused
@@ -1206,7 +1206,7 @@ export async function openReviewView(
         let toolsExpanded = false;
         // Rows of the chat transcript hidden below the viewport; 0 follows the tail.
         let chatScrollOffset = 0;
-        function renderToolEntry(entry: ReviewChatToolCall, width: number): string[] {
+        function renderToolEntry(entry: ReviewChatToolCall, width: number): readonly string[] {
           let view = toolViews.get(entry.toolCallId);
           if (!view) {
             // The session's registered definition carries the tool's own

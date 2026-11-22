@@ -6,17 +6,16 @@ import {
 import type { ZentuiConfig } from "./config";
 import { installPrototypePatch, removePrototypePatch } from "./prototype-patch-registry";
 import { EDITOR_BORDER_STYLE, renderChromeBorder, renderEditorBorder } from "./style";
-import { type BoundaryValue, invokeWithReceiver, isNumber } from "./runtime-values";
+import { type BoundaryValue, invokeWithReceiver, isNumber, isString } from "./runtime-values";
 
 type PatchableSelectorPrototype = {
-  render: (width: number) => string[];
+  render: (width: number) => readonly string[];
 };
 
 type Cleanup = () => void;
 
-function patchableSelectorPrototype(value: BoundaryValue): PatchableSelectorPrototype {
-  // SAFETY: both host selector prototypes implement render(width) and are used only through that method.
-  return value as PatchableSelectorPrototype;
+function isRenderedFrame(value: BoundaryValue): value is readonly string[] {
+  return Array.isArray(value) && value.every(isString);
 }
 
 function stripAnsi(text: string): string {
@@ -54,11 +53,10 @@ export function patchSelectorBorderStyle(
     "render",
     "selector-border-render",
     ({ predecessor, receiver, args }) => {
-      const rendered = invokeWithReceiver(predecessor, receiver, args);
-      // SAFETY: the patched host selector render method returns one string per rendered row.
-      const lines = rendered as string[];
+      const lines = invokeWithReceiver(predecessor, receiver, args);
       const width = args[0];
-      if (lines.length === 0 || !isNumber(width) || width <= 0) return lines;
+      if (!isRenderedFrame(lines) || lines.length === 0 || !isNumber(width) || width <= 0)
+        return lines;
 
       return lines.map((line, index) => {
         if (index !== 0 && index !== lines.length - 1) return line;
@@ -79,14 +77,14 @@ export function installSelectorBorderStyle(
   getConfig?: () => ZentuiConfig,
 ): Cleanup {
   const cleanupModel = patchSelectorBorderStyle(
-    patchableSelectorPrototype(ModelSelectorComponent.prototype),
+    ModelSelectorComponent.prototype,
     getTheme,
     getConfig,
   );
   let cleanupSettings: Cleanup;
   try {
     cleanupSettings = patchSelectorBorderStyle(
-      patchableSelectorPrototype(SettingsSelectorComponent.prototype),
+      SettingsSelectorComponent.prototype,
       getTheme,
       getConfig,
     );

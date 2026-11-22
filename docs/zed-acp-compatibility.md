@@ -2,8 +2,8 @@
 
 | Component                              | Baseline                                               | Evidence or constraint                                               |
 | -------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------- |
-| Pi CLI                                 | `>=1.5.2 <1.6.0`                                       | Required by the root README; the recorded Zed E2E runs used `0.84.4` |
-| Repository `@earendil-works/pi-*` pins | `~1.5.2`                                               | Root dependency ranges                                               |
+| Pi CLI                                 | `>=1.6.0 <1.7.0`                                       | Required by the root README; the recorded Zed E2E runs used `0.84.4` |
+| Repository `@earendil-works/pi-*` pins | `~1.6.0`                                               | Root dependency ranges                                               |
 | `@agentclientprotocol/sdk`             | `0.26.0`                                               | Package-local installed version                                      |
 | ACP `protocolVersion`                  | `1`                                                    | Observed initialize exchange                                         |
 | Zed                                    | `1.18.0` stable                                        | Installed editor baseline (auto-updated from 1.17.2)                 |

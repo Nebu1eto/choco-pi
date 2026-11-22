@@ -13,7 +13,7 @@ This page covers what choco-pi needs, the two ways to install it, and how to upd
 Each [installation method](#installation) has further requirements:
 
 - **Standalone `choco-pi` command**: macOS on arm64 or x64, or Linux with glibc on x64 or arm64; `tar`; `curl` or `wget`; and a SHA-256 tool (`shasum`, `sha256sum`, or `openssl`). The installer uses Node.js 24 or later and pnpm `12.21.0` when they are on `PATH`, and otherwise downloads pinned copies. Windows and musl-based Linux, such as Alpine, are not supported; on Windows, use WSL2 with a glibc distribution.
-- **Profile installed into Pi**: Node.js 24 or later, exactly pnpm `12.21.0`, and Pi `1.5.2` or a later `1.5.x` release (`>=1.5.2 <1.6.0`), which matches this checkout's `~1.5.2` SDK range. [Development environment](development.md#development-environment) shows how to install the pinned Node.js and pnpm, with or without mise.
+- **Profile installed into Pi**: Node.js 24 or later, exactly pnpm `12.21.0`, and Pi `1.6.0` or a later `1.6.x` release (`>=1.6.0 <1.7.0`), which matches this checkout's `~1.6.0` SDK range. [Development environment](development.md#development-environment) shows how to install the pinned Node.js and pnpm, with or without mise.
 
 ## Installation
 
@@ -84,7 +84,7 @@ The first setup ends by listing the next steps: start `choco-pi`, run `/login` (
 choco-pi self setup --import-pi-settings [--from FILE] [--force]
 ```
 
-This is the only standalone command that reads `~/.pi`, and it does so only when you run it. It reads exactly one file, `$HOME/.pi/agent/settings.json` (or `FILE`), and copies the preference keys that Pi 1.5.2 or choco-pi itself reads, such as `theme`, `defaultModel`, `modelThinkingLevels`, `agentLanguage`, and `agentStyle`. Each value is checked against what its reader accepts.
+This is the only standalone command that reads `~/.pi`, and it does so only when you run it. It reads exactly one file, `$HOME/.pi/agent/settings.json` (or `FILE`), and copies the preference keys that Pi 1.6.0 or choco-pi itself reads, such as `theme`, `defaultModel`, `modelThinkingLevels`, `agentLanguage`, and `agentStyle`. Each value is checked against what its reader accepts.
 
 It never copies paths, commands, identities, trust settings, or credentials (`packages`, `extensions`, `skills`, `prompts`, `hooks`, `deviceId`, changelog markers, `defaultProjectTrust`, `httpProxy`, and similar keys). It never opens `auth.json`, `sessions/`, `trust.json`, `mcp.json`, `models.json`, or any other file under `~/.pi`.
 
@@ -181,9 +181,9 @@ export PATH="$HOME/.local/bin:$PATH"
 pi --version
 ```
 
-The command must print `1.5.2` or a later `1.5.x` release. Later 1.5 patch releases work without a change to the checkout. The official installer always installs Pi's current release. If that release is outside the range, such as `1.6.0`, `/check` fails, and the profile installer does not record that launcher until this checkout's range has been reviewed and moved to include it.
+The command must print `1.6.0` or a later `1.6.x` release. Later 1.6 patch releases work without a change to the checkout. The official installer always installs Pi's current release. If that release is outside the range, such as `1.7.0`, `/check` fails, and the profile installer does not record that launcher until this checkout's range has been reviewed and moved to include it.
 
-Pi 1.5's `cli.js` launcher turns on Node's compile cache. If you are diagnosing unusual module-load errors, set `NODE_DISABLE_COMPILE_CACHE=1` to turn it off.
+Pi's `cli.js` launcher turns on Node's compile cache. If you are diagnosing unusual module-load errors, set `NODE_DISABLE_COMPILE_CACHE=1` to turn it off.
 
 When Pi opens, run `/login` and select a provider. The installation scripts do not authenticate, open a login flow, or copy credentials into the repository.
 
@@ -193,7 +193,7 @@ A checkout installed before the profile moved from `.pi/` to `profile/` and `pac
 
 `npm run install:profile` preserves the existing runtime and authentication state and the packages you added, writes absolute checkout paths, and links the tracked profile resources into `~/.pi/agent` (or `PI_CODING_AGENT_DIR` / `--agent-dir`). It does not link MCP configuration. If a target already holds unrelated content, the installer stops. Review the conflict, and if replacing the content is right, run `npm run install:profile -- --backup` to keep a copy and replace it.
 
-After a successful install, it atomically writes `choco-pi/profile.json` in that agent directory with the checkout path, the Git revision (null if unavailable), the observed Pi version, the launcher path, and the host-bridge schema. For the launcher, it takes `--pi-launcher <path>`, then `CHOCO_PI_LAUNCHER`, then the first `pi` on `PATH` that reports a version in `>=1.5.2 <1.6.0`; if it finds none, it records null and prints a warning. External hosts such as Waku use this marker to identify the profile, and `harness_check` warns about a missing marker, a checkout mismatch, or an incompatible launcher.
+After a successful install, it atomically writes `choco-pi/profile.json` in that agent directory with the checkout path, the Git revision (null if unavailable), the observed Pi version, the launcher path, and the host-bridge schema. For the launcher, it takes `--pi-launcher <path>`, then `CHOCO_PI_LAUNCHER`, then the first `pi` on `PATH` that reports a version in `>=1.6.0 <1.7.0`; if it finds none, it records null and prints a warning. External hosts such as Waku use this marker to identify the profile, and `harness_check` warns about a missing marker, a checkout mismatch, or an incompatible launcher.
 
 ## Updating and reloading
 

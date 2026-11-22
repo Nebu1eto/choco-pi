@@ -39,7 +39,7 @@ class Lines implements Component {
   invalidate(): void {}
 }
 
-/** The fullscreen layout Pi 1.5.1 builds in modes/interactive/chat-viewport.js. */
+/** The fullscreen layout Pi 1.6.0 builds in modes/interactive/chat-viewport.js. */
 function chatViewport() {
   const transcript = new ScrollView(new Container(), {
     follow: "end",

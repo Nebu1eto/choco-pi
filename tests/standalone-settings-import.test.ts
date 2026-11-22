@@ -96,13 +96,13 @@ const isPiSchemaModule = compile(
   obj({ SettingsSchema: obj({ properties: map(unknown()) }, { open: true }) }, { open: true }),
 ).check;
 
-test("the import allowlist covers every Pi 1.5.2 setting and adds only choco-pi preference readers", async () => {
+test("the import allowlist covers every Pi 1.6.0 setting and adds only choco-pi preference readers", async () => {
   const piModule: unknown = await import(
     pathToFileURL(
       path.join(ROOT, "node_modules/@earendil-works/pi-coding-agent/dist/core/settings-schema.js"),
     ).href
   );
-  assert.ok(isPiSchemaModule(piModule), "Pi 1.5.2 exports SettingsSchema");
+  assert.ok(isPiSchemaModule(piModule), "Pi 1.6.0 exports SettingsSchema");
   const piKeys = Object.keys(piModule.SettingsSchema.properties);
   const importable = new Set(Object.keys(IMPORTABLE_SETTINGS));
   const excluded = new Set(Object.keys(EXCLUDED_SETTINGS));

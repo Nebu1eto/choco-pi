@@ -1529,7 +1529,7 @@ function sectionAtColumn(
   )?.section;
 }
 function withSectionFooter(
-  lines: string[],
+  lines: readonly string[],
   theme: ExtensionContext["ui"]["theme"],
   mode: "section" | "search" = "section",
 ): string[] {

@@ -274,7 +274,7 @@ export function decoratePromptEditor(
 
   if (suggestion) {
     suggestion.requestRender = requestRender;
-    target.render = (width: number): string[] => {
+    target.render = (width: number): readonly string[] => {
       const lines = render(width);
       const suggested = visibleSuggestion();
       return suggested === undefined ? lines : renderGhostSuggestion(lines, suggested);

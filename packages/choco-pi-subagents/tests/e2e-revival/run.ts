@@ -1,9 +1,9 @@
 /**
  * Opt-in end-to-end harness for durable subagent revival against a REAL Pi
- * 1.5.x (>=1.5.2) process in RPC mode, driven by a scripted faux provider (no network,
+ * 1.6.x process in RPC mode, driven by a scripted faux provider (no network,
  * no model credit). See README.md in this directory.
  *
- *   node packages/choco-pi-subagents/tests/e2e-revival/run.ts [--scenario S1] [--dry-run]
+ *   node packages/choco-pi-subagents/tests/e2e-revival/run.ts --pi "$PI_LAUNCHER" [--scenario S1] [--dry-run]
  *
  * Every check prints PASS or FAIL with its evidence. `M*` checks are harness
  * mechanics (a FAIL there is a harness or host problem); `J*` checks are the
@@ -47,12 +47,10 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-const DEFAULT_PI = "/Users/Nebuleto/.local/pi-1.5.2/node_modules/.bin/pi";
-/** Stable 1.5 patch releases from 1.5.2, matching the package's `~1.5.2` SDK range. */
-const REQUIRED_PI_VERSION = ">=1.5.2 <1.6.0";
+/** Stable 1.6 patch releases, matching the package's `~1.6.0` SDK range. */
+const REQUIRED_PI_VERSION = ">=1.6.0 <1.7.0";
 function supportedPiVersion(version: string | undefined): boolean {
-  const match = /^1\.5\.(0|[1-9]\d*)$/.exec(version ?? "");
-  return match !== null && Number(match[1]) >= 2;
+  return /^1\.6\.(0|[1-9]\d*)$/.test(version ?? "");
 }
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FAUX_EXTENSION = join(HERE, "faux-extension.ts");
@@ -1474,7 +1472,7 @@ async function main(): Promise<number> {
   });
   if (values.help) {
     process.stdout.write(
-      "usage: node run.ts [--scenario S1[,S2...]]... [--pi <pi ~1.5.2 binary>] [--out <dir>] [--sleep-seconds N] [--subagents <index.ts>] [--dry-run]\n",
+      "usage: node run.ts [--scenario S1[,S2...]]... --pi <pi ~1.6.0 binary> [--out <dir>] [--sleep-seconds N] [--subagents <index.ts>] [--dry-run]\n",
     );
     return 0;
   }
@@ -1495,7 +1493,11 @@ async function main(): Promise<number> {
     process.stderr.write("--sleep-seconds must be an integer >= 5\n");
     return 2;
   }
-  const piPath = values.pi ?? DEFAULT_PI;
+  const piPath = values.pi;
+  if (piPath === undefined || piPath.trim() === "") {
+    process.stderr.write("missing required --pi <path> to a Pi ~1.6.0 launcher\n");
+    return 2;
+  }
   if (REVIVAL_MARKER === "") {
     process.stderr.write(
       "buildInterruptionPrompt variants share no line; cannot derive the revival marker\n",

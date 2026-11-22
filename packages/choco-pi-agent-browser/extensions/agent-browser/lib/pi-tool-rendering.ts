@@ -355,7 +355,7 @@ export class AgentBrowserResultComponent {
     this.theme = theme;
   }
 
-  render(width: number): string[] {
+  render(width: number): readonly string[] {
     const lines = this.text.render(width);
     if (this.expanded || lines.length <= TUI_COLLAPSED_OUTPUT_MAX_LINES) {
       return lines;

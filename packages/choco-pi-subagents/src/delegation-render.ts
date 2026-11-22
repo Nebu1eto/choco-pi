@@ -441,14 +441,14 @@ function styleLine(line: SummaryLine, theme: Theme): string {
 
 /** A component whose lines are laid out again for each width it is drawn at. */
 class WidthLines implements Component {
-  private readonly build: (width: number) => string[];
-  private cache: { width: number; lines: string[] } | undefined;
+  private readonly build: (width: number) => readonly string[];
+  private cache: { width: number; lines: readonly string[] } | undefined;
 
-  constructor(build: (width: number) => string[]) {
+  constructor(build: (width: number) => readonly string[]) {
     this.build = build;
   }
 
-  render(width: number): string[] {
+  render(width: number): readonly string[] {
     if (this.cache?.width !== width) this.cache = { width, lines: this.build(width) };
     return this.cache.lines;
   }

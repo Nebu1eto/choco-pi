@@ -114,7 +114,7 @@ export type Mounted = {
   /** The view's own result once it closes. */
   result: Promise<ReviewViewResult | undefined>;
   closed: Promise<RuntimeValue>;
-  render(width: number): string[];
+  render(width: number): readonly string[];
   press(...keys: string[]): Promise<void>;
 };
 

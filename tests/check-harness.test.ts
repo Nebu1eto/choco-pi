@@ -147,20 +147,22 @@ test("agent settings default under CHOCO_PI_HOME in standalone mode and ~/.pi in
 });
 
 test("active host readiness accepts only stable releases in the supported patch line", async () => {
-  const supported = new Set(["1.5.2", "1.5.3", "1.5.10"]);
+  const supported = new Set(["1.6.0", "1.6.1", "1.6.10"]);
   for (const version of [
     "1.0.4",
     "1.4.0",
     "1.5.0",
     "1.5.1",
-    "1.5.2",
-    "1.5.3",
     "1.5.10",
     "1.6.0",
+    "1.6.1",
+    "1.6.10",
+    "1.7.0",
     "2.0.0",
-    "1.5.3-rc.1",
-    "1.5.2+local",
-    "1.05.2",
+    "1.6.1-rc.1",
+    "1.6.0+local",
+    "1.06.0",
+    "1.6.01",
     "garbage",
   ]) {
     const { options } = fixture({

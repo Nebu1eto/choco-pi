@@ -224,6 +224,7 @@ interface SdkSession {
 async function sdkSession(
   factories: ExtensionFactory[],
   entries?: FileEntry[],
+  tools?: string[],
 ): Promise<SdkSession> {
   const root = await mkdtemp(join(tmpdir(), "choco-pi-tool-search-"));
   const settingsManager = SettingsManager.inMemory({});
@@ -253,6 +254,7 @@ async function sdkSession(
     resourceLoader: loader,
     settingsManager,
     sessionManager: SessionManager.inMemory(root, undefined, entries),
+    tools,
   });
   await session.bindExtensions({});
   return {
@@ -336,6 +338,8 @@ interface LateToolOptions {
   resume?: FileEntry[];
   /** Load choco-pi's tool-search policy; off for a Pi-only control. */
   toolSearch?: boolean;
+  /** The `tools` option Pi's CLI passes from `--tools`. */
+  tools?: string[];
 }
 
 async function lateToolFixture(options: LateToolOptions = {}): Promise<LateToolFixture> {
@@ -379,7 +383,7 @@ async function lateToolFixture(options: LateToolOptions = {}): Promise<LateToolF
   };
   // The control runs Pi's own built-in search in place of choco-pi's.
   const search = options.toolSearch === false ? createToolSearchExtension() : toolSearch;
-  const fixture = await sdkSession([search, fixtureTools], options.resume);
+  const fixture = await sdkSession([search, fixtureTools], options.resume, options.tools);
   const { session, modelRuntime } = fixture;
   const model = modelRuntime.getModel("faux-tree", "m");
   assert.ok(model, "faux model registered");
@@ -513,31 +517,41 @@ for (const toolSearchLoaded of [false, true]) {
 }
 
 // Pi applies the CLI's `--tools +name/-name` modifiers to the loadout it restores on resume,
-// in order, so the last modifier naming a tool decides.
+// in order, so the last modifier naming a tool decides. The CLI both leaves them in argv and
+// passes them as the session's `tools` option, so the fixture does both. With a recorded direct
+// tool, the lean surface's first commit deactivates part of the restored loadout, which drops
+// Pi's pending tools, and choco-pi's own carry-over must honor the modifiers instead.
 for (const [tools, kept] of [
   [`-${LATE_TOOL}`, false],
   [`-${LATE_TOOL},+${LATE_TOOL}`, true],
   [`+${LATE_TOOL},-${LATE_TOOL}`, false],
   ["-read", true],
 ] as const) {
-  test(`real Pi session: --tools ${tools} ${kept ? "keeps" : "removes"} the resumed late tool`, async () => {
-    const argv = process.argv;
-    process.argv = [...argv.slice(0, 2), "--tools", tools];
-    try {
-      const fixture = await lateToolFixture({
-        resume: sessionThatRecorded(["read", "tool_search", LATE_TOOL]),
-      });
+  for (const recorded of [
+    ["read", "tool_search", LATE_TOOL],
+    ["read", "tool_search", UNRECORDED_TOOL, LATE_TOOL],
+  ]) {
+    const loadout = recorded.includes(UNRECORDED_TOOL) ? " after a lean narrowing" : "";
+    test(`real Pi session: --tools ${tools} ${kept ? "keeps" : "removes"} the resumed late tool${loadout}`, async () => {
+      const argv = process.argv;
+      process.argv = [...argv.slice(0, 2), "--tools", tools];
       try {
-        fixture.registerLate();
-        await fixture.prompt("go");
-        assert.equal(fixture.session.getActiveToolNames().includes(LATE_TOOL), kept);
+        const fixture = await lateToolFixture({
+          resume: sessionThatRecorded(recorded),
+          tools: tools.split(","),
+        });
+        try {
+          fixture.registerLate();
+          await fixture.prompt("go");
+          assert.equal(fixture.session.getActiveToolNames().includes(LATE_TOOL), kept);
+        } finally {
+          await fixture.close();
+        }
       } finally {
-        await fixture.close();
+        process.argv = argv;
       }
-    } finally {
-      process.argv = argv;
-    }
-  });
+    });
+  }
 }
 
 test("real Pi session: a tool the transcript removed stays inactive after resume", async () => {

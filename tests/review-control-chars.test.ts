@@ -40,7 +40,7 @@ function model(...files: DiffModel["files"]): DiffModel {
 }
 
 /** Render at a wide and a narrow width; both must be clean and fit. */
-function check(lines: (width: number) => string[]): string {
+function check(lines: (width: number) => readonly string[]): string {
   for (const width of [WIDTH, NARROW]) {
     const rendered = lines(width);
     assert.equal(rawControls(rendered), 0, `raw control characters at width ${width}`);

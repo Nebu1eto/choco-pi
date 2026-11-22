@@ -9,9 +9,9 @@ const piPackage = new URL(
   import.meta.url,
 );
 
-test("every Nord theme passes Pi 1.5 theme validation", async () => {
-  // The SDK range is ~1.5.2: any stable 1.5 patch release from 1.5.2.
-  assert.match(await readFile(piPackage, "utf8"), /^\s*"version": "1\.5\.([2-9]|[1-9]\d+)",?$/m);
+test("every Nord theme passes Pi 1.6 theme validation", async () => {
+  // The SDK range is ~1.6.0: any stable 1.6 release.
+  assert.match(await readFile(piPackage, "utf8"), /^\s*"version": "1\.6\.(0|[1-9]\d*)",?$/m);
 
   const files = (await readdir(themeDirectory)).filter((name) => name.endsWith(".json"));
   assert.ok(files.length > 0, "expected at least one Nord theme");

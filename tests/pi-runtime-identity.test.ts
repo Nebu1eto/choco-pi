@@ -72,7 +72,7 @@ test("launcher probe defaults to CHOCO_PI_LAUNCHER, else the PATH pi", async () 
   const executables: string[] = [];
   const runCommand = async (executable: string) => {
     executables.push(executable);
-    return { status: 0, stdout: "1.5.2\n", stderr: "" };
+    return { status: 0, stdout: "1.6.0\n", stderr: "" };
   };
   await probeLauncherVersion({
     runCommand,

@@ -48,7 +48,7 @@ export const MANAGEMENT_VERBS = [
   "help",
 ] as const;
 
-/** Pi 1.5.2 top-level subcommands; the management namespace must not shadow them. */
+/** Pi 1.6.0 top-level subcommands; the management namespace must not shadow them. */
 export const PI_SUBCOMMANDS = [
   "install",
   "remove",
@@ -81,7 +81,7 @@ export const RUNTIME_REPORT_VARIABLES = [
 ] as const;
 
 /**
- * Pi 1.5.2 variables that point at Pi state or at Pi's own install location.
+ * Pi 1.6.0 variables that point at Pi state or at Pi's own install location.
  * The launcher unsets exactly these; the classification table lives in
  * bin/choco-pi.
  */

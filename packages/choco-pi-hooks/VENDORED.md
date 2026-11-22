@@ -171,3 +171,7 @@ Pi's default parallel tool mode runs `afterToolCall` for sibling tool calls conc
 ## 2026-11-15 choco-pi patch: `@choco-pi` package name
 
 - `package.json` `name`: `choco-pi-hooks` → `@choco-pi/hooks`; `version`: `0.1.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-hooks`, so path-based settings entries, imports, and the path-derived extension name are unchanged. The README's import example uses the new name.
+
+## 2026-11-20 choco-pi patch: Pi SDK range ~1.6.0
+
+Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`), so later 1.6 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.

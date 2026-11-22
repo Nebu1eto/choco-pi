@@ -1,0 +1,26 @@
+diff --git a/components/sectioned-settings.ts b/components/sectioned-settings.ts
+index 55f74d64c99b2f5bac74af982ef8acd654686423..47fffc149cf6787169f0844ec90008971417ee21 100644
+--- a/components/sectioned-settings.ts
++++ b/components/sectioned-settings.ts
+@@ -145,7 +145,7 @@ export class SectionedSettings implements Component {
+     this.submenuComponent?.invalidate?.();
+   }
+ 
+-  render(width: number): string[] {
++  render(width: number): readonly string[] {
+     if (this.submenuComponent) {
+       return this.submenuComponent.render(width);
+     }
+diff --git a/components/settings-detail-editor.ts b/components/settings-detail-editor.ts
+index 2f9ab0ae5d00b6dfcdb38070dcdb77e5972fbe2e..7439bdaa191613282978d6e7d8a5513fba52dcb5 100644
+--- a/components/settings-detail-editor.ts
++++ b/components/settings-detail-editor.ts
+@@ -127,7 +127,7 @@ export class SettingsDetailEditor implements Component {
+     this.submenuComponent?.invalidate?.();
+   }
+ 
+-  render(width: number): string[] {
++  render(width: number): readonly string[] {
+     if (this.submenuComponent) {
+       return this.submenuComponent.render(width);
+     }

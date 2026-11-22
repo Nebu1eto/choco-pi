@@ -1,7 +1,7 @@
 /**
  * Runtime check of Pi's fullscreen layout root.
  *
- * Pi 1.5.1 builds the fullscreen layout in `modes/interactive/chat-viewport.js`
+ * Pi 1.6.0 builds the fullscreen layout in `modes/interactive/chat-viewport.js`
  * as `VStack[ScrollView(transcript), VStack(dock)]` and mounts it with
  * `setLayoutRoot`, which stores it in the renderer's private `layoutRoot`
  * field. Neither the field nor the two-entry layout is a public contract, so
@@ -50,7 +50,7 @@ function stackEntryOf(value: RuntimeValue, component: Component): StackEntry | u
   if (shrink !== undefined) options.shrink = shrink;
   if (minSize !== undefined) options.minSize = minSize;
   if (maxSize !== undefined) options.maxSize = maxSize;
-  // Pi 1.5.1 sets no visibility callback on these entries. One could not be
+  // Pi 1.6.0 sets no visibility callback on these entries. One could not be
   // copied back with its exact identity and type, so its presence means the
   // layout is not the one this module knows.
   if ("visible" in value && value.visible !== undefined) return undefined;

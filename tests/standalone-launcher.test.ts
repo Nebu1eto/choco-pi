@@ -391,7 +391,7 @@ async function stubApp(directory: string, home: string): Promise<string> {
   return path.join(app, "bin", "choco-pi");
 }
 
-/** A fake \`bun\`: answers the installer's probe as \`version\`, prints 1.5.2 for --version, else its argv. */
+/** A fake \`bun\`: answers the installer's probe as \`version\`, prints 1.6.0 for --version, else its argv. */
 async function fakeBun(directory: string, version: string): Promise<string> {
   await mkdir(directory, { recursive: true });
   const bun = path.join(directory, "bun");
@@ -401,7 +401,7 @@ async function fakeBun(directory: string, version: string): Promise<string> {
       "#!/bin/sh",
       `if [ "$1" = --no-env-file ] && [ "$2" = -e ]; then printf '%s\\n%s' '${version}' "$0"; exit 0; fi`,
       `[ "$1" != --version ] || { echo '${version}'; exit 0; }`,
-      'for a; do [ "$a" != --version ] || { echo 1.5.2; exit 0; }; done',
+      'for a; do [ "$a" != --version ] || { echo 1.6.0; exit 0; }; done',
       'printf \'%s\\n\' BUN "NODE=$CHOCO_PI_NODE" "$@"',
       "",
     ].join("\n"),

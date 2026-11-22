@@ -651,12 +651,12 @@ test("install.json written before the runtime option stays valid; runtime and bu
   assert.match(manifestProblems({ ...legacy, bun_path: '/a"b/bun' }).join(), /bun_path contains/);
 });
 
-/** A fake bun: answers the installer's probe as `version`, prints Pi's 1.5.2 for --version, else its argv. */
+/** A fake bun: answers the installer's probe as `version`, prints Pi's 1.6.0 for --version, else its argv. */
 function fakeBunScript(version: string): string {
   return [
     "#!/bin/sh",
     `if [ "$1" = --no-env-file ] && [ "$2" = -e ]; then printf '%s\\n%s' '${version}' "$0"; exit 0; fi`,
-    'for a; do [ "$a" != --version ] || { echo 1.5.2; exit 0; }; done',
+    'for a; do [ "$a" != --version ] || { echo 1.6.0; exit 0; }; done',
     'echo "FAKEBUN $*"',
     "",
   ].join("\n");
@@ -725,7 +725,7 @@ test("the private Bun zip is verified against the pinned sha256 before unzip eve
   assert.deepEqual(provisioned.created, [path.join(runtime, "bun")]);
   assert.equal(await exists(marker), true);
   assert.deepEqual(await readdir(runtime), ["bun"]);
-  assert.equal((await runFile(binary, ["--version"])).stdout.trim(), "1.5.2");
+  assert.equal((await runFile(binary, ["--version"])).stdout.trim(), "1.6.0");
   await rm(mirror, { recursive: true });
   assert.deepEqual(
     await provisionPrivateBun(runtime, pinsFor(digest), options),
@@ -831,14 +831,14 @@ async function fixtureSource(directory: string): Promise<string> {
     path.join(fakePi, "package.json"),
     JSON.stringify({
       name: "@earendil-works/pi-coding-agent",
-      version: "1.5.2",
+      version: "1.6.0",
       bin: { pi: "dist/bundle/cli.js" },
     }),
   );
   // Executable from the start: pnpm marks linked bins executable, which would dirty the tree.
   await writeFile(
     path.join(fakePi, "dist", "bundle", "cli.js"),
-    'process.stdout.write("1.5.2\\n");\n',
+    'process.stdout.write("1.6.0\\n");\n',
     { mode: 0o755 },
   );
   // The management CLI's own dependencies, vendored so pnpm links them offline.
@@ -1074,7 +1074,7 @@ test("stage 1 install is idempotent, updates by fast-forward, and uninstall remo
   const version = await runFile(path.join(binDir, "choco-pi"), ["--version"], {
     env: launcherEnvironment,
   });
-  assert.equal(version.stdout.trim(), "1.5.2");
+  assert.equal(version.stdout.trim(), "1.6.0");
   const tree = await snapshot(home);
 
   const second = await install();
@@ -1201,7 +1201,7 @@ test("a runtime directory the installer did not create survives install, update 
   const version = await runFile(path.join(binDir, "choco-pi"), ["--version"], {
     env: launcherEnvironment,
   });
-  assert.equal(version.stdout.trim(), "1.5.2");
+  assert.equal(version.stdout.trim(), "1.6.0");
 
   await runFile(path.join(binDir, "choco-pi"), ["self", "uninstall"], { env: launcherEnvironment });
   assert.equal(await readFile(path.join(foreignBun, "unrelated"), "utf8"), "not the installer's\n");
@@ -1354,7 +1354,7 @@ test("install.sh downloads Node, then hands stage 1 the runtime name rather than
     const version = await runFile(path.join(binDir, "choco-pi"), ["--version"], {
       env: { HOME: userHome, PATH: basePath },
     });
-    assert.equal(version.stdout.trim(), "1.5.2");
+    assert.equal(version.stdout.trim(), "1.6.0");
     return { home, stageOne: stageOne[0] ?? "", manifest: await readManifest(home) };
   };
 
@@ -1875,7 +1875,7 @@ test("self update runs the target's own installer, so it crosses a pins format t
   );
   assert.equal(await fixture.head(), target);
   assert.equal((await readManifest(fixture.home)).rev, target);
-  assert.equal(await fixture.version(), "1.5.2");
+  assert.equal(await fixture.version(), "1.6.0");
 });
 
 test("a failed self update reinstalls the old revision with its own installer, even after its ref is gone, and keeps what the failed run created", async (t) => {
@@ -1913,7 +1913,7 @@ test("a failed self update reinstalls the old revision with its own installer, e
   assert.equal(before.created.includes(pnpmDirectory), false);
   assert.ok(after.created.includes(pnpmDirectory), "the failed run's pnpm is owned");
   assert.equal(await exists(path.join(fixture.home, PROVENANCE_NAME)), false, "journal merged");
-  assert.equal(await fixture.version(), "1.5.2");
+  assert.equal(await fixture.version(), "1.6.0");
 });
 
 test("self update refuses a target older than the installer hand-off before it moves anything", async (t) => {

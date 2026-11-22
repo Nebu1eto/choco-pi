@@ -261,13 +261,13 @@ function projectDaybreakForModel<
 }
 
 export function appendFastModeToEditorMetadata(
-  lines: string[],
+  lines: readonly string[],
   width: number,
   model: Model<Api> | undefined,
   enabled: boolean,
   style: (text: string) => string = (text) => text,
   daybreak?: DaybreakEditorState,
-): string[] {
+): readonly string[] {
   if (!model) return lines;
   const badges: string[] = [];
   if (supportsFastMode(model) && enabled) badges.push("fast");
@@ -277,12 +277,12 @@ export function appendFastModeToEditorMetadata(
 }
 
 function appendFastBadge(
-  lines: string[],
+  lines: readonly string[],
   width: number,
   modelId: string,
   badges: readonly string[],
   style: (text: string) => string,
-): string[] {
+): readonly string[] {
   if (badges.length === 0) return lines;
   for (let index = lines.length - 1; index >= 0; index--) {
     const line = lines[index];
@@ -314,14 +314,14 @@ function appendFastBadge(
 }
 
 export function appendFocusedModelToEditorMetadata(
-  lines: string[],
+  lines: readonly string[],
   width: number,
   rootModel: Model<Api> | undefined,
   rootEnabled: boolean,
   focused: FocusedFastEditorState | undefined,
   style: (text: string) => string = (text) => text,
   rootDaybreak?: DaybreakEditorState,
-): string[] {
+): readonly string[] {
   if (!focused) {
     return appendFastModeToEditorMetadata(
       lines,

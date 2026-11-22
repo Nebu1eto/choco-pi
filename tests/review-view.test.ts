@@ -2825,7 +2825,7 @@ test("a review that cannot draw closes at once, saves through the store, and say
     record: { ...record(), comments: [commentOn("kept", LOW_HUNK_1.id, 2, "Unsent.")] },
   });
   broken = true;
-  let lines: string[] = [];
+  let lines: readonly string[] = [];
   assert.doesNotThrow(() => {
     lines = mounted.component.render(50);
   });

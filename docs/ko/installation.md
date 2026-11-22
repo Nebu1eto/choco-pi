@@ -13,7 +13,7 @@
 [설치 방법](#설치)에 따라 추가로 필요한 것이 다릅니다.
 
 - **독립 실행형 `choco-pi` 명령**: arm64나 x64 macOS, 또는 x64나 arm64의 glibc 기반 Linux가 필요하고, `tar`, `curl`이나 `wget`, SHA-256 도구(`shasum`, `sha256sum`, `openssl` 중 하나)가 있어야 합니다. Node.js 24 이상과 pnpm `12.21.0`이 `PATH`에 있으면 그대로 쓰고, 없으면 설치 프로그램이 고정된 버전을 내려받습니다. Windows와 Alpine 같은 musl 기반 Linux는 지원하지 않습니다. Windows에서는 glibc 배포판을 설치한 WSL2를 쓰세요.
-- **Pi에 프로필 설치**: Node.js 24 이상, pnpm `12.21.0`(다른 버전은 쓸 수 없음), `1.5.2` 이상의 Pi `1.5.x`(`>=1.5.2 <1.6.0`)가 필요합니다. 이 범위는 이 체크아웃의 SDK 범위 `~1.5.2`와 같습니다. 고정된 Node.js와 pnpm을 mise로 설치하는 방법과 mise 없이 설치하는 방법은 [개발 환경](development.md#개발-환경)에 있습니다.
+- **Pi에 프로필 설치**: Node.js 24 이상, pnpm `12.21.0`(다른 버전은 쓸 수 없음), `1.6.0` 이상의 Pi `1.6.x`(`>=1.6.0 <1.7.0`)가 필요합니다. 이 범위는 이 체크아웃의 SDK 범위 `~1.6.0`와 같습니다. 고정된 Node.js와 pnpm을 mise로 설치하는 방법과 mise 없이 설치하는 방법은 [개발 환경](development.md#개발-환경)에 있습니다.
 
 ## 설치
 
@@ -82,7 +82,7 @@ choco-pi
 choco-pi self setup --import-pi-settings [--from FILE] [--force]
 ```
 
-독립 실행형 명령 가운데 `~/.pi`를 읽는 것은 이 명령 하나뿐이며, 사용자가 직접 실행할 때만 읽습니다. 읽는 파일도 `$HOME/.pi/agent/settings.json`(또는 `FILE`) 하나뿐입니다. 복사 대상은 Pi 1.5.2나 choco-pi가 읽는 환경설정 키(`theme`, `defaultModel`, `modelThinkingLevels`, `agentLanguage`, `agentStyle` 등)이며, 값마다 그 키를 읽는 코드가 받아들이는 값인지 확인한 뒤 복사합니다. 경로, 명령, 식별자, 신뢰 결정, 인증 정보(`packages`, `extensions`, `skills`, `prompts`, `hooks`, `deviceId`, 변경 기록 표시, `defaultProjectTrust`, `httpProxy` 등)는 복사하지 않습니다. `auth.json`, `sessions/`, `trust.json`, `mcp.json`, `models.json`을 비롯한 `~/.pi`의 다른 파일은 열지도 않습니다.
+독립 실행형 명령 가운데 `~/.pi`를 읽는 것은 이 명령 하나뿐이며, 사용자가 직접 실행할 때만 읽습니다. 읽는 파일도 `$HOME/.pi/agent/settings.json`(또는 `FILE`) 하나뿐입니다. 복사 대상은 Pi 1.6.0나 choco-pi가 읽는 환경설정 키(`theme`, `defaultModel`, `modelThinkingLevels`, `agentLanguage`, `agentStyle` 등)이며, 값마다 그 키를 읽는 코드가 받아들이는 값인지 확인한 뒤 복사합니다. 경로, 명령, 식별자, 신뢰 결정, 인증 정보(`packages`, `extensions`, `skills`, `prompts`, `hooks`, `deviceId`, 변경 기록 표시, `defaultProjectTrust`, `httpProxy` 등)는 복사하지 않습니다. `auth.json`, `sessions/`, `trust.json`, `mcp.json`, `models.json`을 비롯한 `~/.pi`의 다른 파일은 열지도 않습니다.
 
 choco-pi에서 정한 값이 항상 우선합니다. 키는 `~/.choco-pi/agent/settings.json`에 없거나 아직 첫 실행 시드 값 그대로일 때만 복사하고, `modelThinkingLevels`는 프로필 기본값인 항목만 바꿉니다. 실행하면 복사한 키, 건너뛴 키, 그대로 둔 키의 이름을 출력하고(값은 출력하지 않음), 실행 내역을 `~/.choco-pi/agent/choco-pi/settings-import.json`에 기록합니다. 두 번째 실행은 `--force` 없이는 거부합니다. `--force`를 주더라도 이전 가져오기에서 설정한 키와 사용자가 바꾼 키는 그대로 둡니다.
 
@@ -177,9 +177,9 @@ export PATH="$HOME/.local/bin:$PATH"
 pi --version
 ```
 
-출력은 `1.5.2` 이상의 `1.5.x` 릴리스여야 합니다. 이후에 나오는 1.5 패치 릴리스는 체크아웃을 고치지 않아도 그대로 쓸 수 있습니다. 다만 공식 설치 프로그램은 항상 Pi의 최신 릴리스를 설치하므로 `1.6.0`처럼 범위를 벗어난 버전이 설치될 수 있습니다. 이 경우 이 체크아웃의 지원 범위를 검토해 그 버전까지 넓히기 전에는 `/check`가 실패하고, 프로필 설치 프로그램도 그 실행기를 기록하지 않습니다.
+출력은 `1.6.0` 이상의 `1.6.x` 릴리스여야 합니다. 이후에 나오는 1.6 패치 릴리스는 체크아웃을 고치지 않아도 그대로 쓸 수 있습니다. 다만 공식 설치 프로그램은 항상 Pi의 최신 릴리스를 설치하므로 `1.7.0`처럼 범위를 벗어난 버전이 설치될 수 있습니다. 이 경우 이 체크아웃의 지원 범위를 검토해 그 버전까지 넓히기 전에는 `/check`가 실패하고, 프로필 설치 프로그램도 그 실행기를 기록하지 않습니다.
 
-Pi 1.5의 `cli.js` 실행기는 Node 컴파일 캐시를 켭니다. 원인을 알 수 없는 모듈 로드 오류를 조사할 때는 `NODE_DISABLE_COMPILE_CACHE=1`을 설정해 캐시를 끌 수 있습니다.
+Pi의 `cli.js` 실행기는 Node 컴파일 캐시를 켭니다. 원인을 알 수 없는 모듈 로드 오류를 조사할 때는 `NODE_DISABLE_COMPILE_CACHE=1`을 설정해 캐시를 끌 수 있습니다.
 
 Pi가 실행되면 `/login`을 실행하고 공급자를 고르세요. 설치 스크립트는 인증을 진행하거나 로그인 화면을 열지 않으며, 인증 정보를 저장소에 복사하지도 않습니다.
 
@@ -189,7 +189,7 @@ Pi가 실행되면 `/login`을 실행하고 공급자를 고르세요. 설치 �
 
 `npm run install:profile`은 기존 런타임·인증 상태와 사용자가 추가한 패키지를 보존하고, 체크아웃의 절대 경로를 기록한 뒤, Git이 추적하는 프로필 리소스를 `~/.pi/agent`(또는 `PI_CODING_AGENT_DIR`이나 `--agent-dir`로 지정한 디렉터리)에 연결합니다. MCP 설정은 연결하지 않습니다. 대상 위치에 관련 없는 내용이 이미 있으면 설치를 중단합니다. 충돌 내용을 확인하고, 기존 내용을 보존한 채 교체해도 된다면 `npm run install:profile -- --backup`을 실행하세요.
 
-설치에 성공하면 그 에이전트 디렉터리에 `choco-pi/profile.json`을 원자적으로 기록합니다. 이 파일에는 체크아웃 경로, Git 리비전(알 수 없으면 null), 확인한 Pi 버전, 실행기 경로, 호스트 브리지 스키마가 담깁니다. 실행기 경로는 `--pi-launcher <path>`를 먼저 쓰고, 없으면 `CHOCO_PI_LAUNCHER`, 그것도 없으면 `PATH`에서 버전이 `>=1.5.2 <1.6.0`으로 확인되는 첫 번째 `pi`를 씁니다. 하나도 찾지 못하면 null을 기록하고 경고를 출력합니다. Waku 같은 외부 호스트는 이 마커 파일로 프로필을 식별하며, `harness_check`는 마커 파일이 없거나, 체크아웃이 맞지 않거나, 실행기가 호환되지 않으면 경고합니다.
+설치에 성공하면 그 에이전트 디렉터리에 `choco-pi/profile.json`을 원자적으로 기록합니다. 이 파일에는 체크아웃 경로, Git 리비전(알 수 없으면 null), 확인한 Pi 버전, 실행기 경로, 호스트 브리지 스키마가 담깁니다. 실행기 경로는 `--pi-launcher <path>`를 먼저 쓰고, 없으면 `CHOCO_PI_LAUNCHER`, 그것도 없으면 `PATH`에서 버전이 `>=1.6.0 <1.7.0`으로 확인되는 첫 번째 `pi`를 씁니다. 하나도 찾지 못하면 null을 기록하고 경고를 출력합니다. Waku 같은 외부 호스트는 이 마커 파일로 프로필을 식별하며, `harness_check`는 마커 파일이 없거나, 체크아웃이 맞지 않거나, 실행기가 호환되지 않으면 경고합니다.
 
 ## 업데이트와 다시 불러오기
 
