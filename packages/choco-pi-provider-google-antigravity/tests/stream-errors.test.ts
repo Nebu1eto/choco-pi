@@ -389,3 +389,120 @@ describe("abort and stalls", () => {
     });
   }
 });
+
+/** An SSE body that delivers `pieces` one per read, then fails the next read with `failure`. */
+function sseThenFail(pieces: readonly string[], failure: Error): Response {
+  const encoder = new TextEncoder();
+  let index = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const piece = pieces[index];
+      index += 1;
+      if (piece === undefined) controller.error(failure);
+      else controller.enqueue(encoder.encode(piece));
+    },
+  });
+  return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+}
+
+describe("attempt isolation", () => {
+  it("a retry never inherits the finish reason, usage or ids of a failed attempt", async () => {
+    let calls = 0;
+    const fake = fakeFetch(() => {
+      calls += 1;
+      if (calls === 1) {
+        return sseThenFail(
+          [
+            sseEvent({
+              responseId: "stale-response",
+              modelVersion: "stale-model",
+              candidates: [{ finishReason: "STOP" }],
+              usageMetadata: { promptTokenCount: 7, candidatesTokenCount: 3, totalTokenCount: 10 },
+            }),
+          ],
+          new TypeError("connection reset"),
+        );
+      }
+      return sseResponse([]);
+    });
+    const { stream, sleeps } = start(piFetch(fake), { options: { maxRetries: 1 } });
+    const { events, result } = await collect(stream);
+    assertSingleTerminal(events);
+    assert.equal(fake.calls.length, 2, "the pre-content failure is retried once");
+    assert.deepEqual(sleeps, [1000]);
+    assert.equal(result.stopReason, "error");
+    assert.equal(parseAntigravityErrorMessage(result.errorMessage ?? "")?.kind, "network");
+    assert.match(result.errorMessage ?? "", /ended before a finish reason/u);
+    assert.equal(isRetryableAssistantError(result), true);
+    assert.equal(result.responseId, undefined);
+    assert.equal(result.responseModel, undefined);
+    assert.equal(result.usage.totalTokens, 0);
+  });
+});
+
+describe("leaving an attempt early", () => {
+  /** An SSE body that sends `first` and stays open; records how the transport lets go of it. */
+  function openBody(first: string, signal: AbortSignal | null | undefined) {
+    const seen = { cancelled: false, aborted: false };
+    signal?.addEventListener(
+      "abort",
+      () => {
+        seen.aborted = true;
+      },
+      { once: true },
+    );
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(first));
+      },
+      cancel() {
+        seen.cancelled = true;
+      },
+    });
+    return {
+      seen,
+      response: new Response(body, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    };
+  }
+
+  it("cancels the open body and aborts the request when an event is not JSON", async () => {
+    const opened: { cancelled: boolean; aborted: boolean }[] = [];
+    const fetch: typeof globalThis.fetch = async (_input, init) => {
+      const { seen, response } = openBody("data: not-json\r\n\r\n", init?.signal);
+      opened.push(seen);
+      return response;
+    };
+    const { stream } = start(fetch, { options: { maxRetries: 0 } });
+    const { events, result } = await collect(stream);
+    assertSingleTerminal(events);
+    assert.equal(result.stopReason, "error");
+    assert.equal(opened.length, 1);
+    assert.deepEqual(opened[0], { cancelled: true, aborted: true });
+  });
+
+  it("cancels the body and aborts the request when onResponse throws", async () => {
+    const opened: { cancelled: boolean; aborted: boolean }[] = [];
+    const fetch: typeof globalThis.fetch = async (_input, init) => {
+      const { seen, response } = openBody(okBody, init?.signal);
+      opened.push(seen);
+      return response;
+    };
+    const { stream } = start(fetch, {
+      options: {
+        maxRetries: 0,
+        onResponse: () => {
+          throw new Error("hook failed");
+        },
+      },
+    });
+    const { events, result } = await collect(stream);
+    assertSingleTerminal(events);
+    assert.equal(result.stopReason, "error");
+    assert.equal(opened.length, 1);
+    assert.deepEqual(opened[0], { cancelled: true, aborted: true });
+  });
+});

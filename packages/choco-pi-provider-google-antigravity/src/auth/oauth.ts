@@ -414,10 +414,10 @@ function projectFromStored(
   };
 }
 
-function missingClientError(): Error {
-  return new Error(
-    `No Google Antigravity OAuth client is configured. Set ${ENV_CLIENT_ID} and ${ENV_CLIENT_SECRET}, ` +
-      "add client_id and client_secret to <agentDir>/google-antigravity.json, or allow discovery from agy at login.",
+function missingClientError(): AntigravityError {
+  return loginError(
+    `no OAuth client is configured; set ${ENV_CLIENT_ID} and ${ENV_CLIENT_SECRET}, ` +
+      "add client_id and client_secret to <agentDir>/google-antigravity.json, or allow discovery from agy at login",
   );
 }
 
@@ -471,7 +471,7 @@ export function createAntigravityOAuth(deps: AntigravityOAuthDeps = {}): Antigra
       ],
     });
     if (decision !== ACCEPT_TERMS) {
-      throw new Error("Google Antigravity login cancelled: the terms warning was not accepted");
+      throw loginError("login cancelled: the terms warning was not accepted");
     }
     const signal = callbacks.signal;
     signal?.throwIfAborted();

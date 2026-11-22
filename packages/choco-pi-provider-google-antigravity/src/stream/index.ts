@@ -20,7 +20,7 @@ import {
   antigravityNetworkError,
   formatAntigravityErrorMessage,
 } from "../errors.ts";
-import { ResponseAccumulator } from "./accumulator.ts";
+import { ResponseAccumulator, zeroUsage } from "./accumulator.ts";
 import { parseJsonBody, parseStreamChunk } from "./chunks.ts";
 import {
   ENV_SYSTEM_PROMPT_PLACEMENT,
@@ -67,14 +67,7 @@ function emptyMessage(model: Model<Api>): AssistantMessage {
     api: model.api,
     provider: PROVIDER_ID,
     model: model.id,
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
+    usage: zeroUsage(),
     stopReason: "pending",
     timestamp: Date.now(),
   };
@@ -195,12 +188,14 @@ async function attemptOnce(run: AttemptContext): Promise<void> {
   if (outer?.aborted) throw abortError();
   outer?.addEventListener("abort", forward, { once: true });
   let headerTimedOut = false;
+  // Set once the attempt has consumed its whole response; any other exit lets go of it.
+  let finished = false;
+  let response: Response | undefined;
   const headerTimer = setTimeout(() => {
     headerTimedOut = true;
     controller.abort();
   }, run.headerTimeoutMs);
   try {
-    let response: Response;
     try {
       response = await run.fetch(run.url, {
         method: "POST",
@@ -225,6 +220,7 @@ async function attemptOnce(run: AttemptContext): Promise<void> {
     if (!response.ok) {
       const text = await readBodyText(response, controller.signal, outer, run.idleTimeoutMs);
       if (outer?.aborted) throw abortError();
+      finished = true;
       throw antigravityErrorFromHttp(
         response.status,
         text,
@@ -237,6 +233,7 @@ async function attemptOnce(run: AttemptContext): Promise<void> {
       // HTTP 200 with a JSON body: a google.rpc error, or a non-streamed response list.
       const text = await readBodyText(response, controller.signal, outer, run.idleTimeoutMs);
       if (outer?.aborted) throw abortError();
+      finished = true;
       for (const chunk of parseJsonBody(text)) {
         await run.options?.onProviderStreamEvent?.(chunk, run.model);
         run.accumulator.apply(chunk);
@@ -272,12 +269,18 @@ async function attemptOnce(run: AttemptContext): Promise<void> {
       for (const event of [...parser.push(decoder.decode()), ...parser.end()]) {
         await handle(event.data);
       }
+      finished = true;
     } finally {
+      if (!finished) reader.cancel().catch(() => undefined);
       reader.releaseLock();
     }
   } finally {
     clearTimeout(headerTimer);
     outer?.removeEventListener("abort", forward);
+    if (!finished) {
+      if (response?.body && !response.body.locked) response.body.cancel().catch(() => undefined);
+      controller.abort();
+    }
   }
 }
 
@@ -392,6 +395,7 @@ export function streamGoogleAntigravityWith(
         if (!(error instanceof AntigravityError)) throw error;
         const wait = retryDelayFor(error, retry, maxRetries, maxDelayMs);
         if (wait === undefined) throw error;
+        accumulator.resetAttempt();
         await sleep(wait, signal);
         if (signal?.aborted) throw abortError();
       }

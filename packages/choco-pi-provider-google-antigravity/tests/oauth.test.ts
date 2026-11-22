@@ -19,8 +19,14 @@ import {
   parseAntigravityApiKey,
   type AntigravityOAuthDeps,
 } from "../src/auth/oauth.ts";
-import { GOOGLE_TOKEN_URL, GOOGLE_USERINFO_URL, OAUTH_SCOPES } from "../src/config.ts";
-import { AntigravityError } from "../src/errors.ts";
+import {
+  ENV_CLIENT_ID,
+  ENV_CLIENT_SECRET,
+  GOOGLE_TOKEN_URL,
+  GOOGLE_USERINFO_URL,
+  OAUTH_SCOPES,
+} from "../src/config.ts";
+import { AntigravityError, parseAntigravityErrorMessage } from "../src/errors.ts";
 import {
   FAKE_CLIENT_ID,
   FAKE_CLIENT_SECRET,
@@ -502,7 +508,7 @@ test("client source order: env beats config, config beats agy; agy needs opt-in"
   const declined = harness(["accept", "cancel"], bareCode);
   await assert.rejects(
     createAntigravityOAuth(agyRun.deps).login(declined.callbacks),
-    /No Google Antigravity OAuth client/u,
+    /no OAuth client is configured/u,
   );
   assert.equal(scanned, 0);
   assert.equal(agyRun.fake.calls.length, 0);
@@ -636,4 +642,55 @@ test("api key: malformed values are rejected without echoing them", () => {
     () => createAntigravityOAuth().getApiKey({ refresh: "r", access: "a", expires: 0 }),
     /no project/u,
   );
+});
+
+/** The formatted fields of the AntigravityError `pending` rejects with. */
+async function formattedRejection(pending: Promise<OAuthCredentials>) {
+  try {
+    await pending;
+  } catch (error) {
+    assert.ok(error instanceof AntigravityError, "a formatted AntigravityError");
+    const fields = parseAntigravityErrorMessage(error.message);
+    assert.ok(fields, `formatter output: ${error.message}`);
+    return { kind: error.kind, message: error.message, fields };
+  }
+  return assert.fail("expected a rejection");
+}
+
+test("login and refresh errors are formatter lines that keep the actionable wording", async () => {
+  const dir = await agentDirWith();
+  const run = deps(googleRoute("{}"), dir, {});
+
+  const declined = await formattedRejection(
+    createAntigravityOAuth(run.deps).login(harness(["decline"], bareCode).callbacks),
+  );
+  assert.equal(declined.kind, "auth");
+  assert.match(
+    declined.fields.detail ?? "",
+    /^login cancelled: the terms warning was not accepted$/u,
+  );
+
+  const missing = [
+    await formattedRejection(
+      createAntigravityOAuth(run.deps).login(harness(["accept"], bareCode).callbacks),
+    ),
+    await formattedRejection(
+      createAntigravityOAuth(run.deps).refreshToken(
+        storedCredential({ client_source: "env", client_id: FAKE_CLIENT_ID }),
+        new AbortController().signal,
+      ),
+    ),
+  ];
+  for (const error of missing) {
+    assert.equal(error.kind, "auth");
+    const detail = error.fields.detail ?? "";
+    assert.match(detail, /no OAuth client is configured/u);
+    for (const name of [ENV_CLIENT_ID, ENV_CLIENT_SECRET, "client_id", "client_secret"]) {
+      assert.ok(detail.includes(name), `names ${name}: ${detail}`);
+    }
+    assert.match(detail, /google-antigravity\.json/u);
+    assert.doesNotMatch(detail, /cancelled/u, "missing configuration is not a cancellation");
+  }
+  assert.equal(run.fake.calls.length, 0);
+  await rm(dir, { recursive: true });
 });

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fetchAvailableModels } from "../src/catalog/fetch.ts";
+import { loadCodeAssist } from "../src/auth/project.ts";
 import { planLabelFor, readQuotaSummary, readTier } from "../src/client/quota.ts";
 import { AntigravityError } from "../src/errors.ts";
 import { fakeFetch, fixture, json } from "./helpers.ts";
@@ -103,4 +105,25 @@ test("readTier labels a 20x Ultra account from its tier id", async () => {
   const tier = await readTier({ token: "fake", fetch: fake.fetch, endpoints: ENDPOINTS });
   assert.equal(tier.planLabel, "Google AI Ultra (20x)");
   assert.equal(tier.paidTierId, "g1-ultra-tier");
+});
+
+test("an HTTP 200 google.rpc error envelope is a typed error, never an empty success", async () => {
+  const unauthenticated = '{"error":{"code":401,"status":"UNAUTHENTICATED","message":"bad"}}';
+  const isAuth = { name: "AntigravityError", kind: "auth", status: 401 };
+  const fake = fakeFetch(() => json(200, unauthenticated));
+  const request = { token: "fake", fetch: fake.fetch, endpoints: ENDPOINTS };
+  await assert.rejects(readQuotaSummary({ ...request, projectId: "p" }), isAuth);
+  await assert.rejects(readTier(request), isAuth);
+  await assert.rejects(loadCodeAssist(request), isAuth);
+  await assert.rejects(fetchAvailableModels({ ...request, projectId: "p" }), isAuth);
+  const statusOnly = fakeFetch(() => json(200, '{"error":{"status":"PERMISSION_DENIED"}}'));
+  await assert.rejects(
+    readQuotaSummary({
+      token: "fake",
+      projectId: "p",
+      fetch: statusOnly.fetch,
+      endpoints: ENDPOINTS,
+    }),
+    { name: "AntigravityError", kind: "permission" },
+  );
 });

@@ -27,6 +27,18 @@ export function stopReasonFor(finishReason: string): StopReason {
 
 type OpenBlock = TextContent | ThinkingContent;
 
+/** The usage of a message before any usage metadata arrived. */
+export function zeroUsage(): AssistantMessage["usage"] {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+}
+
 function signatureOf(block: OpenBlock): string | undefined {
   return block.type === "text" ? block.textSignature : block.thinkingSignature;
 }
@@ -69,6 +81,19 @@ export class ResponseAccumulator {
     if (this.#started) return;
     this.#started = true;
     this.#stream.push({ type: "start", partial: this.#output });
+  }
+
+  /**
+   * Forgets what a failed attempt reported (finish reason, usage, response id and model) so a
+   * transport retry starts from a pending message. Only valid while no content was emitted.
+   */
+  resetAttempt(): void {
+    const output = this.#output;
+    output.stopReason = "pending";
+    delete output.rawStopReason;
+    delete output.responseId;
+    delete output.responseModel;
+    output.usage = zeroUsage();
   }
 
   apply(response: StreamResponse): void {

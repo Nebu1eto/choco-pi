@@ -142,7 +142,9 @@ sent, only its digests.
 - Watchdogs: response headers must arrive within 90 s. The body may not stay silent longer than
   `options.timeoutMs` (Pi's idle timeout), or 300 s by default. Either timeout is a retryable
   `network` error. The body watchdog covers every body: the event stream, a non-2xx error body
-  and an HTTP 200 JSON body; a stalled body is cancelled.
+  and an HTTP 200 JSON body; a stalled body is cancelled. Any attempt that ends before its body
+  is fully read (a malformed event, a throwing `onResponse` or stream hook) cancels the body and
+  aborts its request.
 - The stream settles exactly once: one terminal `done` or `error` event, then end.
 
 ## Retry policy
@@ -158,7 +160,8 @@ Transport retries here are kept small so the two do not multiply:
   error is surfaced at once with its `retry_after_ms` so Pi's visible retry owns the wait.
 - `quota_exhausted`, `credits_exhausted`, auth, permission, validation, unsupported-client,
   model-unavailable, invalid-request and context-overflow errors fail immediately. A retry
-  resends the same body with the same identifiers.
+  resends the same body with the same identifiers. A failed attempt's finish reason, usage and
+  response id are discarded before the retry, so only the successful attempt decides the result.
 
 ## Usage mapping
 

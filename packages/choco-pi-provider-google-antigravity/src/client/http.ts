@@ -98,9 +98,13 @@ async function attempt<T>(
   } catch {
     throw antigravityMalformedResponse("response body is not JSON");
   }
-  if (options.validator.check(value)) return value;
+  // A google.rpc error envelope is an error even when the open success schema would accept it.
   const rpc = parseRpcErrorBody(text);
-  if (rpc) throw antigravityErrorFromRpc(rpc, { httpStatus: rpc.code });
+  if (rpc && (rpc.code !== undefined || rpc.status !== undefined)) {
+    throw antigravityErrorFromRpc(rpc);
+  }
+  if (options.validator.check(value)) return value;
+  if (rpc) throw antigravityErrorFromRpc(rpc);
   throw antigravityMalformedResponse("response body does not match the expected schema");
 }
 
