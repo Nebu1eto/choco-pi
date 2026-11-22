@@ -452,3 +452,63 @@ describe("streamGenerateContent request", () => {
     assert.equal(headers?.get("x-extra"), "1");
   });
 });
+
+describe("generationConfig matches agy 1.5.14", () => {
+  async function generationConfig(
+    modelId: string,
+    options: SimpleStreamOptions & Pick<GoogleOptions, "thinking">,
+  ) {
+    const respond = await captureSse();
+    const fake = fakeFetch(respond);
+    await collect(
+      streamGoogleAntigravityWith(
+        testModel(modelId),
+        transcript(firstContext()),
+        { apiKey: API_KEY, fetch: piFetch(fake), ...options },
+        noSleep,
+      ),
+    );
+    const sent = sentBodies(fake)[0];
+    return { model: at(sent, "model"), config: at(sent, "request", "generationConfig") };
+  }
+
+  it("sends xhigh as the numeric thinkingLevel 100 and keeps named levels otherwise", async () => {
+    assert.deepEqual(await generationConfig("gemini-4-neon", { reasoning: "xhigh" }), {
+      model: "gemini-4-neon-xhigh",
+      config: {
+        maxOutputTokens: 262_144,
+        thinkingConfig: { includeThoughts: true, thinkingLevel: 100 },
+      },
+    });
+    // Pi's max clamps down to the highest advertised level, xhigh.
+    assert.deepEqual(await generationConfig("gemini-4-neon", { reasoning: "max" }), {
+      model: "gemini-4-neon-xhigh",
+      config: {
+        maxOutputTokens: 262_144,
+        thinkingConfig: { includeThoughts: true, thinkingLevel: 100 },
+      },
+    });
+    assert.deepEqual(await generationConfig("gemini-4-neon", { reasoning: "high" }), {
+      model: "gemini-4-neon-high",
+      config: {
+        maxOutputTokens: 262_144,
+        thinkingConfig: { includeThoughts: true, thinkingLevel: "HIGH" },
+      },
+    });
+    // A model without xhigh clamps to HIGH.
+    assert.deepEqual(await generationConfig("claude-sonnet-5-5", { reasoning: "xhigh" }), {
+      model: "claude-sonnet-5-5-high",
+      config: {
+        maxOutputTokens: 128_000,
+        thinkingConfig: { includeThoughts: true, thinkingLevel: "HIGH" },
+      },
+    });
+  });
+
+  it("sends no temperature, topP or topK for any family", async () => {
+    for (const modelId of ["gemini-4-neon", "gemini-3.8-flash", "claude-sonnet-5-5"]) {
+      const { config } = await generationConfig(modelId, { reasoning: "high", temperature: 0.3 });
+      assert.deepEqual(keysAt(config), ["maxOutputTokens", "thinkingConfig"], modelId);
+    }
+  });
+});

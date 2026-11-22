@@ -60,9 +60,9 @@ export interface AntigravityGenerateRequest {
   tools?: GeminiTools;
   toolConfig?: { functionCallingConfig: { mode: FunctionCallingMode } };
   labels: AntigravityLabels;
+  /** agy sends no sampling parameters (temperature, topP, topK) for any model. */
   generationConfig: {
     maxOutputTokens: number;
-    temperature?: number;
     thinkingConfig?: AntigravityThinkingConfig;
   };
   sessionId: string;
@@ -200,7 +200,8 @@ export function buildAntigravityRequest(input: BuildRequestInput): BuiltRequest 
   const generationConfig: AntigravityGenerateRequest["generationConfig"] = {
     maxOutputTokens: Math.max(1, clampMaxTokensToContext(model, context, requestedMax)),
   };
-  if (options?.temperature !== undefined) generationConfig.temperature = options.temperature;
+  // options.temperature is not forwarded: agy never sends sampling parameters, and Google says
+  // Gemini 4 ignores them and rejects out-of-range values with HTTP 400.
   if (resolution.thinkingConfig) generationConfig.thinkingConfig = resolution.thinkingConfig;
 
   // The capture's key set; JSON key order carries no meaning on this API.

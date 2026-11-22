@@ -47,6 +47,30 @@ const DISPLAY_LEVEL = /\s*\((?:minimal|low|medium|high|xhigh|extra high|max)\)\s
 const RUNTIME_ID = /^[a-z0-9][a-z0-9._-]*$/u;
 const DEFAULT_CONTEXT_WINDOW = 131_072;
 const DEFAULT_MAX_OUTPUT = 8192;
+/** ModelDetails.thinking_level for XHIGH; agy sends it as this number, it has no enum name. */
+const XHIGH_WIRE_LEVEL = 100;
+
+/**
+ * Model ids never offered: the Antigravity Orchestrator is agy's client-side plan/execute loop
+ * (gemini-4-neon-xhigh planning, gemini-4-hydrogen-xhigh executing), not a plain model.
+ */
+export function isHiddenModelId(id: string): boolean {
+  return id.startsWith("gemini-pro-orchestrator");
+}
+
+/** The catalog without hidden models, also for catalogs persisted before they were hidden. */
+export function withoutHiddenModels(catalog: AntigravityCatalog): AntigravityCatalog {
+  const models = catalog.models.flatMap((model) => {
+    if (isHiddenModelId(model.id)) return [];
+    const variants = model.variants.filter((variant) => !isHiddenModelId(variant.runtimeId));
+    return variants.length > 0 ? [{ ...model, variants }] : [];
+  });
+  const visible: AntigravityCatalog = { models, webSearchModelIds: catalog.webSearchModelIds };
+  if (catalog.defaultModelId !== undefined && !isHiddenModelId(catalog.defaultModelId)) {
+    visible.defaultModelId = catalog.defaultModelId;
+  }
+  return visible;
+}
 
 function normalizeSuffix(suffix: string | undefined): CatalogLevel | undefined {
   const value = suffix?.toLowerCase();
@@ -58,7 +82,7 @@ function levelFromWire(level: number | undefined): CatalogLevel | undefined {
   if (level === 1) return "low";
   if (level === 2) return "medium";
   if (level === 3) return "high";
-  if (level === 100) return "xhigh";
+  if (level === XHIGH_WIRE_LEVEL) return "xhigh";
   return undefined;
 }
 
@@ -66,7 +90,7 @@ function levelToWire(level: CatalogLevel): number | undefined {
   if (level === "low") return 1;
   if (level === "medium") return 2;
   if (level === "high") return 3;
-  if (level === "xhigh") return 100;
+  if (level === "xhigh") return XHIGH_WIRE_LEVEL;
   return undefined;
 }
 
@@ -105,6 +129,7 @@ function isSelectable(
   images: Set<string>,
 ): boolean {
   if (!RUNTIME_ID.test(id) || /^(?:tab|chat)_/u.test(id) || id.startsWith("MODEL_")) return false;
+  if (isHiddenModelId(id)) return false;
   if (/image/iu.test(id) || /image/iu.test(details.displayName ?? "") || images.has(id))
     return false;
   if (details.isInternal || details.disabled) return false;
@@ -226,7 +251,7 @@ export function buildAntigravityCatalog(
     webSearchModelIds: [...(response.webSearchModelIds ?? [])],
   };
   if (response.defaultAgentModelId) catalog.defaultModelId = response.defaultAgentModelId;
-  return catalog;
+  return withoutHiddenModels(catalog);
 }
 
 function levelIndex(level: CatalogLevel | undefined): number {
@@ -350,7 +375,8 @@ export function getActiveCatalog(): AntigravityCatalog {
 
 export type AntigravityThinkingConfig = {
   includeThoughts: boolean;
-  thinkingLevel?: "LOW" | "MEDIUM" | "HIGH";
+  /** Named levels as agy sends them; XHIGH goes out as the number 100, as agy sends it. */
+  thinkingLevel?: "LOW" | "MEDIUM" | "HIGH" | typeof XHIGH_WIRE_LEVEL;
   thinkingBudget?: number;
 };
 
@@ -389,6 +415,7 @@ function thinkingConfigFor(
   if (variant.wireThinkingLevel === 1) config.thinkingLevel = "LOW";
   else if (variant.wireThinkingLevel === 2) config.thinkingLevel = "MEDIUM";
   else if (variant.wireThinkingLevel === 3) config.thinkingLevel = "HIGH";
+  else if (variant.wireThinkingLevel === XHIGH_WIRE_LEVEL) config.thinkingLevel = XHIGH_WIRE_LEVEL;
   else if (variant.thinkingBudget !== undefined && variant.thinkingBudget > 0) {
     config.thinkingBudget = variant.thinkingBudget;
   }

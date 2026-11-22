@@ -32,7 +32,7 @@ the model's base URL is used: no endpoint fallback and no model-tier switching.
     tools,                        // pi-ai convertTools over getCurrentTools
     toolConfig?,                  // only when Pi asks for a non-default tool choice
     labels,
-    generationConfig: { maxOutputTokens, temperature?, thinkingConfig },
+    generationConfig: { maxOutputTokens, thinkingConfig },
     sessionId },
   model: <runtime id>,            // resolveRuntimeModel, e.g. gemini-3.8-flash-low
   userAgent: "antigravity",
@@ -49,6 +49,12 @@ the model's base URL is used: no endpoint fallback and no model-tier switching.
 - `generationConfig.maxOutputTokens` is the catalog variant's cap, lowered to `options.maxTokens` and
   to Pi's context clamp. `thinkingConfig` is the catalog variant's (`includeThoughts` is true unless
   the level is off).
+- `thinkingConfig.thinkingLevel` is `"LOW"`, `"MEDIUM"` or `"HIGH"` for wire levels 1 to 3 and the
+  number `100` for xhigh variants (for example `gemini-4-neon-xhigh`, `gemini-4-hydrogen-xhigh`),
+  as agy 1.5.14 sends it. Pi's `max` clamps to xhigh on models that advertise it.
+- No sampling parameters: `options.temperature` is not forwarded and `topP`/`topK` are never
+  sent, for every family. agy sends none, and Google's Gemini 4 guidance says they are ignored and
+  that out-of-range values return HTTP 400 on Neon and Hydrogen.
 - Thinking level: `reasoning` is clamped with Pi's `clampThinkingLevel`. `thinking.enabled: false`
   or no level means off: the lowest variant, without thought summaries. `thinking` with only
   `budgetTokens` has no level equivalent and maps to the highest supported level.
@@ -77,6 +83,11 @@ Probed live on 2026-11-22, one tool per `generateContent` request with `maxOutpu
 
 The transport therefore sends `parametersJsonSchema` for every family. agy itself sends OpenAPI
 `parameters` with uppercase types; its own tool schemas contain no unions.
+
+Residual difference at xhigh: agy serializes the whole xhigh request with proto enum numbers
+(schema `type` 1/3/4/6 as well as `thinkingLevel` 100), apparently because 100 has no JSON name
+in its ThinkingLevel enum. This transport sends only `thinkingLevel` as the number 100 and keeps
+every other value as it is at other levels; its tools are JSON Schema in any case.
 
 ## Identity
 

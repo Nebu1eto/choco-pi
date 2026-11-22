@@ -94,6 +94,36 @@ models store. Effort-suffixed runtime ids collapse into one Pi model per base id
 `gemini-3.8-flash` with low, medium and high; only advertised levels are selectable. A small
 fallback list is used until the first refresh.
 
+The models-store slot `google` is shared. Pi composes this provider's refresh with the built-in
+google provider's pi.dev catalog refresh. The built-in refresh runs first and owns the top-level
+`models`, `lastModified`, `etag` and `checkedAt` fields. Both refreshes read one snapshot taken
+before either runs, and each write replaces the whole slot. This provider therefore:
+
+- keeps its data under `google_antigravity` (`schema_version` 2, `credential_key`, `checked_at`,
+  `catalog`) and judges freshness only by its own `checked_at`;
+- persists only after a successful fetch, writing the snapshot's other fields back unchanged next
+  to its own key; a cache hit, an offline start or a failed fetch writes nothing;
+- reads a version 1 entry, whose timestamp was the shared `checkedAt`, as stale: it serves that
+  catalog offline and as the failure fallback, and the first successful online fetch rewrites it
+  as version 2.
+
+The two writers settle within two runs. When the built-in refresh downloads a new catalog
+(HTTP 200) in the same run as this provider's fetch, this provider's write restores the
+snapshot's older built-in fields, so the built-in refresh revalidates on the next run. If that
+download drops `google_antigravity`, this provider serves the catalog from that run's snapshot
+and fetches again on the following run, merging with the new built-in entry. A revalidation
+(HTTP 304) keeps every key. The worst case is two `fetchAvailableModels` calls per four-hour
+window instead of one (`tests/catalog.test.ts`, "composed refresh"), and the live catalog is
+served on every run.
+
+## Deferred and omitted features
+
+- The Antigravity Orchestrator (every `gemini-pro-orchestrator*` id, such as "Orchestrator
+  (Neon)") is intentionally not offered. agy runs it as a client-side plan/execute loop on
+  `gemini-4-neon-xhigh` and `gemini-4-hydrogen-xhigh` and never sends the orchestrator id on
+  the wire, so a plain model entry would not behave like it. The ids are dropped from refreshed
+  catalogs, the fallback list and any catalog persisted before this change.
+
 ## Modules
 
 | Module                       | Purpose                                                              |
@@ -119,7 +149,7 @@ with pi-antigravity 0.15.0 (Rahularya01/pi-antigravity). No code was copied from
 - The agy binary embeds several client ids and secrets with no recorded pairing. Its Go string
   table groups literals by length, so the position of an id or secret says nothing about which
   pair the consumer login uses; candidates keep file order and, when there are several, you pick.
-- The wire value for xhigh thinking and Claude thinking parameters are inferred from the catalog,
-  not from a captured request.
+- Claude thinking parameters (`thinkingLevel` LOW/MEDIUM/HIGH) match captured agy requests for
+  Claude Opus 5.5; Claude Sonnet 5.5 was not captured.
 - Tool schemas go to every family as JSON Schema (`parametersJsonSchema`); the OpenAPI
   `parameters` field rejects unions for Claude (docs/transport.md, measured).

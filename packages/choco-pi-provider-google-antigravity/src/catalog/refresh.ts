@@ -11,27 +11,52 @@ import {
   buildAntigravityCatalog,
   catalogToProviderModels,
   setActiveCatalog,
+  withoutHiddenModels,
   type AntigravityCatalog,
 } from "./group.ts";
 
 export const CATALOG_TTL_MS = 4 * 60 * 60 * 1000;
 export const STORE_KEY = "google_antigravity";
 
+/*
+ * The models-store slot `google` is shared with Pi's built-in google remote-catalog refresh, which
+ * runs first in the same composed refresh and owns the top-level fields (models, lastModified,
+ * etag, checkedAt). This provider owns only the `google_antigravity` key, keeps its freshness
+ * timestamp inside it, and leaves every other field as the snapshot holds it. See README "Models".
+ */
 const StoredCatalogSchema = obj(
   {
     google_antigravity: obj({
-      schema_version: lit(1),
+      schema_version: lit(2),
       credential_key: str(),
+      checked_at: num(),
       catalog: AntigravityCatalogSchema,
     }),
-    checkedAt: opt(num()),
   },
   { open: true },
 );
 const isStoredCatalog = compile(StoredCatalogSchema).check;
 type StoredCatalog = Static<typeof StoredCatalogSchema>["google_antigravity"];
 
-/** The models-store entry: Pi's fields plus this provider's catalog metadata. */
+/**
+ * Schema version 1 kept its timestamp in the shared top-level `checkedAt`, which the base also
+ * moves. Its catalog is still served offline and as the failure fallback, but it is always stale:
+ * the first online run refetches and rewrites the entry as version 2.
+ */
+const isLegacyStoredCatalog = compile(
+  obj(
+    {
+      google_antigravity: obj({
+        schema_version: lit(1),
+        credential_key: str(),
+        catalog: AntigravityCatalogSchema,
+      }),
+    },
+    { open: true },
+  ),
+).check;
+
+/** The models-store entry: the shared slot's fields plus this provider's catalog metadata. */
 export interface AntigravityStoreEntry extends ModelsStoreEntry {
   google_antigravity: StoredCatalog;
 }
@@ -72,17 +97,32 @@ export function catalogCredentialKey(refreshToken: string): string {
 interface CachedCatalog {
   catalog: AntigravityCatalog;
   credentialKey: string;
-  checkedAt: number;
+  /** Undefined for a legacy entry, which is never fresh. */
+  checkedAt: number | undefined;
 }
 
 function readCache(context: RefreshModelsContext): CachedCatalog | undefined {
   const stored = context.stored;
-  if (!isStoredCatalog(stored)) return undefined;
-  return {
-    catalog: stored.google_antigravity.catalog,
-    credentialKey: stored.google_antigravity.credential_key,
-    checkedAt: stored.checkedAt ?? 0,
-  };
+  let cached: CachedCatalog;
+  if (isStoredCatalog(stored)) {
+    cached = {
+      catalog: stored.google_antigravity.catalog,
+      credentialKey: stored.google_antigravity.credential_key,
+      checkedAt: stored.google_antigravity.checked_at,
+    };
+  } else if (isLegacyStoredCatalog(stored)) {
+    cached = {
+      catalog: stored.google_antigravity.catalog,
+      credentialKey: stored.google_antigravity.credential_key,
+      checkedAt: undefined,
+    };
+  } else {
+    return undefined;
+  }
+  // A catalog persisted before a model was hidden must not bring it back.
+  const catalog = withoutHiddenModels(cached.catalog);
+  if (catalog.models.length === 0) return undefined;
+  return { ...cached, catalog };
 }
 
 function isAbort(context: RefreshModelsContext, cause: unknown): boolean {
@@ -94,7 +134,8 @@ function isAbort(context: RefreshModelsContext, cause: unknown): boolean {
  * when offline, 4-hour TTL keyed to the credential, best-effort persistence through
  * `context.publish`, and the last good (or fallback) catalog on any failure except abort. With a
  * current credential, a persisted catalog serves as the fallback only when it was fetched with
- * that credential; another account's catalog gives way to the offline FALLBACK_CATALOG.
+ * that credential; another account's catalog gives way to the offline FALLBACK_CATALOG. Only a
+ * successful fetch persists, and the write carries the snapshot's foreign fields unchanged.
  */
 export function createAntigravityRefreshModels(
   deps: AntigravityRefreshDeps = {},
@@ -133,6 +174,7 @@ export function createAntigravityRefreshModels(
       cached &&
       !context.force &&
       cached.credentialKey === credentialKey &&
+      cached.checkedAt !== undefined &&
       now() - cached.checkedAt < ttl
     ) {
       return use(cached.catalog);
@@ -148,10 +190,11 @@ export function createAntigravityRefreshModels(
       return use(fallback);
     }
     context.signal.throwIfAborted();
+    // Replace semantics: the snapshot's fields (the base's catalog and freshness) go back as read.
     const entry: AntigravityStoreEntry = {
       models: [],
-      checkedAt: now(),
-      [STORE_KEY]: { schema_version: 1, credential_key: credentialKey, catalog },
+      ...context.stored,
+      [STORE_KEY]: { schema_version: 2, credential_key: credentialKey, checked_at: now(), catalog },
     };
     try {
       await context.publish({ persist: entry, update: () => setActiveCatalog(catalog) });
