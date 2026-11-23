@@ -70,19 +70,7 @@ import {
   pmBinary,
   resolveNodePackageManager,
 } from "../package-manager.ts";
-import {
-  resetSafeSpawnWindowsCommandCache,
-  safeSpawnAsync as hostSafeSpawnAsync,
-  type SpawnResult,
-} from "../safe-spawn.ts";
-
-async function safeSpawnAsync(
-  ...args: Parameters<typeof hostSafeSpawnAsync>
-): Promise<SpawnResult> {
-  const result = await hostSafeSpawnAsync(...args);
-  // SAFETY: safeSpawnAsync constructs SpawnResult on every resolve path; its shared inferred signature is temporarily unknown.
-  return result as SpawnResult;
-}
+import { resetSafeSpawnWindowsCommandCache, safeSpawnAsync } from "../safe-spawn.ts";
 
 // Global installation directory for choco-pi-lsp tools
 const TOOLS_DIR = path.join(getGlobalPiLensDir(), "tools");

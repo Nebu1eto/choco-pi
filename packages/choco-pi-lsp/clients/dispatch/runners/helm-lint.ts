@@ -5,6 +5,7 @@ import { safeSpawnAsync } from "../../safe-spawn.ts";
 import { findNearestDirWithMarker } from "../../workspace-topology.ts";
 import { PRIORITY } from "../priorities.ts";
 import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { failedResult, isWithin } from "./utils/helm-shared.ts";
 import {
   createAvailabilityChecker,
   resolveAvailableOrInstall,
@@ -20,14 +21,6 @@ const SKIPPED: RunnerResult = {
   diagnostics: [],
   semantic: "none",
 };
-
-function isWithin(root: string, candidate: string): boolean {
-  const relative = path.relative(normalizeMapKey(root), normalizeMapKey(candidate));
-  return (
-    relative === "" ||
-    (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))
-  );
-}
 
 interface DiagnosticLocation {
   filePath: string;
@@ -82,16 +75,6 @@ ${line.trim()}`;
     });
   }
   return diagnostics;
-}
-
-function failedResult(kind: string, message: string): RunnerResult {
-  return {
-    status: "failed",
-    diagnostics: [],
-    semantic: "warning",
-    failureKind: kind,
-    failureMessage: message.slice(0, 200),
-  };
 }
 
 async function lintChart(chartRoot: string, cwd: string): Promise<RunnerResult> {

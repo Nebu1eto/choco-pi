@@ -1,3 +1,4 @@
+import { assignOptionalProperties } from "./optional-properties.ts";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
@@ -22,19 +23,6 @@ import {
   WARM_DIAGNOSTICS_SCHEMA_VERSION,
 } from "./mcp/ipc.ts";
 import { normalizeFilePath } from "./path-utils.ts";
-
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-): T & Partial<U>;
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-) {
-  return include ? Object.assign(target, createProperties(include)) : target;
-}
 
 interface AttachState {
   cwd?: string;

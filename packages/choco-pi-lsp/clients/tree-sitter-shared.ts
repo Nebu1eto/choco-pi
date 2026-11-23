@@ -13,23 +13,11 @@
  * consumer skips further tree-sitter work (previously only the runner tracked this,
  * while the other subsystems kept calling the dead runtime).
  */
+import { assignOptionalProperties } from "./optional-properties.ts";
 import { notifyUserDegradation } from "./user-notify.ts";
 import * as path from "node:path";
 import { type ParsedTreeOutcome, TreeSitterClient } from "./tree-sitter-client.ts";
 import { logTreeSitter } from "./tree-sitter-logger.ts";
-
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-): T & Partial<U>;
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-) {
-  return include ? Object.assign(target, createProperties(include)) : target;
-}
 
 let _shared: TreeSitterClient | null = null;
 let _wasmAborted = false;

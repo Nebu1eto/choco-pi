@@ -18,16 +18,8 @@ import {
   resolveNodePackageManager,
   runScriptArgs,
 } from "../package-manager.ts";
-import { safeSpawnAsync as hostSafeSpawnAsync, type SpawnResult } from "../safe-spawn.ts";
+import { safeSpawnAsync } from "../safe-spawn.ts";
 import type { AnalyzeFileOptions, McpAnalyzeResult } from "./analyze.ts";
-
-async function safeSpawnAsync(
-  ...args: Parameters<typeof hostSafeSpawnAsync>
-): Promise<SpawnResult> {
-  const result = await hostSafeSpawnAsync(...args);
-  // SAFETY: safeSpawnAsync constructs SpawnResult on every resolve path; its shared inferred signature is temporarily unknown.
-  return result as SpawnResult;
-}
 
 /**
  * Which npm script rebuilds the layout the server is running from. A server at

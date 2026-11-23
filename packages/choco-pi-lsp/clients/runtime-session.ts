@@ -1,3 +1,4 @@
+import { assignOptionalProperties } from "./optional-properties.ts";
 import { isFunction, isString } from "./runtime-guards.ts";
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
@@ -80,19 +81,6 @@ import { setSessionLanguages } from "./widget-state.ts";
 import { logWordIndex } from "./word-index-logger.ts";
 import { resetWorkspaceTopology } from "./workspace-topology.ts";
 import { resetZizmorTokenAvailability } from "./zizmor-config.ts";
-
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-): T & Partial<U>;
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-) {
-  return include ? Object.assign(target, createProperties(include)) : target;
-}
 
 type LoadSnapshotBodyUnlessStaleResultContract = {
   snapshot: ProjectSnapshot | null;

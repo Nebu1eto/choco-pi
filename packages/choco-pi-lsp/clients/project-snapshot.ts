@@ -1,3 +1,4 @@
+import { assignOptionalProperties } from "./optional-properties.ts";
 import {
   isFiniteNumber,
   isObjectRecord,
@@ -29,19 +30,6 @@ import {
   serializeWordIndex,
   type SerializedWordIndex,
 } from "./word-index.ts";
-
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-): T & Partial<U>;
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-) {
-  return include ? Object.assign(target, createProperties(include)) : target;
-}
 
 type ReadSnapshotBodyResultContract = {
   snapshot: ProjectSnapshot | null;

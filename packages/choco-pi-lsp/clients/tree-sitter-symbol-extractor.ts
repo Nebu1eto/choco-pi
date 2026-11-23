@@ -3,25 +3,13 @@
  * Extracts definitions and references from source files
  */
 
+import { assignOptionalProperties } from "./optional-properties.ts";
 import { isFiniteNumber } from "./runtime-guards.ts";
 import { logTreeSitterDiagnostic } from "./tree-sitter-logger.ts";
 import * as path from "node:path";
 import { loadWebTreeSitter } from "./deps/web-tree-sitter.ts";
 import type { Symbol, SymbolKind, SymbolRef } from "./symbol-types.ts";
 import type { TreeSitterClient } from "./tree-sitter-client.ts";
-
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-): T & Partial<U>;
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-) {
-  return include ? Object.assign(target, createProperties(include)) : target;
-}
 
 // Tree-sitter query patterns for symbol extraction
 

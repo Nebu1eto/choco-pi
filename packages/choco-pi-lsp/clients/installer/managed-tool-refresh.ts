@@ -44,7 +44,7 @@ import * as path from "node:path";
 import { recordDegradationOnce } from "../degradation-ledger.ts";
 import { commitDurableStoreAsync } from "../durable-store.ts";
 import { pmBinary, resolveNodePackageManager, updateArgs } from "../package-manager.ts";
-import { safeSpawnAsync as hostSafeSpawnAsync, type SpawnResult } from "../safe-spawn.ts";
+import { safeSpawnAsync } from "../safe-spawn.ts";
 import { logSessionStart } from "../sessionstart-logger.ts";
 import {
   getManagedToolsDir,
@@ -58,14 +58,6 @@ import {
   releaseManagedToolRefreshSlot,
   reserveManagedToolRefreshSlot,
 } from "./managed-tool-refresh-session.ts";
-
-async function safeSpawnAsync(
-  ...args: Parameters<typeof hostSafeSpawnAsync>
-): Promise<SpawnResult> {
-  const result = await hostSafeSpawnAsync(...args);
-  // SAFETY: safeSpawnAsync constructs SpawnResult on every resolve path; its shared inferred signature is temporarily unknown.
-  return result as SpawnResult;
-}
 
 const STATE_FILENAME = ".refresh-state.json";
 const STATE_VERSION = 1;

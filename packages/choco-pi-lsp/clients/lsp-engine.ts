@@ -14,6 +14,7 @@
  * scan, LSP status, diagnostic stats, LSP config).
  */
 
+import { assignOptionalProperties } from "./optional-properties.ts";
 import { isFiniteNumber } from "./runtime-guards.ts";
 import * as path from "node:path";
 import { minimatch } from "./deps/minimatch.ts";
@@ -39,19 +40,6 @@ import {
   searchWordIndex,
   triggerBackgroundWordIndexBuild,
 } from "./word-index.ts";
-
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-): T & Partial<U>;
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-) {
-  return include ? Object.assign(target, createProperties(include)) : target;
-}
 
 // --- Facades (re-exported so adapters import only this module) ---------------
 

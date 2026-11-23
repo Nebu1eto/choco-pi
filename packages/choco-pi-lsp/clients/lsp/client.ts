@@ -50,7 +50,7 @@ import { hashDiagnosticContent, type StoredDiagnosticBinding } from "./diagnosti
 import { installLspCrashGuard } from "./crash-guard.ts";
 import { applyWorkspaceEdit, normalizeWorkspaceEditToUtf16 } from "./edits.ts";
 import type { LSPProcess } from "./launch.ts";
-import { normalizeMapKey, uriToPath } from "./path-utils.ts";
+import { normalizeMapKey, uriToPath } from "../path-utils.ts";
 import {
   ADVERTISED_POSITION_ENCODINGS,
   convertCharacterOffset,

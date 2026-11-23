@@ -329,8 +329,8 @@ export function demotePastEofDiagnostics<T extends PastEofDiagnosticLike>(args: 
  * than left to re-publish the same divergent diagnostics next time
  * (`LSPService.openFile` sends a full-sync didChange, or a didClose/didOpen
  * pair for servers that only re-scan on a fresh open — see
- * `handleNotifyOpen`'s `reopenOnResync` branch). Dynamic import (mirrors
- * `clients/module-report-lsp.ts`) so this module — used from widget-state.ts
+ * `handleNotifyOpen`'s `reopenOnResync` branch). Dynamic import so this
+ * module — used from widget-state.ts
  * and tools/diagnostics-report.ts — never statically depends on `clients/lsp`,
  * which itself imports widget-state.ts.
  *

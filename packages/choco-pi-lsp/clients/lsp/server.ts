@@ -29,6 +29,7 @@ import {
   isAtOrAboveHomeDir,
   isFullyQualified,
   isWindowsPath,
+  normalizeMapKey,
   pathsEqual,
 } from "../path-utils.ts";
 import { ensureTool, getToolEnvironment, getToolPath } from "../installer/index.ts";
@@ -45,7 +46,6 @@ import { hasSpawnFailureKind, isCommandAvailableAsync, safeSpawnAsync } from "..
 import { type LSPProcess, launchLSP } from "./launch.ts";
 import { createLombokJdtlsArgs } from "./lombok.ts";
 import { resolveJavaRuntimeEnv } from "./jvm-runtime.ts";
-import { normalizeMapKey } from "./path-utils.ts";
 import { getRubyVersionDirNamesSync } from "./ruby-drive-dirs.ts";
 import { defaultTypeScriptInitialization } from "./typescript-config.ts";
 import { isAutomaticTypeAcquisitionEnabledAsync } from "../lsp-config.ts";

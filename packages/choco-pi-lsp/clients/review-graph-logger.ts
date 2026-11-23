@@ -1,21 +1,9 @@
+import { assignOptionalProperties } from "./optional-properties.ts";
 import * as path from "node:path";
 import { isTestMode } from "./env-utils.ts";
 import { getGlobalPiLensDir } from "./file-utils.ts";
 import { createNdjsonLogger } from "./ndjson-logger.ts";
 import type { ReviewGraph, ReviewGraphPersistCoverage } from "./review-graph/types.ts";
-
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-): T & Partial<U>;
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-) {
-  return include ? Object.assign(target, createProperties(include)) : target;
-}
 
 const REVIEW_GRAPH_LOG_DIR = getGlobalPiLensDir();
 const REVIEW_GRAPH_LOG_FILE = path.join(REVIEW_GRAPH_LOG_DIR, "review-graph.log");

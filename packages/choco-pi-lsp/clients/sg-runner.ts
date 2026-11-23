@@ -5,6 +5,7 @@
  * Handles: spawn, spawnSync, temp dir management, JSON parsing.
  */
 
+import { assignOptionalProperties } from "./optional-properties.ts";
 import { finite } from "./runtime-guards.ts";
 import { arr, compile, obj, str } from "@earendil-works/pi-schema";
 import { createSubsystemLogger } from "./extension-log.ts";
@@ -24,19 +25,6 @@ import {
   logAvailabilityDecision,
   startHostStallSampler,
 } from "./dispatch/runners/utils/availability-policy.ts";
-
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-): T & Partial<U>;
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-) {
-  return include ? Object.assign(target, createProperties(include)) : target;
-}
 
 type GetSgCommandResultContract = { cmd: string; argsPrefix: string[] };
 type PrepareTempScanResultContract = {

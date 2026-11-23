@@ -1,14 +1,14 @@
 /**
  * One implementation of the "race a promise against a timer" pattern that had
- * drifted into three near-identical copies (#366): `withTimeout` (clients/lsp),
- * `withBudget` (read-expansion), and `withinRemaining` (module-report-lsp).
+ * drifted into near-identical copies (#366): `withTimeout` (clients/lsp) and
+ * `withBudget` (read-expansion).
  *
  * The differences between them were real — timeout can *reject* or *resolve
  * undefined*, and the raced promise's own rejection can *propagate* or be
  * *swallowed* — so they are kept as named adapters over one core. Consolidating
  * fixes two latent bugs the copies had: `withBudget` did not suppress the loser
  * promise's late rejection (an unhandled rejection if the timer won first), and
- * `withinRemaining` never cleared its timer.
+ * a deadline-based copy never cleared its timer.
  */
 
 /**
@@ -122,20 +122,4 @@ export function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<
  */
 export function withBudget<T>(promise: Promise<T>, budgetMs: number): Promise<T | undefined> {
   return withDeadline(promise, { ms: budgetMs, onTimeout: "undefined" });
-}
-
-/**
- * Resolve `promise`, or `undefined` once the shared `deadlineAt` passes (a past
- * deadline resolves `undefined` immediately). The raced promise's own rejection
- * is swallowed to `undefined`.
- */
-export function withinRemaining<T>(
-  promise: Promise<T>,
-  deadlineAt: number,
-): Promise<T | undefined> {
-  return withDeadline(promise, {
-    deadlineAt,
-    onTimeout: "undefined",
-    onReject: "undefined",
-  });
 }

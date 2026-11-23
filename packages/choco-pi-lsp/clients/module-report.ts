@@ -25,13 +25,14 @@
  * cached graph backs it, "unavailable:file-cap" when a size verdict disabled the
  * graph, else "none" (cold). Live-LSP enrichment is re-homed to #236, where LSP
  * writes provenance-tagged edges INTO the graph (once, persisted) for this path
- * to read as "graph-lsp". That logic lives in clients/module-report-lsp.ts.
+ * to read as "graph-lsp".
  *
  * Guard integrity: moduleReport injects NO read records — an outline is not
  * "having seen the body". readSymbol returns the actual body lines so the host
  * can record a read that legitimately satisfies the read-guard for that symbol.
  */
 
+import { assignOptionalProperties } from "./optional-properties.ts";
 import { isFiniteNumber, type LspBoundaryValue } from "./runtime-guards.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -51,19 +52,6 @@ import type { ReviewGraph, ReviewGraphEdgeKind } from "./review-graph/types.ts";
 import type { Symbol as ExtractedSymbol } from "./symbol-types.ts";
 import { getSharedTreeSitterClient, resolveTreeSitterLanguage } from "./tree-sitter-shared.ts";
 import { type ImportRef, TreeSitterSymbolExtractor } from "./tree-sitter-symbol-extractor.ts";
-
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-): T & Partial<U>;
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-) {
-  return include ? Object.assign(target, createProperties(include)) : target;
-}
 
 type ReadArgsForResultContract = { path: string; offset: number; limit: number };
 type CollectImportsResultContract = { external: string[]; internal: string[] };

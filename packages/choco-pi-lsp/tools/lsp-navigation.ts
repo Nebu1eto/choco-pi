@@ -1,3 +1,4 @@
+import { includePropertiesWhen } from "../clients/optional-properties.ts";
 import type { ProtocolDictionary } from "./runtime-values.ts";
 import type { RuntimeValue } from "./runtime-values.ts";
 import {
@@ -1727,13 +1728,4 @@ export function createLspNavigationTool(
       );
     },
   };
-}
-
-function includePropertiesWhen<T extends object, TInclude>(
-  include: TInclude,
-  createProperties: () => T,
-): Partial<T> {
-  const properties: Partial<T> = {};
-  if (include) Object.assign(properties, createProperties());
-  return properties;
 }

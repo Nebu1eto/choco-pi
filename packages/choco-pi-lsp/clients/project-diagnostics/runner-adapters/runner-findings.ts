@@ -1,3 +1,4 @@
+import { includePropertiesWhen } from "../../optional-properties.ts";
 import type { TestFailure, TestResult } from "../../test-runner-client.ts";
 import type { ProjectDiagnostic } from "../types.ts";
 import * as fs from "node:fs";
@@ -148,13 +149,4 @@ export function testRunnerFindingsToProjectDiagnostics(
           }
         : diagnostic,
     );
-}
-
-function includePropertiesWhen<T extends object, TInclude>(
-  include: TInclude,
-  createProperties: () => T,
-): Partial<T> {
-  const properties: Partial<T> = {};
-  if (include) Object.assign(properties, createProperties());
-  return properties;
 }

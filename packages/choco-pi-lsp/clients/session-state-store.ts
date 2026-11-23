@@ -9,6 +9,7 @@
  * (a missing or corrupt file just means "start clean").
  */
 
+import { assignOptionalProperties } from "./optional-properties.ts";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { writeFileAtomicAsync } from "./atomic-write.ts";
@@ -16,19 +17,6 @@ import { getProjectDataDir } from "./file-utils.ts";
 import { readJsonCacheAsync } from "./json-cache-read.ts";
 import type { PersistedReadGuardState } from "./read-guard.ts";
 import type { PersistedWidgetState } from "./widget-state.ts";
-
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-): T & Partial<U>;
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-) {
-  return include ? Object.assign(target, createProperties(include)) : target;
-}
 
 export const STATE_VERSION = 1;
 

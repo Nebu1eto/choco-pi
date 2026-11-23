@@ -22,7 +22,7 @@ import {
   pathsEqual,
   uriToDiskPath,
   uriToPath,
-} from "./path-utils.ts";
+} from "../path-utils.ts";
 import { convertCharacterOffset, lineTextAt, type PositionEncoding } from "./position-encoding.ts";
 import { recordLspMutation, type LspMutationContext } from "../lsp-mutation.ts";
 import { detectLineEnding, normalizeToLF, restoreLineEndings } from "../host-edit-normalize.ts";

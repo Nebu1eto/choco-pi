@@ -1,3 +1,4 @@
+import { includePropertiesWhen } from "../optional-properties.ts";
 import { isRuntimeFunction, isRuntimeNumber, isRuntimeString } from "../../tools/runtime-values.ts";
 import { idleEvictionTimersSuspended, registerIdleTimerRelease } from "../idle-timer-release.ts";
 import { createHash } from "node:crypto";
@@ -5091,13 +5092,4 @@ export function extractSymbolsAndRefsFromGraph(graph: ReviewGraph) {
   if (!sawRelevantFileNode) coverage.complete = false;
 
   return { allSymbols, allRefs, coverage };
-}
-
-function includePropertiesWhen<T extends object, TInclude>(
-  include: TInclude,
-  createProperties: () => T,
-): Partial<T> {
-  const properties: Partial<T> = {};
-  if (include) Object.assign(properties, createProperties());
-  return properties;
 }

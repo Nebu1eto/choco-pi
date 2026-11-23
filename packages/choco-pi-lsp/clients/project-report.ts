@@ -1,3 +1,4 @@
+import { assignOptionalProperties } from "./optional-properties.ts";
 import { isFiniteNumber } from "./runtime-guards.ts";
 /**
  * Project Report (#773) — the top of the discovery funnel: `project_report` →
@@ -39,19 +40,6 @@ import * as path from "node:path";
 import { normalizeMapKey, toProjectRelativePath } from "./path-utils.ts";
 import { loadProjectSnapshotWithoutWordIndex } from "./project-snapshot.ts";
 import type { ReviewGraph } from "./review-graph/types.ts";
-
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-): T & Partial<U>;
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-) {
-  return include ? Object.assign(target, createProperties(include)) : target;
-}
 
 type SuggestedNextResultContract = {
   tool: "module_report";

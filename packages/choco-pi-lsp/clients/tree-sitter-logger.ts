@@ -1,3 +1,4 @@
+import { assignOptionalProperties } from "./optional-properties.ts";
 import { type LspDictionaryValue } from "./runtime-guards.ts";
 import * as path from "node:path";
 import { isTestMode } from "./env-utils.ts";
@@ -5,19 +6,6 @@ import { getGlobalPiLensDir } from "./file-utils.ts";
 import { createNdjsonLogger } from "./ndjson-logger.ts";
 import type { TreeSitterParseCacheStats } from "./tree-sitter-client.ts";
 import { getMaxLogSizeMB } from "./log-cleanup.ts";
-
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-): T & Partial<U>;
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-) {
-  return include ? Object.assign(target, createProperties(include)) : target;
-}
 
 const TREE_SITTER_LOG_DIR = getGlobalPiLensDir();
 const TREE_SITTER_LOG_FILE = path.join(TREE_SITTER_LOG_DIR, "tree-sitter.log");

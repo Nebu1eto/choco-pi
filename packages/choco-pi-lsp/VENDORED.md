@@ -390,3 +390,13 @@ Under the `choco-pi` launcher, Pi itself can run on Bun (`CHOCO_PI_RUNTIME=bun`)
 ## 2026-11-20 choco-pi patch: Pi SDK range ~1.6.0
 
 Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`), so later 1.6 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
+
+## 2026-11-23 choco-pi patch: internal deduplication and orphan removal
+
+Internal-only cleanup; tool names, schemas, and runtime behavior are unchanged.
+
+- `clients/optional-properties.ts` now holds `assignOptionalProperties` and `includePropertiesWhen`, which had been copied verbatim into 14 and 8 files in `clients/` and `tools/`; those files import it instead.
+- `clients/installer/index.ts`, `clients/installer/managed-tool-refresh.ts`, and `clients/mcp/review.ts` call `safeSpawnAsync` from `clients/safe-spawn.ts` directly. Their local wrappers only re-cast the already-typed `Promise<SpawnResult>`.
+- `clients/dispatch/runners/utils/helm-shared.ts` holds `isWithin` and `failedResult`, which had been identical in `helm-lint.ts` and `helm-render.ts`.
+- Removed `clients/lsp/path-utils.ts`, a re-export of `clients/path-utils.ts`; `clients/lsp/client.ts`, `edits.ts`, and `server.ts` import `../path-utils.ts`.
+- Removed two files that nothing imported: `clients/finding-delivery-gate.ts` (the #1634 delivery-surface documentation and registry; the `// @delivery-surface:` tags in `tools/diagnostics-report.ts` and `clients/runtime-turn.ts` remain as plain labels) and `clients/module-report-lsp.ts` (live-LSP enrichment for `module_report`, parked for #236 since #1090; it is in git history). `withinRemaining` in `clients/deadline-utils.ts` was used only by `module-report-lsp.ts` and is removed with it. Comments that pointed at the removed files are updated.

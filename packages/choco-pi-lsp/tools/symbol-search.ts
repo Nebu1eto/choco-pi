@@ -1,3 +1,4 @@
+import { includePropertiesWhen } from "../clients/optional-properties.ts";
 import type { RuntimeValue } from "./runtime-values.ts";
 /**
  * symbol_search pi tool (#348) — the entry point of the discovery funnel:
@@ -183,12 +184,3 @@ export function createSymbolSearchTool(getProjectRoot: () => string) {
 // Re-exported so tests importing from this module can reach baseName without
 // a second import path.
 export { baseName };
-
-function includePropertiesWhen<T extends object, TInclude>(
-  include: TInclude,
-  createProperties: () => T,
-): Partial<T> {
-  const properties: Partial<T> = {};
-  if (include) Object.assign(properties, createProperties());
-  return properties;
-}

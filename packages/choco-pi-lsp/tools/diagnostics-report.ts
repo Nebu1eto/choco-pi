@@ -1,3 +1,4 @@
+import { includePropertiesWhen } from "../clients/optional-properties.ts";
 import type { ProtocolDictionary } from "./runtime-values.ts";
 import type { RuntimeValue } from "./runtime-values.ts";
 import { isRuntimeNumber, isRuntimeString } from "./runtime-values.ts";
@@ -495,8 +496,7 @@ function formatProjectDeltaDiagnostic(diagnostic: ProjectDiagnostic, stale: bool
  * cited `file:line` findings from a report with its own `generatedAt`, no
  * freshness check. Same gate, same policy as `applyDeltaFreshnessGate`:
  * missing file -> DROP, edited-since -> DEMOTE (loses its line, keeps
- * rule/message), live -> unchanged. See `clients/finding-delivery-gate.ts`
- * surface `lens-diagnostics:mode-delta`.
+ * rule/message), live -> unchanged.
  */
 function appendProjectDiagnosticsDeltaLines(
   lines: string[],
@@ -586,8 +586,7 @@ function loadProjectRulePolicyMap(cwd: string) {
  * warning is gated against it exactly like a scanner finding against
  * `scannedAt`: missing file → DROP (nothing to fix in a file that's gone),
  * edited-since → DEMOTE (loses its line, keeps its rule/message, marked
- * `STALE_LINE_MARKER`), live → unchanged. See
- * `clients/finding-delivery-gate.ts` surface `lens-diagnostics:mode-delta`.
+ * `STALE_LINE_MARKER`), live → unchanged.
  */
 function applyDeltaFreshnessGate<W extends DispositionCandidate>(
   files: Array<{ filePath: string; warnings: W[] }>,
@@ -2235,13 +2234,4 @@ function formatAllMode(
       staleDropped,
     },
   };
-}
-
-function includePropertiesWhen<T extends object, TInclude>(
-  include: TInclude,
-  createProperties: () => T,
-): Partial<T> {
-  const properties: Partial<T> = {};
-  if (include) Object.assign(properties, createProperties());
-  return properties;
 }

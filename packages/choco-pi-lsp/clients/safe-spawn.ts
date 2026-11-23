@@ -14,6 +14,7 @@
  * - To: await safeSpawnAsync(cmd, args, opts)
  */
 
+import { assignOptionalProperties } from "./optional-properties.ts";
 import { isString, type LspBoundaryValue } from "./runtime-guards.ts";
 import { type ChildProcess, type SpawnOptions, spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -23,19 +24,6 @@ import { recordDegradation } from "./degradation-ledger.ts";
 import { logExtension } from "./extension-log.ts";
 import { isFullyQualifiedWin32 } from "./path-utils.ts";
 import { startSpawnUsageSampler } from "./resource-sampler.ts";
-
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-): T & Partial<U>;
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-) {
-  return include ? Object.assign(target, createProperties(include)) : target;
-}
 
 export interface SpawnResourceUsage {
   sampleCount: number;

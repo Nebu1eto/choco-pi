@@ -10,25 +10,13 @@
  * Falls back safely when LSP is unavailable.
  */
 
+import { assignOptionalProperties } from "./optional-properties.ts";
 import { isString, type LspDictionaryValue } from "./runtime-guards.ts";
 import * as fs from "node:fs";
 import { createFileTime, type FileTime } from "./file-time.ts";
 import { hashDiagnosticContent } from "./lsp/diagnostic-binding.ts";
 import { normalizeEphemeralMapKey, normalizeFilePath } from "./path-utils.ts";
 import { logReadGuardEvent } from "./read-guard-logger.ts";
-
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-): T & Partial<U>;
-function assignOptionalProperties<T extends object, U extends object, C>(
-  target: T,
-  include: C,
-  createProperties: (included: NonNullable<C>) => U,
-) {
-  return include ? Object.assign(target, createProperties(include)) : target;
-}
 
 type CurrentLinesMatchReadSnapshotResultContract = {
   checked: boolean;

@@ -76,6 +76,7 @@ import { findNearestDirWithMarker } from "../../workspace-topology.ts";
 import { PRIORITY } from "../priorities.ts";
 import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
 import { describeUnavailability } from "./utils/availability-policy.ts";
+import { failedResult, isWithin } from "./utils/helm-shared.ts";
 import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/runner-helpers.ts";
 
 const helm = createAvailabilityChecker("helm", ".exe");
@@ -134,14 +135,6 @@ const SKIPPED: RunnerResult = {
   diagnostics: [],
   semantic: "none",
 };
-
-function isWithin(root: string, candidate: string): boolean {
-  const relative = path.relative(normalizeMapKey(root), normalizeMapKey(candidate));
-  return (
-    relative === "" ||
-    (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))
-  );
-}
 
 /**
  * Explicit opt-in for rendering. Rendering runs chart-authored template code,
@@ -407,16 +400,6 @@ function helmUnavailableResult(cwd: string): RunnerResult {
       elapsedMs: verdict.elapsedMs,
       retryAfterMs: verdict.retryAtMs ? Math.max(0, verdict.retryAtMs - Date.now()) : undefined,
     }).slice(0, 300),
-  };
-}
-
-function failedResult(kind: string, message: string): RunnerResult {
-  return {
-    status: "failed",
-    diagnostics: [],
-    semantic: "warning",
-    failureKind: kind,
-    failureMessage: message.slice(0, 200),
   };
 }
 
