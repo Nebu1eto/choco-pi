@@ -6,6 +6,7 @@ import type { Static } from "@earendil-works/pi-schema";
 import type { FetchLike } from "../client/http.ts";
 import {
   AGY_CLIENT_IDENTITY,
+  AntigravityConfigError,
   ENV_CLIENT_ID,
   ENV_CLIENT_SECRET,
   GOOGLE_AUTHORIZE_URL,
@@ -32,17 +33,16 @@ import { discoverAntigravityProject, type AntigravityProjectInfo } from "./proje
 export type AntigravityOAuthConfig = NonNullable<ProviderConfig["oauth"]>;
 
 /**
- * Shown before any network request; login continues only on an explicit "accept". One line with
- * no hard breaks, so the host wraps it to the terminal width.
+ * Shown with the sign-in URL, ahead of the sign-in instructions; login asks no question, as agy
+ * does. One line with no hard breaks, so the host wraps it to the terminal width.
  */
 export const ANTIGRAVITY_TERMS_WARNING = [
   "Warning: Google's Antigravity terms restrict third-party clients on consumer (personal Google account) OAuth access, and Google has suspended accounts used this way.",
   "choco-pi is a third-party client.",
   `For compatibility it identifies itself with the official agy CLI's user agent (version ${AGY_CLIENT_IDENTITY.version}) and request format.`,
-  "Continue only if you accept the risk to your Google account.",
+  "Sign in only if you accept the risk to your Google account.",
 ].join(" ");
 
-const ACCEPT_TERMS = "accept";
 const EXPIRY_SKEW_MS = 5 * 60 * 1000;
 const TOKEN_TIMEOUT_MS = 30_000;
 const USERINFO_TIMEOUT_MS = 30_000;
@@ -170,6 +170,8 @@ export interface AntigravityOAuthDeps {
   onboardPollIntervalMs?: number | undefined;
   findAgyBinary?: ResolveClientCredentialsOptions["findAgyBinary"];
   scanAgyBinary?: ((file: string, signal?: AbortSignal) => Promise<AgyScanResult>) | undefined;
+  /** The client login selects from the agy scan; defaults to agy's consumer client. */
+  agyClient?: ResolveClientCredentialsOptions["agyClient"];
 }
 
 interface AuthorizationInput {
@@ -417,7 +419,7 @@ function projectFromStored(
 function missingClientError(): AntigravityError {
   return loginError(
     `no OAuth client is configured; set ${ENV_CLIENT_ID} and ${ENV_CLIENT_SECRET}, ` +
-      "add client_id and client_secret to <agentDir>/google-antigravity.json, or allow discovery from agy at login",
+      "add client_id and client_secret to <agentDir>/google-antigravity.json, or install agy and log in again",
   );
 }
 
@@ -453,7 +455,10 @@ export function createAntigravityOAuth(deps: AntigravityOAuthDeps = {}): Antigra
   ): Promise<string> {
     const signal = callbacks.signal;
     signal?.throwIfAborted();
-    callbacks.onAuth({ url: authorizeUrl, instructions: AUTH_INSTRUCTIONS });
+    callbacks.onAuth({
+      url: authorizeUrl,
+      instructions: `${ANTIGRAVITY_TERMS_WARNING} ${AUTH_INSTRUCTIONS}`,
+    });
     const pending =
       callbacks.onManualCodeInput !== undefined
         ? callbacks.onManualCodeInput()
@@ -463,43 +468,25 @@ export function createAntigravityOAuth(deps: AntigravityOAuthDeps = {}): Antigra
   }
 
   async function login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
-    const decision = await callbacks.onSelect({
-      message: ANTIGRAVITY_TERMS_WARNING,
-      options: [
-        { id: ACCEPT_TERMS, label: "I understand the risk and want to continue" },
-        { id: "decline", label: "Cancel login" },
-      ],
-    });
-    if (decision !== ACCEPT_TERMS) {
-      throw loginError("login cancelled: the terms warning was not accepted");
-    }
     const signal = callbacks.signal;
     signal?.throwIfAborted();
     const config = await readConfig();
-    const client = await resolveClientCredentials({
-      env,
-      config,
-      signal,
-      findAgyBinary: deps.findAgyBinary,
-      scanAgyBinary: deps.scanAgyBinary,
-      confirmAgyDiscovery: async () =>
-        (await callbacks.onSelect({
-          message:
-            "No Google Antigravity OAuth client is configured. Scan the installed agy binary on this machine for its OAuth client? The scan is local; the discovered pair is stored only in your Pi credential.",
-          options: [
-            { id: "scan", label: "Scan agy" },
-            { id: "cancel", label: "Cancel login" },
-          ],
-        })) === "scan",
-      chooseCandidate: async (choice) => {
-        const selected = await callbacks.onSelect({
-          message: choice.message,
-          options: choice.labels.map((label, index) => ({ id: String(index), label })),
-        });
-        const index = selected === undefined ? Number.NaN : Number(selected);
-        return Number.isInteger(index) ? index : undefined;
-      },
-    });
+    let client: AntigravityClientCredentials | undefined;
+    try {
+      client = await resolveClientCredentials({
+        env,
+        config,
+        signal,
+        discoverFromAgy: true,
+        agyClient: deps.agyClient,
+        findAgyBinary: deps.findAgyBinary,
+        scanAgyBinary: deps.scanAgyBinary,
+      });
+    } catch (error) {
+      // A missing agy, an unknown agy client or a half-set source: a login error the user can act on.
+      if (error instanceof AntigravityConfigError) throw loginError(error.message);
+      throw error;
+    }
     if (!client) throw missingClientError();
     signal?.throwIfAborted();
 

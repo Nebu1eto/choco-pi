@@ -27,8 +27,8 @@ To use a Gemini API key instead, remove this package from `packages` and restart
 
 Google's Antigravity terms restrict third-party clients on consumer OAuth access, and Google has
 suspended accounts used this way. choco-pi is a third-party client. `/login google`, choosing
-Google Antigravity, shows this warning and continues only after you choose to accept it;
-declining ends the login before any network request.
+Google Antigravity, shows this warning above the sign-in instructions. Like agy, login asks no
+question: signing in means you accept the risk, and closing the prompt cancels.
 
 ## Client identity (a deliberate compatibility choice)
 
@@ -39,8 +39,8 @@ Requests identify as the official agy CLI release this package was built against
 antigravity/cli/1.5.14 (aidev_client; os_type=<your OS>; arch=<your arch>; cl=1026970498; auth_method=consumer)
 ```
 
-`os_type` and `arch` are this machine's real values. The login warning names this choice, so
-using the provider means you confirmed it. The provider does not rewrite prompts, inject an
+`os_type` and `arch` are this machine's real values. The login warning names this choice. The
+provider does not rewrite prompts, inject an
 identity into them, or fold the system prompt into user turns.
 
 ## Login and the OAuth client
@@ -59,10 +59,12 @@ The repository ships no OAuth client id or secret. Login resolves one in this or
    }
    ```
 
-3. Only when neither is set, and only after you agree at a second prompt: a local scan of the
-   installed agy binary (`CHOCO_PI_ANTIGRAVITY_AGY_PATH`, then `agy_path`, then `agy` on
-   `PATH`). When the binary holds several candidates you choose one; secrets are shown only by
-   their last four characters.
+3. Only when neither is set: a local scan of the installed agy binary
+   (`CHOCO_PI_ANTIGRAVITY_AGY_PATH`, then `agy_path`, then `agy` on `PATH`). agy 1.5.14 holds
+   three OAuth clients, each loaded next to its own secret: Business login, consumer login
+   (`auth.newBrowserLogin`) and MCP. Login takes the consumer pair, identified by the SHA-256
+   digests in `AGY_CONSUMER_CLIENT` (`src/auth/client-credentials.ts`); the values are never
+   committed. An agy without that pair fails the login and names the environment variables.
 
 The browser step follows agy 1.5.14's consumer login. It opens
 `https://accounts.google.com/o/oauth2/auth` with PKCE (S256), an independent `state`,
@@ -151,9 +153,10 @@ with pi-antigravity 0.15.0 (Rahularya01/pi-antigravity). No code was copied from
 
 ## Known gaps
 
-- The agy binary embeds several client ids and secrets with no recorded pairing. Its Go string
-  table groups literals by length, so the position of an id or secret says nothing about which
-  pair the consumer login uses; candidates keep file order and, when there are several, you pick.
+- agy discovery recognises only the consumer client of agy 1.5.14. If a later agy rotates it,
+  login fails until `AGY_CONSUMER_CLIENT` is updated or the client is set by environment or
+  config. The pairing comes from agy's arm64 code: each client id is loaded beside its secret in
+  the functions named above.
 - Claude thinking parameters (`thinkingLevel` LOW/MEDIUM/HIGH) match captured agy requests for
   Claude Opus 5.5. Claude Sonnet 5.5 was not captured from agy, but live Sonnet requests with
   the same shape succeed, including tool turns.

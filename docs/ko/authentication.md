@@ -38,13 +38,13 @@ Pi에 내장된 `xai` 공급자(Grok)는 `/login xai`로 SuperGrok 또는 X Prem
 
 새로 설치하면 이 패키지가 기본으로 로드됩니다. 다시 설치하는 명령(`pnpm install:profile`, `choco-pi self setup`, `choco-pi self update`)은 기존 설치에도 이 패키지를 추가하고 그 경로를 `added package:`로 출력합니다. 이후 choco-pi를 다시 시작하세요. 이전 설치에서 이미 제공된 번들 패키지를 `settings.json`의 `packages`에서 지웠다면 그 패키지는 계속 빠진 상태로 유지되므로, Pi 기본 공급자를 계속 쓰려면 이 패키지도 같은 방법으로 지우세요.
 
-**약관과 계정 위험.** Google의 Antigravity 약관은 소비자 OAuth 접근으로 서드파티 클라이언트를 쓰는 것을 제한하며, 실제로 이런 방식으로 쓰인 계정이 정지된 사례가 있습니다. choco-pi는 서드파티 클라이언트이고, 요청은 공식 agy CLI로 식별됩니다. Google Antigravity 로그인은 이 경고를 보여 주고 사용자가 수락해야만 진행합니다. 거절하면 네트워크 요청 없이 로그인이 끝납니다. 계정에 대한 이 위험을 받아들일 때만 이 공급자를 쓰세요.
+**약관과 계정 위험.** Google의 Antigravity 약관은 소비자 OAuth 접근으로 서드파티 클라이언트를 쓰는 것을 제한하며, 실제로 이런 방식으로 쓰인 계정이 정지된 사례가 있습니다. choco-pi는 서드파티 클라이언트이고, 요청은 공식 agy CLI로 식별됩니다. Google Antigravity 로그인은 로그인 안내 위에 이 경고를 보여 주며, agy처럼 아무것도 묻지 않습니다. 로그인하면 이 위험을 받아들인 것으로 봅니다. 계정에 대한 이 위험을 받아들일 때만 이 공급자를 쓰세요.
 
 저장소에는 OAuth 클라이언트 ID나 시크릿이 들어 있지 않습니다. 로그인은 다음 중 먼저 설정된 곳에서 값을 가져옵니다.
 
 1. `CHOCO_PI_ANTIGRAVITY_CLIENT_ID`와 `CHOCO_PI_ANTIGRAVITY_CLIENT_SECRET` 환경 변수
 2. `<에이전트 디렉터리>/google-antigravity.json`의 `client_id`와 `client_secret`. 같은 파일에 `project_id`(직접 쓰는 Cloud 프로젝트)와 `agy_path`도 지정할 수 있습니다.
-3. 둘 다 없을 때, 두 번째 확인 질문에 동의한 경우에만: 설치된 agy 바이너리의 로컬 검사(`CHOCO_PI_ANTIGRAVITY_AGY_PATH`, `agy_path`, `PATH`의 `agy` 순)
+3. 둘 다 없을 때: 설치된 agy 바이너리의 로컬 검사(`CHOCO_PI_ANTIGRAVITY_AGY_PATH`, `agy_path`, `PATH`의 `agy` 순). agy처럼 아무것도 묻지 않고 agy의 소비자용 클라이언트를 스스로 고릅니다.
 
 브라우저 단계는 공식 agy CLI의 로그인과 같은 방식입니다. choco-pi가 Google 로그인 페이지를 열고, 접근을 허용하면 Google이 브라우저를 `https://antigravity.google/oauth-callback`으로 보내며, 그 페이지에 인증 코드가 표시됩니다. 이 코드를 복사해 choco-pi의 입력란에 붙여 넣으세요(그 페이지의 전체 주소를 붙여 넣어도 됩니다). 이 컴퓨터에서 대기하는 서버는 없으며, 코드는 기록하거나 화면에 다시 보여 주지 않습니다. 로그인이 요청하는 범위(scope)는 `cloud-platform`, `userinfo.email`, `userinfo.profile`, `cclog`, `experimentsandconfigs`, `aicode`(모두 `https://www.googleapis.com/auth/` 아래)와 `openid`입니다. 로그인 후 choco-pi는 계정 이메일을 읽어 `/usage` 같은 계정별 데이터가 같은 계정에 계속 묶이도록 합니다. 이메일은 인증 정보에만 저장되고 해시한 형태로만 쓰입니다. 인증 정보는 Pi 인증 저장소에만 저장되며, 환경 변수나 설정 파일의 시크릿은 그곳에 복사하지 않습니다. Cloud Code Assist 프로젝트는 Google이 정해 주며, 받지 못하면 프로젝트를 지어내지 않고 메시지와 함께 로그인이 실패합니다.
 

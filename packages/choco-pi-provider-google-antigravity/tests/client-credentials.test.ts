@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  AGY_CONSUMER_CLIENT,
   findAgyBinary,
   resolveClientCredentials,
   scanAgyBinary,
@@ -46,41 +48,61 @@ test("findAgyBinary honors the env override and then PATH", async () => {
   await rm(dir, { recursive: true });
 });
 
-test("several candidates require an explicit choice; no choice cancels", async () => {
+const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
+
+test("login selects the fingerprinted client pair among several, asking nothing", async () => {
+  // Fingerprinted pair listed second, as in agy, where file order does not identify it.
   const scan = async () => ({
     clientIds: [FAKE_CLIENT_ID, FAKE_CLIENT_ID_2],
     clientSecrets: [FAKE_CLIENT_SECRET, FAKE_CLIENT_SECRET_2],
   });
-  const labels: string[][] = [];
+  const agyClient = {
+    clientIdSha256: sha256(FAKE_CLIENT_ID_2),
+    clientSecretSha256: sha256(FAKE_CLIENT_SECRET_2),
+  };
   const chosen = await resolveClientCredentials({
     env: {},
-    confirmAgyDiscovery: async () => true,
+    discoverFromAgy: true,
+    agyClient,
     findAgyBinary: async () => "/fake/agy",
     scanAgyBinary: scan,
-    chooseCandidate: async (choice) => {
-      labels.push(choice.labels);
-      return 1;
-    },
   });
   assert.deepEqual(chosen, {
     clientId: FAKE_CLIENT_ID_2,
     clientSecret: FAKE_CLIENT_SECRET_2,
     source: "agy",
   });
-  assert.equal(
-    labels[1]?.some((label) => label.includes("GOCSPX")),
-    false,
-  );
-  await assert.rejects(
-    resolveClientCredentials({
-      env: {},
-      confirmAgyDiscovery: async () => true,
-      findAgyBinary: async () => "/fake/agy",
-      scanAgyBinary: scan,
-      chooseCandidate: async () => undefined,
-    }),
-    AntigravityConfigError,
-  );
+});
+
+test("a binary without the fingerprinted pair fails without falling back to another client", async () => {
+  const scan = async () => ({
+    clientIds: [FAKE_CLIENT_ID, FAKE_CLIENT_ID_2],
+    clientSecrets: [FAKE_CLIENT_SECRET, FAKE_CLIENT_SECRET_2],
+  });
+  for (const agyClient of [
+    AGY_CONSUMER_CLIENT,
+    // The right id with a secret from another client is still no match.
+    { clientIdSha256: sha256(FAKE_CLIENT_ID), clientSecretSha256: sha256("GOCSPX-other") },
+  ]) {
+    await assert.rejects(
+      resolveClientCredentials({
+        env: {},
+        discoverFromAgy: true,
+        agyClient,
+        findAgyBinary: async () => "/fake/agy",
+        scanAgyBinary: scan,
+      }),
+      {
+        name: AntigravityConfigError.name,
+        message: /^(?!.*GOCSPX).*does not hold the agy consumer OAuth client/u,
+      },
+    );
+  }
+});
+
+test("the shipped fingerprint is two SHA-256 digests, never a raw client value", () => {
+  assert.match(AGY_CONSUMER_CLIENT.clientIdSha256, /^[0-9a-f]{64}$/u);
+  assert.match(AGY_CONSUMER_CLIENT.clientSecretSha256, /^[0-9a-f]{64}$/u);
 });
 
 test("a half-configured source is an error, not a silent fallthrough", async () => {

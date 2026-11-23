@@ -29,7 +29,9 @@ import {
 import { AntigravityError, parseAntigravityErrorMessage } from "../src/errors.ts";
 import {
   FAKE_CLIENT_ID,
+  FAKE_CLIENT_ID_2,
   FAKE_CLIENT_SECRET,
+  FAKE_CLIENT_SECRET_2,
   fakeFetch,
   fixture,
   json,
@@ -40,6 +42,7 @@ const ENDPOINT = "https://cloudcode.test";
 const REDIRECT = "https://antigravity.google/oauth-callback";
 const FAKE_CODE = "4/0fake-authorization-code";
 const FAKE_EMAIL = "fake.user@example.com";
+const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
 async function agentDirWith(config?: string): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), "agy-oauth-"));
@@ -59,15 +62,13 @@ interface LoginHarness {
 }
 
 /**
- * Callbacks that answer the selects in order and paste `paste`'s text: through
+ * Callbacks that record any select (login must ask none) and paste `paste`'s text: through
  * onManualCodeInput when `manual` is set (the host has one), else through onPrompt.
  */
 function harness(
-  answers: readonly (string | undefined)[],
   paste: Paste,
   options: { signal?: AbortSignal; manual?: boolean } = {},
 ): LoginHarness {
-  let answer = 0;
   const h: LoginHarness = {
     selects: [],
     auths: [],
@@ -84,7 +85,7 @@ function harness(
       },
       onSelect: async (prompt) => {
         h.selects.push(prompt);
-        return answers[answer++];
+        return undefined;
       },
       signal: options.signal,
     },
@@ -200,11 +201,15 @@ test("terms warning has no hard line breaks, so the host can wrap it", () => {
 test("login: pasted code, PKCE exchange with the Antigravity redirect, userinfo email, project", async () => {
   const dir = await agentDirWith();
   const { fake, deps: d } = deps(googleRoute(await fixture("load-code-assist.json")), dir, ENV);
-  const h = harness(["accept"], () => `  ${FAKE_CODE}\n`, { manual: true });
+  const h = harness(() => `  ${FAKE_CODE}\n`, { manual: true });
   const credentials = await createAntigravityOAuth(d).login(h.callbacks);
 
-  assert.equal(h.selects[0]?.message, ANTIGRAVITY_TERMS_WARNING);
+  assert.equal(h.selects.length, 0, "login asks no question, as agy does");
   assert.equal(h.auths.length, 1);
+  assert.ok(
+    h.auths[0]?.instructions?.startsWith(ANTIGRAVITY_TERMS_WARNING),
+    "the terms warning leads the sign-in instructions",
+  );
   assert.match(h.auths[0]?.instructions ?? "", /Antigravity page/u);
   assert.equal(h.manualInputs, 1);
   assert.equal(h.prompts.length, 0, "the manual code input is the only prompt");
@@ -278,7 +283,7 @@ test("login: pasted code, PKCE exchange with the Antigravity redirect, userinfo 
 test("login: a pasted redirect URL with the right state works through the one onPrompt", async () => {
   const dir = await agentDirWith();
   const { fake, deps: d } = deps(googleRoute(await fixture("load-code-assist.json")), dir, ENV);
-  const h = harness(["accept"], redirectWith(FAKE_CODE));
+  const h = harness(redirectWith(FAKE_CODE));
   const credentials = await createAntigravityOAuth(d).login(h.callbacks);
   assert.equal(h.prompts.length, 1);
   assert.equal(h.manualInputs, 0);
@@ -290,7 +295,7 @@ test("login: a pasted redirect URL with the right state works through the one on
 test("login: a percent-encoded bare code is decoded", async () => {
   const dir = await agentDirWith();
   const { fake, deps: d } = deps(googleRoute(await fixture("load-code-assist.json")), dir, ENV);
-  const h = harness(["accept"], () => encodeURIComponent(FAKE_CODE), { manual: true });
+  const h = harness(() => encodeURIComponent(FAKE_CODE), { manual: true });
   await createAntigravityOAuth(d).login(h.callbacks);
   assert.equal(new URLSearchParams(fake.calls[0]?.body).get("code"), FAKE_CODE);
   await rm(dir, { recursive: true });
@@ -310,7 +315,7 @@ test("login: state mismatch, empty paste and a denied redirect fail as auth erro
   for (const manual of [true, false]) {
     for (const { paste, message } of cases) {
       const { fake, deps: d } = deps(googleRoute("{}"), dir, ENV);
-      const h = harness(["accept"], paste, { manual });
+      const h = harness(paste, { manual });
       await assert.rejects(createAntigravityOAuth(d).login(h.callbacks), (error) => {
         assert.ok(error instanceof AntigravityError);
         assert.equal(error.kind, "auth");
@@ -325,18 +330,13 @@ test("login: state mismatch, empty paste and a denied redirect fail as auth erro
   await rm(dir, { recursive: true });
 });
 
-test("login: declining the terms aborts before any network or browser step", async () => {
+test("login: without agy or a configured client it fails before any network or browser step", async () => {
   const dir = await agentDirWith();
-  const { fake, deps: d } = deps(googleRoute("{}"), dir, ENV);
-  for (const answer of ["decline", undefined]) {
-    const h = harness([answer], bareCode);
-    await assert.rejects(
-      createAntigravityOAuth(d).login(h.callbacks),
-      /terms warning was not accepted/u,
-    );
-    assert.equal(h.auths.length, 0);
-    assert.equal(h.prompts.length + h.manualInputs, 0);
-  }
+  const { fake, deps: d } = deps(googleRoute("{}"), dir, {});
+  const h = harness(bareCode);
+  await assert.rejects(createAntigravityOAuth(d).login(h.callbacks), /agy was not found/u);
+  assert.equal(h.selects.length + h.auths.length, 0);
+  assert.equal(h.prompts.length + h.manualInputs, 0);
   assert.equal(fake.calls.length, 0);
   await rm(dir, { recursive: true });
 });
@@ -359,7 +359,6 @@ test("login: abort during the code prompt rejects once and never requests a toke
       release = resolve;
     });
     const h = harness(
-      ["accept"],
       () => {
         setTimeout(() => controller.abort(new Error("user cancelled")), 5);
         return pasted;
@@ -392,7 +391,7 @@ test("login: an abort before the browser step never shows the URL or prompts", a
       return "{}";
     },
   });
-  const h = harness(["accept"], bareCode, { signal: controller.signal, manual: true });
+  const h = harness(bareCode, { signal: controller.signal, manual: true });
   await assert.rejects(createAntigravityOAuth(d).login(h.callbacks), /cancelled early/u);
   assert.equal(h.auths.length, 0);
   assert.equal(h.manualInputs, 0);
@@ -413,9 +412,7 @@ test("login: a userinfo failure is not fatal; the account key falls back to the 
   ];
   for (const userinfo of failures) {
     const { fake, deps: d } = deps(googleRoute(load, { userinfo }), dir, ENV);
-    const credentials = await createAntigravityOAuth(d).login(
-      harness(["accept"], bareCode).callbacks,
-    );
+    const credentials = await createAntigravityOAuth(d).login(harness(bareCode).callbacks);
     assert.equal(credentials["email"], undefined);
     assert.equal(credentials["project_id"], "aicode-consumers");
     assert.equal(fake.calls.length, 3);
@@ -434,15 +431,12 @@ test("login: Google returning no refresh token is an auth error", async () => {
     dir,
     ENV,
   );
-  await assert.rejects(
-    createAntigravityOAuth(d).login(harness(["accept"], bareCode).callbacks),
-    (error) => {
-      assert.ok(error instanceof AntigravityError);
-      assert.equal(error.kind, "auth");
-      assert.match(error.message, /no refresh token/u);
-      return true;
-    },
-  );
+  await assert.rejects(createAntigravityOAuth(d).login(harness(bareCode).callbacks), (error) => {
+    assert.ok(error instanceof AntigravityError);
+    assert.equal(error.kind, "auth");
+    assert.match(error.message, /no refresh token/u);
+    return true;
+  });
   await rm(dir, { recursive: true });
 });
 
@@ -468,7 +462,7 @@ test("account key: prefers the email, is stable across refresh-token rotation, k
   assert.equal(withEmail.includes("fake"), false);
 });
 
-test("client source order: env beats config, config beats agy; agy needs opt-in", async () => {
+test("client source order: env beats config, config beats agy; agy is scanned only when neither is set", async () => {
   const config = JSON.stringify({
     client_id: "222222222222-config.apps.googleusercontent.com",
     client_secret: "config-secret-fake",
@@ -477,15 +471,13 @@ test("client source order: env beats config, config beats agy; agy needs opt-in"
   const load = await fixture("load-code-assist.json");
 
   const envRun = deps(googleRoute(load), dir, ENV);
-  const envCreds = await createAntigravityOAuth(envRun.deps).login(
-    harness(["accept"], bareCode).callbacks,
-  );
+  const envCreds = await createAntigravityOAuth(envRun.deps).login(harness(bareCode).callbacks);
   assert.equal(envCreds["client_source"], "env");
   assert.equal(new URLSearchParams(envRun.fake.calls[0]?.body).get("client_id"), FAKE_CLIENT_ID);
 
   const configRun = deps(googleRoute(load), dir, {});
   const configCreds = await createAntigravityOAuth(configRun.deps).login(
-    harness(["accept"], bareCode).callbacks,
+    harness(bareCode).callbacks,
   );
   assert.equal(configCreds["client_source"], "config");
   assert.equal(configCreds["client_secret"], undefined);
@@ -501,22 +493,22 @@ test("client source order: env beats config, config beats agy; agy needs opt-in"
       findAgyBinary: async () => "/fake/agy",
       scanAgyBinary: async () => {
         scanned++;
-        return { clientIds: [FAKE_CLIENT_ID], clientSecrets: [FAKE_CLIENT_SECRET] };
+        return {
+          clientIds: [FAKE_CLIENT_ID_2, FAKE_CLIENT_ID],
+          clientSecrets: [FAKE_CLIENT_SECRET_2, FAKE_CLIENT_SECRET],
+        };
+      },
+      agyClient: {
+        clientIdSha256: sha256(FAKE_CLIENT_ID),
+        clientSecretSha256: sha256(FAKE_CLIENT_SECRET),
       },
     },
   );
-  const declined = harness(["accept", "cancel"], bareCode);
-  await assert.rejects(
-    createAntigravityOAuth(agyRun.deps).login(declined.callbacks),
-    /no OAuth client is configured/u,
-  );
-  assert.equal(scanned, 0);
-  assert.equal(agyRun.fake.calls.length, 0);
-
-  const agyCreds = await createAntigravityOAuth(agyRun.deps).login(
-    harness(["accept", "scan"], bareCode).callbacks,
-  );
+  assert.equal(scanned, 0, "env and config logins never scan agy");
+  const agyLogin = harness(bareCode);
+  const agyCreds = await createAntigravityOAuth(agyRun.deps).login(agyLogin.callbacks);
   assert.equal(scanned, 1);
+  assert.equal(agyLogin.selects.length, 0, "discovery asks nothing");
   assert.equal(agyCreds["client_source"], "agy");
   assert.equal(agyCreds["client_id"], FAKE_CLIENT_ID);
   assert.equal(agyCreds["client_secret"], FAKE_CLIENT_SECRET);
@@ -661,19 +653,31 @@ test("login and refresh errors are formatter lines that keep the actionable word
   const dir = await agentDirWith();
   const run = deps(googleRoute("{}"), dir, {});
 
-  const declined = await formattedRejection(
-    createAntigravityOAuth(run.deps).login(harness(["decline"], bareCode).callbacks),
-  );
-  assert.equal(declined.kind, "auth");
-  assert.match(
-    declined.fields.detail ?? "",
-    /^login cancelled: the terms warning was not accepted$/u,
-  );
+  const loginFailures = [
+    // No agy on PATH.
+    await formattedRejection(createAntigravityOAuth(run.deps).login(harness(bareCode).callbacks)),
+    // An agy whose clients do not match the consumer fingerprint.
+    await formattedRejection(
+      createAntigravityOAuth({
+        ...run.deps,
+        findAgyBinary: async () => "/fake/agy",
+        scanAgyBinary: async () => ({
+          clientIds: [FAKE_CLIENT_ID],
+          clientSecrets: [FAKE_CLIENT_SECRET],
+        }),
+      }).login(harness(bareCode).callbacks),
+    ),
+  ];
+  for (const error of loginFailures) {
+    assert.equal(error.kind, "auth");
+    const detail = error.fields.detail ?? "";
+    for (const name of [ENV_CLIENT_ID, ENV_CLIENT_SECRET]) {
+      assert.ok(detail.includes(name), `names ${name}: ${detail}`);
+    }
+    assert.doesNotMatch(detail, /GOCSPX/u);
+  }
 
   const missing = [
-    await formattedRejection(
-      createAntigravityOAuth(run.deps).login(harness(["accept"], bareCode).callbacks),
-    ),
     await formattedRejection(
       createAntigravityOAuth(run.deps).refreshToken(
         storedCredential({ client_source: "env", client_id: FAKE_CLIENT_ID }),

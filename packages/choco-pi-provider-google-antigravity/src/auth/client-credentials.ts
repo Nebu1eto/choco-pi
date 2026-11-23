@@ -1,4 +1,5 @@
 import { constants, createReadStream } from "node:fs";
+import { createHash } from "node:crypto";
 import { access } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -25,23 +26,32 @@ export interface AgyScanResult {
   clientSecrets: string[];
 }
 
-export interface CandidateChoice {
-  message: string;
-  labels: string[];
+/** SHA-256 hex digests of one OAuth client's id and secret. */
+export interface ClientFingerprint {
+  clientIdSha256: string;
+  clientSecretSha256: string;
 }
+
+/**
+ * The OAuth client agy's consumer login uses (`auth.newBrowserLogin` and
+ * `(*loopbackLogin).oauthConfig` in agy 1.5.14). The binary also holds a Business client and an
+ * MCP client, each loaded next to its own secret, so only these digests select the consumer pair;
+ * the values themselves are never committed.
+ */
+export const AGY_CONSUMER_CLIENT: ClientFingerprint = {
+  clientIdSha256: "bf00c418024ba6bf606ccdc37120976e41bc429dd1d46ecf16a729aa532626ea",
+  clientSecretSha256: "1d2f041093fd95aa8995a038c711d50a7960da09a505381c09a745d6ad0ecc60",
+};
 
 export interface ResolveClientCredentialsOptions {
   env?: EnvLookup | undefined;
   /** Already-read config file; omitted reads `<agentDir>/google-antigravity.json`. */
   config?: AntigravityConfigFile | undefined;
   agentDir?: string | undefined;
-  /**
-   * Explicit opt-in for scanning the installed agy binary. Only login passes it; it must ask the
-   * user and resolve true only on an explicit yes. Refresh never scans.
-   */
-  confirmAgyDiscovery?: (() => Promise<boolean>) | undefined;
-  /** Picks one candidate when the binary holds several; resolves undefined to cancel. */
-  chooseCandidate?: ((choice: CandidateChoice) => Promise<number | undefined>) | undefined;
+  /** Scans the installed agy binary when no other source is set. Only login sets it; refresh never scans. */
+  discoverFromAgy?: boolean | undefined;
+  /** The client to select from the agy scan; defaults to AGY_CONSUMER_CLIENT. */
+  agyClient?: ClientFingerprint | undefined;
   findAgyBinary?:
     | ((env: EnvLookup, config: AntigravityConfigFile | undefined) => Promise<string | undefined>)
     | undefined;
@@ -112,26 +122,8 @@ export async function findAgyBinary(
   return undefined;
 }
 
-function redactedSecretLabel(secret: string, index: number): string {
-  return `secret candidate ${index + 1} (ends …${secret.slice(-4)})`;
-}
-
-async function pick(
-  values: string[],
-  message: string,
-  label: (value: string, index: number) => string,
-  choose: ResolveClientCredentialsOptions["chooseCandidate"],
-): Promise<string> {
-  const [only] = values;
-  if (values.length === 1 && only !== undefined) return only;
-  const index = choose ? await choose({ message, labels: values.map(label) }) : undefined;
-  const chosen = index === undefined ? undefined : values[index];
-  if (chosen === undefined) {
-    throw new AntigravityConfigError(
-      `agy holds ${values.length} candidates and none was chosen; set ${ENV_CLIENT_ID} and ${ENV_CLIENT_SECRET} instead`,
-    );
-  }
-  return chosen;
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 async function discoverFromAgy(
@@ -146,30 +138,22 @@ async function discoverFromAgy(
     );
   }
   const scan = await (options.scanAgyBinary ?? scanAgyBinary)(binary, options.signal);
-  if (scan.clientIds.length === 0 || scan.clientSecrets.length === 0) {
-    throw new AntigravityConfigError(`no OAuth client found in ${binary}`);
+  const wanted = options.agyClient ?? AGY_CONSUMER_CLIENT;
+  const clientId = scan.clientIds.find((value) => sha256(value) === wanted.clientIdSha256);
+  const clientSecret = scan.clientSecrets.find(
+    (value) => sha256(value) === wanted.clientSecretSha256,
+  );
+  if (clientId === undefined || clientSecret === undefined) {
+    throw new AntigravityConfigError(
+      `${binary} does not hold the agy consumer OAuth client this choco-pi knows; update choco-pi, or set ${ENV_CLIENT_ID} and ${ENV_CLIENT_SECRET}`,
+    );
   }
-  // Candidates keep file order. agy's Go string table groups literals by length, so neither an
-  // id's distance to the redirect string nor a secret's distance to an id identifies the pair the
-  // consumer login uses; no deterministic ranking rule exists, so the user chooses.
-  const clientId = await pick(
-    scan.clientIds,
-    "agy contains several OAuth client ids. Choose the one to use:",
-    (value) => value,
-    options.chooseCandidate,
-  );
-  const clientSecret = await pick(
-    scan.clientSecrets,
-    "agy contains several OAuth client secrets. Choose the one to use:",
-    redactedSecretLabel,
-    options.chooseCandidate,
-  );
   return { clientId, clientSecret, source: "agy" };
 }
 
 /**
- * Resolves the OAuth client in order: environment, config file, then (only after an explicit
- * opt-in) the installed agy binary. Resolves undefined when no source supplies one.
+ * Resolves the OAuth client in order: environment, config file, then (only when login asks for
+ * it) the installed agy binary. Resolves undefined when no source supplies one.
  */
 export async function resolveClientCredentials(
   options: ResolveClientCredentialsOptions = {},
@@ -186,7 +170,6 @@ export async function resolveClientCredentials(
     (options.agentDir === undefined ? undefined : await readAntigravityConfig(options.agentDir));
   const fromConfig = pairFrom(config?.client_id, config?.client_secret, "google-antigravity.json");
   if (fromConfig) return { ...fromConfig, source: "config" };
-  if (!options.confirmAgyDiscovery) return undefined;
-  if (!(await options.confirmAgyDiscovery())) return undefined;
+  if (options.discoverFromAgy !== true) return undefined;
   return discoverFromAgy(options, env, config);
 }
