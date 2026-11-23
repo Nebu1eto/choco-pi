@@ -24,7 +24,6 @@ import { resolveMaxTokens } from "../budget.ts";
 import type { FailureReason, PreparationBudget, ProviderScope } from "../background/contract.ts";
 import { ownedReasonOf } from "../background/lane-journal.ts";
 import type { AnnouncedRecord, NoticeLevel, NoticePolicy } from "../background-host/notices.ts";
-import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 import {
   SURFACED_FAILURE_RESULT,
   surfacedFailureMessage,
@@ -44,6 +43,7 @@ import type { WireCapture } from "./capture.ts";
 import type { LaneStream } from "./lane-client.ts";
 import type { AnthropicCompactionMode, AnthropicServerSideSession } from "./mode.ts";
 import { hostTriggerOf, type CompactionTrigger } from "../trigger.ts";
+import { readSessionId } from "../shared/session.ts";
 
 /** Upper bound on one foreground summarization request. */
 const FOREGROUND_TIMEOUT_MS = 300_000;
@@ -108,16 +108,6 @@ const STALE: Attempt = { kind: "stale" };
 
 function fallback(reason: FailureReason | "no-capture"): Attempt {
   return { kind: "fallback", reason };
-}
-
-/** Session ID, or undefined once the context outlived its session. */
-function readSessionId(ctx: ExtensionContext): string | undefined {
-  try {
-    return ctx.sessionManager.getSessionId();
-  } catch (error) {
-    if (error instanceof Error && isStaleContextError(error)) return undefined;
-    throw error;
-  }
 }
 
 /**

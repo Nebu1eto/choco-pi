@@ -14,8 +14,6 @@
  * Transport checks registered for the current provider call run before the
  * request leaves the process; a failed check refuses it locally (fail closed).
  */
-import { AsyncLocalStorage } from "node:async_hooks";
-
 import type {
   Api,
   AssistantMessageEventStream,
@@ -46,8 +44,18 @@ import {
   JsonRecordSchema,
   withJsonValueDefs,
 } from "../background/contract.ts";
-import { isNonNegativeInteger, isRecord, isString, nonEmptyStr, readProperty } from "../guards.ts";
+import { isString, nonEmptyStr } from "../guards.ts";
 import { isXaiDetails } from "./details.ts";
+import {
+  endpointOf,
+  laneRuntime,
+  type LaneRuntime,
+  type ProjectionSource,
+  projectionFor,
+  requestUrl,
+  responseRingSlot,
+  storeBounded,
+} from "../shared/lane-runtime.ts";
 
 // ---------------------------------------------------------------------------
 // Wire model (Responses `input` items)
@@ -331,53 +339,13 @@ interface TransportRefusal {
   readonly at: number;
 }
 
-type ProjectionSource = () => readonly ProjectedSessionEntry[];
-
-interface LaneRuntime {
-  readonly schemaVersion: 1;
-  readonly calls: AsyncLocalStorage<TransportCall>;
-  readonly captures: Map<string, XaiWireCapture[]>;
-  readonly projections: Map<string, ProjectionSource>;
-  readonly refusals: TransportRefusal[];
-  readonly counter: { value: number };
-}
-
 const RUNTIME_SYMBOL = Symbol.for("choco-pi:xai-native-lane");
 
-function isRuntime<T>(value: T): value is T & LaneRuntime {
-  return (
-    isRecord(value) &&
-    readProperty(value, "schemaVersion") === 1 &&
-    Array.isArray(readProperty(value, "refusals")) &&
-    isRecord(readProperty(value, "counter")) &&
-    isNonNegativeInteger(readProperty(readProperty(value, "counter"), "value")) &&
-    readProperty(value, "calls") instanceof AsyncLocalStorage &&
-    readProperty(value, "captures") instanceof Map &&
-    readProperty(value, "projections") instanceof Map
-  );
-}
-
 /** Process-wide state shared by every extension instance that loads this module. */
-function runtime(): LaneRuntime {
-  const descriptor = Object.getOwnPropertyDescriptor(globalThis, RUNTIME_SYMBOL);
-  const found: unknown = descriptor?.value;
-  if (descriptor !== undefined) {
-    if (!isRuntime(found)) throw new Error("Invalid xAI native lane runtime slot");
-    return found;
-  }
-  const created: LaneRuntime = {
-    schemaVersion: 1,
-    calls: new AsyncLocalStorage<TransportCall>(),
-    captures: new Map(),
-    projections: new Map(),
-    refusals: [],
-    counter: { value: 0 },
-  };
-  Object.defineProperty(globalThis, RUNTIME_SYMBOL, { value: created, configurable: true });
-  return created;
+function runtime(): LaneRuntime<TransportCall, XaiWireCapture, TransportRefusal> {
+  return laneRuntime<TransportCall, XaiWireCapture, TransportRefusal>(RUNTIME_SYMBOL, "xAI");
 }
 
-const MAX_SESSIONS = 64;
 const MAX_REFUSALS = 64;
 const DEFAULT_CAPTURES_PER_SESSION = 4;
 
@@ -430,13 +398,7 @@ const MAX_RESPONSES_PER_SESSION = 8;
  * usable capture. Its own slot, so the lane runtime's shape is unchanged.
  */
 function responseRing(): Map<string, XaiRecordedResponse[]> {
-  const descriptor = Object.getOwnPropertyDescriptor(globalThis, RESPONSES_SYMBOL);
-  const found: unknown = descriptor?.value;
-  if (found instanceof Map) return found;
-  if (descriptor !== undefined) throw new Error("Invalid xAI native response ring slot");
-  const created = new Map<string, XaiRecordedResponse[]>();
-  Object.defineProperty(globalThis, RESPONSES_SYMBOL, { value: created, configurable: true });
-  return created;
+  return responseRingSlot<XaiRecordedResponse>(RESPONSES_SYMBOL, "xAI");
 }
 
 /** Unusable responses of a session, oldest first (at most 8). */
@@ -445,15 +407,7 @@ export function recentXaiResponsesFor(sessionId: string): readonly XaiRecordedRe
 }
 
 function storeResponse(sessionId: string, response: XaiRecordedResponse): void {
-  const ring = responseRing();
-  const list = ring.get(sessionId) ?? [];
-  ring.delete(sessionId);
-  ring.set(sessionId, [...list, response].slice(-MAX_RESPONSES_PER_SESSION));
-  while (ring.size > MAX_SESSIONS) {
-    const oldest = ring.keys().next();
-    if (oldest.done === true) break;
-    ring.delete(oldest.value);
-  }
+  storeBounded(responseRing(), sessionId, response, MAX_RESPONSES_PER_SESSION);
 }
 
 export function xaiTransportRefusals(sessionId?: string): readonly TransportRefusal[] {
@@ -486,45 +440,8 @@ function isResponsesModel(model: Model<Api>): model is Model<"openai-responses">
   return model.api === "openai-responses";
 }
 
-function requestUrl(input: Parameters<typeof globalThis.fetch>[0]): string {
-  if (input instanceof Request) return input.url;
-  if (input instanceof URL) return input.href;
-  return input;
-}
-
-function endpointOf(url: string): string {
-  try {
-    const parsed = new URL(url);
-    return `${parsed.origin}${parsed.pathname}`;
-  } catch {
-    return "";
-  }
-}
-
-function projectionFor(
-  sessionId: string | undefined,
-): readonly ProjectedSessionEntry[] | undefined {
-  if (sessionId === undefined) return undefined;
-  const source = runtime().projections.get(sessionId);
-  if (source === undefined) return undefined;
-  try {
-    return source();
-  } catch {
-    // A stale or disposed session context cannot describe this request; leave it unmapped.
-    return undefined;
-  }
-}
-
 function storeCapture(capture: XaiWireCapture, limit: number): void {
-  const captures = runtime().captures;
-  const list = captures.get(capture.sessionId) ?? [];
-  captures.delete(capture.sessionId);
-  captures.set(capture.sessionId, [...list, capture].slice(-limit));
-  while (captures.size > MAX_SESSIONS) {
-    const oldest = captures.keys().next();
-    if (oldest.done === true) break;
-    captures.delete(oldest.value);
-  }
+  storeBounded(runtime().captures, capture.sessionId, capture, limit);
 }
 
 /** A refused request is answered locally with a non-retryable 400 and never transmitted. */
@@ -623,7 +540,7 @@ async function captureAndForward(
   const request = readRequest(init);
   const refusal = verifyRequest(capture, request);
   if (refusal) return refusal;
-  const entries = projectionFor(capture.call.sessionId);
+  const entries = projectionFor(runtime().projections, capture.call.sessionId);
   const mapping =
     request.body === undefined || entries === undefined
       ? undefined

@@ -36,7 +36,8 @@ import {
   ownedReasonOf,
   REASONS,
 } from "../background/lane-journal.ts";
-import { CODEX_BACKEND_SETTING_ID, isBackendEnabled } from "../background/settings.ts";
+import { CODEX_BACKEND_SETTING_ID } from "../background/settings.ts";
+import { isCompactionBackendEnabled } from "./backend-registry.ts";
 import { TEXT_BACKEND_ID } from "../background/text-backend.ts";
 import { deliveredAdoptionsFor } from "../background/registry.ts";
 import {
@@ -206,7 +207,7 @@ export async function createOwnerCore(
     settings: spec.settings,
     freezeSnapshot: (context) => freeze(state, context),
     headroom: () => state.headroom,
-    isBackendEnabled,
+    isBackendEnabled: isCompactionBackendEnabled,
     isStaleContextError: (cause) => cause instanceof Error && isStaleContextError(cause),
     clock: options.clock,
     delivered: deliveredAdoptionsFor(spec.ownerKey),

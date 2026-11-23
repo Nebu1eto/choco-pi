@@ -6,6 +6,8 @@ import {
   buildSyntheticProviderModelsFromStore,
 } from "./models.ts";
 import { createSyntheticRefreshModels } from "./refresh-models.ts";
+import { registerSyntheticCompactionTokenCounter } from "../../src/compaction/token-counter.ts";
+import { bindCompactionTokenCounter } from "../../src/compaction/token-counter-slot.ts";
 
 interface ProviderRuntime {
   activateSyntheticProvider(
@@ -56,4 +58,6 @@ export function registerSyntheticProvider(pi: ExtensionAPI): void {
 export default async function (pi: ExtensionAPI): Promise<void> {
   const runtime = await loadRuntime();
   await runtime.activateSyntheticProvider(pi, registerSyntheticProvider);
+  // Background compaction sizes synthetic prompts with this counter.
+  bindCompactionTokenCounter(pi, registerSyntheticCompactionTokenCounter);
 }

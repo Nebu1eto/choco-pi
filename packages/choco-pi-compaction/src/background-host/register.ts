@@ -77,6 +77,11 @@ import {
   getBackgroundAdoptionSignal,
   publishBackgroundAdoptionSignalSlot,
 } from "./adoption-signal.ts";
+import {
+  firstForegroundAnswer,
+  type ForegroundCompactHandler,
+  registeredForegroundHandlers,
+} from "./backend-registry.ts";
 import { createChildProvider } from "./child-provider.ts";
 import { watchCodexEligibility } from "./codex-eligibility.ts";
 import {
@@ -208,6 +213,7 @@ export function registerBackgroundCompaction(
     now: clock === undefined ? undefined : () => clock.now(),
     announce: (ctx, record, text, level, policy) => announce(rt, ctx, record, text, level, policy),
   });
+  const builtInForeground: readonly ForegroundCompactHandler[] = [foreground, xaiForeground];
   /** Bumped by every session_shutdown; a session start awaiting I/O stops when it moved. */
   const shutdowns = { count: 0 };
 
@@ -292,9 +298,10 @@ export function registerBackgroundCompaction(
   return {
     beforeCompact: (event, ctx) => answerBeforeCompact(rt, event, ctx),
     childAdopts: (event, ctx) => childAdopts(event, ctx),
-    // The two owners are disjoint (anthropic-messages vs the xai provider), so at most one answers.
-    foregroundCompact: async (event, ctx) =>
-      (await foreground(event, ctx)) ?? (await xaiForeground(event, ctx)),
+    // Built-in server-side lanes first; their owners are disjoint (anthropic-messages vs the
+    // xai provider), so at most one answers. Registered provider lanes answer after both declined.
+    foregroundCompact: (event, ctx) =>
+      firstForegroundAnswer([...builtInForeground, ...registeredForegroundHandlers()], event, ctx),
     settings: () => rt.loaded,
     modes: () => rt.modes(),
   };

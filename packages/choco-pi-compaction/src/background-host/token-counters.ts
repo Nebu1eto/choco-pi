@@ -1,39 +1,38 @@
 /**
  * Provider prompt token counters for background compaction admission.
  *
- * Selected by the owner model's provider: Synthetic and Anthropic expose a
- * free `messages/count_tokens` endpoint, and `google` signed in with Google
- * Antigravity OAuth a `v1internal:countTokens` method that is used only when
- * `CHOCO_PI_ANTIGRAVITY_COUNT_TOKENS=1` is set; every other provider, and a
- * `google` Gemini API key, is uncounted and admission keeps its estimate. A
- * counter never throws: every failure resolves to undefined plus a short
- * `count-tokens: <code>` diagnostic.
+ * Selected by the owner model's provider. Anthropic's free
+ * `messages/count_tokens` endpoint is counted here (API-key auth only); every
+ * other provider is counted by the counter its package registered through
+ * {@link registerCompactionTokenCounter} (the Synthetic and Google Antigravity
+ * provider packages do on activation), and a provider without one is
+ * uncounted, so admission keeps its estimate. A registered counter may name an
+ * opt-in environment variable that must be `1` when the compaction counter is
+ * created. A counter never throws: every failure resolves to undefined plus a
+ * short `count-tokens: <code>` diagnostic.
  */
-import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { compile, obj } from "@earendil-works/pi-schema";
 
-import {
-  type CountTokensErrorCode,
-  type CountTokensResult,
-  countSyntheticTokens,
-} from "../../../choco-pi-provider-synthetic/src/client/count-tokens.ts";
-import { readAntigravityApiKey } from "../../../choco-pi-provider-google-antigravity/src/auth/oauth.ts";
-import { resolveRuntimeModel } from "../../../choco-pi-provider-google-antigravity/src/catalog/group.ts";
-import { countAntigravityTokens } from "../../../choco-pi-provider-google-antigravity/src/client/count-tokens.ts";
 import { finiteInt } from "../guards.ts";
 import { authModeOf, normalizeBaseUrl } from "../anthropic/capability.ts";
 import type { TokenCounter } from "../background/contract.ts";
+import {
+  type CompactionTokenCounter,
+  type CompactionTokenCountOutcome,
+  type CompactionTokenCountRequest,
+  isTokenCountOutcome,
+  registeredOptInEnvs,
+  registeredTokenCounter,
+} from "./token-counter-registry.ts";
 
 /** Upper bound on one count request; an 800k-char Synthetic body took ~4 s. */
 export const COUNT_TOKENS_TIMEOUT_MS = 10_000;
 /** How long a deterministic failure (5xx, malformed, auth) suppresses requests for one model. */
 export const COUNT_TOKENS_NEGATIVE_TTL_MS = 600_000;
-/** Opt-in switch for Google Antigravity counting; only the value `1` enables it. */
-export const ANTIGRAVITY_COUNT_TOKENS_ENV = "CHOCO_PI_ANTIGRAVITY_COUNT_TOKENS";
-/** The Google Antigravity provider's Pi id; it replaces Pi's built-in Gemini `google`. */
-const ANTIGRAVITY_PROVIDER = "google";
 
+const ANTHROPIC_PROVIDER = "anthropic";
 const ANTHROPIC_VERSION = "2023-06-01";
 const ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com";
 const isCountTokensResponse = compile(obj({ input_tokens: finiteInt(0) }, { open: true })).check;
@@ -41,7 +40,7 @@ const isCountTokensResponse = compile(obj({ input_tokens: finiteInt(0) }, { open
 type CountInput = Parameters<TokenCounter["countTokens"]>[0];
 /** The registry slice a counter reads: request auth for the owner model. */
 export type CountRegistry = Pick<ExtensionContext["modelRegistry"], "getApiKeyAndHeaders">;
-type CountFailure = Extract<CountTokensResult, { ok: false }>;
+type CountFailure = Extract<CompactionTokenCountOutcome, { ok: false }>;
 
 /** Negative results keyed by `provider|baseUrl|model`; shareable across counters. */
 export type CountTokensNegativeCache = Map<
@@ -56,17 +55,18 @@ export interface ProviderTokenCounterOptions {
   readonly timeoutMs?: number;
   readonly cache?: CountTokensNegativeCache;
   /**
-   * Count Google Antigravity prompts. Defaults to whether
-   * `CHOCO_PI_ANTIGRAVITY_COUNT_TOKENS` is `1` when the counter is created.
+   * Opt-in decisions by environment variable name (a registered counter's
+   * `optInEnv`). A variable not listed is `1` or not when the counter is
+   * created, or, for a counter registered later, when it is first used.
    */
-  readonly antigravityCountTokens?: boolean;
+  readonly optIn?: ReadonlyMap<string, boolean>;
 }
 
 interface CountContext {
   readonly registry: CountRegistry;
   readonly fetch: typeof globalThis.fetch;
   readonly timeoutMs: number;
-  readonly antigravity: boolean;
+  readonly optedIn: (env: string) => boolean;
 }
 
 /** One count attempt: a token figure, or a diagnostic and whether it is worth caching. */
@@ -87,12 +87,13 @@ function cacheable(failure: Pick<CountFailure, "code" | "status">): boolean {
   return failure.code === "http" && failure.status !== undefined && failure.status >= 500;
 }
 
-function fromResult(result: CountTokensResult): CountOutcome {
-  if (result.ok) return { tokens: result.inputTokens };
-  return { detail: failureDetail(result), cache: cacheable(result) };
+function fromOutcome(outcome: CompactionTokenCountOutcome): CountOutcome {
+  if ("skipped" in outcome) return { skipped: true };
+  if (outcome.ok) return { tokens: outcome.inputTokens };
+  return { detail: failureDetail(outcome), cache: outcome.cache ?? cacheable(outcome) };
 }
 
-function errorCodeForStatus(status: number): CountTokensErrorCode {
+function errorCodeForStatus(status: number): string {
   if (status === 401 || status === 403) return "auth";
   if (status === 402) return "quota";
   if (status === 429) return "rate-limit";
@@ -100,14 +101,14 @@ function errorCodeForStatus(status: number): CountTokensErrorCode {
 }
 
 /** Registry headers (null drops a header) under the count request's own fixed headers. */
-function anthropicHeaders(auth: AnthropicAuth): Headers {
+function anthropicHeaders(request: CompactionTokenCountRequest): Headers {
   const headers = new Headers();
-  for (const [name, value] of Object.entries(auth.headers ?? {})) {
+  for (const [name, value] of Object.entries(request.headers ?? {})) {
     if (value !== null) headers.set(name, value);
   }
   headers.set("content-type", "application/json");
   headers.set("anthropic-version", ANTHROPIC_VERSION);
-  headers.set("x-api-key", auth.apiKey);
+  headers.set("x-api-key", request.apiKey);
   return headers;
 }
 
@@ -128,135 +129,88 @@ function timedSignal(signal: AbortSignal, timeoutMs: number): AbortSignal {
   return AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
 }
 
-function transportFailure(caller: AbortSignal, combined: AbortSignal): CountOutcome {
-  if (caller.aborted) return { detail: "count-tokens: aborted", cache: false };
-  if (combined.aborted) return { detail: "count-tokens: timeout", cache: false };
-  return { detail: "count-tokens: network", cache: false };
+function transportFailure(caller: AbortSignal, combined: AbortSignal): CompactionTokenCountOutcome {
+  if (caller.aborted) return { ok: false, code: "aborted", cache: false };
+  if (combined.aborted) return { ok: false, code: "timeout", cache: false };
+  return { ok: false, code: "network", cache: false };
 }
 
-async function countSynthetic(
-  context: CountContext,
-  input: CountInput,
-  apiKey: string,
-  baseUrl: string,
-): Promise<CountOutcome> {
-  return fromResult(
-    await countSyntheticTokens({
-      apiKey,
-      model: input.model.id,
-      system: input.system,
-      promptText: input.promptText,
-      baseUrl,
-      fetch: context.fetch,
-      signal: input.signal,
-      timeoutMs: context.timeoutMs,
-    }),
-  );
-}
-
-interface AnthropicAuth {
-  readonly apiKey: string;
-  readonly headers: ProviderHeaders | undefined;
-}
-
-async function countAnthropic(
-  context: CountContext,
-  input: CountInput,
-  auth: AnthropicAuth,
-  baseUrl: string,
-): Promise<CountOutcome> {
-  const url = anthropicCountUrl(baseUrl);
-  if (url === undefined) return { detail: "count-tokens: invalid-base-url", cache: true };
-  const signal = timedSignal(input.signal, context.timeoutMs);
-  let response: Response;
-  try {
-    response = await context.fetch(url, {
-      method: "POST",
-      headers: anthropicHeaders(auth),
-      body: JSON.stringify({
-        model: input.model.id,
-        system: input.system,
-        messages: [{ role: "user", content: [{ type: "text", text: input.promptText }] }],
-      }),
-      signal,
-    });
-  } catch {
-    return transportFailure(input.signal, signal);
-  }
-  if (!response.ok) {
-    await response.body?.cancel().catch(() => undefined);
-    const failure = { code: errorCodeForStatus(response.status), status: response.status };
-    return { detail: failureDetail(failure), cache: cacheable(failure) };
-  }
-  let text: string;
-  try {
-    text = await response.text();
-  } catch {
-    return transportFailure(input.signal, signal);
-  }
-  return parseAnthropicCount(text, response.status);
-}
-
-function parseAnthropicCount(text: string, status: number): CountOutcome {
-  const malformed = { detail: failureDetail({ code: "malformed", status }), cache: true };
+function parseAnthropicCount(text: string, status: number): CompactionTokenCountOutcome {
+  const malformed = { ok: false, code: "malformed", status, cache: true } as const;
   let data: ReturnType<typeof JSON.parse>;
   try {
     data = JSON.parse(text);
   } catch {
     return malformed;
   }
-  return isCountTokensResponse(data) ? { tokens: data.input_tokens } : malformed;
+  return isCountTokensResponse(data) ? { ok: true, inputTokens: data.input_tokens } : malformed;
+}
+
+/** Anthropic `messages/count_tokens`; Bearer/OAuth tokens are not accepted as `x-api-key`. */
+const anthropicTokenCounter: CompactionTokenCounter = {
+  async countTokens(request) {
+    if (authModeOf(request.apiKey) !== "api-key") return { skipped: true };
+    const url = anthropicCountUrl(request.baseUrl);
+    if (url === undefined) return { ok: false, code: "invalid-base-url", cache: true };
+    const signal = timedSignal(request.signal, request.timeoutMs);
+    let response: Response;
+    try {
+      response = await request.fetch(url, {
+        method: "POST",
+        headers: anthropicHeaders(request),
+        body: JSON.stringify({
+          model: request.model.id,
+          system: request.system,
+          messages: [{ role: "user", content: [{ type: "text", text: request.promptText }] }],
+        }),
+        signal,
+      });
+    } catch {
+      return transportFailure(request.signal, signal);
+    }
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      return { ok: false, code: errorCodeForStatus(response.status), status: response.status };
+    }
+    let text: string;
+    try {
+      text = await response.text();
+    } catch {
+      return transportFailure(request.signal, signal);
+    }
+    return parseAnthropicCount(text, response.status);
+  },
+};
+
+/** The counter for a provider: Anthropic is built in; others come from the registry. */
+function counterFor(provider: string): CompactionTokenCounter | undefined {
+  return provider === ANTHROPIC_PROVIDER ? anthropicTokenCounter : registeredTokenCounter(provider);
 }
 
 async function countFor(context: CountContext, input: CountInput): Promise<CountOutcome> {
-  const provider = input.model.provider;
-  if (provider === ANTIGRAVITY_PROVIDER) {
-    return context.antigravity ? countAntigravity(context, input) : { skipped: true };
+  const counter = counterFor(input.model.provider);
+  if (counter === undefined) return { skipped: true };
+  if (counter.optInEnv !== undefined && !context.optedIn(counter.optInEnv)) {
+    return { skipped: true };
   }
-  if (provider !== "synthetic" && provider !== "anthropic") return { skipped: true };
   const auth = await context.registry.getApiKeyAndHeaders(input.model);
   if (!auth.ok) return { detail: "count-tokens: auth-unresolved", cache: false };
   const apiKey = auth.apiKey?.trim() ?? "";
   if (apiKey.length === 0) return { detail: "count-tokens: no-api-key", cache: false };
-  const baseUrl = auth.baseUrl ?? input.model.baseUrl;
-  if (provider === "synthetic") return countSynthetic(context, input, apiKey, baseUrl);
-  // Bearer/OAuth tokens are not accepted as `x-api-key`; leave them uncounted.
-  if (authModeOf(apiKey) !== "api-key") return { skipped: true };
-  return countAnthropic(context, input, { apiKey, headers: auth.headers }, baseUrl);
-}
-
-/**
- * Google Antigravity: the registry key is the packed `{token, project_id}`
- * credential, and the request names the runtime model id agy would send for
- * the base model's first advertised level (the level does not change the count).
- * Any other key, such as a Gemini API key Pi's inherited `google` API-key auth
- * resolved (GEMINI_API_KEY or a stored API key), is skipped without a request.
- */
-async function countAntigravity(context: CountContext, input: CountInput): Promise<CountOutcome> {
-  const auth = await context.registry.getApiKeyAndHeaders(input.model);
-  if (!auth.ok) return { detail: "count-tokens: auth-unresolved", cache: false };
-  const apiKey = auth.apiKey?.trim() ?? "";
-  if (apiKey.length === 0) return { detail: "count-tokens: no-api-key", cache: false };
-  const credential = readAntigravityApiKey(apiKey);
-  if (credential === undefined) return { skipped: true };
-  const { token } = credential;
-  let runtimeId: string;
-  try {
-    runtimeId = resolveRuntimeModel(input.model.id, undefined).runtimeId;
-  } catch {
-    return { detail: "count-tokens: model-unavailable", cache: true };
-  }
-  return fromResult(
-    await countAntigravityTokens({
-      token,
-      model: runtimeId,
-      system: input.system,
-      promptText: input.promptText,
-      fetch: context.fetch,
-      signal: input.signal,
-      timeoutMs: context.timeoutMs,
-    }),
-  );
+  const outcome = await counter.countTokens({
+    model: input.model,
+    system: input.system,
+    promptText: input.promptText,
+    signal: input.signal,
+    apiKey,
+    headers: auth.headers,
+    baseUrl: auth.baseUrl ?? input.model.baseUrl,
+    fetch: context.fetch,
+    timeoutMs: context.timeoutMs,
+  });
+  // A registered counter is another package's code; an unreadable answer is a defect there.
+  if (!isTokenCountOutcome(outcome)) return { detail: "count-tokens: error", cache: true };
+  return fromOutcome(outcome);
 }
 
 function cacheKey(model: Model<Api>): string {
@@ -264,8 +218,28 @@ function cacheKey(model: Model<Api>): string {
 }
 
 /**
- * Counter for Synthetic, Anthropic and (opt-in) Google Antigravity owner
- * models; undefined for every other provider, without network. Deterministic
+ * Opt-in decisions: `options.optIn` first, then each variable as it was when
+ * the counter was created (or first needed, for a counter registered later).
+ */
+function optInReader(options: ProviderTokenCounterOptions): (env: string) => boolean {
+  const snapshot = new Map<string, boolean>();
+  const read = (env: string): boolean => {
+    const given = options.optIn?.get(env);
+    if (given !== undefined) return given;
+    let value = snapshot.get(env);
+    if (value === undefined) {
+      value = process.env[env] === "1";
+      snapshot.set(env, value);
+    }
+    return value;
+  };
+  for (const env of registeredOptInEnvs()) read(env);
+  return read;
+}
+
+/**
+ * Counter for Anthropic owner models and every provider with a registered
+ * counter; undefined for every other provider, without network. Deterministic
  * failures are remembered per `provider|baseUrl|model` for
  * {@link COUNT_TOKENS_NEGATIVE_TTL_MS}.
  */
@@ -276,8 +250,7 @@ export function createProviderTokenCounter(options: ProviderTokenCounterOptions)
     registry: options.registry,
     fetch: options.fetch ?? globalThis.fetch,
     timeoutMs: options.timeoutMs ?? COUNT_TOKENS_TIMEOUT_MS,
-    antigravity:
-      options.antigravityCountTokens ?? process.env[ANTIGRAVITY_COUNT_TOKENS_ENV] === "1",
+    optedIn: optInReader(options),
   };
   return {
     async countTokens(input) {

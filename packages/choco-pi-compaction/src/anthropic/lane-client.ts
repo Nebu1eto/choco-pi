@@ -31,6 +31,7 @@ import {
 import { finiteInt, finiteNum } from "../guards.ts";
 import { type WireBody, wireBlockMember } from "./capture.ts";
 import { COMPACT_BETA, type CompactionBlock, isCompactionBlock } from "./details.ts";
+import { ERROR_BODY_LIMIT, readBoundedText } from "../shared/http.ts";
 
 // ---------------------------------------------------------------------------
 // Payload
@@ -362,24 +363,6 @@ interface HttpObservation {
 const LANE_CONTEXT = normalizeContext({
   messages: [{ role: "user", content: "choco-pi anthropic native compaction lane", timestamp: 0 }],
 });
-const ERROR_BODY_LIMIT = 65_536;
-
-async function readBounded(response: Response, limit: number): Promise<string> {
-  if (response.body === null) return "";
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let text = "";
-  try {
-    while (text.length < limit) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      text += decoder.decode(value, { stream: true });
-    }
-  } finally {
-    await reader.cancel().catch(() => undefined);
-  }
-  return text.slice(0, limit);
-}
 
 function retryAfter(headers: Headers, now: number): number | undefined {
   const ms = Number(headers.get("retry-after-ms"));
@@ -666,7 +649,9 @@ async function observeResponse(
   http.status = response.status;
   http.retryAfterMs = retryAfter(response.headers, now());
   if (response.status < 400) return;
-  const parsed = parseErrorBody(await readBounded(response.clone(), ERROR_BODY_LIMIT));
+  const parsed = parseErrorBody(
+    (await readBoundedText(response.clone(), ERROR_BODY_LIMIT)).slice(0, ERROR_BODY_LIMIT),
+  );
   if (!parsed) return;
   http.errorType = parsed.error.type;
   http.errorCode = parsed.error.details?.error_code;

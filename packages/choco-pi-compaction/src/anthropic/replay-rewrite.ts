@@ -17,7 +17,6 @@
  */
 import {
   type BeforeProviderRequestEvent,
-  convertToLlm,
   type ExtensionContext,
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
@@ -43,6 +42,7 @@ import {
   isCompactionBlock,
   sameBlock,
 } from "./details.ts";
+import { summaryWireText } from "../shared/summary-wire.ts";
 
 type ReplayRefusalCode =
   | "details-invalid"
@@ -98,17 +98,6 @@ export function findActiveAnthropicCheckpoint(
   const lookup = findActiveNativeCheckpoint(branch);
   if (lookup.kind === "none") return undefined;
   return { entryId: lookup.kind === "active" ? lookup.checkpoint.entryId : lookup.entryId };
-}
-
-/** Text the host sends for a compaction summary (public `convertToLlm`). */
-function summaryWireText(summary: string): string {
-  const [message] = convertToLlm([
-    { role: "compactionSummary", summary, tokensBefore: 0, timestamp: 0 },
-  ]);
-  const part =
-    message?.role === "user" && Array.isArray(message.content) ? message.content[0] : undefined;
-  if (part?.type !== "text") throw new Error("Unexpected host compaction summary message");
-  return part.text;
 }
 
 function isSummaryMessage(message: WireMessage, text: string): boolean {

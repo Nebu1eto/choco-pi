@@ -13,7 +13,7 @@
  */
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 
-import { sha256 } from "../anthropic/details.ts";
+import { sha256 } from "../shared/details.ts";
 import type { AnthropicCapabilityGate } from "../anthropic/capability.ts";
 import { normalizeBaseUrl } from "../anthropic/capability.ts";
 import type {

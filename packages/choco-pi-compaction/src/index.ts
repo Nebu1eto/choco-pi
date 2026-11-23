@@ -30,6 +30,19 @@ import {
 
 export { RESPONSE_MARGIN_TOKENS } from "./budget.ts";
 export {
+  COMPACTION_BACKENDS_SYMBOL,
+  type CompactionBackendProvider,
+  type ForegroundCompactHandler,
+  registerCompactionBackendProvider,
+} from "./background-host/backend-registry.ts";
+export {
+  COMPACTION_TOKEN_COUNTERS_SYMBOL,
+  type CompactionTokenCounter,
+  type CompactionTokenCountOutcome,
+  type CompactionTokenCountRequest,
+  registerCompactionTokenCounter,
+} from "./background-host/token-counter-registry.ts";
+export {
   ANTHROPIC_COMPACTION_MODE_KEY,
   type AnthropicCompactionMode,
   DEFAULT_ANTHROPIC_COMPACTION_MODE,

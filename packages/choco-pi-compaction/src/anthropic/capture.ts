@@ -19,8 +19,6 @@
  * verification) run before the request leaves the process; a failed check
  * refuses the request (fail closed) and records a reason code.
  */
-import { AsyncLocalStorage } from "node:async_hooks";
-
 import type {
   Api,
   AssistantMessageEventStream,
@@ -40,19 +38,21 @@ import { arr, bool, compile, lit, obj, oneOf, opt, str, union } from "@earendil-
 import type { Static } from "@earendil-works/pi-schema";
 
 import { jsonRest, withJsonValueDefs, type JsonValue } from "../background/contract.ts";
-import {
-  finiteInt,
-  hasProperty,
-  isNonNegativeInteger,
-  isRecord,
-  isString,
-  nonEmptyStr,
-  nonNegative,
-  readProperty,
-} from "../guards.ts";
+import { finiteInt, hasProperty, isString, nonEmptyStr, nonNegative } from "../guards.ts";
 import { OPAQUE_GUARD_NOTICE, opaqueProviderOf } from "../opaque-checkpoint.ts";
 import { pendingOpaqueBlock } from "../opaque-guard.ts";
-import { isAnthropicDetails, sha256 } from "./details.ts";
+import { isAnthropicDetails } from "./details.ts";
+import { sha256 } from "../shared/details.ts";
+import {
+  endpointOf,
+  laneRuntime,
+  type LaneRuntime,
+  type ProjectionSource,
+  projectionFor,
+  requestUrl,
+  responseRingSlot,
+  storeBounded,
+} from "../shared/lane-runtime.ts";
 
 // ---------------------------------------------------------------------------
 // Wire model
@@ -572,53 +572,13 @@ interface TransportRefusal {
   readonly at: number;
 }
 
-type ProjectionSource = () => readonly ProjectedSessionEntry[];
-
-interface LaneRuntime {
-  readonly schemaVersion: 1;
-  readonly calls: AsyncLocalStorage<TransportCall>;
-  readonly captures: Map<string, WireCapture[]>;
-  readonly projections: Map<string, ProjectionSource>;
-  readonly refusals: TransportRefusal[];
-  readonly counter: { value: number };
-}
-
 const RUNTIME_SYMBOL = Symbol.for("choco-pi:anthropic-native-lane");
 
-function isRuntime<T>(value: T): value is T & LaneRuntime {
-  return (
-    isRecord(value) &&
-    readProperty(value, "schemaVersion") === 1 &&
-    Array.isArray(readProperty(value, "refusals")) &&
-    isRecord(readProperty(value, "counter")) &&
-    isNonNegativeInteger(readProperty(readProperty(value, "counter"), "value")) &&
-    readProperty(value, "calls") instanceof AsyncLocalStorage &&
-    readProperty(value, "captures") instanceof Map &&
-    readProperty(value, "projections") instanceof Map
-  );
-}
-
 /** Process-wide state shared by every extension instance that loads this module. */
-function runtime(): LaneRuntime {
-  const descriptor = Object.getOwnPropertyDescriptor(globalThis, RUNTIME_SYMBOL);
-  const found: unknown = descriptor?.value;
-  if (descriptor !== undefined) {
-    if (!isRuntime(found)) throw new Error("Invalid Anthropic native lane runtime slot");
-    return found;
-  }
-  const created: LaneRuntime = {
-    schemaVersion: 1,
-    calls: new AsyncLocalStorage<TransportCall>(),
-    captures: new Map(),
-    projections: new Map(),
-    refusals: [],
-    counter: { value: 0 },
-  };
-  Object.defineProperty(globalThis, RUNTIME_SYMBOL, { value: created, configurable: true });
-  return created;
+function runtime(): LaneRuntime<TransportCall, WireCapture, TransportRefusal> {
+  return laneRuntime<TransportCall, WireCapture, TransportRefusal>(RUNTIME_SYMBOL, "Anthropic");
 }
 
-const MAX_SESSIONS = 64;
 const MAX_REFUSALS = 64;
 
 /** The transport call a before_provider_request handler is running for, if any. */
@@ -674,13 +634,7 @@ const MAX_RESPONSES_PER_SESSION = 8;
  * usable capture. Its own slot, so the capture runtime's shape is unchanged.
  */
 function responseRing(): Map<string, RecordedResponse[]> {
-  const descriptor = Object.getOwnPropertyDescriptor(globalThis, RESPONSES_SYMBOL);
-  const found: unknown = descriptor?.value;
-  if (found instanceof Map) return found;
-  if (descriptor !== undefined) throw new Error("Invalid Anthropic native response ring slot");
-  const created = new Map<string, RecordedResponse[]>();
-  Object.defineProperty(globalThis, RESPONSES_SYMBOL, { value: created, configurable: true });
-  return created;
+  return responseRingSlot<RecordedResponse>(RESPONSES_SYMBOL, "Anthropic");
 }
 
 /** Unusable responses of a session, oldest first (at most 8). */
@@ -689,15 +643,7 @@ export function recentResponsesFor(sessionId: string): readonly RecordedResponse
 }
 
 function storeResponse(sessionId: string, response: RecordedResponse): void {
-  const ring = responseRing();
-  const list = ring.get(sessionId) ?? [];
-  ring.delete(sessionId);
-  ring.set(sessionId, [...list, response].slice(-MAX_RESPONSES_PER_SESSION));
-  while (ring.size > MAX_SESSIONS) {
-    const oldest = ring.keys().next();
-    if (oldest.done === true) break;
-    ring.delete(oldest.value);
-  }
+  storeBounded(responseRing(), sessionId, response, MAX_RESPONSES_PER_SESSION);
 }
 
 export function transportRefusals(sessionId?: string): readonly TransportRefusal[] {
@@ -732,21 +678,6 @@ function isAnthropicMessagesModel(model: Model<Api>): model is Model<"anthropic-
   return model.api === "anthropic-messages";
 }
 
-function requestUrl(input: Parameters<typeof globalThis.fetch>[0]): string {
-  if (input instanceof Request) return input.url;
-  if (input instanceof URL) return input.href;
-  return input;
-}
-
-function endpointOf(url: string): string {
-  try {
-    const parsed = new URL(url);
-    return `${parsed.origin}${parsed.pathname}`;
-  } catch {
-    return "";
-  }
-}
-
 export function parseBetaHeader(value: string | null): string[] {
   if (value === null) return [];
   return [
@@ -769,30 +700,8 @@ export function freezeJson(value: JsonValue): void {
   }
 }
 
-function projectionFor(
-  sessionId: string | undefined,
-): readonly ProjectedSessionEntry[] | undefined {
-  if (sessionId === undefined) return undefined;
-  const source = runtime().projections.get(sessionId);
-  if (source === undefined) return undefined;
-  try {
-    return source();
-  } catch {
-    // A stale or disposed session context cannot describe this request; leave it unmapped.
-    return undefined;
-  }
-}
-
 function storeCapture(capture: WireCapture, limit: number): void {
-  const captures = runtime().captures;
-  const list = captures.get(capture.sessionId) ?? [];
-  captures.delete(capture.sessionId);
-  captures.set(capture.sessionId, [...list, capture].slice(-limit));
-  while (captures.size > MAX_SESSIONS) {
-    const oldest = captures.keys().next();
-    if (oldest.done === true) break;
-    captures.delete(oldest.value);
-  }
+  storeBounded(runtime().captures, capture.sessionId, capture, limit);
 }
 
 /**
@@ -936,7 +845,7 @@ async function captureAndForward(
   const refusal = verifyRequest(capture, request);
   if (refusal) return refusal;
   // Map against the branch as it is when this request is sent.
-  const entries = projectionFor(capture.call.sessionId);
+  const entries = projectionFor(runtime().projections, capture.call.sessionId);
   const mapping =
     request.body === undefined || entries === undefined
       ? undefined

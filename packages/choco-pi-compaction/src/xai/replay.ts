@@ -31,7 +31,6 @@
  */
 import {
   type BeforeProviderRequestEvent,
-  convertToLlm,
   type ExtensionAPI,
   type ExtensionContext,
   type SessionEntry,
@@ -70,6 +69,9 @@ import {
   type XaiDetails,
 } from "./details.ts";
 import type { XaiAnnounce } from "./foreground.ts";
+import { summaryWireText } from "../shared/summary-wire.ts";
+import { ERROR_BODY_LIMIT, readBoundedText } from "../shared/http.ts";
+import { readSessionId } from "../shared/session.ts";
 
 export type XaiReplayRefusalCode =
   | "details-invalid"
@@ -118,17 +120,6 @@ export function findActiveXaiCheckpoint(branch: readonly SessionEntry[]): Checkp
     };
   }
   return { kind: "none" };
-}
-
-/** Text the host sends for a compaction summary (public `convertToLlm`). */
-function summaryWireText(summary: string): string {
-  const [message] = convertToLlm([
-    { role: "compactionSummary", summary, tokensBefore: 0, timestamp: 0 },
-  ]);
-  const part =
-    message?.role === "user" && Array.isArray(message.content) ? message.content[0] : undefined;
-  if (part?.type !== "text") throw new Error("Unexpected host compaction summary message");
-  return part.text;
 }
 
 function isSummaryItem(item: XaiWireItem | undefined, text: string): boolean {
@@ -345,7 +336,6 @@ export function createXaiReplayRewriteHandler(options: ReplayRewriteOptions = {}
 // Binder (capture registration, projection, rewrite, rejection handling)
 // ---------------------------------------------------------------------------
 
-const ERROR_BODY_LIMIT = 65_536;
 /**
  * Provider error fields that tie a 4xx to the replayed compaction item: the
  * item's encrypted payload, the item itself, its type, or its position.
@@ -363,23 +353,6 @@ const isErrorBody = compile(
   ),
 ).check;
 const isErrorField = compile(str()).check;
-
-async function readBounded(response: Response): Promise<string> {
-  if (response.body === null) return "";
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let text = "";
-  try {
-    while (text.length < ERROR_BODY_LIMIT) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      text += decoder.decode(value, { stream: true });
-    }
-  } finally {
-    await reader.cancel().catch(() => undefined);
-  }
-  return text;
-}
 
 /** Whether a provider error body names the compaction item (JSON `error.message|code|param` only). */
 function namesCompactionItem(text: string): boolean {
@@ -405,7 +378,7 @@ export async function xaiReplayRejectionCode(response: Response): Promise<string
   if (response.status !== 400 && response.status !== 422) return undefined;
   let text: string;
   try {
-    text = await readBounded(response.clone());
+    text = await readBoundedText(response.clone(), ERROR_BODY_LIMIT);
   } catch {
     return undefined;
   }
@@ -614,16 +587,6 @@ function isRefusalCode(code: string): code is XaiReplayRefusalCode {
 /** A transport refusal code as a replay code (`body-unreadable` and foreign codes stay unnamed). */
 function refusalCodeOf(code: string): XaiReplayRefusalCode | undefined {
   return isRefusalCode(code) ? code : undefined;
-}
-
-/** The session id, or undefined once the context outlived its session. */
-function readSessionId(ctx: ExtensionContext): string | undefined {
-  try {
-    return ctx.sessionManager.getSessionId();
-  } catch (cause) {
-    if (cause instanceof Error && isStaleContextError(cause)) return undefined;
-    throw cause;
-  }
 }
 
 /** The branch, or undefined once the context outlived its session. */

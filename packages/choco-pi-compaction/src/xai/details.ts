@@ -11,7 +11,7 @@
 import { compile, lit, obj, oneOf } from "@earendil-works/pi-schema";
 import type { Static } from "@earendil-works/pi-schema";
 
-import { sha256 } from "../anthropic/details.ts";
+import { opaqueFingerprint } from "../shared/details.ts";
 import { BackgroundUsageSchema, jsonRest, withJsonValueDefs } from "../background/contract.ts";
 import { jsonEqual } from "../background/json-equal.ts";
 import { finiteInt, finiteNum, nonEmptyStr } from "../guards.ts";
@@ -93,7 +93,7 @@ export function sameItem(left: XaiCompactionItem, right: XaiCompactionItem): boo
 
 /** Non-secret identity for diagnostics: digest prefix and length, never the content. */
 export function itemFingerprint(item: XaiCompactionItem): string {
-  return `${sha256(item.encrypted_content).slice(0, 16)}:${item.encrypted_content.length}`;
+  return opaqueFingerprint(item.encrypted_content);
 }
 
 /**

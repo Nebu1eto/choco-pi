@@ -14,13 +14,18 @@ import type {
   TokenCounter,
 } from "../background/contract.ts";
 import { getRegistry, registerBackendFactory } from "../background/registry.ts";
-import { CODEX_BACKEND_SETTING_ID, isBackendEnabled } from "../background/settings.ts";
+import { CODEX_BACKEND_SETTING_ID } from "../background/settings.ts";
 import {
   createModelSummarizer,
   createTextBackend,
   TEXT_BACKEND_ID,
 } from "../background/text-backend.ts";
 import { resolveOwner } from "../ownership.ts";
+import {
+  compactionBackendProviders,
+  isCompactionBackendEnabled,
+  registeredBackendProvider,
+} from "./backend-registry.ts";
 import { errorText } from "./notices.ts";
 import type { BackgroundCompactionOptions, OwnerSpec } from "./owner-spec.ts";
 import {
@@ -216,15 +221,27 @@ export function registerDefaultBackendFactories(): void {
 
 /** Whether this owner's switches admit a registered backend ID. */
 function isBackendAllowed(spec: BackendOwnerSpec, id: string): boolean {
-  if (!isBackendEnabled(id, spec.settings)) return false;
+  if (!isCompactionBackendEnabled(id, spec.settings)) return false;
   if (id === TEXT_BACKEND_ID) return true;
   if (id === ANTHROPIC_BACKEND_ID) return spec.allowAnthropic;
   return spec.allowForeign;
 }
 
-/** Backend IDs this owner may use, in registry order, filtered by its switches. */
+/** The factory for a backend ID: the neutral registry first, then a registered provider lane. */
+function backendFactoryFor(id: string): BackendFactory | undefined {
+  return getRegistry().backendFactories.get(id) ?? registeredBackendProvider(id)?.backendFactory;
+}
+
+/**
+ * Backend IDs this owner may use, filtered by its switches: the neutral
+ * registry's in its order, then registered provider lanes it does not hold.
+ */
 function allowedBackendIds(spec: BackendOwnerSpec): string[] {
-  return [...getRegistry().backendFactories.keys()].filter((id) => isBackendAllowed(spec, id));
+  const ids = [...getRegistry().backendFactories.keys()];
+  for (const provider of compactionBackendProviders()) {
+    if (provider.backendFactory !== undefined && !ids.includes(provider.id)) ids.push(provider.id);
+  }
+  return ids.filter((id) => isBackendAllowed(spec, id));
 }
 
 /** Instantiate one registered backend for this owner; failures are reported, not thrown. */
@@ -233,7 +250,7 @@ async function addBackend(
   id: string,
   backends: Map<string, Backend>,
 ): Promise<void> {
-  const factory = getRegistry().backendFactories.get(id);
+  const factory = backendFactoryFor(id);
   if (factory === undefined) return;
   try {
     const backend = await factory({
@@ -286,6 +303,17 @@ export async function selectBackendId(
       if (verdict.supported) return ANTHROPIC_BACKEND_ID;
     } catch (cause) {
       spec.report(`anthropic capability check failed: ${errorText(cause)}`);
+    }
+  }
+  // A registered provider lane whose own capability check supports this scope.
+  for (const provider of compactionBackendProviders()) {
+    const backend = backends.get(provider.id);
+    if (backend === undefined || provider.backendFactory === undefined) continue;
+    try {
+      const verdict = await backend.capability(spec.scope);
+      if (verdict.supported) return provider.id;
+    } catch (cause) {
+      spec.report(`${provider.id} capability check failed: ${errorText(cause)}`);
     }
   }
   return backends.has(TEXT_BACKEND_ID) ? TEXT_BACKEND_ID : undefined;

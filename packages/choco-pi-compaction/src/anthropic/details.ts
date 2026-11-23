@@ -8,14 +8,15 @@
  * only ever persisted in the protected session file through these details;
  * diagnostics use `blockFingerprint` instead.
  */
-import { createHash } from "node:crypto";
-
 import { arr, bool, compile, lit, obj, oneOf } from "@earendil-works/pi-schema";
 import type { Static } from "@earendil-works/pi-schema";
 
 import { BackgroundUsageSchema, jsonRest, withJsonValueDefs } from "../background/contract.ts";
 import { jsonEqual } from "../background/json-equal.ts";
 import { finiteInt, finiteNum, nonEmptyStr } from "../guards.ts";
+import { opaqueFingerprint } from "../shared/details.ts";
+
+export { sha256 } from "../shared/details.ts";
 
 export const ANTHROPIC_STRATEGY = "anthropic-compaction-on-demand-v1";
 const ANTHROPIC_DETAILS_SCHEMA_VERSION = 1;
@@ -98,11 +99,7 @@ export function sameBlock(left: CompactionBlock, right: CompactionBlock): boolea
   );
 }
 
-export function sha256(text: string): string {
-  return createHash("sha256").update(text).digest("hex");
-}
-
 /** Non-secret identity for diagnostics: digest prefix and length, never the signature. */
 export function blockFingerprint(block: CompactionBlock): string {
-  return `${sha256(block.signature).slice(0, 16)}:${block.signature.length}`;
+  return opaqueFingerprint(block.signature);
 }

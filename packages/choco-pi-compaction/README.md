@@ -300,7 +300,11 @@ estimate. Google Antigravity owner models (provider `google`) are counted by Clo
 `v1internal:countTokens` for the model's runtime id only when
 `CHOCO_PI_ANTIGRAVITY_COUNT_TOKENS=1` is set when the owner's counter is created; without
 it they keep the estimate and make no request. A `google` credential that is a Gemini API
-key rather than a Google Antigravity sign-in is skipped the same way. Other providers are not counted. A failed count falls back to the
+key rather than a Google Antigravity sign-in is skipped the same way. Anthropic is counted by
+this package; every other provider is counted only by a counter its package registered with
+`registerCompactionTokenCounter` on `Symbol.for("choco-pi:compaction-token-counters/v1")` (the
+Synthetic and Google Antigravity provider packages do on activation), and a provider without
+one is not counted. A failed count falls back to the
 estimate and records `detail` such as `count-tokens: http 500`; a 5xx,
 malformed, or auth failure suppresses further requests for that
 `provider|baseUrl|model` for 10 minutes (`(cached)`), while timeouts, network

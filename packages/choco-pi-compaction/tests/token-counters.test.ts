@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after, before } from "node:test";
 
 import type { Api, Model } from "@earendil-works/pi-ai";
 
@@ -7,10 +7,34 @@ import { DEFAULT_BACKGROUND_COMPACTION_SETTINGS } from "../src/background/contra
 import type { TokenCounter } from "../src/background/contract.ts";
 import { ownerTokenCounter } from "../src/background-host/backends.ts";
 import {
-  ANTIGRAVITY_COUNT_TOKENS_ENV,
   COUNT_TOKENS_NEGATIVE_TTL_MS,
   createProviderTokenCounter,
 } from "../src/background-host/token-counters.ts";
+import {
+  type CompactionTokenCounter,
+  registerCompactionTokenCounter,
+  registeredTokenCounter,
+} from "../src/background-host/token-counter-registry.ts";
+// The provider packages register these on activation; this test loads no provider extension.
+import {
+  ANTIGRAVITY_COUNT_TOKENS_ENV,
+  registerAntigravityCompactionTokenCounter,
+} from "../../choco-pi-provider-google-antigravity/src/compaction/token-counter.ts";
+import { registerSyntheticCompactionTokenCounter } from "../../choco-pi-provider-synthetic/src/compaction/token-counter.ts";
+
+const unregisterProviders: (() => void)[] = [];
+before(() => {
+  unregisterProviders.push(
+    registerSyntheticCompactionTokenCounter(),
+    registerAntigravityCompactionTokenCounter(),
+  );
+});
+after(() => {
+  for (const unregister of unregisterProviders.splice(0)) unregister();
+});
+
+/** Count Google Antigravity prompts regardless of the environment. */
+const ANTIGRAVITY_ON = new Map([[ANTIGRAVITY_COUNT_TOKENS_ENV, true]]);
 
 function model(provider: string, id: string, baseUrl: string): Model<Api> {
   return {
@@ -277,7 +301,7 @@ test("google (Antigravity): counts through v1internal:countTokens with the runti
   const counter = createProviderTokenCounter({
     registry: registry(ANTIGRAVITY_KEY),
     fetch: stub.fetch,
-    antigravityCountTokens: true,
+    optIn: ANTIGRAVITY_ON,
   });
   const notes: string[] = [];
   assert.equal(await counter.countTokens(input(ANTIGRAVITY, notes)), 4_321);
@@ -299,7 +323,7 @@ test("google (Antigravity): a 403 is cached, a 429 is not", async () => {
   const counter = createProviderTokenCounter({
     registry: registry(ANTIGRAVITY_KEY),
     fetch: denied.fetch,
-    antigravityCountTokens: true,
+    optIn: ANTIGRAVITY_ON,
   });
   const notes: string[] = [];
   assert.equal(await counter.countTokens(input(ANTIGRAVITY, notes)), undefined);
@@ -311,7 +335,7 @@ test("google (Antigravity): a 403 is cached, a 429 is not", async () => {
   const retrying = createProviderTokenCounter({
     registry: registry(ANTIGRAVITY_KEY),
     fetch: limited.fetch,
-    antigravityCountTokens: true,
+    optIn: ANTIGRAVITY_ON,
   });
   const limitedNotes: string[] = [];
   assert.equal(await retrying.countTokens(input(ANTIGRAVITY, limitedNotes)), undefined);
@@ -331,7 +355,7 @@ test("google (Antigravity): an abort is not cached; an unknown model is", async 
   const counter = createProviderTokenCounter({
     registry: registry(ANTIGRAVITY_KEY),
     fetch: stub.fetch,
-    antigravityCountTokens: true,
+    optIn: ANTIGRAVITY_ON,
   });
   const notes: string[] = [];
   assert.equal(await counter.countTokens(input(ANTIGRAVITY, notes, controller.signal)), undefined);
@@ -345,7 +369,7 @@ test("google (Antigravity): an abort is not cached; an unknown model is", async 
   const counted = createProviderTokenCounter({
     registry: registry(ANTIGRAVITY_KEY),
     fetch: none.fetch,
-    antigravityCountTokens: true,
+    optIn: ANTIGRAVITY_ON,
   });
   assert.equal(await counted.countTokens(input(unknown, unknownNotes)), undefined);
   assert.deepEqual(unknownNotes, ["count-tokens: model-unavailable"]);
@@ -359,7 +383,7 @@ test("google (Antigravity): a Gemini API key or another non-OAuth key is skipped
     const counter = createProviderTokenCounter({
       registry: registry(key),
       fetch: none.fetch,
-      antigravityCountTokens: true,
+      optIn: ANTIGRAVITY_ON,
     });
     const notes: string[] = [];
     assert.equal(await counter.countTokens(input(ANTIGRAVITY, notes)), undefined, key);
@@ -445,4 +469,94 @@ test("ownerTokenCounter: default provider counter, injected seam, and countToken
   const off = { ...spec, settings: { ...settings, countTokens: false } };
   assert.equal(ownerTokenCounter(off, {}), undefined, "disabled: no counter, so no request");
   assert.equal(ownerTokenCounter(off, { tokenCounter: injected }), undefined);
+});
+
+test("registry: the newest registration answers and unregister removes only its own", async () => {
+  const provider = "test-provider-registry";
+  const counter = (tokens: number): CompactionTokenCounter => ({
+    countTokens: async () => ({ ok: true, inputTokens: tokens }),
+  });
+  const first = counter(1);
+  const second = counter(2);
+  const dropFirst = registerCompactionTokenCounter(provider, first);
+  const dropSecond = registerCompactionTokenCounter(provider, second);
+  try {
+    assert.equal(registeredTokenCounter(provider), second);
+    const counted = createProviderTokenCounter({
+      registry: registry("k"),
+      fetch: stubFetch().fetch,
+    });
+    const target = model(provider, "m", "https://example.test");
+    assert.equal(await counted.countTokens(input(target, [])), 2);
+    dropFirst();
+    dropFirst();
+    assert.equal(
+      registeredTokenCounter(provider),
+      second,
+      "a stale unregister keeps the newer one",
+    );
+    dropSecond();
+    assert.equal(registeredTokenCounter(provider), undefined);
+    assert.equal(
+      await counted.countTokens(input(target, [])),
+      undefined,
+      "unregistered: uncounted",
+    );
+  } finally {
+    dropFirst();
+    dropSecond();
+  }
+});
+
+test("registry: a counter failure code, cache override, and an unreadable answer", async () => {
+  const provider = "test-provider-outcomes";
+  const answers: Awaited<ReturnType<CompactionTokenCounter["countTokens"]>>[] = [
+    { ok: false, code: "quota", status: 402 },
+    { ok: false, code: "network", cache: true },
+  ];
+  const drop = registerCompactionTokenCounter(provider, {
+    countTokens: async () => answers.shift() ?? { skipped: true },
+  });
+  try {
+    let now = 0;
+    const counted = createProviderTokenCounter({
+      registry: registry("k"),
+      fetch: stubFetch().fetch,
+      now: () => now,
+    });
+    const notes: string[] = [];
+    const target = model(provider, "m", "https://example.test");
+    assert.equal(await counted.countTokens(input(target, notes)), undefined);
+    assert.equal(await counted.countTokens(input(target, notes)), undefined);
+    assert.equal(await counted.countTokens(input(target, notes)), undefined);
+    assert.deepEqual(notes, [
+      "count-tokens: quota 402",
+      "count-tokens: network",
+      "count-tokens: network (cached)",
+    ]);
+    now += COUNT_TOKENS_NEGATIVE_TTL_MS;
+    assert.equal(await counted.countTokens(input(target, notes)), undefined);
+    assert.equal(notes.length, 3, "a skip after the TTL reports nothing");
+  } finally {
+    drop();
+  }
+
+  const malformed = "test-provider-malformed";
+  const dropMalformed = registerCompactionTokenCounter(malformed, {
+    countTokens: async () => ({ ok: true, inputTokens: -1 }),
+  });
+  try {
+    const notes: string[] = [];
+    const counted = createProviderTokenCounter({
+      registry: registry("k"),
+      fetch: stubFetch().fetch,
+    });
+    assert.equal(
+      await counted.countTokens(input(model(malformed, "m", "https://x.test"), notes)),
+      undefined,
+    );
+    assert.deepEqual(notes, ["count-tokens: error"]);
+  } finally {
+    dropMalformed();
+  }
 });

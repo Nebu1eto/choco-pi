@@ -3,8 +3,8 @@
 This directory is a **vendored, patched copy** of the upstream open-source
 package **@aliou/pi-synthetic**. This is not the original source repository.
 
-- Original source code: https://github.com/aliou/pi-synthetic
-- Package on npm: https://www.npmjs.com/package/@aliou/pi-synthetic
+- Original source code: <https://github.com/aliou/pi-synthetic>
+- Package on npm: <https://www.npmjs.com/package/@aliou/pi-synthetic>
 - Base version: `0.24.3` (upstream commit `3a66c5b`, `@aliou/pi-synthetic@0.24.3`)
 - License: MIT (see `package.json` in upstream)
 - Runtime deps vendored under `node_modules/@aliou/`: `pi-utils-settings@0.15.1`,
@@ -70,6 +70,26 @@ match the single latest line used across the repository. `peerDependencies.typeb
 remains `"*"` (unchanged) since this package accepts any host-provided typebox.
 Upstream `@aliou/pi-synthetic@0.24.3` pins `^1.1.37`; this divergence is local
 to the choco-pi vendored copy only.
+
+## choco-pi patch: background compaction token counter registration
+
+choco-pi background compaction counts Synthetic owner prompts with
+`countSyntheticTokens`. It used to import `src/client/count-tokens.ts` across
+packages; now this package offers the counter itself:
+
+1. `src/compaction/token-counter-slot.ts` writes compaction's process-global
+   slot `Symbol.for("choco-pi:compaction-token-counters/v1")` (a `Map` from Pi
+   provider id to its counters, newest last) without importing the compaction
+   package; `bindCompactionTokenCounter` keeps a registration from activation
+   until `session_shutdown`, and again from a later `session_start`.
+2. `src/compaction/token-counter.ts` adapts `countSyntheticTokens` to the
+   slot's request and outcome shapes for provider `synthetic`, loading the
+   client on first count so activation cost is unchanged.
+3. `extensions/provider/index.ts` binds the counter after the provider is
+   activated.
+
+Counting behavior (endpoint, headers, body, timeouts, error codes) is
+unchanged, and the upstream client is untouched.
 
 ## How this copy is used
 

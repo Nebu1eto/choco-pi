@@ -34,6 +34,7 @@ import type { SessionStateReader } from "./session-state.ts";
 import { CompactionAbortedError, runSummaryCall } from "./summarize.ts";
 import type { CompactionMessage } from "./types.ts";
 import { combineUsage } from "./usage.ts";
+import { readSessionId } from "./shared/session.ts";
 
 // Background compaction host integration lives in ./background-host/; this
 // module stays the package's entry for both the summarizer and the background
@@ -87,23 +88,6 @@ function notifyContained(ctx: ExtensionContext, text: string): void {
     ctx.ui.notify(text, "warning");
   } catch (error) {
     if (!(error instanceof Error && isStaleContextError(error))) throw error;
-  }
-}
-
-/**
- * Session identity, or undefined once this context outlived its session.
- *
- * Only the stale-context failure is contained: any other error from the host
- * is a real defect and must surface.
- */
-function readSessionId(ctx: ExtensionContext): string | undefined {
-  try {
-    return ctx.sessionManager.getSessionId();
-  } catch (error) {
-    if (error instanceof Error && isStaleContextError(error)) {
-      return undefined;
-    }
-    throw error;
   }
 }
 

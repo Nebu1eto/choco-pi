@@ -42,6 +42,7 @@ import { placeholderSummary } from "./details.ts";
 import type { XaiCompactionMode } from "./mode.ts";
 import { findActiveXaiCheckpoint } from "./replay.ts";
 import { hostTriggerOf, type CompactionTrigger } from "../trigger.ts";
+import { readSessionId } from "../shared/session.ts";
 
 /** Upper bound on one foreground compaction request. */
 const FOREGROUND_TIMEOUT_MS = 300_000;
@@ -114,15 +115,6 @@ const ABSTAIN: Attempt = { kind: "abstain" };
 
 function fallback(reason: FallbackReason): Attempt {
   return { kind: "fallback", reason };
-}
-
-function readSessionId(ctx: ExtensionContext): string | undefined {
-  try {
-    return ctx.sessionManager.getSessionId();
-  } catch (error) {
-    if (error instanceof Error && isStaleContextError(error)) return undefined;
-    throw error;
-  }
 }
 
 function show(ctx: ExtensionContext, text: string): void {

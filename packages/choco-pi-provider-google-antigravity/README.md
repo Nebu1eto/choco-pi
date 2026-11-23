@@ -142,9 +142,15 @@ served on every run.
 | `src/catalog/*`              | Catalog fetch, grouping, refresh, `resolveRuntimeModel`              |
 | `src/client/quota.ts`        | `readQuotaSummary`, `readTier`                                       |
 | `src/client/count-tokens.ts` | `countAntigravityTokens`                                             |
+| `src/compaction/*`           | Background compaction prompt counter and its registration slot       |
 
 Transport details are in [docs/transport.md](docs/transport.md) and the search family in
 [docs/search.md](docs/search.md).
+
+The provider entry registers the background compaction prompt counter for `google` on
+activation and removes it on `session_shutdown` (again from a later `session_start`), through
+the process-global slot `Symbol.for("choco-pi:compaction-token-counters/v1")`; compaction never
+imports this package. The counter runs only with `CHOCO_PI_ANTIGRAVITY_COUNT_TOKENS=1`.
 
 ## References
 

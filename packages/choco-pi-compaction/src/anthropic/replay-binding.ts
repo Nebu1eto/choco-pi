@@ -29,8 +29,8 @@ import {
 } from "./capture.ts";
 import type { AnthropicServerSideSession } from "./mode.ts";
 import { createReplayRewriteHandler, type ReplayDiagnostic } from "./replay-rewrite.ts";
+import { ERROR_BODY_LIMIT, readBoundedText } from "../shared/http.ts";
 
-const ERROR_BODY_LIMIT = 65_536;
 const COMPACTION_ERROR_PREFIX = "compaction_";
 /** The subscription OAuth refusal observed on full-profile requests (README, live status). */
 const OAUTH_ENTITLEMENT_MESSAGE = "Third-party apps now draw from your extra usage";
@@ -52,23 +52,6 @@ const isErrorBody = compile(
   ),
 ).check;
 
-async function readBounded(response: Response): Promise<string> {
-  if (response.body === null) return "";
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let text = "";
-  try {
-    while (text.length < ERROR_BODY_LIMIT) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      text += decoder.decode(value, { stream: true });
-    }
-  } finally {
-    await reader.cancel().catch(() => undefined);
-  }
-  return text;
-}
-
 /**
  * The rejection code of a provider response to a replayed request, or
  * undefined when the response does not reject the replayed block.
@@ -77,7 +60,7 @@ export async function replayRejectionCode(response: Response): Promise<string | 
   if (response.status !== 400) return undefined;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(await readBounded(response.clone()));
+    parsed = JSON.parse(await readBoundedText(response.clone(), ERROR_BODY_LIMIT));
   } catch {
     return undefined;
   }
