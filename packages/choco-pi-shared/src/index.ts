@@ -1,5 +1,6 @@
 export * from "./codex-compaction-contract.ts";
 export * from "./codex-model.ts";
+export * from "./compaction-token-counter-slot.ts";
 export * from "./lifecycle.ts";
 export * from "./node-runtime.ts";
 export * from "./pi-paths.ts";

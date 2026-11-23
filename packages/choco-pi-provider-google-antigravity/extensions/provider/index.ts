@@ -4,7 +4,7 @@ import { antigravityOAuth } from "../../src/auth/oauth.ts";
 import { FALLBACK_CATALOG, catalogToProviderModels } from "../../src/catalog/group.ts";
 import { createAntigravityRefreshModels } from "../../src/catalog/refresh.ts";
 import { registerAntigravityCompactionTokenCounter } from "../../src/compaction/token-counter.ts";
-import { bindCompactionTokenCounter } from "../../src/compaction/token-counter-slot.ts";
+import { bindCompactionTokenCounter } from "@choco-pi/shared/compaction-token-counter-slot";
 import { DEFAULT_ANTIGRAVITY_ENDPOINT, PROVIDER_ID, PROVIDER_NAME } from "../../src/config.ts";
 
 /**

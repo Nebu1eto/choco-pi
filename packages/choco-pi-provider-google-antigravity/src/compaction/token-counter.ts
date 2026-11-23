@@ -17,7 +17,7 @@ import {
   type CompactionTokenCounter,
   type CompactionTokenCountOutcome,
   registerCompactionTokenCounter,
-} from "./token-counter-slot.ts";
+} from "@choco-pi/shared/compaction-token-counter-slot";
 
 /** Opt-in switch for Google Antigravity counting; only the value `1` enables it. */
 export const ANTIGRAVITY_COUNT_TOKENS_ENV = "CHOCO_PI_ANTIGRAVITY_COUNT_TOKENS";

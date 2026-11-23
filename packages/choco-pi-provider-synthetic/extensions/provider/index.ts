@@ -7,7 +7,7 @@ import {
 } from "./models.ts";
 import { createSyntheticRefreshModels } from "./refresh-models.ts";
 import { registerSyntheticCompactionTokenCounter } from "../../src/compaction/token-counter.ts";
-import { bindCompactionTokenCounter } from "../../src/compaction/token-counter-slot.ts";
+import { bindCompactionTokenCounter } from "@choco-pi/shared/compaction-token-counter-slot";
 
 interface ProviderRuntime {
   activateSyntheticProvider(

@@ -9,7 +9,7 @@ import {
   type CompactionTokenCounter,
   type CompactionTokenCountOutcome,
   registerCompactionTokenCounter,
-} from "./token-counter-slot.ts";
+} from "@choco-pi/shared/compaction-token-counter-slot";
 
 /** The Pi provider id the provider entry registers. */
 const SYNTHETIC_PROVIDER_ID = "synthetic";

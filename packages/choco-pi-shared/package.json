@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./codex-compaction-contract": "./src/codex-compaction-contract.ts",
     "./codex-model": "./src/codex-model.ts",
+    "./compaction-token-counter-slot": "./src/compaction-token-counter-slot.ts",
     "./lifecycle": "./src/lifecycle.ts",
     "./node-runtime": "./src/node-runtime.ts",
     "./pi-paths": "./src/pi-paths.ts",

@@ -5,7 +5,7 @@
  * `Symbol.for("choco-pi:compaction-token-counters/v1")` is a `Map` from Pi
  * provider id to an array of counters, newest registration last; compaction
  * asks the newest. A registration appends its own counter object and its
- * unregister removes exactly that object. The Synthetic provider registers its counter for `synthetic`.
+ * unregister removes exactly that object.
  */
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
