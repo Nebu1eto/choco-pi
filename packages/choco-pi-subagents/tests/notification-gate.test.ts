@@ -169,7 +169,6 @@ test("shutdown snapshots held keys, ignores late completions, and restores exact
   assert.deepEqual(f.messages, []);
   f.records.get("b")!.resultConsumed = true;
   f.gate.start("session-a", [...keys, "a"]);
-  // A repeated bind after the durable snapshot was cleared must retain its hold.
   f.gate.start("session-a");
   f.tick(200);
   assert.deepEqual(f.messages, [["a"]]);

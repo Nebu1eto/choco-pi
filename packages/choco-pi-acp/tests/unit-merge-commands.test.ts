@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-// Minimal local impl (mirrors src/acp/agent.ts behavior)
 function mergeCommands(a: Array<{ name: string }>, b: Array<{ name: string }>) {
   const out: Array<{ name: string }> = [];
   const seen = new Set<string>();

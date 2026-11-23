@@ -27,7 +27,6 @@ test("saving over malformed config rejects and leaves the file bytes untouched",
   await writeFile(configPath, original, "utf8");
   await assert.rejects(saveWebSearchConfig({ workflow: "none" }), /Failed to parse/);
   assert.equal(await readFile(configPath, "utf8"), original);
-  // The extension-level helper surfaces the same failure instead of discarding it.
   await assert.rejects(saveConfig({ workflow: "none" }), /Failed to parse/);
   assert.equal(await readFile(configPath, "utf8"), original);
 });

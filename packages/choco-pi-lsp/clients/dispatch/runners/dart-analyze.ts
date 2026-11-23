@@ -7,13 +7,7 @@ import { PRIORITY } from "../priorities.ts";
 const dart = createAvailabilityChecker("dart", ".exe");
 const flutter = createAvailabilityChecker("flutter", ".bat");
 
-// Lint rules that `dart fix` rewrites deterministically. The `--format=
-// machine` output does NOT surface a per-diagnostic fix flag, so we keep
-// a curated allowlist. Sources: dart.dev/tools/dart-fix and the `linter`
-// package's documentation of which rules ship a fix. Conservative — when
-// in doubt, leave a rule off this list.
 const DART_FIXABLE_RULES = new Set<string>([
-  // const / final canonicalization
   "prefer_const_constructors",
   "prefer_const_constructors_in_immutables",
   "prefer_const_declarations",
@@ -25,7 +19,6 @@ const DART_FIXABLE_RULES = new Set<string>([
   "unnecessary_const",
   "unnecessary_final",
   "unnecessary_new",
-  // null-aware / null safety modernization
   "avoid_init_to_null",
   "avoid_null_checks_in_equality_operators",
   "avoid_returning_null_for_void",
@@ -34,7 +27,6 @@ const DART_FIXABLE_RULES = new Set<string>([
   "prefer_null_aware_operators",
   "unnecessary_null_aware_assignments",
   "unnecessary_null_in_if_null_operators",
-  // string / quoting / interpolation
   "prefer_adjacent_string_concatenation",
   "prefer_interpolation_to_compose_strings",
   "prefer_single_quotes",
@@ -43,7 +35,6 @@ const DART_FIXABLE_RULES = new Set<string>([
   "unnecessary_string_interpolations",
   "use_raw_strings",
   "use_string_buffers",
-  // collection literals / spread / where
   "prefer_collection_literals",
   "prefer_contains",
   "prefer_for_elements_to_map_fromiterable",
@@ -55,7 +46,6 @@ const DART_FIXABLE_RULES = new Set<string>([
   "prefer_is_not_operator",
   "prefer_spread_collections",
   "use_collection_literals_when_possible",
-  // types / generics / function syntax
   "omit_local_variable_types",
   "prefer_expression_function_bodies",
   "prefer_function_declarations_over_variables",
@@ -64,7 +54,6 @@ const DART_FIXABLE_RULES = new Set<string>([
   "prefer_void_to_null",
   "type_init_formals",
   "use_function_type_syntax_for_parameters",
-  // redundancy / cleanup
   "avoid_redundant_argument_values",
   "avoid_unused_constructor_parameters",
   "empty_catches",
@@ -73,20 +62,17 @@ const DART_FIXABLE_RULES = new Set<string>([
   "unnecessary_overrides",
   "unnecessary_parenthesis",
   "unnecessary_this",
-  // imports / sorting / formatting
   "combinators_ordering",
   "directives_ordering",
   "prefer_relative_imports",
   "sort_child_properties_last",
   "slash_for_doc_comments",
-  // flutter-specific deterministic rewrites
   "sized_box_for_whitespace",
   "use_decorated_box",
   "use_full_hex_values_for_flutter_colors",
   "use_key_in_widget_constructors",
   "use_named_constants",
   "use_super_parameters",
-  // misc
   "prefer_conditional_assignment",
   "prefer_equal_for_default_values",
   "prefer_initializing_formals",
@@ -95,8 +81,6 @@ const DART_FIXABLE_RULES = new Set<string>([
   "use_rethrow_when_possible",
 ]);
 
-// dart analyze --format=machine output:
-// severity|type|code|file|line|col|length|message
 function parseDartMachineOutput(raw: string, filePath: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   for (const line of raw.split(/\r?\n/)) {
@@ -109,7 +93,6 @@ function parseDartMachineOutput(raw: string, filePath: string): Diagnostic[] {
     const lineNum = parseInt(lineStr, 10);
     const colNum = parseInt(colStr, 10);
 
-    // Only include diagnostics for the target file
     if (file && !path.resolve(file).endsWith(path.resolve(filePath).replace(/\\/g, "/"))) {
       const resolvedFile = path.resolve(file.trim());
       const resolvedTarget = path.resolve(filePath);
@@ -169,7 +152,6 @@ const dartAnalyzeRunner: RunnerDefinition = {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
 
-    // dart analyze writes diagnostics to stderr in machine format
     const raw = (result.stderr || "") + (result.stdout || "");
     const diagnostics = parseDartMachineOutput(raw, ctx.filePath);
 

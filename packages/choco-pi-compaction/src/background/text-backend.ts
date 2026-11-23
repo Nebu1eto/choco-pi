@@ -1,16 +1,3 @@
-/**
- * Provider-neutral text backend for background compaction.
- *
- * It summarizes only the frozen prefix `A..C` of a {@link PrefixSnapshot} and
- * returns a draft whose `firstKeptEntryId` is the first retained entry, so the
- * retained suffix `D/E` stays verbatim. It never sees a retained or later
- * entry: every prompt is built from `snapshot.entries`, and each pass's input
- * entry IDs are asserted against the prefix before the call is made.
- *
- * Preparation never touches session history. Every failure is a typed
- * {@link PrepareFailure}; a draft is returned only after its structure,
- * metadata, and size were validated.
- */
 import type { RetryPolicy, StopReason, Usage } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { compile, obj } from "@earendil-works/pi-schema";
@@ -63,14 +50,6 @@ import {
 
 export const TEXT_BACKEND_ID = "text";
 
-/**
- * Stable detail codes behind an "oversized" text-backend failure:
- * - prefix-over-budget: no input budget remains, or the provider rejected the prompt as too long;
- * - no-pass-plan: neither one pass nor the bounded two-pass split fits the budget;
- * - second-pass-over-budget: the reconciliation prompt outgrew the budget after pass one;
- * - summary-truncated: generation stopped at the output cap;
- * - result-bytes: the summary or draft exceeds `maxResultBytes`.
- */
 export type OversizedDetail =
   | "prefix-over-budget"
   | "no-pass-plan"
@@ -78,10 +57,8 @@ export type OversizedDetail =
   | "summary-truncated"
   | "result-bytes";
 
-/** Largest delay `setTimeout` honors; longer deadlines are checked by clock only. */
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
-/** One summarization call issued by the backend. */
 export interface TextSummaryRequest {
   readonly pass: 1 | 2;
   readonly label: string;
@@ -91,7 +68,6 @@ export interface TextSummaryRequest {
   readonly signal: AbortSignal;
 }
 
-/** Raw outcome of one call; the backend validates it before use. */
 export interface TextSummaryResponse {
   readonly text: string;
   readonly usage: Usage;
@@ -99,36 +75,28 @@ export interface TextSummaryResponse {
   readonly toolCallCount: number;
 }
 
-/** A summarizer bound to one provider; it must never route elsewhere. */
 export interface TextSummarizer {
   readonly scope: ProviderScope;
   summarize(request: TextSummaryRequest): Promise<TextSummaryResponse>;
 }
 
-/** Exactly what one pass is about to send, for the prefix-only assertion. */
 export interface PromptInput {
   readonly pass: 1 | 2;
-  /** Entry IDs whose messages are serialized into `promptText`. */
   readonly entryIds: readonly string[];
   readonly systemPrompt: string;
   readonly promptText: string;
 }
 
-/** Observer called with each pass's input after the prefix assertion passed. */
 type PromptInputHook = (input: PromptInput) => void;
 
 export interface TextBackendOptions {
-  /** Summarizer for the session's own provider, or undefined when none is configured. */
   readonly summarize: TextSummarizer | undefined;
-  /** Context window and output cap of the summarizer model. */
   readonly budget: ModelBudget;
   readonly id?: string;
-  /** Clock for the absolute preparation deadline; defaults to `Date.now`. */
   readonly now?: () => number;
   readonly onPromptInput?: PromptInputHook;
 }
 
-/** Raised when a pass would read an entry outside the frozen prefix. */
 export class PostCutInputError extends Error {
   constructor(message: string) {
     super(message);
@@ -136,12 +104,6 @@ export class PostCutInputError extends Error {
   }
 }
 
-/**
- * Throw unless every entry feeding a pass belongs to the frozen prefix.
- *
- * The first retained entry is checked explicitly: it is the boundary most
- * likely to leak through an off-by-one.
- */
 export function assertPrefixOnlyInput(snapshot: FrozenSnapshot, input: PromptInput): void {
   const prefixIds = new Set(snapshot.entries.map((entry) => entry.id));
   const firstKept = readFirstKeptEntryId(snapshot);
@@ -162,15 +124,10 @@ function oversized(detail: OversizedDetail): PrepareFailure {
   return { ok: false, reason: "oversized", retryable: false, detail };
 }
 
-/** Two optional scope fields conflict only when both are named and differ. */
 function conflicting(left: string | undefined, right: string | undefined): boolean {
   return left !== undefined && right !== undefined && left !== right;
 }
 
-/**
- * Compatible, not equal: the provider must match, while baseUrl, authMode, and
- * accountScope only must not conflict where both sides name them; model is not compared.
- */
 function summarizerScopeCompatible(summarizer: ProviderScope, session: ProviderScope): boolean {
   return (
     summarizer.provider === session.provider &&
@@ -180,13 +137,6 @@ function summarizerScopeCompatible(summarizer: ProviderScope, session: ProviderS
   );
 }
 
-/**
- * Map a thrown summarizer error to a typed reason.
- *
- * Provider errors reach here as messages only, so classification is textual.
- * An unrecognized failure produced no usable summary and is reported as
- * `malformed`, retryable.
- */
 export function classifySummarizerError(error: Error): PrepareFailure {
   if (error instanceof CompactionAbortedError) return failure("canceled", false);
   if (error instanceof SummaryTruncatedError) return oversized("summary-truncated");
@@ -244,7 +194,6 @@ function validUsage(usage: Usage): boolean {
   return numbers.every((value) => Number.isFinite(value));
 }
 
-/** Every required heading present, each once, in order. */
 function hasSummaryStructure(text: string): boolean {
   const lines = text.split("\n").map((line) => line.trim());
   let previous = -1;
@@ -256,7 +205,6 @@ function hasSummaryStructure(text: string): boolean {
   return true;
 }
 
-/** Usage restricted to the keys a persisted candidate draft accepts. */
 function draftUsage(usage: Usage): Usage {
   return {
     input: usage.input,
@@ -307,7 +255,6 @@ function copyRange(range: EntryIdRange | null): [string, string] | null {
 
 type Limits = BackgroundLimits;
 
-/** Same effective limits the coordinator admits against; reasoning models get output headroom. */
 function resolveLimits(model: ModelBudget, budget: PreparationBudget): Limits | undefined {
   return resolveBackgroundLimits(model, budget);
 }
@@ -321,14 +268,6 @@ type PassPlan =
       readonly evidence: readonly TaggedMessage[];
     };
 
-/**
- * Choose one pass, or a bounded two-pass split of the frozen prefix.
- *
- * The second pass gets the largest newest slice that fits beside a
- * worst-case first-pass draft; the first pass gets the rest and must fit on
- * its own. There is no third pass: a prefix that cannot be covered this way
- * fails as oversized rather than dropping material.
- */
 function planPasses(
   evidence: PrefixEvidence,
   governing: string | undefined,
@@ -354,7 +293,6 @@ function planPasses(
     return undefined;
   }
 
-  // Worst-case first-pass draft: the output cap at a generous chars/token rate.
   const placeholder = "x".repeat(limits.maxOutputTokens * 5);
   const renderSecond = (slice: readonly TaggedMessage[]): string =>
     buildFrozenPrefixReconciliationPrompt({
@@ -411,7 +349,6 @@ interface PrepareOptions {
   readonly customInstructions?: string;
 }
 
-/** Everything `prepare` resolved synchronously before its first await. */
 interface PreparedInputs {
   readonly summarizer: TextSummarizer;
   readonly onPromptInput: PromptInputHook | undefined;
@@ -424,7 +361,6 @@ interface PreparedInputs {
   readonly customInstructions: string | undefined;
 }
 
-/** Synchronous checks and planning; returns a typed failure instead of starting a call. */
 function resolvePrepareInputs(
   options: TextBackendOptions,
   snapshot: FrozenSnapshot,
@@ -462,10 +398,6 @@ function resolvePrepareInputs(
   };
 }
 
-/**
- * Abort scope for one preparation: forwards the caller's signal, arms the
- * absolute deadline timer, and reports cancellation or timeout after each await.
- */
 class PreparationDeadline {
   readonly controller = new AbortController();
   private timedOut = false;
@@ -557,13 +489,11 @@ async function runPass(
   return runner.deadline.interrupted() ?? validatePass(response, runner.maxResultBytes);
 }
 
-/** Prompt-input and output tokens of one pass. */
 interface PassIteration {
   readonly input: number;
   readonly output: number;
 }
 
-/** Summary text and accounting produced by the planned passes. */
 interface PassOutcome {
   readonly text: string;
   readonly usage: Usage;
@@ -635,7 +565,6 @@ function runPlannedPasses(runner: PassRunner): Promise<PassOutcome | PrepareFail
   return plan.kind === "single" ? runSinglePass(runner, plan) : runTwoPasses(runner, plan);
 }
 
-/** Final summary: normalized text, governing appendix for a split turn, then file lists. */
 function composeSummary(
   text: string,
   capped: CappedGoverningContent | undefined,
@@ -698,7 +627,6 @@ function totalUsage(outcome: PassOutcome): BackgroundUsage {
   };
 }
 
-/** Assemble, validate, and size-check the checkpoint built from the pass outcome. */
 function buildCheckpoint(
   snapshot: FrozenSnapshot,
   inputs: PreparedInputs,
@@ -746,7 +674,6 @@ async function prepareTextCheckpoint(
   snapshot: FrozenSnapshot,
   request: PrepareOptions,
 ): Promise<PreparedCheckpoint<TextCheckpointDetails> | PrepareFailure> {
-  // Snapshot every input before the first await.
   const inputs = resolvePrepareInputs(options, snapshot, request, context.now);
   if ("ok" in inputs) return inputs;
   const deadline = new PreparationDeadline({
@@ -775,7 +702,6 @@ function textCapability(
   return { supported: true };
 }
 
-/** Create the text backend; register it under {@link TEXT_BACKEND_ID}. */
 export function createTextBackend(options: TextBackendOptions): Backend<TextCheckpointDetails> {
   const context = { backendId: options.id ?? TEXT_BACKEND_ID, now: options.now ?? Date.now };
   return {
@@ -786,10 +712,6 @@ export function createTextBackend(options: TextBackendOptions): Backend<TextChec
   };
 }
 
-/**
- * Validate one pass's raw response: transport status and metadata first, then
- * the summary's structure and size. Semantics are the model's responsibility.
- */
 function validatePass(
   response: TextSummaryResponse,
   maxResultBytes: number,
@@ -817,7 +739,6 @@ function validatePass(
   return { text, usage: response.usage };
 }
 
-/** Dependencies of the production summarizer bound to the session's model. */
 interface ModelSummarizerDeps {
   readonly modelRegistry: ExtensionContext["modelRegistry"];
   readonly model: NonNullable<ExtensionContext["model"]>;
@@ -825,12 +746,6 @@ interface ModelSummarizerDeps {
   readonly retry: RetryPolicy | undefined;
 }
 
-/**
- * Summarizer that calls the session's own model through `runSummaryCall`.
- *
- * `runSummaryCall` already rejects truncated, empty, errored, and tool-calling
- * responses by throwing; those errors are classified by the backend.
- */
 export function createModelSummarizer(deps: ModelSummarizerDeps): TextSummarizer {
   const scope: ProviderScope = {
     provider: deps.model.provider,

@@ -34,8 +34,6 @@ const activateParametersCheck = compile(
   ),
 );
 
-// Pi 1.4.0 activates every extension tool a branch never recorded when it restores tools on
-// resume or `/tree`, unless the tool registers with `defaultActive: false`.
 test("every tool lsp_activate_tools can activate registers inactive, and only those", async () => {
   const manifest: unknown = JSON.parse(
     await readFile(new URL("../registration-manifest.json", import.meta.url), "utf-8"),

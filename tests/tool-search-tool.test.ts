@@ -10,7 +10,6 @@ import {
 } from "../profile/extensions/lib/tool-search-tool.ts";
 import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
 
-/** Registered tools as a choco-pi Code Mode session sees them, with their real descriptions. */
 const CATALOG: Array<{
   name: string;
   description: string;
@@ -47,7 +46,6 @@ const CATALOG: Array<{
     description: "Check files or directories for language-server diagnostics.",
   },
   { name: "grep", description: "Search file contents for a pattern." },
-  // Pi base tools: the Code Mode bridge never exposes them inside exec.
   {
     name: "read",
     description: "Read the contents of a file.",
@@ -58,7 +56,6 @@ const CATALOG: Array<{
     description: "Write content to a file.",
     sourceInfo: { source: "builtin", path: "builtin:write" },
   },
-  // A tool from a built-in extension (MCP) is bridged like any extension tool.
   {
     name: "mcp__docs__read_page",
     description: "Read a documentation page.",

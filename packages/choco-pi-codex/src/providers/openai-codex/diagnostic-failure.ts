@@ -76,8 +76,6 @@ export function noThrowCodexDiagnosticsSink(
   return (event) => {
     try {
       sink(event);
-    } catch {
-      // Optional diagnostics must never change provider execution.
-    }
+    } catch {}
   };
 }

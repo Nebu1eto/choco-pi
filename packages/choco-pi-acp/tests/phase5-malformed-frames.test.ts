@@ -17,12 +17,6 @@ import { numberField, recordField, stringField } from "../src/pi-rpc/protocol.ts
 
 const TEST_TIMEOUT_MS = 5_000;
 
-/**
- * Read the session's in-flight extension-UI handler count.
- *
- * The counter is private to `PiAcpSession` and has no public accessor, so this
- * test reads it as an undecoded boundary record rather than asserting a shape.
- */
 function extensionUiActive(session: PiAcpSession): number {
   const state = recordField(session, "extensionUiTaskState");
   const active = state === undefined ? undefined : numberField(state, "active");

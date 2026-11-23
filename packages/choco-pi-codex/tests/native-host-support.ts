@@ -26,7 +26,6 @@ import {
 } from "@choco-pi/code-mode/tools/code-mode/tools";
 import { codeModeHostBinaryPath } from "@choco-pi/code-mode/tools/code-mode/binary";
 
-/** GPT-6 model the live native probes target; CHOCO_PI_NATIVE_MODEL selects Sol or Luna. */
 export const NATIVE_LIVE_MODEL = process.env.CHOCO_PI_NATIVE_MODEL ?? "gpt-6-astra";
 
 const asyncCallValidator = compile(obj({ name: lit("exec"), async: lit(true) }, { open: true }));
@@ -34,7 +33,6 @@ const yieldedValidator = compile(
   obj({ codeMode: lit(true), status: lit("yielded") }, { open: true }),
 );
 
-/** Opt-in harness: production provider, native input hook and actual Code Mode host. */
 export async function createNativeHost(options: {
   codeMode?: boolean;
   enabled?: boolean;
@@ -49,7 +47,7 @@ export async function createNativeHost(options: {
   const credential = readStoredCredential("openai-codex");
   if (credential?.type !== "oauth" || credential.expires < Date.now() + 180000)
     throw new Error("Native probe requires an existing unexpired Codex login");
-  if (options.codeMode) codeModeHostBinaryPath(); // Refuse automatic installation during tests.
+  if (options.codeMode) codeModeHostBinaryPath();
   const apiKey = credential.access;
   const enabled = options.enabled ?? true;
   const config = structuredClone(DEFAULT_CODEX_CONVERSION_CONFIG);

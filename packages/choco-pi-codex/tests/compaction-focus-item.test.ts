@@ -62,7 +62,6 @@ interface Rejection {
   readonly message: string;
 }
 
-/** A Responses provider that records every payload; `reject(n)` fails the n-th call (0-based). */
 async function harness(reject: (call: number) => Rejection | undefined = () => undefined) {
   const payloads: Static<typeof BodySchema>[] = [];
   const runtime = await ModelRuntime.create({ refreshOnCreate: false, modelsPath: null });
@@ -159,7 +158,6 @@ test("a non-blank focus is one developer message right before compaction_trigger
     { type: "compaction_trigger" },
   ]);
   assert.equal(input.filter((item) => JSON.stringify(item).includes("Compaction focus")).length, 1);
-  // The retained window is built from the prompt input, never from the request: no focus item.
   const window = buildRemoteCompactionV2Window(PROMPT_INPUT, result.compaction);
   assert.equal(JSON.stringify(window).includes("Compaction focus"), false);
   assert.equal(JSON.stringify(PROMPT_INPUT).includes("Compaction focus"), false);
@@ -179,7 +177,6 @@ test("a blank or absent focus adds nothing", async () => {
 
 test("a focus over 16,384 code points is an oversized failure and sends nothing", async () => {
   const { payloads, registry } = await harness();
-  // Astral characters: 16,385 code points but 32,770 UTF-16 units.
   const result = await run(registry, "\u{1F600}".repeat(COMPACTION_FOCUS_MAX_CODE_POINTS + 1));
   assert.equal(result.ok, false);
   assert.equal(result.ok ? undefined : result.reason, "oversized");
@@ -223,7 +220,6 @@ test("rejection heuristic: 400/422 with a JSON body naming the item index, devel
   const failure = (message: string, status = 400) =>
     ({ ok: false, reason: "stream-error", errorMessage: message, status }) as const;
   const body = (error: Record<string, string>) => `400 ${JSON.stringify({ error })}`;
-  // A real item rejection: the param names exactly the appended item.
   assert.equal(rejectsCompactionFocus(failure('{"error":{"param":"input[3]"}}'), 3), true);
   assert.equal(rejectsCompactionFocus(failure('{"error":{"param":"input[3].role"}}'), 3), true);
   assert.equal(rejectsCompactionFocus(failure('{"error":{"param":"input[3]"}}', 422), 3), true);
@@ -246,11 +242,9 @@ test("rejection heuristic: 400/422 with a JSON body naming the item index, devel
     rejectsCompactionFocus(failure(body({ message: "bad", code: "developer" })), 3),
     true,
   );
-  // No JSON body: plain text naming the item, the role or the trigger is not proof.
   assert.equal(rejectsCompactionFocus(failure("Invalid input[3]: bad item"), 3), false);
   assert.equal(rejectsCompactionFocus(failure("role 'developer' is not allowed here"), 3), false);
   assert.equal(rejectsCompactionFocus(failure(body({ message: "context too long" })), 3), false);
-  // Reviewer probes: an HTML 404 page mentioning "developer", and transport text without a status.
   assert.equal(
     rejectsCompactionFocus(
       failure("<html><body>404 Not Found. See the developer docs.</body></html>", 404),

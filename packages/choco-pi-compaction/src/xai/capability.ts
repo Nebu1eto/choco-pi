@@ -1,11 +1,3 @@
-/**
- * Static support policy for xAI server-side compaction.
- *
- * Eligible: Pi's built-in `xai` provider on the `openai-responses` API at the
- * first-party endpoint `https://api.x.ai/v1`, a `grok-` model, and either auth
- * mode (OAuth and API keys both reach api.x.ai). Nothing is probed over the
- * network. Failures cool the combination down through the shared gate.
- */
 import type { Api, Model } from "@earendil-works/pi-ai";
 
 import {
@@ -22,7 +14,6 @@ export const XAI_PROVIDER = "xai";
 export const XAI_API = "openai-responses";
 export const XAI_FIRST_PARTY_HOST = "api.x.ai";
 const MODEL_PREFIX = "grok-";
-/** xAI API keys carry this prefix; any other bearer credential is treated as OAuth. */
 const API_KEY_PREFIX = "xai-";
 
 export function xaiAuthModeOf(apiKey: string | undefined): XaiAuthMode | undefined {
@@ -30,12 +21,6 @@ export function xaiAuthModeOf(apiKey: string | undefined): XaiAuthMode | undefin
   return apiKey.startsWith(API_KEY_PREFIX) ? "api-key" : "oauth";
 }
 
-/**
- * Auth mode of a resolved auth (D10): the bearer credential is the API key
- * or, for a provider configured with headers only, the token of its
- * `Authorization: Bearer` header. The foreground and the backend both
- * classify through here, so they agree for one session.
- */
 export function xaiAuthModeFromAuth(auth: BearerAuth): XaiAuthMode | undefined {
   return xaiAuthModeOf(bearerCredentialOf(auth));
 }
@@ -49,7 +34,6 @@ function firstPartyHost(baseUrl: string): boolean {
   }
 }
 
-/** The default policy: provider, host and model family; any auth mode. */
 export function xaiSupportPolicy(scope: ProviderScope): AnthropicSupportEntry | undefined {
   const { authMode, baseUrl } = scope;
   if (authMode !== "oauth" && authMode !== "api-key") return undefined;
@@ -63,21 +47,17 @@ export function xaiSupportPolicy(scope: ProviderScope): AnthropicSupportEntry | 
   };
 }
 
-/** Whether a session model is an xAI Responses model this lane may serve (before auth). */
 export function isXaiResponsesModel(model: Pick<Model<Api>, "api" | "provider">): boolean {
   return model.api === XAI_API && model.provider === XAI_PROVIDER;
 }
 
 export interface XaiGateOptions {
   readonly cooldownMs: number;
-  /** Exact combinations replacing the default policy (tests, synthetic providers). */
   readonly allowList?: readonly AnthropicSupportEntry[];
   readonly now?: () => number;
-  /** Called when a cooldown actually starts. */
   readonly onCooldown?: CooldownObserver;
 }
 
-/** The shared cooldown gate with the xAI policy. */
 export function createXaiCapabilityGate(options: XaiGateOptions): AnthropicCapabilityGate {
   return new AnthropicCapabilityGate({
     enabled: true,
@@ -89,13 +69,11 @@ export function createXaiCapabilityGate(options: XaiGateOptions): AnthropicCapab
   });
 }
 
-/** Providers whose Responses stream must be captured for replay under a policy. */
 export function xaiCapturedProviders(allowList?: readonly AnthropicSupportEntry[]): string[] {
   if (allowList === undefined) return [XAI_PROVIDER];
   return [...new Set(allowList.map((entry) => entry.provider))];
 }
 
-/** Whether the gate's static policy admits a model under either auth mode (no I/O, no credentials). */
 export function xaiGateAdmitsModel(
   gate: AnthropicCapabilityGate,
   model: Pick<Model<Api>, "provider" | "id" | "baseUrl">,

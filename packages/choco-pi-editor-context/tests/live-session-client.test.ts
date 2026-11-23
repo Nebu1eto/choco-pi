@@ -203,7 +203,6 @@ test("canonical cwd matching compares exact roots, not descendants", async (t) =
   assert.equal(await canonicalCwdMatches(`${project}${sep}`, join(project, ".")), true);
   assert.equal(await canonicalCwdMatches(join(project, "src", ".."), project), true);
   assert.equal(await canonicalCwdMatches(project, sibling), false);
-  // Workspace matching is exact-root matching: a descendant is not the same workspace root.
   assert.equal(await canonicalCwdMatches(project, subdirectory), false);
   assert.equal(await canonicalCwdMatches(project, join(root, "missing")), false);
   assert.equal(

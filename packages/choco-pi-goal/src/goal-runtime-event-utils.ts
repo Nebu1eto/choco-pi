@@ -71,7 +71,6 @@ export function getContextWindow(ctx: ExtensionContext): number {
   return safeContextWindow(ctx.model?.contextWindow);
 }
 
-/** Hidden continuations that only call get_goal / *.__get_goal are blocked, not progressed. */
 export const STATUS_INSPECTION_ONLY_CONTINUATION_REASON =
   "continuation only re-inspected goal status with no actionable progress";
 

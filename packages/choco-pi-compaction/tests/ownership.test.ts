@@ -1,12 +1,3 @@
-/**
- * Ownership of the compaction summary.
- *
- * The codex package registers its own native compaction and runs after this
- * one, so its result would replace anything produced here. Abstaining avoids a
- * wasted provider call. Codex's handler only summarizes with its
- * `responsesCompaction` flag on; with it off a codex transport is summarized
- * here (the former unconditional codex-transport abstention is gone).
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -95,8 +86,6 @@ test("the configured-provider rule needs a responses model", () => {
   );
 });
 
-// Replaces the former "codex-owned regardless of the codex config" rule: codex's
-// handler abstains with native compaction off, so the summary is local there.
 test("a codex transport is codex-owned only while codex native compaction is on", () => {
   const codex = { model: model({ provider: "openai-codex", api: "openai-codex-responses" }) };
   assert.equal(
@@ -142,8 +131,6 @@ test("server-side mode claims anthropic-messages models only after every Codex r
     "choco-pi mode stays local",
   );
   assert.equal(resolveOwner({ model: model({}) }), "local", "the summarizer's own view is local");
-  // Codex keeps winning wherever it owns the summary (an absent snapshot keeps
-  // the codex-transport abstention).
   assert.equal(
     resolveOwner(
       { model: model({ provider: "openai-codex", api: "openai-codex-responses" }) },
@@ -182,10 +169,6 @@ test("server-side mode claims anthropic-messages models only after every Codex r
 
 const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 
-/**
- * Run with a temporary agent directory holding a codex config, so
- * `session_start` reads this flag instead of the developer's real one.
- */
 async function withCodexConfig(
   responsesCompaction: boolean,
   run: () => Promise<void>,
@@ -206,7 +189,6 @@ async function withCodexConfig(
   }
 }
 
-/** A codex-provider host whose `session_start` has read the codex config. */
 async function codexHost() {
   const host = await createCompactionHost({
     provider: "openai-codex",

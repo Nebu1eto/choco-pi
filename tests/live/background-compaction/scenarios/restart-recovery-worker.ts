@@ -1,8 +1,3 @@
-/**
- * One fresh-process phase of the restart-recovery scenario. Spawned by
- * scenarios/restart-recovery.ts; writes `<out>/<phase>.json` plus redacted
- * events, then exits (SIGKILL where the phase simulates a crash).
- */
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { lit, nullable, obj, opt, str, unknown } from "@earendil-works/pi-schema";
@@ -32,7 +27,6 @@ const REOPEN_MARKERS = {
   reload: "HARNESS-RESTART-RELOAD",
 } as const;
 
-/** Candidate IDs found in the protected session file on disk (the crash-durable state). */
 async function persistedCandidateIds(file: string): Promise<string[]> {
   const text = await readFile(file, "utf8");
   return text
@@ -100,7 +94,6 @@ async function finish(host: Host, out: string, phase: RestartPhase, data: PhaseR
   await writeArtifact(out, `${phase}.json`, data);
 }
 
-/** First process: prepare during the active turn, then crash before the boundary adoption. */
 async function persist(host: Host, out: string): Promise<never> {
   const sessionId = host.manager.getSessionId();
   host.setForegroundObserver(async (dispatch) => {
@@ -109,20 +102,17 @@ async function persist(host: Host, out: string): Promise<never> {
     await finish(host, out, "persist", await result(host, "persist", statusOf(host)));
     process.kill(process.pid, "SIGKILL");
   });
-  // Live: the kill lands before request 1 is forwarded, so later steps are never sent.
   await host.session.prompt(
     stepsPrompt(host, "HARNESS-RESTART-PERSIST-GO", 4, "HARNESS-RESTART-ACK"),
   );
   throw new Error("Phase persist did not reach the kill point");
 }
 
-/** Later processes: reopen, record recovery state, run one prompt. */
 async function reopen(host: Host, out: string, phase: "recover" | "reload"): Promise<void> {
   const reopened = statusOf(host);
   const marker = REOPEN_MARKERS[phase];
   await host.session.prompt(replyPrompt(host, marker, `${marker}-ACK`));
   await finish(host, out, phase, await result(host, phase, reopened));
-  // Crash after adoption too, so the reload phase reads only durable state.
   if (phase === "recover") process.kill(process.pid, "SIGKILL");
 }
 

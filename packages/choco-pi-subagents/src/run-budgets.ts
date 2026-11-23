@@ -1,20 +1,12 @@
 export interface RunBudgetLimits {
-  /** Maximum elapsed time for this run, measured from actual start. */
   timeoutMs?: number;
-  /** Maximum completed tool calls for this run. */
   maxToolCalls?: number;
-  /** Maximum input + output + cache-write tokens reported for this run. */
   maxTokens?: number;
-  /** Inactivity interval before conclusion steering, then watchdog stop. */
   idleTimeoutMs?: number;
 }
 
 export type ForcedTerminalStatus = "budget_exceeded" | "watchdog_stopped";
 
-/**
- * A token cap below this multiple of the estimated first request cannot let
- * the child finish even one round trip with room to answer.
- */
 export const BOOTSTRAP_FLOOR_MULTIPLIER = 1.5;
 
 interface BootstrapTool {
@@ -23,11 +15,6 @@ interface BootstrapTool {
   parameters?: unknown;
 }
 
-/**
- * Rough first-request size: system prompt plus declared tool schemas at four
- * characters per token. Deliberately coarse — it guards against caps that
- * cannot cover bootstrap at all, not against marginal ones.
- */
 export function estimateBootstrapTokens(input: {
   systemPrompt?: string;
   tools?: readonly BootstrapTool[];
@@ -40,7 +27,6 @@ export function estimateBootstrapTokens(input: {
   return Math.ceil(chars / 4);
 }
 
-/** The refusal for a cap below the bootstrap floor, or undefined when it fits. */
 export function bootstrapFloorRefusal(
   maxTokens: number | undefined,
   estimatedTokens: number,
@@ -64,7 +50,6 @@ function armTimer(callback: () => void, delayMs: number): ReturnType<typeof setT
   return timer;
 }
 
-/** Per-generation budget/watchdog state. It never publishes terminal results itself. */
 export class RunBudgetController {
   private readonly limits: RunBudgetLimits;
   private readonly hooks: RunBudgetHooks;
@@ -124,11 +109,6 @@ export class RunBudgetController {
     this.requestTokenConclusion(maxTokens);
   }
 
-  /**
-   * Called once before the first request with the estimated bootstrap size.
-   * Stops the run as budget_exceeded when the token cap cannot cover it, so no
-   * provider call is spent on a run that is certain to be cut off.
-   */
   checkBootstrap(estimatedTokens: number): boolean {
     if (!this.isActive()) return true;
     const refusal = bootstrapFloorRefusal(this.limits.maxTokens, estimatedTokens);

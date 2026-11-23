@@ -1,34 +1,3 @@
-/**
- * Replay of a committed xAI server-side checkpoint.
- *
- * The host builds every request from the branch: the latest compaction entry
- * becomes a summary `user` message (after the system-prompt instruction item)
- * followed by the kept items. For an `xai-responses-compaction-v1` checkpoint a
- * `before_provider_request` handler replaces that summary message with the
- * opaque compaction item as the FIRST input item, followed by the system
- * prompt and every kept/new item unchanged (xAI: the item is the head of the
- * conversation; new items are appended after it, never before).
- *
- * The handler chain is last-writer-wins, so the rewrite is enforced at the
- * capturing transport: the serialized body must carry exactly one compaction
- * item, first and byte-identical, and no summary text. Any mismatch refuses
- * the request before it is transmitted; a local refusal never turns
- * server-side compaction off. Only a provider 4xx that names the compaction
- * item does (later requests send the placeholder summary).
- *
- * Opaque-history guard (D2) at the request boundary: when the checkpoint
- * cannot be replayed (its scope differs from the current model, the payload
- * cannot be rewritten, server-side is off for the session after a provider
- * rejection, or the request is not an xAI transport call) and the user has
- * not authorized the loss, an xAI call is refused locally. For any other
- * provider a pending opaque block is published at `context` time, before the
- * request is built, and the provider-boundary overlay
- * (`installOpaqueBlockProvider`) refuses the request before it is sent (a
- * `before_provider_request` handler cannot stop a request: the host's runner
- * catches throws and sends the payload anyway). A non-xAI request that still
- * reaches `before_provider_request` was not stopped and is journaled as an
- * unauthorized send. Authorized loss sends the placeholder and is journaled.
- */
 import {
   type BeforeProviderRequestEvent,
   type ExtensionAPI,
@@ -107,7 +76,6 @@ const isSummaryFields = compile(
   ),
 ).check;
 
-/** The latest compaction entry on the branch decides; older native entries are history. */
 export function findActiveXaiCheckpoint(branch: readonly SessionEntry[]): CheckpointLookup {
   for (let index = branch.length - 1; index >= 0; index--) {
     const entry = branch[index];
@@ -134,11 +102,6 @@ type RewriteOutcome =
   | { readonly ok: true; readonly payload: XaiWireBody }
   | { readonly ok: false; readonly code: XaiReplayRefusalCode };
 
-/**
- * The payload as it goes on the wire. The adapter's in-memory params carry
- * `undefined`-valued fields (`prompt_cache_retention`, item `phase`/`id`)
- * that serialization drops; the JSON round trip yields exactly the sent form.
- */
 function wireForm<T>(payload: T): XaiWireBody | undefined {
   if (isXaiWireBody(payload)) return payload;
   let text: string | undefined;
@@ -150,7 +113,6 @@ function wireForm<T>(payload: T): XaiWireBody | undefined {
   return text === undefined ? undefined : parseXaiWireBody(text);
 }
 
-/** Pure payload rewrite: item first, then the instruction item, then every other item as given. */
 export function rewriteXaiReplayPayload<T>(
   payload: T,
   checkpoint: ActiveXaiCheckpoint,
@@ -180,7 +142,6 @@ function rewriteWireBody(payload: XaiWireBody, checkpoint: ActiveXaiCheckpoint):
   return { ok: true, payload: { ...payload, input: [...head, ...rest] } };
 }
 
-/** Transport-level check: the serialized request still carries the exact item first, once. */
 export function verifyXaiReplayTransport(
   request: Pick<XaiTransportRequest, "body">,
   checkpoint: ActiveXaiCheckpoint,
@@ -207,12 +168,6 @@ export function verifyXaiReplayTransport(
 
 type ReplayModel = Pick<NonNullable<ExtensionContext["model"]>, "provider" | "id" | "baseUrl">;
 
-/**
- * Whether the checkpoint was made for the current model (D11): provider,
- * model id and normalized base URL. The auth mode is not compared: it is only
- * known after the credentials resolve, and the transport check enforces the
- * item itself.
- */
 export function xaiCheckpointScopeMatches(
   details: Pick<XaiDetails, "scope">,
   model: ReplayModel | undefined,
@@ -230,22 +185,12 @@ export interface XaiReplayDiagnostic {
   readonly kind: "rewritten" | "refused" | "unverifiable";
   readonly sessionId: string;
   readonly entryId: string;
-  /** Non-secret item identity (digest prefix and length). */
   readonly item?: string;
   readonly code?: XaiReplayRefusalCode;
 }
 
-/** Why the checkpoint cannot be replayed on this request. */
-/** `opaque-checkpoint`: the request is not an xAI transport call, so it cannot carry the item. */
-/** `disabled`: server-side is off for the session (a provider rejected the item), so it is never replayed. */
 export type XaiReplayGuardCode = XaiReplayRefusalCode | "opaque-checkpoint" | "disabled";
 
-/**
- * A request-boundary guard decision for an unreplayable checkpoint:
- * `refused`, an xAI call refused locally; `blocked`, another provider's
- * request published as a pending block; `loss`, the placeholder is sent
- * with the user's authorization.
- */
 export interface XaiReplayGuard {
   readonly kind: "refused" | "blocked" | "loss";
   readonly sessionId: string;
@@ -255,30 +200,20 @@ export interface XaiReplayGuard {
 
 interface ReplayRewriteOptions {
   readonly onDiagnostic?: (diagnostic: XaiReplayDiagnostic) => void;
-  /** Called with the code when the transport check refuses the rewritten request. */
   readonly onRefused?: (code: string) => void;
   readonly onGuard?: (guard: XaiReplayGuard) => void;
-  /** Session-scoped loss consent; defaults to the process-global consent slot. */
   readonly lossAuthorized?: (sessionId: string, entryId: string) => boolean;
-  /** Server-side is off for this session: the checkpoint is unreplayable on every request. */
   readonly disabled?: boolean;
 }
 
-/** Clear only this lane's pending block; a Codex block on the same session is kept. */
 function clearXaiBlock(sessionId: string): void {
   clearOpaqueBlockOf(sessionId, "xai-native");
 }
 
-/** The local refusal text: the exits, never a provider body. */
 function guardRefusalMessage(entryId: string): string {
   return OPAQUE_GUARD_NOTICE("xai", entryId);
 }
 
-/**
- * `before_provider_request` handler. Rewrites only inside a capturing xAI
- * provider call, where the transport check enforces the result. An
- * unreplayable checkpoint goes through the opaque-history guard.
- */
 export function createXaiReplayRewriteHandler(options: ReplayRewriteOptions = {}) {
   const consent = options.lossAuthorized ?? lossAuthorizedFor;
   return (event: BeforeProviderRequestEvent, ctx: ExtensionContext): XaiWireBody | undefined => {
@@ -293,12 +228,10 @@ export function createXaiReplayRewriteHandler(options: ReplayRewriteOptions = {}
     const guard = (kind: XaiReplayGuard["kind"], code: XaiReplayGuardCode): void =>
       options.onGuard?.({ kind, sessionId, entryId, code });
     if (call === undefined) {
-      // Another provider (or an uncaptured call): it cannot carry the xAI item.
       if (consent(sessionId, entryId)) {
         clearXaiBlock(sessionId);
         guard("loss", "opaque-checkpoint");
       } else {
-        // The provider overlay did not stop this request: it is sent with the placeholder.
         setOpaqueBlock(sessionId, { entryId, owner: "xai-native" });
         guard("blocked", "opaque-checkpoint");
       }
@@ -332,14 +265,6 @@ export function createXaiReplayRewriteHandler(options: ReplayRewriteOptions = {}
   };
 }
 
-// ---------------------------------------------------------------------------
-// Binder (capture registration, projection, rewrite, rejection handling)
-// ---------------------------------------------------------------------------
-
-/**
- * Provider error fields that tie a 4xx to the replayed compaction item: the
- * item's encrypted payload, the item itself, its type, or its position.
- */
 const ITEM_REJECTION_PATTERN = /encrypted_content|compaction item|type "compaction"|input\[0\]/iu;
 const isErrorBody = compile(
   obj(
@@ -354,7 +279,6 @@ const isErrorBody = compile(
 ).check;
 const isErrorField = compile(str()).check;
 
-/** Whether a provider error body names the compaction item (JSON `error.message|code|param` only). */
 function namesCompactionItem(text: string): boolean {
   let parsed: unknown;
   try {
@@ -369,11 +293,6 @@ function namesCompactionItem(text: string): boolean {
   );
 }
 
-/**
- * Rejection code of a provider response to a replayed request (HTTP 400 or
- * 422 whose JSON error names the compaction item), or undefined: any other
- * status, a non-JSON body, or an error about something else.
- */
 export async function xaiReplayRejectionCode(response: Response): Promise<string | undefined> {
   if (response.status !== 400 && response.status !== 422) return undefined;
   let text: string;
@@ -388,31 +307,20 @@ export async function xaiReplayRejectionCode(response: Response): Promise<string
 type SessionSource = Pick<SessionManager, "buildSessionProjection">;
 
 export interface XaiReplayBinderOptions {
-  /** Providers whose Responses stream is captured. */
   readonly providers: readonly string[];
   readonly capture?: XaiCapturingOptions;
   readonly session: AnthropicServerSideSession;
   readonly onDiagnostic: (ctx: ExtensionContext, diagnostic: XaiReplayDiagnostic) => void;
-  /** Called once per session when a provider rejection turns server-side off. */
   readonly onDisabled: (ctx: ExtensionContext, code: string) => void;
-  /** Journal seam for guard decisions; without it the notices are shown directly. */
   readonly announce?: XaiAnnounce;
-  /** Session-scoped loss consent; defaults to the process-global consent slot. */
   readonly lossAuthorized?: (sessionId: string, entryId: string) => boolean;
   readonly now?: () => number;
 }
 
 export interface XaiReplayBinder {
-  /**
-   * Capture and project `sessionId` and activate replay for it; returns the
-   * unbind. Rebinding a bound session replaces its projection source; no
-   * unbind releases captures (the host releases them at shutdown and when a
-   * session start binds a different session).
-   */
   bindSession(sessionId: string, sessionManager: SessionSource): () => void;
   readonly active: () => boolean;
   readonly isBound: (sessionId: string) => boolean;
-  /** The `before_provider_request` handler; register it last. */
   readonly handler: (
     event: BeforeProviderRequestEvent,
     ctx: ExtensionContext,
@@ -424,12 +332,9 @@ export function createXaiReplayBinder(
   options: XaiReplayBinderOptions,
 ): XaiReplayBinder {
   let captureRegistered = false;
-  /** Bound sessions; the token identifies the newest binding of each. */
   const bound = new Map<string, object>();
-  /** Guard decisions already announced per session (once per checkpoint, kind and code). */
   const announced = new Map<string, Set<string>>();
 
-  /** Disable only for the binding the request started on; a stale rejection does nothing. */
   const disable = (
     ctx: ExtensionContext,
     binding: { readonly sessionId: string; readonly token: object | undefined },
@@ -481,13 +386,10 @@ export function createXaiReplayBinder(
     const token = bound.get(sessionId);
     if (token === undefined) return undefined;
     const binding = { sessionId, token };
-    // Server-side off for this session (a provider rejected the item): the checkpoint is
-    // unreplayable, so the guard refuses the request unless the loss is authorized.
     const disabled = options.session.isDisabled(sessionId);
     const rewritten = createXaiReplayRewriteHandler({
       disabled,
       onDiagnostic: (diagnostic) => options.onDiagnostic(ctx, diagnostic),
-      // A local transport refusal is reported, never a disable: only the provider's rejection disables.
       onRefused: (code) => onTransportRefused(ctx, binding, code),
       onGuard: (guard) => onGuard(ctx, guard),
       lossAuthorized: options.lossAuthorized,
@@ -499,12 +401,6 @@ export function createXaiReplayBinder(
   };
 
   const consent = options.lossAuthorized ?? lossAuthorizedFor;
-  /**
-   * Publish or clear this lane's pending block before a request is built: a
-   * request that cannot go through an xAI capture cannot carry the item, so
-   * without authorized loss the provider overlay must refuse it. A captured
-   * xAI request is guarded by its transport check instead (no block).
-   */
   const publishBlock = (ctx: ExtensionContext): void => {
     const sessionId = readSessionId(ctx);
     if (sessionId === undefined || !bound.has(sessionId)) return;
@@ -584,12 +480,10 @@ function isRefusalCode(code: string): code is XaiReplayRefusalCode {
   return REFUSAL_CODES.has(code);
 }
 
-/** A transport refusal code as a replay code (`body-unreadable` and foreign codes stay unnamed). */
 function refusalCodeOf(code: string): XaiReplayRefusalCode | undefined {
   return isRefusalCode(code) ? code : undefined;
 }
 
-/** The branch, or undefined once the context outlived its session. */
 function readBranch(ctx: ExtensionContext): SessionEntry[] | undefined {
   try {
     return ctx.sessionManager.getBranch();
@@ -609,7 +503,6 @@ function showNotice(ctx: ExtensionContext, text: string): void {
   }
 }
 
-/** One guard decision: journaled (when wired) and notified, policy `always`. */
 function announceGuard(
   ctx: ExtensionContext,
   guard: XaiReplayGuard,

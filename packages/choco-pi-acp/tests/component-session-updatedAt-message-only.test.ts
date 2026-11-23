@@ -13,8 +13,6 @@ test("listPiSessions: updatedAt prefers last message timestamp over later non-me
 
   const sessionFile = join(sessionsDir, "s.jsonl");
 
-  // Last message at 00:00:02, but a later session_info at 00:00:10.
-  // We want updatedAt == 00:00:02.
   writeFileSync(
     sessionFile,
     [

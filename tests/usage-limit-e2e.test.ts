@@ -1,4 +1,3 @@
-// Must stay the first import: isolates HOME before provider-usage.ts is evaluated.
 import { E2E_HOME } from "./helpers/usage-limit-e2e-home.ts";
 
 import assert from "node:assert/strict";
@@ -45,7 +44,6 @@ import {
 const CONTROLLER_PATH = fileURLToPath(
   new URL("../profile/extensions/usage-limit-policy.ts", import.meta.url),
 );
-/** Loads the real root controller inside child sessions through project extension discovery. */
 const CHILD_CONTROLLER_SHIM = `export { default } from ${JSON.stringify(CONTROLLER_PATH)};\n`;
 
 const subagents: ExtensionFactory = (pi) => subagentsExtension(pi);
@@ -58,7 +56,6 @@ const isUsageLimitEvent = compile(
 function usageEvents(events: readonly RuntimeValue[]) {
   return events.map((event) => {
     assert.ok(isUsageLimitEvent(event), "malformed subagents:usage_limit event");
-    // Value.Parse after the check only stripped unknown keys; the tests read declared fields only.
     return event;
   });
 }
@@ -71,7 +68,6 @@ function resetHealth(): void {
 beforeEach(resetHealth);
 after(async () => {
   resetHealth();
-  // provider-usage.ts queues its cache writes; remove until no late write recreates the dir.
   for (let attempt = 0; attempt < 10; attempt += 1) {
     await rm(E2E_HOME, { recursive: true, force: true });
     await delay(100);
@@ -89,7 +85,6 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-/** The quota cache provider-usage.ts derives from HOME (redirected by usage-limit-e2e-home.ts). */
 const ISOLATED_USAGE_CACHE = join(E2E_HOME, ".pi", "agent", "choco-pi", "usage-cache.json");
 
 async function waitForCacheKey(key: string): Promise<void> {
@@ -159,7 +154,6 @@ test("preference none: child limit is reported, failed model closed, model untou
     assert.equal(e2e.providers.requestsFor(CODEX_MODEL).length, 1);
     assert.equal(e2e.providers.requestsFor(CLAUDE_MODEL).length, 0);
 
-    // The real controller loaded in the child, stayed inert, and published no policy there.
     assert.ok(
       child.resourceLoader
         .getExtensions()
@@ -169,8 +163,6 @@ test("preference none: child limit is reported, failed model closed, model untou
     assert.deepEqual(usageLimitPolicyOwners(), [parentId]);
     assert.notEqual(child.sessionId, parentId);
 
-    // No usage reading exists for this account, so the stored closure is not
-    // trusted: the next spawn re-checks it and tries the provider again.
     const retried = await runTool(e2e.session, "Agent", {
       prompt: "Try again.",
       description: "second spawn",
@@ -187,17 +179,9 @@ test("preference none: child limit is reported, failed model closed, model untou
   assert.equal(usageLimitPolicyOwners()?.length ?? 0, 0);
 });
 
-/** Private `USAGE_LIMIT_RESET_MARGIN_MS` in agent-manager.ts: the wake fires at resetAt + margin. */
 const MANAGER_RESET_MARGIN_MS = 30_000;
-/** Distance from park to wake-up in the auto-resume scenarios. */
 const WAKE_AFTER_MS = 600;
 
-/**
- * Real policy factory (real classifier, corroboration and preference reader)
- * with the `usageSnapshot` seam injected: the first reading reports an
- * exhausted window whose reset lands WAKE_AFTER_MS after the manager's 30 s
- * margin, every later reading reports capacity. Registered for `owner`.
- */
 function registerParkingPolicy(e2e: UsageLimitE2e) {
   let readings = 0;
   const policy = createUsageLimitPolicy({
@@ -260,7 +244,6 @@ test("auto-resume: foreground child parks, wakes, resumes the same session and m
     assert.match(text, /Agent paused until \d{4}-\d{2}-\d{2}T[^;]+; result will arrive/);
     assert.match(text, /status: waiting_for_reset/);
     assert.ok(elapsed < 2_000, `foreground call took ${elapsed} ms`);
-    // Returned before the wake-up: only the settle-time corroboration ran.
     assert.equal(parking.readings(), 1);
     assert.equal(record.status, "waiting_for_reset");
     assert.equal(record.usageLimit?.status, "waiting_for_reset");
@@ -315,7 +298,6 @@ test("auto-resume: stop_subagent while parked settles stopped with no later resu
     assert.equal(record.status, "stopped");
     assert.equal(record.error, "Stopped by user request.");
 
-    // Past the armed wake-up: no corroboration, no resume request, still stopped.
     await delay(WAKE_AFTER_MS + 900);
     assert.equal(parking.readings(), 1);
     assert.equal(e2e.providers.requestsFor(CODEX_MODEL).length, 1);
@@ -324,7 +306,6 @@ test("auto-resume: stop_subagent while parked settles stopped with no later resu
     const notifications = customEntries(e2e.session, "subagent-notification");
     assert.equal(notifications.length, 1);
     assert.match(JSON.stringify(notifications[0]), /<status>Stopped<\/status>/);
-    // Not asserted: usageLimit.status after stop (observed "waiting_for_reset"; see report).
   } finally {
     parking.unregister();
     await e2e.close();
@@ -419,7 +400,6 @@ test("real root controller, fallback: Anthropic 429 switches the session to Code
     );
     await e2e.session.waitForIdle();
 
-    // One original attempt plus one host retry, then a single settle.
     assert.equal(e2e.providers.requestsFor(CLAUDE_MODEL).length, 2);
     assert.equal(e2e.session.model?.provider, "openai-codex");
     assert.equal(e2e.session.model?.id, "e2e-codex");
@@ -432,11 +412,8 @@ test("real root controller, fallback: Anthropic 429 switches the session to Code
       /^Anthropic usage limit reached \(e2e-claude only; other models stay available\) \(resets .+\)\. Switched to openai-codex\/e2e-codex\. Continue the previous task/,
     );
     assert.deepEqual(usageLimitPolicyOwners(), [parentId]);
-    // Corroboration had a (fake) Anthropic token, so it tried the OAuth usage endpoints.
-    // The guard refused them, so corroboration read nothing and fallback proceeded uncorroborated.
     assert.ok(e2e.fetchCalls.includes("https://api.anthropic.com/api/oauth/usage"));
     assert.ok(e2e.fetchCalls.every((url) => url.startsWith("https://api.anthropic.com/")));
-    // The refused request's backoff entry went to the isolated HOME, not the user's cache.
     await waitForCacheKey("anthropic:usage");
   } finally {
     await e2e.close();
@@ -463,7 +440,6 @@ test("real policy corroboration without provider auth resolves not-ready with no
       confidence: "inferred",
     });
     assert.equal(anthropic.ready, false);
-    // Codex is authenticated with a non-JWT key, so no account id can be derived.
     const codex = await policy.corroborate({
       kind: "quota",
       provider: "openai-codex",
@@ -492,7 +468,6 @@ test("real root closure from an Anthropic 429 is re-checked before the next Anth
     e2e.providers.script(CLAUDE_MODEL, { kind: "error", message: ANTHROPIC_LIMIT_TEXT });
     await e2e.session.prompt("Do the task.");
     await e2e.session.waitForIdle();
-    // No usage data confirms the limit: the closure covers the failed model only.
     await waitFor(
       () => policy.isClosed("anthropic", account(), undefined, "e2e-claude"),
       5_000,
@@ -501,8 +476,6 @@ test("real root closure from an Anthropic 429 is re-checked before the next Anth
     assert.equal(policy.isClosed("anthropic", account()), false);
     assert.equal(policy.isClosed("anthropic", account(), undefined, "claude-fable-5-2"), false);
 
-    // The usage endpoint is refused here, so no reading exists: the closure is
-    // not trusted and the spawn goes to the provider instead of being refused.
     const result = await runTool(e2e.session, "Agent", {
       prompt: "Summarise the repository.",
       description: "after reset",
@@ -523,7 +496,6 @@ test("Fable-scoped limit in a real session: Fable child refused, Anthropic non-F
     preference: "none",
     parentModel: CODEX_MODEL,
     factories: [subagents],
-    // Child sessions read these: the 429 must reach the manager, not a host retry.
     projectSettings: { retry: { enabled: false } },
   });
   const fableReset = Date.now() + 3 * 86_400_000;
@@ -541,7 +513,6 @@ test("Fable-scoped limit in a real session: Fable child refused, Anthropic non-F
       },
       lastResort: [],
     },
-    // Live usage: only the Fable weekly window is exhausted.
     usageSnapshot: async (provider) => ({
       observedAt: Date.now(),
       windows:
@@ -587,13 +558,10 @@ test("Fable-scoped limit in a real session: Fable child refused, Anthropic non-F
     });
     assert.equal(record?.usageLimit?.suggestedModel, "openai-codex/e2e-codex");
 
-    // Another Anthropic model is not covered: the spawn reaches the provider.
     const opus = resultText(await spawn("anthropic/e2e-claude", "non-fable child"));
     assert.doesNotMatch(opus, /unavailable|Agent failed/);
     assert.equal(e2e.providers.requestsFor(CLAUDE_MODEL).length, 1);
 
-    // Fable stays refused after the pre-spawn re-check reads the same window.
-    // The tool throws the refusal; the host turns it into a tool error.
     await assert.rejects(
       spawn("anthropic/claude-fable-5-2", "fable again"),
       /^ProviderUnavailableError: Model anthropic\/claude-fable-5-2 unavailable \(temporarily rate limited\)\. .*\(claude-fable\*, claude-mythos\* only; other models stay available\)/,
@@ -617,7 +585,6 @@ test("no live usage data in a real session: a Fable 429 never blocks other Anthr
     generation: 1,
     readPreference: async () => (await readAgentPreferencesAsync(e2e.agentDir)).onUsageLimit,
     fallbacks: { tiers: {}, lastResort: [] },
-    // The usage endpoint cannot be read at all.
     usageSnapshot: async () => undefined,
   });
   const unregister = registerUsageLimitPolicy(policy);

@@ -120,7 +120,6 @@ export async function handleQuotasCommand(
   });
   if (!isCurrent()) return;
 
-  // Non-interactive fallback (RPC, print, JSON modes)
   if (result === undefined) {
     const fetchResult = await quotasClient.quotas();
     if (!isCurrent()) return;

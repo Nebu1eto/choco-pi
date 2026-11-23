@@ -18,7 +18,6 @@ import {
 } from "./store-cleanup.ts";
 import type { DiffHunk, DiffModel, ReviewRecord, ReviewStore } from "./types.ts";
 
-// Keys, record validation and the test guard live in lib/changes, shared with the changes pane.
 export {
   isStoredReviewRecord,
   refuseRealStoreUnderTest,
@@ -26,18 +25,12 @@ export {
   targetKey,
 } from "../../lib/changes/review-records.ts";
 
-/**
- * Review records live in `<agentDir>/choco-pi/reviews`, where `agentDir` is
- * Pi's agent directory (`PI_CODING_AGENT_DIR`, else `~/.pi/agent`). With the
- * default agent directory this is the same path earlier versions used.
- */
 export function resolveReviewDirectory(agentDir: string = getAgentDir()): string {
   return reviewRecordsDirectory(agentDir);
 }
 
 type RecordRead = { kind: "missing" } | { kind: "read"; record: ReviewRecord | undefined };
 
-/** Read a record file: missing, or read (the record, or undefined when it is not one). */
 async function readRecordFile(path: string): Promise<RecordRead> {
   let text: string;
   try {
@@ -57,34 +50,20 @@ async function readRecordFile(path: string): Promise<RecordRead> {
 
 let defaultCleanupSession: ReviewCleanupSession | undefined;
 
-/**
- * This session's clean-up controller. Pi loads extension modules afresh for
- * each session, so module state is session state.
- */
 function sessionCleanup(): ReviewCleanupSession {
   defaultCleanupSession ??= createReviewCleanupSession({ isRecord: isStoredReviewRecord });
   return defaultCleanupSession;
 }
 
-/**
- * Stop this session's record clean-up: cancels a scheduled pass and stops a
- * running one at its next filesystem step. Call from `session_shutdown`.
- */
 export function stopReviewRecordCleanup(): void {
   sessionCleanup().stop();
 }
 
-/**
- * Per record path, in this process (every store instance): the number of the
- * last save started and committed, the chain the commit steps run on, and
- * the saves in flight. Removed when none is in flight.
- */
 const pathCommits = new Map<
   string,
   { started: number; committed: number; chain: Promise<void>; active: number }
 >();
 
-/** The record in a temporary file beside `path`; the caller renames or removes it. */
 async function writeTemporary(path: string, record: ReviewRecord): Promise<string> {
   const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
@@ -105,30 +84,10 @@ export type ReviewListWarning = {
 };
 
 export type ReviewStoreOptions = {
-  /**
-   * Clean-up started on first use. Defaults to this session's pass for the
-   * agent-directory store and to none for an explicitly supplied directory.
-   */
   cleanup?: ReviewCleanupSession | false;
-  /**
-   * Test seam: runs in `save` after the repository directory is created and
-   * before the record is written, where another session's clean-up can
-   * remove that directory.
-   */
   beforeWrite?: (repositoryDirectory: string) => Promise<void>;
 };
 
-/**
- * Create a store. `onListWarning` observes records skipped by `list`; callback
- * failures are ignored so one bad record or warning handler cannot hide the
- * remaining resumable reviews. Without `baseDirectory`, the directory is
- * resolved from Pi's agent directory on every call.
- *
- * The first call starts the session's record clean-up in the background. A
- * record this store loaded or saved, and every record of a repository it
- * listed (the resume picker can open any of them), is never removed by that
- * session's pass.
- */
 export function createReviewStore(
   baseDirectory?: string,
   onListWarning?: (warning: ReviewListWarning) => void,
@@ -152,9 +111,7 @@ export function createReviewStore(
     if (cleanup !== false) {
       try {
         cleanup.start(base, isProtected);
-      } catch {
-        // Housekeeping must never break the review it accompanies.
-      }
+      } catch {}
     }
     return base;
   }
@@ -162,12 +119,9 @@ export function createReviewStore(
   function warn(warning: ReviewListWarning): void {
     try {
       onListWarning?.(warning);
-    } catch {
-      // Listing must remain available even when the observer fails.
-    }
+    } catch {}
   }
 
-  /** See what this session's clean-up pass moves aside while a read runs. */
   function watch(repository: string): ReviewQuarantineWatch | undefined {
     if (cleanup === false) return undefined;
     try {
@@ -177,11 +131,6 @@ export function createReviewStore(
     }
   }
 
-  /**
-   * Read a record; when it is missing because this session's pass holds it
-   * in quarantine, wait until the pass settles it (put back or deleted) and
-   * read again, so a record about to be restored is never reported absent.
-   */
   async function readSettled(
     path: string,
     fileName: string,
@@ -215,11 +164,6 @@ export function createReviewStore(
       openedRecords.add(`${record.repoKey}/${fileName}`);
       const repositoryDirectory = join(use(directory()), record.repoKey);
       const path = join(repositoryDirectory, fileName);
-      // Saves of one record may overlap (a leave-save the view gave up on, then
-      // a newer one). Each takes a number when it starts; only a save newer
-      // than the last one committed replaces the file, so an older save that
-      // finishes late cannot overwrite newer work. Writing the temporary file
-      // happens outside the chain, so a hung write never blocks a newer save.
       const commits = pathCommits.get(path) ?? {
         started: 0,
         committed: 0,
@@ -234,7 +178,6 @@ export function createReviewStore(
         const temporaryPath = await writeTemporary(path, record);
         const step = commits.chain.then(async () => {
           if (sequence <= commits.committed) {
-            // Superseded: what is on disk is newer than this record.
             await unlink(temporaryPath).catch(() => undefined);
             return;
           }
@@ -254,14 +197,11 @@ export function createReviewStore(
         try {
           await write();
         } catch (error) {
-          // Another session's clean-up removes a directory it has just emptied; that can
-          // happen between the two steps above. Create it again and write once more.
           if (!(isObject(error) && error.code === "ENOENT")) throw error;
           await mkdir(repositoryDirectory, { recursive: true, mode: 0o700 });
           await write();
         }
       } finally {
-        // Bounded: with no save of this path in flight, nothing older can still land.
         commits.active -= 1;
         if (commits.active === 0 && pathCommits.get(path) === commits) pathCommits.delete(path);
       }
@@ -284,7 +224,6 @@ export function createReviewStore(
         const readName = async (name: string): Promise<void> => {
           try {
             const read = await readSettled(join(repositoryDirectory, name), name, watching);
-            // Removed since the listing (by a clean-up pass or by hand): not corrupt, just gone.
             if (read.kind === "missing") return;
             if (read.record) found.set(name, read.record);
             else warn({ fileName: name, error: new Error("Invalid or corrupt review record.") });
@@ -294,7 +233,6 @@ export function createReviewStore(
         };
         const listed = new Set(names.filter((name) => name.endsWith(".json")));
         for (const name of listed) await readName(name);
-        // Records this session's pass held while the directory was listed.
         for (const name of watching?.names() ?? []) {
           if (!listed.has(name)) await readName(name);
         }
@@ -310,7 +248,6 @@ export function createReviewStore(
 
 export type UnreviewedHunk = { path: string; hunk: DiffHunk };
 
-/** Return current hunks whose stable content ids are absent from the record. */
 export function unreviewedHunks(record: ReviewRecord, diff: DiffModel): UnreviewedHunk[] {
   const reviewed = new Set(record.cursor.reviewedHunkIds);
   return diff.files.flatMap((file) =>
@@ -318,7 +255,6 @@ export function unreviewedHunks(record: ReviewRecord, diff: DiffModel): Unreview
   );
 }
 
-/** Return a new record with the supplied stable hunk ids marked reviewed. */
 export function markHunksReviewed(
   record: ReviewRecord,
   hunkIds: Iterable<string>,

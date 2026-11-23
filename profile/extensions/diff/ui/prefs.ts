@@ -1,17 +1,3 @@
-/**
- * Pane UI state: its remembered width. Whether the pane opens on startup or
- * automatically on session changes is governed by the `diffPaneDefault` user
- * preference (`on` | `off` | `auto`) in `<agentDir>/settings.json`.
- *
- * Stored as `<agentDir>/choco-pi/diff-pane.json`. The file is user state in
- * the agent directory, not a tracked `profile/extensions/*.json` sidecar, so the
- * install profile neither links nor migrates it. A file that fails to parse
- * or validate is ignored and rewritten with the defaults. Writes are debounced
- * and atomic (temporary file, then rename).
- *
- * Legacy keys (`open`, `autoOpen`) and unknown keys are accepted so files from
- * earlier versions keep their saved width without being rewritten as corrupt.
- */
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { bool, compile, int, obj, opt, type Static } from "@earendil-works/pi-schema";
@@ -41,11 +27,8 @@ export function prefsPath(agentDir: string): string {
   return join(agentDir, "choco-pi", "diff-pane.json");
 }
 
-/** File access seam; tests replace it with an in-memory map. */
 export type PrefsIo = {
-  /** File contents, or undefined when the file does not exist. */
   read(path: string): Promise<string | undefined>;
-  /** Replace the file atomically. */
   write(path: string, contents: string): Promise<void>;
 };
 
@@ -70,7 +53,6 @@ export const fileSystemPrefsIo: PrefsIo = {
   },
 };
 
-/** Parse stored text; undefined when it is not a valid preferences file. */
 export function parsePrefs(text: string): PanePrefs | undefined {
   let value: RuntimeValue;
   try {
@@ -89,9 +71,7 @@ export function serializePrefs(prefs: PanePrefs): string {
 
 export type PrefsStore = {
   load(): Promise<PanePrefs>;
-  /** Debounced write of the latest preferences. */
   save(prefs: PanePrefs): void;
-  /** Cancel the debounce timer and start any pending write now. */
   flush(): Promise<void>;
 };
 
@@ -107,7 +87,6 @@ export function createPrefsStore(path: string, io: PrefsIo, clock: DiffClock): P
     pending = undefined;
     if (!prefs) return chain;
     const contents = serializePrefs(prefs);
-    // A failed write leaves the previous file; the next change retries.
     chain = chain.then(() => io.write(path, contents)).catch(() => undefined);
     return chain;
   }

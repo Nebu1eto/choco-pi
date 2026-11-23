@@ -1,10 +1,3 @@
-/**
- * The changes view's boxed header: a labeled `╭ … ╮` border, `│` rows and a
- * `╰ … ╯` border, drawn the way zentui frames the prompt editor when zentui
- * is installed (its `renderLabeledBox`), and with the theme's own border
- * colors otherwise. The view chooses the labels and rows; this module only
- * draws them.
- */
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
@@ -22,34 +15,22 @@ import {
 } from "../../zentui-loader.ts";
 import type { PaneStyler } from "./rows.ts";
 
-/** Below this many columns the header is plain lines: a box would leave too little room. */
 export const HEADER_BOX_MIN_WIDTH = 30;
 
-/** Columns the box takes from each row: `│ ` and ` │`. */
 export const HEADER_BOX_CHROME = 4;
 
 export type HeaderBox = {
   width: number;
-  /** Rows inside the box, already styled; each is cut to the inner width. */
   lines: string[];
   topLeft: string;
-  /** Cells on the right of the top border, joined by ` – ` in the border's color as the editor's are. */
   topRight: readonly string[];
   bottomLeft: string;
-  /** Cells on the right of the bottom border, joined like `topRight`. */
   bottomRight: readonly string[];
-  /** The border takes the accent color while the view has focus. */
   focused: boolean;
 };
 
-/** Draws a box, or answers undefined to have the themed box drawn instead. */
 export type HeaderBoxRenderer = (box: HeaderBox) => string[] | undefined;
 
-/**
- * One labeled border row: `╭─ left ──── right ─╮`. The right label gives way
- * first (it is cut to a third of the room, or dropped below four columns),
- * then the left one is cut.
- */
 function labeledBorder(
   width: number,
   leftLabel: string,
@@ -82,7 +63,6 @@ function labeledBorder(
   );
 }
 
-/** The box in the theme's colors: `borderMuted`, or `accent` while focused. */
 export function themedHeaderBox(box: HeaderBox, styler: Pick<PaneStyler, "fg">): string[] {
   const paint = (text: string) => styler.fg(box.focused ? "accent" : "borderMuted", text);
   const cells = (values: readonly string[]) =>
@@ -100,7 +80,6 @@ export function themedHeaderBox(box: HeaderBox, styler: Pick<PaneStyler, "fg">):
   ];
 }
 
-/** The two zentui exports the box needs, as loaded; checked before use. */
 export type HeaderBoxModules = { renderLabeledBox: RuntimeValue; loadConfig: RuntimeValue };
 
 export type HeaderBoxLoader = () => Promise<HeaderBoxModules | undefined>;
@@ -114,7 +93,6 @@ const defaultHeaderBoxLoader: HeaderBoxLoader = async () => {
   return { renderLabeledBox: editor["renderLabeledBox"], loadConfig: config["loadConfig"] };
 };
 
-/** zentui's `renderLabeledBox` options, as `minimalist-editor.ts` declares them. */
 type LabeledBoxOptions = {
   width: number;
   lines: string[];
@@ -131,13 +109,6 @@ function isStringArray(value: RuntimeValue): value is string[] {
   return Array.isArray(value) && value.every((entry: RuntimeValue) => isString(entry));
 }
 
-/**
- * zentui's box renderer, bound to its config as read now and to the theme
- * `theme` returns at each draw. Undefined when zentui, its `renderLabeledBox`
- * (a copy older than that export) or its config cannot be loaded. The
- * renderer answers undefined whenever zentui throws or draws an unexpected
- * shape, so the caller falls back to {@link themedHeaderBox}. Never rejects.
- */
 export async function loadZentuiHeaderBox(
   theme: () => Theme,
   loader: HeaderBoxLoader = defaultHeaderBoxLoader,

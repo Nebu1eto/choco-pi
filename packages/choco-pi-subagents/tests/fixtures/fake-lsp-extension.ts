@@ -1,10 +1,3 @@
-/**
- * A stand-in for choco-pi-lsp in child-runner tests: the same tool names, with
- * the situational ones registered inactive as the real package does, and an
- * `execute` that only records the call. Loaded from a file whose directory is
- * named `choco-pi-lsp`, so `extensions:` and `ext:` selectors match it the
- * way they match the real package.
- */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { obj } from "@earendil-works/pi-schema";
 import { hostParams } from "../../src/schema-bridge.ts";
@@ -12,25 +5,19 @@ import { type HostValue, isHostObject, isString } from "../../src/value-guards.t
 
 export interface FakeLspCall {
   name: string;
-  /** The `operation` or `disposition` argument, when the call passed one. */
   operation: string | undefined;
 }
 
 declare global {
-  // Pi's loader may evaluate this file as a separate module instance from the
-  // test's import, so the log lives on the global object.
   var chocoPiFakeLspCalls: FakeLspCall[] | undefined;
 }
 
-/** The call log shared between the loaded fixture module and the test. */
 export function fakeLspCalls(): FakeLspCall[] {
   globalThis.chocoPiFakeLspCalls ??= [];
   return globalThis.chocoPiFakeLspCalls;
 }
 
-/** Always active in choco-pi-lsp. */
 export const FAKE_LSP_ACTIVE_TOOLS = ["read_symbol", "read_enclosing", "symbol_search"];
-/** Registered inactive until `lsp_activate_tools` in choco-pi-lsp. */
 export const FAKE_LSP_SITUATIONAL_TOOLS = [
   "ast_grep_search",
   "ast_grep_replace",

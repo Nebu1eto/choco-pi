@@ -57,7 +57,6 @@ for (const scenario of ["native", "off", "sse", "fallback"] as const) {
   test(`steering UI correlates real GPT-6 delivery: ${scenario}`, { skip: !live }, async () => {
     const frames: string[][] = [];
     // SAFETY: The production native input hook uses only setWidget in this SDK UI fixture.
-    // Interactive rendering is exercised separately by native-steering-tui.ts.
     const uiContext = {
       setWidget(_key: string, lines: string[] | undefined) {
         if (lines) frames.push([...lines]);

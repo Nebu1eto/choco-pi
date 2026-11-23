@@ -1,4 +1,3 @@
-/** Recovery of persisted candidate records at session start, newest first. */
 import type { Backend, CandidateRecord, FrozenSnapshot, ReasonCode } from "../contract.ts";
 import { type CommittedCandidate } from "../adoption.ts";
 import { parseRecord, revalidateIdentity } from "../candidate-record.ts";
@@ -15,8 +14,6 @@ import {
   validate,
 } from "./state.ts";
 import { findCommit, reconcileCommit } from "./arbitration.ts";
-
-// ---- recovery from persisted candidate records ----
 
 type RecoveryStep = "next" | "recovered" | "refused";
 
@@ -38,14 +35,12 @@ function recordedPriorCheckpoint(
     : null;
 }
 
-/** Record a discarded candidate so status reports why the persisted record was refused. */
 function discardRecord(state: CoordinatorState, record: CandidateRecord, reason: ReasonCode): void {
   const stale = newCandidate(state, record.candidateId, record.backendId, "recovery");
   state.candidate = stale;
   finish(state, stale, "discarded-stale", reason);
 }
 
-/** Resolve the record's backend and comparison context, or the step to take when it cannot recover. */
 function recoveryContext(
   state: CoordinatorState,
   record: CandidateRecord,
@@ -54,7 +49,6 @@ function recoveryContext(
   const captured = captureContext(state, record.backendId);
   const committed = findCommit(state, record.candidateId, record.identity.prefixFingerprint);
   if (!ownerCurrent(state)) return "refused";
-  // A committed record is compared against the checkpoint that preceded its own commit.
   const comparison =
     committed && captured.latestCheckpoint?.id === committed.id
       ? { ...captured, latestCheckpoint: recordedPriorCheckpoint(record) }
@@ -80,7 +74,6 @@ function recoverySnapshot(context: RecoveryContext): FrozenSnapshot | undefined 
   });
 }
 
-/** After an await, a committed record must still be the latest checkpoint on an unchanged branch. */
 function committedRecoveryCurrent(
   context: RecoveryContext,
   current: Candidate,

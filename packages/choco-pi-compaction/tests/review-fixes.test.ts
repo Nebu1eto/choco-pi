@@ -202,7 +202,6 @@ test("manual lanes: text and Anthropic owners keep their lanes, a Codex owner ge
   });
   assert.deepEqual(manualLanes(core("text")), ["text"]);
   assert.deepEqual(manualLanes(core("text"), "focus"), ["text"]);
-  // No Anthropic capture for this session: the documented text fallback stays.
   assert.deepEqual(manualLanes(core("anthropic-native")), ["text"]);
   assert.deepEqual(manualLanes(core("anthropic-native"), "focus"), ["text"]);
   assert.deepEqual(manualLanes(core("codex-native-v2")), [], "Codex's foreground handler owns it");
@@ -243,16 +242,13 @@ test("manual lanes over real captures: non-200 only, usable, disabled, and with 
     anthropicDisabled: () => disabled,
   };
   try {
-    // The host's retry burst on a failing request: four non-200 answers, nothing usable.
     for (let attempt = 0; attempt < 4; attempt++) await send(529);
     assert.equal(capturesFor(sessionId).length, 0);
     assert.equal(recentResponsesFor(sessionId).length, 4, "kept for diagnostics only");
     assert.deepEqual(manualLanes(core), ["text"], "non-200 captures are not usable");
     await send(200);
     assert.deepEqual(manualLanes(core), ["anthropic-native", "text"]);
-    // D9: the Anthropic lane applies `/compact <focus>` itself.
     assert.deepEqual(manualLanes(core, "focus"), ["anthropic-native", "text"]);
-    // A later non-200 burst does not evict the usable capture.
     for (let attempt = 0; attempt < 4; attempt++) await send(529);
     assert.deepEqual(manualLanes(core), ["anthropic-native", "text"]);
     disabled = true;

@@ -84,7 +84,6 @@ test("nested bash failure propagates its non-zero exit code and output", async (
 
 test("nested bash truncation surfaces truncated and the full output path", async (t) => {
   const cwd = await scratchDir(t);
-  // Structured output keeps up to 1 MiB; 1.5 MiB forces truncation and a spill file.
   const value = await nestedBash(cwd).invoke(
     { command: "head -c 1572864 /dev/zero | tr '\\0' a" },
     directContext(cwd),
@@ -97,7 +96,6 @@ test("nested bash truncation surfaces truncated and the full output path", async
   assert.equal(result.truncated, true);
   assert.ok(fullOutputPath);
   await access(fullOutputPath);
-  // Head and tail of the first 1 MiB around Pi's omission marker, not the whole 1.5 MiB.
   assert.match(result.output, /\[\.\.\. \d+ bytes omitted \.\.\.\]/);
   assert.ok(result.output.length < 1572864);
 });
@@ -142,7 +140,6 @@ test("callable bridged tools dispatch through ctx.executeTool", async (t) => {
   const bashTool = createBashTool(cwd, { exposeSessionEnvironment: false });
   let directExecutions = 0;
   const calls: Array<{ name: string; args: unknown; signal: AbortSignal | undefined }> = [];
-  // The host's own validation options (pi-ai validateToolArguments).
   const bashValidator = compile(bashTool.parameters, {
     formats,
     coerce: true,

@@ -1,16 +1,3 @@
-/**
- * Synchronous locked read-modify-write commit seam for behavior-gating JSON
- * stores shared by multiple choco-pi-lsp processes.
- *
- * The authoritative read happens only after the bounded PID lock is held; the
- * caller merges only its delta, publication is a throwing atomic replacement,
- * and success telemetry runs only after publication succeeds.
- *
- * Short synchronous commits use a file lock. Awaited commits use the shared
- * quarantine directory lock, preserving bounded contention and stale-owner
- * recovery without allowing a late release to delete a replacement owner.
- */
-
 import * as fs from "node:fs";
 import fsp from "node:fs/promises";
 import { writeFileAtomic, writeFileAtomicAsync } from "./atomic-write.ts";
@@ -19,11 +6,6 @@ import {
   acquireQuarantinePidFileLock,
 } from "./bounded-pid-file-lock.ts";
 
-// Shared fields WITHOUT the post-write callback: the sync and async commit
-// variants declare their own callback signatures (void vs void|Promise<void>)
-// so neither widens the other's contract (sonar S6544 — a Promise-returning
-// callback behind a void-typed field is an unawaited-work hazard at the type
-// level; the async variant awaits its callback inside the lock).
 interface DurableStoreCommitCore<T> {
   path: string;
   deserialize: (contents: string | undefined) => T;

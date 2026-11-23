@@ -1,8 +1,3 @@
-/**
- * The advisor tool spawns the internal `advisor` agent through the registry
- * entry's `spawnInternal`. Caller-supplied paths (`spawn`, which RPC shares,
- * the Agent tool, schedules, mentions) keep treating it as unknown.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -110,7 +105,6 @@ test("internal resolution takes only the exact name of an enabled internal agent
       assert.equal(resolution.ok, false, name);
       if (!resolution.ok) assert.match(resolution.message, /internal agent type/);
     }
-    // The caller-supplied path still hides it and applies the fallback.
     assert.deepEqual(resolveSpawnTypeIn(registry, "advisor"), {
       ok: true,
       type: "general",
@@ -133,7 +127,6 @@ test("the registry entry spawns the advisor as advisor even with fallbackSubagen
     assert.equal(record?.type, "advisor");
     entry.stop(id);
 
-    // A misspelt internal type errors instead of running general.
     const before = entry.getAllRecords().length;
     assert.throws(
       () => entry.spawnInternal(pi, ctx, "advizor", "question", options),
@@ -142,7 +135,6 @@ test("the registry entry spawns the advisor as advisor even with fallbackSubagen
     assert.throws(() => entry.spawnInternal(pi, ctx, "general", "question", options), /internal/);
     assert.equal(entry.getAllRecords().length, before, "nothing spawned");
 
-    // `spawn` (shared with cross-extension RPC) never dispatches the internal type.
     const fellBack = entry.spawn(pi, ctx, "advisor", "question", options);
     const fallbackRecord = entry.getAllRecords().find((candidate) => candidate.id === fellBack);
     assert.equal(fallbackRecord?.type, "general");

@@ -83,11 +83,6 @@ function absolutePath(filePath: string, cwd: string): string {
   return path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
 }
 
-/**
- * Expand completed mutation tools recorded by Pi code mode inside an outer
- * `exec` result. Synthetic paths are absolute because nested traces do not have
- * their own host `tool_call` event from which path attribution can be recorded.
- */
 export function codeModeMutationToolResults(
   event: { details?: HostBoundaryValue },
   cwd: string,

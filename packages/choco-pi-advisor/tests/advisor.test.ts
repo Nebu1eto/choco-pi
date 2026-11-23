@@ -307,7 +307,6 @@ test("local agent_message schema matches the subagents tool shape", () => {
     const params: AgentMessageParams = { to: "/root", message: "m", type };
     assert.ok(isAgentMessageArgs(params));
   }
-  // Compile-time parity: each shape must be assignable to the other.
   const toRemote = (local: AgentMessageArgs): AgentMessageParams => local;
   const toLocal = (remote: AgentMessageParams): AgentMessageArgs => remote;
   const sample: AgentMessageParams = { to: "a", message: "m", type: "TASK" };
@@ -327,7 +326,6 @@ function codeResult(
   toolName: string,
   produced: ReturnType<typeof toCodeModeToolResult>,
 ): SessionEntry {
-  // Round-trip like the session file so details are the persisted JSON shape.
   const details: unknown = JSON.parse(JSON.stringify(produced.details));
   assert.ok(isJsonValue(details));
   return {
@@ -788,7 +786,6 @@ test("manager slot is resolved lazily and requires the internal spawn path", () 
       value: { spawnInternal: "invalid", getRecord: () => undefined },
     });
     assert.equal(resolveAdvisorManager(), undefined);
-    // A build with only `spawn` would run the internal advisor as fallbackSubagent.
     Object.defineProperty(globalThis, symbol, {
       configurable: true,
       value: { spawn: () => "id", getRecord: () => undefined },
@@ -884,12 +881,10 @@ test("advisor prefers the access-program variant only when the account can use i
       [FABLE, ASTRA, mythos].find((m) => m.provider === provider && m.id === id),
     getAvailable: () => available,
   });
-  // The entitlement filter lists Mythos as available only for an account with access.
   const granted = registryWith([FABLE, ASTRA, mythos]);
   const denied = registryWith([FABLE, ASTRA]);
   const candidates = async () => [FABLE, ASTRA];
 
-  // An Astra session with an Astra advisor switches to the Flagship Anthropic primary.
   assert.deepEqual(await selectAdvisorModel(ASTRA, ASTRA, granted, candidates, variants), {
     tag: "selected",
     model: mythos,
@@ -900,12 +895,10 @@ test("advisor prefers the access-program variant only when the account can use i
     model: FABLE,
     notice: alternateModelNotice(FABLE),
   });
-  // A configured Fable advisor runs on Mythos when available, without a switch notice.
   assert.deepEqual(await selectAdvisorModel(FABLE, ASTRA, granted, candidates, variants), {
     tag: "selected",
     model: mythos,
   });
-  // Fable and Mythos share weights, so neither advises a session on the other.
   for (const session of [FABLE, mythos]) {
     assert.deepEqual(await selectAdvisorModel(FABLE, session, granted, candidates, variants), {
       tag: "selected",

@@ -1,17 +1,3 @@
-/**
- * Code Mode characterization across representative providers.
- *
- * Wave 0 pins the observable Code Mode surface before the Code Mode code moves
- * out of `choco-pi-codex`: the public tools the extension registers (their
- * order is part of the cached prompt prefix), the outer tool set activation
- * leaves the model, the nested `tools.<name>` namespace, and the bundled-tool
- * prompt section. Every value comes from production registration and planning
- * under DEFAULT_CODEX_CONVERSION_CONFIG; nothing here mirrors a constant.
- *
- * `tests/codex-code-mode-defaults.test.ts` checks that Code Mode is the default
- * and how prompts compact; `tests/tool-schema-budget.test.ts` bounds schema
- * sizes. This file pins exact names, order and provider routing instead.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -49,7 +35,6 @@ import { buildCodeModeToolsPrompt } from "../packages/choco-pi-code-mode/src/too
 import { googleAntigravityProviderConfig } from "../packages/choco-pi-provider-google-antigravity/extensions/provider/index.ts";
 import { PROVIDER_ID as GOOGLE_ANTIGRAVITY_PROVIDER_ID } from "../packages/choco-pi-provider-google-antigravity/src/config.ts";
 
-/** Tools another extension already registered before Code Mode takes over. */
 const SESSION_TOOLS = ["read", "bash", "edit", "write", "web_search", "tool_search"];
 
 interface RepresentativeModel {
@@ -105,10 +90,6 @@ const SHARED_PROMPT_TOOLS = [
   "write_stdin",
 ];
 
-/**
- * Only the Codex transport model gets native image generation; every other
- * provider keeps its own transport and loses only that nested tool.
- */
 function representativeModels(): RepresentativeModel[] {
   return [
     {
@@ -197,11 +178,6 @@ interface CodexHost {
   activeTools(): string[];
 }
 
-/**
- * A real Pi extension runner whose conversation model is `model`, with the
- * Codex runtime and its public tools registered the way `registerCodexConversion`
- * does, minus the Code Mode host process.
- */
 async function createCodexHost(
   t: TestContext,
   model: Model<Api>,
@@ -279,7 +255,6 @@ async function createCodexHost(
   };
 }
 
-/** The nested namespace for the session tools Code Mode replaced, scoped as production scopes it. */
 function nestedToolNames(host: CodexHost, sessionTools: readonly string[]): string[] {
   const registered = [...new Set([...SESSION_TOOLS, ...host.registeredToolNames])];
   const scope = activeRegisteredSessionToolNames(

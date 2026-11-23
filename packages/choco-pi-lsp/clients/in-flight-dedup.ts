@@ -1,4 +1,3 @@
-/** Share one in-flight operation among concurrent callers using the same key. */
 export function dedupeInFlight<TResult>(
   inFlight: Map<string, Promise<TResult>>,
   key: string,

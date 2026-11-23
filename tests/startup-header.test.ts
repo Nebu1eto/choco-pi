@@ -26,11 +26,9 @@ const plainTheme: HeaderTheme = {
   getColorMode: () => "truecolor",
 };
 
-/** What `installStartupPolicy` patches: the host's prototype, read as property bag. */
 type HostPrototype = Parameters<typeof installStartupPolicy>[0] & {};
 
 function hostPrototype(quietStartup: boolean | "header"): HostPrototype {
-  // The shape Pi's InteractiveMode uses for these two decisions.
   return {
     shouldShowStartupHeader(this: { options: { verbose?: boolean } }): boolean {
       return this.options.verbose === true || quietStartup !== true;
@@ -109,7 +107,6 @@ test("the header shows the logo, the title above both versions, key hints, and t
   assert.ok(text.some((line) => line.includes(CHOCO_PI_DESCRIPTION)));
   assert.ok(text.some((line) => line.includes("commands")));
   assert.ok(!text.some((line) => line.includes("Pi can explain its own features")));
-  // Four logo rows of half blocks sit before the text on each line.
   for (const line of text.slice(0, 4)) assert.match(line.slice(1, 1 + LOGO_WIDTH), /[▀▄█]/);
   for (const line of lines) assert.ok(visibleWidth(line) <= 120);
 });
@@ -146,7 +143,6 @@ test("at every width each row fits, so Pi never re-wraps a row through the logo"
         assert.ok(!text.some((line) => HALF_BLOCKS.test(line)), `width ${width} drops the logo`);
         continue;
       }
-      // The logo's four rows come first, whole, at the margin; no other row draws it.
       for (const [row, line] of text.entries()) {
         const cell = line.slice(1, 1 + LOGO_WIDTH);
         if (row < 4) assert.match(cell, HALF_BLOCKS, `width ${width} row ${row}`);
@@ -167,6 +163,5 @@ test("a narrow header wraps hints between hints and keeps every word", () => {
     assert.ok(joined.includes(hint), hint);
   }
   assert.ok(joined.includes(CHOCO_PI_DESCRIPTION));
-  // No row starts or ends with a dangling separator.
   for (const line of text) assert.doesNotMatch(line.trim(), /^·|·$/);
 });

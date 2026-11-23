@@ -25,10 +25,6 @@ import type { ModelNameLookup } from "./names.ts";
 import type { CallRecord } from "./records.ts";
 import { scanSessions, type ScanCache, type ScanResult } from "./scan.ts";
 
-/**
- * The view state the dialog keeps for the Statistics tab. Without a section
- * the body shows every section in order (hosts without a terminal).
- */
 export type StatsView = {
   period: Period;
   scope: Scope;
@@ -36,15 +32,12 @@ export type StatsView = {
   section?: StatsSection;
 };
 
-/** Serialises the view for the tab controller's cache key. */
 export function statsVariant(view: Pick<StatsView, "period" | "scope" | "section">): string {
   return `${view.period}:${view.scope}:${view.section ?? ""}`;
 }
 
-/** How long scanned logs, and every view computed from them, are reused. */
 export const STATS_CACHE_TTL_MS = 5 * 60_000;
 
-/** The logs of one scan, deduplicated once and shared by every period and scope. */
 type ScanData = {
   records: CallRecord[];
   compactions: CompactionEvent[];
@@ -52,32 +45,22 @@ type ScanData = {
   scan: StatsScanSummary;
 };
 
-/** One period and scope computed from a scan: what a layout needs besides the view. */
 export type StatsSnapshot = {
   report: StatsReport;
   scan: StatsScanSummary;
   period: Period;
   scope: Scope;
-  /** When the logs were scanned; every period of the scan ends here. */
   now: number;
 };
 
 type ScanEntry = {
-  /** Cache clock reading when the scan started; the TTL runs from here. */
   startedAt: number;
   now: number;
   data: Promise<ScanData>;
   views: Map<string, Promise<StatsSnapshot>>;
-  /** Settled views, for synchronous reuse. */
   ready: Map<string, StatsSnapshot>;
 };
 
-/**
- * Scans and computed views, reused for STATS_CACHE_TTL_MS. A scan is shared
- * by every period and scope; each view is computed once per scan. Everything
- * from one scan expires with it, so all views on screen come from the same
- * snapshot of the logs.
- */
 export type StatsCache = {
   ttlMs: number;
   clock: () => number;
@@ -96,9 +79,7 @@ export function createStatsCache(
 ): StatsCache {
   return {
     ttlMs: options.ttlMs ?? STATS_CACHE_TTL_MS,
-    // Read through Date at call time, so the process cache follows a replaced clock.
     clock: options.clock ?? (() => Date.now()),
-    // The per-file cache lives for the process, so a rescan re-reads only files that changed.
     scan: options.scan ?? ((roots) => scanSessions(roots, processScanCache)),
     entries: new Map(),
   };
@@ -107,37 +88,22 @@ export function createStatsCache(
 const processStatsCache = createStatsCache();
 
 export type StatsDataOptions = {
-  /** Current directory; "this project" also keeps the git worktrees sharing its repository. */
   cwd: string;
-  /** Overrides the git lookup of sibling worktrees (tests). */
   projectDirs?: readonly string[];
   period: Period;
   scope: Scope;
   priceLookup?: PriceLookup;
-  /** End of every period for a new scan; a scan still in the cache keeps its own. */
   now?: number;
-  /** Session roots to scan; `sessionsRoots` gives this agent's own. */
   roots: readonly string[];
   cache?: StatsCache;
 };
 
 export type StatsBodyOptions = Omit<StatsDataOptions, "period" | "scope"> & {
   view: StatsView;
-  /** Display names for models; defaults to formatted ids. */
   modelNames?: ModelNameLookup;
   style?: SessionInfoStyle;
 };
 
-/**
- * Where this agent writes session files, so the report covers its own sessions
- * only: `<agent dir>/sessions/<project>/` (CA/config.js `getSessionsDir`, not
- * exported), and the session directory Pi uses instead when one is configured,
- * resolved with CA/main.js precedence: `PI_CODING_AGENT_SESSION_DIR`, else the
- * effective `sessionDir` setting (`pi.getSettings()`), normalized as Pi does.
- * The agent directory stays a root, since sessions written before a session
- * directory was configured remain there. A one-run `--session-dir` flag is not
- * visible to extensions and is not covered.
- */
 export function sessionsRoots(
   sessionDirSetting: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
@@ -155,10 +121,6 @@ export function sessionsRoots(
 
 const runFile = promisify(execFile);
 
-/**
- * The current directory plus every worktree of its git repository, which Pi
- * records as separate session cwds. Outside git, or if git fails, just the cwd.
- */
 export async function projectDirsOf(cwd: string): Promise<string[]> {
   const dirs = new Set([cwd]);
   try {
@@ -169,9 +131,7 @@ export async function projectDirsOf(cwd: string): Promise<string[]> {
     for (const line of stdout.split("\n")) {
       if (line.startsWith("worktree ")) dirs.add(line.slice("worktree ".length));
     }
-  } catch {
-    // Not a repository or git unavailable: the cwd alone is the project.
-  }
+  } catch {}
   return [...dirs];
 }
 
@@ -179,14 +139,12 @@ function rootsKey(roots: readonly string[]): string {
   return roots.join("\0");
 }
 
-/** A view's key within a scan; "this project" depends on the directory it was opened from. */
 function viewKey(options: StatsDataOptions): string {
   const dirs =
     options.scope === "project" ? (options.projectDirs?.join("\0") ?? `cwd:${options.cwd}`) : "";
   return `${options.period}:${options.scope}:${dirs}`;
 }
 
-/** The scan of these roots while its TTL runs; an expired one is dropped. */
 function liveEntry(cache: StatsCache, key: string): ScanEntry | undefined {
   const entry = cache.entries.get(key);
   if (entry === undefined) return undefined;
@@ -229,19 +187,12 @@ async function computeSnapshot(
   return { report, scan: data.scan, period: options.period, scope: options.scope, now };
 }
 
-/** The view already computed from a live scan, without waiting; undefined when it must be loaded. */
 export function peekStatsSnapshot(options: StatsDataOptions): StatsSnapshot | undefined {
   const cache = options.cache ?? processStatsCache;
   const entry = liveEntry(cache, rootsKey(options.roots));
   return entry?.ready.get(viewKey(options));
 }
 
-/**
- * The period and scope computed from the session logs. A scan younger than
- * the cache's TTL is reused, whatever period or scope it was first read for,
- * and a view it already computed is returned as is; concurrent loads share
- * one scan and one computation. A failed scan or view is not cached.
- */
 export function loadStatsSnapshot(options: StatsDataOptions): Promise<StatsSnapshot> {
   const cache = options.cache ?? processStatsCache;
   const roots = options.roots;
@@ -277,22 +228,15 @@ export function loadStatsSnapshot(options: StatsDataOptions): Promise<StatsSnaps
   return view;
 }
 
-/**
- * A body that lays itself out for the columns it is given. The scan and the
- * aggregation run once; only the text layout is per width.
- */
 export type StatsLayout = (width: number) => string;
 
-/** How a snapshot is laid out: the parts of the view that need no new data. */
 export type StatsLayoutOptions = {
   expanded: boolean;
   section?: StatsSection;
-  /** Display names for models; defaults to formatted ids. */
   modelNames?: ModelNameLookup;
   style?: SessionInfoStyle;
 };
 
-/** Lays a computed snapshot out; expanding or changing section never reads the logs again. */
 export function layoutStats(snapshot: StatsSnapshot, options: StatsLayoutOptions): StatsLayout {
   const byWidth = new Map<number, string>();
   return (width) => {
@@ -314,7 +258,6 @@ export function layoutStats(snapshot: StatsSnapshot, options: StatsLayoutOptions
   };
 }
 
-/** Load (or reuse) the snapshot for a view, then lay it out. */
 export async function statsLayout(options: StatsBodyOptions): Promise<StatsLayout> {
   const snapshot = await loadStatsSnapshot({
     ...options,
@@ -329,12 +272,10 @@ export async function statsLayout(options: StatsBodyOptions): Promise<StatsLayou
   });
 }
 
-/** The body at the default width, for hosts without a terminal. */
 export async function statsBody(options: StatsBodyOptions): Promise<string> {
   return (await statsLayout(options))(STATS_DEFAULT_WIDTH);
 }
 
-/** The subset of Pi's model registry the Statistics tab reads. */
 export type StatsModelRegistry = {
   find(
     provider: string,
@@ -359,7 +300,6 @@ export type StatsModelRegistry = {
     | undefined;
 };
 
-/** Display names from Pi's model registry; undefined for models it no longer lists. */
 export function registryModelNames(registry: StatsModelRegistry): ModelNameLookup {
   return (provider, model) => {
     const name = registry.find(provider, model)?.name;
@@ -367,7 +307,6 @@ export function registryModelNames(registry: StatsModelRegistry): ModelNameLooku
   };
 }
 
-/** A price lookup over Pi's model registry; a model without a listed price yields undefined. */
 export function registryPriceLookup(registry: StatsModelRegistry): PriceLookup {
   return (provider, model) => {
     const found = registry.find(provider, model);

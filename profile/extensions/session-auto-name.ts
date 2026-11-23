@@ -22,7 +22,6 @@ export const SESSION_TITLE_PROMPT =
   "Return only the title: one line, 3 to 7 words when the language uses spaces, " +
   "with no quotes, markdown, label, explanation, or ending punctuation.";
 
-/** The title request's system prompt, carrying the same language directive as the agent prompt. */
 export function sessionTitleSystemPrompt(language: string | undefined): string {
   if (!language) return SESSION_TITLE_PROMPT;
   return `${SESSION_TITLE_PROMPT}\n\n${renderPreferredLanguageLine(language)}`;

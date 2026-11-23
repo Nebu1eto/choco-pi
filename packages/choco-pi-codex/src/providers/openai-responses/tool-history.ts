@@ -111,7 +111,6 @@ function itemAt<T>(input: T[], index: number): T {
   return input[index] as T;
 }
 
-/** Keep Responses tool calls and outputs paired after arbitrary history rewrites. */
 export function normalizeResponsesToolHistory<T>(input: T[]): (T | SyntheticToolOutput)[] {
   const calls = new Map<string, PairedCall>();
   const validCalls = new Set<number>();

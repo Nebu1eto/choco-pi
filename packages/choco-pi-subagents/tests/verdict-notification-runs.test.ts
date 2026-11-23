@@ -15,9 +15,6 @@ import type { NotificationDetails } from "../src/types.ts";
 import { compile } from "@earendil-works/pi-schema";
 import { KeptReplySchema } from "../src/delegation-render.ts";
 
-// An old completion notification must never show a later run's verdict:
-// `resume` reuses the agent record and replaces its result.
-
 function asExtensionAPI(value: RuntimeValue): ExtensionAPI {
   // SAFETY: The host fixture implements the registration and delivery methods the extension uses here.
   return value as ExtensionAPI;
@@ -38,7 +35,6 @@ interface Notice {
 }
 
 const FENCE = "\u0060\u0060\u0060";
-/** Same opening text for every run, longer than the 500-character notification preview. */
 const PREFIX =
   "## Findings\n\n" +
   "1. HIGH notes.txt:1-2: the file must keep two lines; the edit drops the second one and nothing restores it.\n".repeat(
@@ -73,7 +69,6 @@ const theme = partialFixture<Theme>({
   getBgAnsi: () => "",
 });
 
-/** The real manager the extension built, captured at its spawn boundary. */
 interface ManagerHolder {
   current?: AgentManager;
 }
@@ -341,13 +336,11 @@ test("after a restart the stored notification renders from its own details, with
   } finally {
     await first.close();
   }
-  // Two hosts in one test mock the same prototype method; restore the first before the second.
   t.mock.restoreAll();
   const restarted = await host(t);
   try {
     const view = restarted.render(stored);
     assert.match(view, /Review FINDINGS: 1 finding \(1 high\)/);
-    // A notification stored before this change has only the preview: drawn as before, no summary.
     const legacy: Notice = { ...stored, details: { ...stored.details } };
     assert.equal(Reflect.deleteProperty(legacy.details, "verdictReply"), true);
     assert.doesNotMatch(restarted.render(legacy), /Review FINDINGS:/);

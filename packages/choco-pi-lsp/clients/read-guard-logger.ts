@@ -47,7 +47,6 @@ export interface EditBatchRejection {
 }
 
 export interface ReadGuardEditBatchSummary {
-  /** True totals; the corresponding indexes are bounded, de-duplicated samples. */
   requestedCount: number;
   requestedTotal: number;
   requestedIndexes: number[];
@@ -61,7 +60,6 @@ export interface ReadGuardEditBatchSummary {
   appliedCount: number;
   appliedTotal: number;
   appliedIndexes: number[];
-  /** Correlations participating in a coalesced terminal outcome. */
   participantIds: string[];
   participantTotal: number;
   participantIdsTruncated: boolean;
@@ -82,8 +80,6 @@ export function sanitizeCorrelationId(value: LspBoundaryValue): string | undefin
     .slice(0, 64);
   return sanitized.length > 0 ? sanitized : undefined;
 }
-
-/** Prefer the host call token; otherwise create a bounded per-process token. */
 
 export function getReadGuardCorrelationId(event: LspBoundaryValue): string {
   // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
@@ -200,7 +196,6 @@ export function createReadGuardEditBatchSummary(args: {
 export interface ReadGuardLogEntry {
   event: string;
   sessionId?: string;
-  /** Bounded host/tool-call correlation token, persisted inside metadata. */
   correlationId?: string;
   filePath: string;
   requestedOffset?: number;
@@ -327,7 +322,6 @@ export function getReadGuardLogPath(): string {
   return READ_GUARD_LOG_FILE;
 }
 
-/** Resolve once all enqueued read-guard writes are on disk (tests/shutdown). */
 export function flushReadGuardLog(): Promise<void> {
   return writer.flush();
 }

@@ -84,7 +84,6 @@ async function harness(scenario: Scenario, factories: Parameters<typeof createSd
           assert.ok(dependent);
           dependent.status = dependentStatus;
         }
-        // Tool-bearing turns cannot be completion attempts.
         fire({
           ...answer,
           content: [{ type: "toolCall", id: "call", name: "read", arguments: {} }],
@@ -356,8 +355,6 @@ test("root notification, failed lifecycle and root/nested fetched details retain
   try {
     const agent = fixture.session.extensionRunner.getToolDefinition("Agent");
     assert.ok(agent);
-    // Activation applies the project's subagents.json (requireExplicitModel on);
-    // this test drives spawn mechanics, not model choice, so lift the gate.
     setRequireExplicitModel(false);
     const inline = await agent.execute(
       "owner",
@@ -392,7 +389,6 @@ test("root notification, failed lifecycle and root/nested fetched details retain
     );
     assert.ok(isPendingPayload(result.details), JSON.stringify(result));
     assert.deepEqual(result.details.pendingDependents, record.pendingDependents);
-    // Nested retrieval exercises the same shared details builder with scoped ownership.
     record.parentAgentId = "outer";
     record.resultConsumed = false;
     record.consumedResultGeneration = undefined;
@@ -417,7 +413,6 @@ test("root notification, failed lifecycle and root/nested fetched details retain
     );
     assert.ok(isPendingPayload(nestedResult.details));
     assert.deepEqual(nestedResult.details.pendingDependents, record.pendingDependents);
-    // A detached run publishes a notification independently of tool batches.
     const notificationId = actual.spawn(
       fixture.pi,
       fixture.ctx,

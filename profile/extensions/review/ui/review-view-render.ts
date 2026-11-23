@@ -1,7 +1,3 @@
-/**
- * Drawing the full-screen review: one frame of title, diff and/or chat, the
- * status line, and the footer with the input and its keys.
- */
 import { propertiesWhen } from "../../lib/runtime-values.ts";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { sanitizeTerminalText as safe } from "../../lib/changes/terminal-text.ts";
@@ -22,7 +18,6 @@ import {
 import type { ReviewContext } from "./review-view-state.ts";
 import { renderToolEntry } from "./review-view-tools.ts";
 
-/** Draws one file's diff body for the changes view, with the review's highlight limits. */
 export function createFileBodyRenderer(config: ResolvedReviewConfig): FileBodyRenderer {
   return (file, width, bodyStyler, layout) =>
     renderDiffFile(
@@ -80,7 +75,6 @@ export function commentTargetLine(ctx: ReviewContext): string {
   );
 }
 
-/** One frame of the review: title, the changes view or chat (or both), and the footer. */
 export function renderReviewFrame(ctx: ReviewContext, width: number): string[] {
   const contentWidth = Math.max(1, width);
   const splitChat = ctx.chatOpen && contentWidth >= REVIEW_CHAT_SPLIT_MIN_WIDTH;
@@ -92,9 +86,6 @@ export function renderReviewFrame(ctx: ReviewContext, width: number): string[] {
   let inputLines: string[];
   let hintLineOne: string;
   let hintLineTwo: string;
-  // zentui's frame names the model, provider, and effort under the
-  // text, exactly as it does for the session prompt. The chat is
-  // the session behind both boxes, so both name it.
   const frameModel = (() => {
     const model = ctx.chat?.status.model ?? ctx.options.chatModel;
     const thinkingLevel = ctx.chat?.status.thinkingLevel ?? ctx.options.chatThinkingLevel;
@@ -139,8 +130,6 @@ export function renderReviewFrame(ctx: ReviewContext, width: number): string[] {
     hintLineOne = `Shift+↑/↓ select lines · ←/→ file · PgUp/PgDn page${ctx.chatOpen ? " · Tab focus chat · Ctrl+O tool output" : ""}`;
     hintLineTwo = `+/- context · c comment · a ask · / search · >/< match · ${SPLIT_TOGGLE_KEY} split · m reviewed · e/E editor · S finish · q save`;
   }
-  // Without zentui the input has no metadata row, so the keys row
-  // carries the model and effort instead of dropping them.
   const chatModelStatus = (() => {
     if (ctx.frameAdapter.available || !ctx.chatOpen || !ctx.chat) return undefined;
     const text = [ctx.chat.status.model?.split("/").at(-1), ctx.chat.status.thinkingLevel]
@@ -153,12 +142,9 @@ export function renderReviewFrame(ctx: ReviewContext, width: number): string[] {
     if (!chatModelStatus) return left;
     const right = ctx.theme.fg("muted", chatModelStatus);
     const gap = contentWidth - visibleWidth(left) - visibleWidth(right);
-    // A narrow terminal keeps the keys and drops the status.
     if (gap < 2) return left;
     return `${left}${" ".repeat(gap)}${right}`;
   })();
-  // The view's header holds the message line; when the chat replaces the diff
-  // (narrow terminals), the message moves above the status line instead.
   const message = ctx.changes.message;
   const messageRows =
     !diffVisible && message
@@ -171,9 +157,6 @@ export function renderReviewFrame(ctx: ReviewContext, width: number): string[] {
     hintOneRow,
     ctx.theme.fg("dim", hintLineTwo),
   ];
-  // The shared view's header (totals, recorded findings, messages, keys or
-  // help, rule) sits under the review's title; its own title line is the
-  // review's first row instead.
   const viewHeader = diffVisible
     ? ctx.changes.renderHeader(diffWidth, ctx.focus === "review").slice(1)
     : [];
@@ -190,11 +173,8 @@ export function renderReviewFrame(ctx: ReviewContext, width: number): string[] {
       }
     : undefined;
   const body = ctx.changes.renderBody(diffWidth, ctx.focus === "review");
-  // The view keeps its cursor visible through the scroller; a resize or
-  // a comment drawn above it can still move it, so check once more here.
   const cursorRow = ctx.changes.selectionRow();
   if (ctx.lastBodyHeight > 0) {
-    // The rows pinned at the top cover the rows under them: keep the cursor below them.
     const covered = ctx.changes.pinnedRowCount(ctx.scrollTop, ctx.lastBodyHeight);
     if (cursorRow < ctx.scrollTop + covered) {
       ctx.scrollTop = ctx.changes.topShowing(cursorRow, ctx.lastBodyHeight);
@@ -207,7 +187,6 @@ export function renderReviewFrame(ctx: ReviewContext, width: number): string[] {
     Math.min(Math.max(0, body.length - ctx.lastBodyHeight), ctx.scrollTop),
   );
   const visibleDiff = body.slice(ctx.scrollTop, ctx.scrollTop + ctx.lastBodyHeight);
-  // The open file's row and its hunk's header stay at the top while the rows under them scroll.
   if (ctx.scrollTop > 0) {
     ctx.changes.stickyRows(ctx.scrollTop, ctx.lastBodyHeight).forEach((row, index) => {
       if (index < visibleDiff.length) visibleDiff[index] = row;

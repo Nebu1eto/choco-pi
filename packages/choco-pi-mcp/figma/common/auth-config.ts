@@ -188,7 +188,7 @@ async function promptSecret(
       function maskedInput(contentWidth: number): string {
         if (value.length === 0) return "> ▌";
 
-        const inputChromeWidth = 3; // "> " + cursor.
+        const inputChromeWidth = 3;
         const availableMaskWidth = Math.max(1, contentWidth - inputChromeWidth);
         const suffix = value.length > availableMaskWidth ? ` ${value.length} chars` : "";
         const bulletCount = Math.max(1, Math.min(value.length, availableMaskWidth - suffix.length));
@@ -267,7 +267,6 @@ async function promptSecret(
 function sanitizeSecretInput(data: string): string {
   if (!data) return "";
 
-  // Bracketed paste: ESC [ 200 ~ pasted text ESC [ 201 ~
   if (data.includes("\u001b[200~") || data.includes("\u001b[201~")) {
     return data
       .split("\u001b[200~")
@@ -280,7 +279,6 @@ function sanitizeSecretInput(data: string): string {
       .trim();
   }
 
-  // Ignore non-paste escape sequences such as arrows and modified keys.
   if (data.startsWith("\u001b")) return "";
 
   return [...data]
@@ -307,13 +305,9 @@ async function readClipboardText(): Promise<string> {
     ] as const) {
       try {
         return (await execFileAsync(command, args)).stdout;
-      } catch {
-        // Try next clipboard provider.
-      }
+      } catch {}
     }
-  } catch {
-    // Clipboard access is best-effort; normal terminal paste can still work.
-  }
+  } catch {}
   return "";
 }
 

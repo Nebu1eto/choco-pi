@@ -66,41 +66,30 @@ import { probePiStartup, startupInfoAgentDirs } from "./agent-pi-version.ts";
 
 export { readPiVersion, findPiChangelog, startupInfoAgentDirs } from "./agent-pi-version.ts";
 
-/** The `name`/`version` pair read out of the nearest package manifest. */
 type PackageIdentity = {
   name?: string;
   version?: string;
 };
 
-/** Where a known session's transcript lives on disk. */
 type StoredSessionLocation = {
   cwd: string;
   sessionFile: string;
 };
 
-/** Construction options for {@link PiAcpAgent}. */
 type PiAcpAgentConfig = {
   piCommand?: string;
 };
 
-/** Overrides applied when a stored session is respawned. */
 type RestoreSessionOptions = {
   cwd?: string;
   mcpServers?: LoadSessionRequest["mcpServers"];
 };
 
-/** Request parameters of the unstable per-session model selection method. */
 type SetSessionModelRequest = {
   sessionId: string;
   modelId: string;
 };
 
-/**
- * The `SessionManager` surface this agent drives.
- *
- * `retainRecent` is optional so a narrow injected manager stays assignable without a
- * type assertion; the real manager always provides it.
- */
 export type SessionManagerLike = Pick<
   SessionManager,
   "create" | "maybeGet" | "getOrCreate" | "close" | "disposeAll" | "shutdownAll"
@@ -109,17 +98,14 @@ export type SessionManagerLike = Pick<
   retainRecent?: SessionManager["retainRecent"];
 };
 
-/** The persistent session-index operations used by the agent. */
 export type SessionStoreLike = Pick<SessionStore, "get" | "upsert" | "delete">;
 
-/** Decode Zed's terminal-auth capability from ACP's open metadata object. */
 function clientSupportsTerminalAuthMeta(params: InitializeRequest): boolean {
   const capabilities = recordField(params, "clientCapabilities");
   const metadata = recordField(capabilities, "_meta");
   return booleanField(metadata, "terminal-auth") === true;
 }
 
-/** Decode the unstable cwd extension accepted by session/list clients. */
 function listSessionsCwd(params: ListSessionsRequest): string | undefined {
   const cwd = stringField(params, "cwd");
   return cwd?.trim() ? cwd : undefined;
@@ -154,7 +140,6 @@ export class PiAcpAgent implements ACPAgent {
     await sessions.shutdownAll(graceMs);
   }
 
-  // Remember recent session cwd and use it as the default filter.
   private lastSessionCwd: string | null = null;
 
   constructor(conn: AcpConnection, config?: PiAcpAgentConfig) {
@@ -199,7 +184,6 @@ export class PiAcpAgent implements ACPAgent {
     this.assertCurrent(generation);
   }
 
-  /** Refresh and publish one session's command catalog after extension reload/replacement. */
   async refreshAvailableCommands(sessionId: string): Promise<void> {
     const generation = this.generation;
     this.assertCurrent(generation);
@@ -209,7 +193,6 @@ export class PiAcpAgent implements ACPAgent {
     this.assertCurrent(generation);
   }
 
-  /** Integration callback for lifecycle owners that observe a Pi extension reload. */
   createCommandRefreshHook(sessionId: string): () => Promise<void> {
     return () => this.refreshAvailableCommands(sessionId);
   }
@@ -224,9 +207,7 @@ export class PiAcpAgent implements ACPAgent {
     if (sessionFile && sessionFile.trim()) {
       try {
         if (existsSync(sessionFile)) unlinkSync(sessionFile);
-      } catch {
-        // ignore cleanup failures; the auth/internal error is the primary result
-      }
+      } catch {}
     }
 
     this.store.delete(sessionId);
@@ -328,7 +309,6 @@ export class PiAcpAgent implements ACPAgent {
   }
 
   async initialize(params: InitializeRequest): Promise<InitializeResponse> {
-    // We currently only support ACP protocol version 1.
     const supportedVersion = 1;
     const requested = params.protocolVersion;
 
@@ -339,8 +319,6 @@ export class PiAcpAgent implements ACPAgent {
         title: "pi ACP adapter",
         version: pkg.version ?? "0.0.0",
       },
-      // Zed currently uses ClientCapabilities._meta["terminal-auth"] to decide whether to show
-      // the "Authenticate" banner/button. If not supported, we still return the method for the registry.
       authMethods: getAuthMethods({
         supportsTerminalAuthMeta: clientSupportsTerminalAuthMeta(params),
       }),
@@ -353,8 +331,6 @@ export class PiAcpAgent implements ACPAgent {
           embeddedContext: process.env.PI_ACP_ENABLE_EMBEDDED_CONTEXT === "true",
         },
         sessionCapabilities: {
-          // **UNSTABLE** ACP capability used by Zed's codex-acp adapter.
-          // Enables a native session picker in clients that support it.
           list: {},
           delete: {},
         },
@@ -375,10 +351,8 @@ export class PiAcpAgent implements ACPAgent {
 
     const fileCommands = loadSlashCommands(cwd);
     const enableSkillCommands = getEnableSkillCommands(cwd);
-    // Started now so the version and update probes overlap the Pi child's startup; it never rejects.
     const startupProbe = probePiStartup(this.piCommand);
 
-    // Pi doesn't support mcpServers, but we accept and store.
     const session = await this.sessions.create({
       cwd,
       mcpServers: params.mcpServers,
@@ -390,7 +364,6 @@ export class PiAcpAgent implements ACPAgent {
     const proc = session.proc;
     const sessionId = session.sessionId;
 
-    // Fetch state + models once (parallel) to reduce startup latency.
     const getState = proc.getState;
     const getAvailableModels = proc.getAvailableModels;
     const getCommands = proc.getCommands;
@@ -422,7 +395,6 @@ export class PiAcpAgent implements ACPAgent {
       throw RequestError.internalError({}, failureText(availableModelsErr));
     }
 
-    // If pi has no models available after spawning, it's effectively unauthenticated.
     const rawModelsCount = Array.isArray(availableModels?.models)
       ? availableModels.models.length
       : 0;
@@ -453,8 +425,6 @@ export class PiAcpAgent implements ACPAgent {
     const { piVersion, updateNotice } = await startupProbe;
     this.assertCurrent(generation);
 
-    // If quietStartup is enabled, suppress the full "startup info" prelude, but still surface
-    // the "New version available" notice (if any) since it's high-signal and actionable.
     const preludeText = quietStartup
       ? updateNotice
         ? updateNotice + "\n"
@@ -468,10 +438,6 @@ export class PiAcpAgent implements ACPAgent {
 
     if (preludeText) session.setStartupInfo(preludeText);
 
-    // Keep recently active threads live in this ACP connection, bounded so clients that never
-    // explicitly close old threads cannot leak an unlimited number of Pi subprocesses.
-    //
-    // (Tests sometimes stub out `this.sessions`, so guard the call.)
     this.sessions.retainRecent?.(sessionId, PI_ACP_MAX_LIVE_SESSIONS);
 
     const fallbackCommandData: BoundaryValue = {
@@ -497,16 +463,11 @@ export class PiAcpAgent implements ACPAgent {
       },
     };
 
-    // Try to send it immediately after session/new returns; if the client ignores it,
-    // it will still be emitted as the first chunk of the first prompt.
     if (preludeText)
       setTimeout(() => {
         if (this.active && this.generation === generation) session.sendStartupInfoIfPending();
       }, 0);
 
-    // Advertise slash commands (ACP: available_commands_update)
-    // Important: some clients (e.g. Zed) will ignore notifications for an unknown sessionId.
-    // So we must send this *after* the session/new response has been delivered.
     setTimeout(() => {
       if (!this.active || this.generation !== generation) return;
       const owned = this.commandCatalogs.get(sessionId);
@@ -525,8 +486,6 @@ export class PiAcpAgent implements ACPAgent {
   }
 
   async authenticate(_params: AuthenticateRequest) {
-    // Terminal Auth is handled out-of-band by re-launching the binary with `--terminal-login`.
-    // If the client calls `authenticate` anyway, we can no-op successfully.
     return;
   }
 
@@ -559,9 +518,6 @@ export class PiAcpAgent implements ACPAgent {
     session: PiAcpSession,
     generation: number,
   ): Promise<PromptResponse> {
-    // The client has rendered this prompt as a new user entry; commands answered here
-    // and Pi's output both start a new block, so the first output needs no separator.
-    // (Tests sometimes stub out the session, so guard the call.)
     session.beginClientPrompt?.();
     const { message, images } = promptToPiMessage(
       params.prompt,
@@ -599,23 +555,16 @@ export class PiAcpAgent implements ACPAgent {
       await proc.prompt(invocation.text, []);
       this.assertCurrent(generation);
 
-      // Extension commands complete directly through Pi RPC. They may also mutate the
-      // extension registry (for example, /reload), so refresh the ACP command catalog
-      // without allowing refresh failures or stale process ownership to change the
-      // successful command result.
       if (this.sessions.maybeGet(sessionId)?.proc === proc) {
         try {
           await this.publishCommandCatalog(session);
-        } catch {
-          // Command discovery is best-effort after a successful extension command.
-        }
+        } catch {}
         this.assertCurrent(generation);
       }
 
       return { stopReason: "end_turn" };
     }
 
-    // Adapter-owned builtins remain local, unless Pi discovered the same canonical name.
     if (invocation && command?.source === "builtin") {
       const handled = await runBuiltinCommand(session, invocation, {
         piCommand: this.piCommand,
@@ -626,8 +575,6 @@ export class PiAcpAgent implements ACPAgent {
 
     const result = await session.prompt(message, images);
 
-    // ACP StopReason does not include "error"; if pi fails we map to end_turn for now,
-    // unless we know this was a cancellation.
     const stopReason: StopReason =
       result === "error" ? (session.wasCancelRequested() ? "cancelled" : "end_turn") : result;
 
@@ -641,9 +588,6 @@ export class PiAcpAgent implements ACPAgent {
   }
 
   async listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
-    // Scope in client-to-adapter order: explicit cwd, the last active session cwd, then the
-    // adapter process cwd (clients normally spawn it inside the project). Only list unscoped
-    // when none can be determined at all.
     let effectiveCwd: string | undefined =
       listSessionsCwd(params) ?? this.lastSessionCwd ?? undefined;
     if (!effectiveCwd) {
@@ -655,8 +599,6 @@ export class PiAcpAgent implements ACPAgent {
     }
     const filtered = listPiSessions(effectiveCwd);
 
-    // Cursor-based pagination (opaque cursor). For MVP, we use a simple numeric offset.
-    // If cursor is invalid, treat as 0.
     const offset = params.cursor ? Number.parseInt(params.cursor, 10) : 0;
     const start = Number.isFinite(offset) && offset > 0 ? offset : 0;
 
@@ -680,9 +622,6 @@ export class PiAcpAgent implements ACPAgent {
       throw RequestError.invalidParams(`cwd must be an absolute path: ${params.cwd}`);
     }
 
-    // If the client is re-loading a session that is already active, tear down the existing
-    // pi subprocess so we can start fresh and re-advertise commands reliably.
-    // (Some clients may call session/load when restoring from history.)
     this.sessions.close(params.sessionId);
 
     this.lastSessionCwd = params.cwd;
@@ -700,18 +639,14 @@ export class PiAcpAgent implements ACPAgent {
     const proc = session.proc;
     const fileCommands = loadSlashCommands(params.cwd);
 
-    // A restored thread becomes most-recently used; evict only beyond the bounded live-thread cap.
-    // (Tests sometimes stub out `this.sessions`, so guard the call.)
     this.sessions.retainRecent?.(session.sessionId, PI_ACP_MAX_LIVE_SESSIONS);
 
-    // (Optional) ensure mapping stays fresh.
     this.store.upsert({
       sessionId: params.sessionId,
       cwd: params.cwd,
       sessionFile: stored.sessionFile,
     });
 
-    // Replay full conversation history.
     const getMessages = proc.getMessages;
     if (!getMessages) throw missingPiCapability("get_messages");
     const data: PiMessages = await getMessages.call(proc);
@@ -751,7 +686,6 @@ export class PiAcpAgent implements ACPAgent {
       },
     };
 
-    // Advertise slash commands after the response so the client knows the session exists.
     setTimeout(() => {
       const { availableCommands } = loadCatalog.snapshot();
       void this.conn.sessionUpdate({
@@ -770,9 +704,6 @@ export class PiAcpAgent implements ACPAgent {
     const stored = this.store.get(params.sessionId);
     const piSession = findPiSession(params.sessionId);
 
-    // Per ACP session/delete semantics, deleting a session that does not
-    // exist (or is already gone) should succeed idempotently.
-    // https://agentclientprotocol.com/protocol/v2/session-delete#semantics
     if (!stored && !piSession) {
       return {};
     }
@@ -782,9 +713,7 @@ export class PiAcpAgent implements ACPAgent {
     if (sessionFile) {
       try {
         if (existsSync(sessionFile)) unlinkSync(sessionFile);
-      } catch {
-        // best-effort cleanup
-      }
+      } catch {}
     }
 
     this.store.delete(params.sessionId);
@@ -810,7 +739,6 @@ export class PiAcpAgent implements ACPAgent {
     if (!setThinkingLevel) throw missingPiCapability("set_thinking_level");
     await setThinkingLevel.call(session.proc, mode);
 
-    // Let the client know the current mode changed (keeps the dropdown in sync).
     void this.conn.sessionUpdate({
       sessionId: session.sessionId,
       update: {
@@ -871,7 +799,6 @@ function buildStartupInfo(opts: {
 
   const md: string[] = [];
 
-  // pi version header
   if (opts.piVersion) {
     md.push(`pi v${opts.piVersion}`);
     md.push("---");
@@ -887,18 +814,15 @@ function buildStartupInfo(opts: {
     md.push("");
   };
 
-  // Context
   const contextItems: string[] = [];
   const contextPath = join(opts.cwd, "AGENTS.md");
   if (existsSync(contextPath)) contextItems.push(contextPath);
   addSection("Context", contextItems);
 
-  // Skills
   const skillsItems: string[] = [];
 
   const pushSkillFromRoot = (root: string) => {
     try {
-      // Direct .md files in root
       for (const e of readdirSync(root)) {
         const p = join(root, e);
         try {
@@ -906,12 +830,9 @@ function buildStartupInfo(opts: {
           if (st.isFile() && e.toLowerCase().endsWith(".md")) {
             skillsItems.push(p);
           }
-        } catch {
-          // ignore
-        }
+        } catch {}
       }
 
-      // Recursive SKILL.md under subdirectories
       const stack: string[] = [root];
       while (stack.length) {
         const dir = stack.pop()!;
@@ -923,7 +844,6 @@ function buildStartupInfo(opts: {
         }
 
         for (const name of entries) {
-          // Skip obvious noise
           if (name === "node_modules" || name === ".git") continue;
           const p = join(dir, name);
           let st;
@@ -939,49 +859,36 @@ function buildStartupInfo(opts: {
           }
         }
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
 
-  // Global skills
-  // Use getAgentDir() so this respects PI_CODING_AGENT_DIR overrides.
   const globalSkillsDir = join(getAgentDir(), "skills");
   pushSkillFromRoot(globalSkillsDir);
 
-  // Also support ~/.agents/skills (pi skill discovery)
   const legacyAgentsSkillsDir = join(process.env.HOME ?? "", ".agents", "skills");
   pushSkillFromRoot(legacyAgentsSkillsDir);
 
-  // Project skills (.pi/skills)
   const projectSkillsDir = join(opts.cwd, ".pi", "skills");
   pushSkillFromRoot(projectSkillsDir);
 
   addSection("Skills", skillsItems);
 
-  // Prompts
   const promptsItems: string[] = [];
   const agentDirs = startupInfoAgentDirs();
   const promptsDir = agentDirs.prompts;
   try {
     const prompts = readdirSync(promptsDir).filter((f) => f.endsWith(".md"));
     for (const f of prompts) promptsItems.push(`/${basename(f, ".md")}`);
-  } catch {
-    // ignore
-  }
+  } catch {}
   addSection("Prompts", promptsItems);
 
-  // Extensions
   const extItems: string[] = [];
   const extDir = agentDirs.extensions;
   try {
     const exts = readdirSync(extDir).filter((f) => f.endsWith(".ts") || f.endsWith(".js"));
     for (const f of exts) extItems.push(join(extDir, f));
-  } catch {
-    // ignore
-  }
+  } catch {}
 
-  // Also show npm packages from pi settings (global + project)
   const settingsPaths = [
     join(getAgentDir(), "settings.json"),
     join(opts.cwd, ".pi", "settings.json"),
@@ -998,9 +905,7 @@ function buildStartupInfo(opts: {
           extItems.push(s);
         }
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   addSection("Extensions", extItems);
@@ -1011,7 +916,6 @@ function buildStartupInfo(opts: {
     md.push("");
   }
 
-  // Do NOT include themes (per request).
   return md.join("\n").trim() + "\n";
 }
 
@@ -1019,7 +923,6 @@ function readNearestPackageJson(metaUrl: string): PackageIdentity {
   try {
     let dir = dirname(fileURLToPath(metaUrl));
 
-    // Walk upwards a few levels to find the nearest package.json
     for (let i = 0; i < 6; i++) {
       const p = join(dir, "package.json");
       if (existsSync(p)) {
@@ -1028,8 +931,6 @@ function readNearestPackageJson(metaUrl: string): PackageIdentity {
       }
       dir = dirname(dir);
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
   return { name: "pi-acp", version: "0.0.0" };
 }

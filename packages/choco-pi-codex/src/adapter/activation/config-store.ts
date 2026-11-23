@@ -12,9 +12,6 @@ import {
   type CodexConversionConfig,
 } from "./config.ts";
 
-// This fork owns its own config file. Retired upstream keys (voice.*,
-// ui.backgroundShell*) are no longer part of the config: reads ignore them and
-// writes leave them in place in an existing document.
 export const CODEX_CONVERSION_CONFIG_BASENAME = "choco-pi-codex.json";
 
 export interface EffectiveCodexConversionConfigOptions {
@@ -28,8 +25,6 @@ export type CodexConversionConfigScope = "global" | "folder";
 
 const OWNED_CONFIG_KEYS = Object.keys(DEFAULT_CODEX_CONVERSION_CONFIG);
 const LEGACY_OWNED_CONFIG_KEYS = ["beta"];
-// Retired top-level sections the fork still owns: they mark a folder config and
-// a folder clear removes them, but a settings write preserves them.
 const RETIRED_OWNED_CONFIG_KEYS = ["voice"];
 
 function isRecord(value: BoundaryValue): value is JsonObject {
@@ -85,10 +80,6 @@ export function getProjectCodexConversionConfigPath(cwd: string): string {
   return join(cwd, CONFIG_DIR_NAME, CODEX_CONVERSION_CONFIG_BASENAME);
 }
 
-/**
- * In the profile checkout the project config path and the global config are
- * the same file, so no separate folder layer exists there to write or clear.
- */
 function projectConfigAliasesGlobal(cwd: string, globalConfigPath?: string | undefined): boolean {
   return configPathsAliasSameFile(
     getProjectCodexConversionConfigPath(cwd),
@@ -228,8 +219,6 @@ export function clearFolderCodexConversionConfig(
 ): { ok: true } | { ok: false; error: string } {
   if (!projectTrusted)
     return { ok: false, error: "Trust this folder before changing folder settings" };
-  // The "folder" file is the global profile itself: there is no separate
-  // folder layer to clear, and stripping owned keys would erase the profile.
   if (projectConfigAliasesGlobal(cwd)) return { ok: true };
   const path = getProjectCodexConversionConfigPath(cwd);
   const project = readProjectCodexConversionDocument(cwd, true);
@@ -275,9 +264,7 @@ export function writeCodexConversionConfig(
       try {
         const existing: BoundaryValue = JSON.parse(readFileSync(configPath, "utf-8"));
         if (isRecord(existing)) document = mergeConfigDocument(existing, normalized);
-      } catch {
-        // A valid explicit settings write replaces an unreadable document.
-      }
+      } catch {}
     }
     if (!preserveProjectCacheKeepalive) document = withoutProjectOnlyDocument(document);
     for (const key of LEGACY_OWNED_CONFIG_KEYS) delete document[key];

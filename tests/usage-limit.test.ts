@@ -28,11 +28,9 @@ const NOW = Date.parse("2026-05-01T12:00:00.000Z");
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 
-// Anthropic SDK `APIError.makeMessage`: `${status} ${JSON.stringify(body)}` or `${status} status code (no body)`.
 const ANTHROPIC_429 =
   '429 {"type":"error","error":{"type":"rate_limit_error","message":"Error"},"request_id":"req_1"}';
 const ANTHROPIC_503 = "503 status code (no body)";
-// pi-ai provider-retry.js:25 wrapper.
 const wrap = (seconds: number, inner: string): string =>
   `Server requested ${seconds}s retry delay (max: 60s). ${inner}`;
 
@@ -41,7 +39,6 @@ function classify(provider: string, errorMessage: string): UsageLimitClassificat
 }
 
 test("codex usage-limit messages classify as quota with parsed lower-bound resets", () => {
-  // choco-pi-codex errors.ts formatCodexUsageLimitError / parseErrorResponse.
   assert.deepEqual(
     classify("openai-codex", "Codex usage limit reached (plus plan). Resets in ~12m."),
     {
@@ -90,15 +87,12 @@ test("anthropic 429 is an inferred quota; the retry-delay wrapper depends on its
 });
 
 test("synthetic 429 is an inferred quota; other text is not a limit", () => {
-  // No captured Synthetic limit body exists; only the status prefix is asserted.
   assert.equal(classify("synthetic", "429 status code (no body)")?.kind, "quota");
   assert.equal(classify("synthetic", "429 status code (no body)")?.confidence, "inferred");
   assert.equal(classify("synthetic", "500 status code (no body)"), undefined);
   assert.equal(classify("some-other", ANTHROPIC_429), undefined);
 });
 
-// pi-ai openai-responses.js error surfaces for Sign in with ChatGPT on provider `openai`
-// (live re-verification: no retry-after, x-ratelimit-* or reset field on any of them).
 const OPENAI_SUBSCRIPTION_HTTP =
   'OpenAI API error (429): {"error":{"code":"subscription_sharing_usage_limit_exceeded","message":"You have reached your usage limit."}}\nCheck your ChatGPT usage: https://chatgpt.com/settings/usage';
 const OPENAI_SUBSCRIPTION_STREAM =
@@ -121,7 +115,6 @@ test("openai subscription usage limit is a quota with no fabricated reset", () =
     });
     assert.equal(classified && "resetAt" in classified, false);
   }
-  // The code only means a limit on `openai`; other providers keep their own rules.
   assert.equal(classify("openai-codex", OPENAI_SUBSCRIPTION_STREAM), undefined);
 });
 
@@ -158,8 +151,6 @@ test("an openai quota without usage data closes for the default window, never co
   assert.deepEqual(result, { ready: false, classification: classified, evidence: "unavailable" });
 });
 
-// pi-ai openai-responses.js: `${model.provider} API error (${status}): ${message}`, where the OpenAI
-// SDK message for an empty body is `429 status code (no body)` (the live xAI 429 had no body).
 const XAI_429 = "xai API error (429): 429 status code (no body)";
 
 test("xai 429 is an inferred quota without a reset; the retry-delay wrapper depends on its inner status", () => {
@@ -176,7 +167,6 @@ test("xai 429 is an inferred quota without a reset; the retry-delay wrapper depe
   );
   assert.equal(classify("xai", "429 status code (no body)")?.kind, "quota");
 
-  // provider-retry.js wraps the SDK message (no provider prefix) when retry-after exceeds the cap.
   const wrapped429 = classify("xai", wrap(90, "429 status code (no body)"));
   assert.equal(wrapped429?.kind, "quota");
   assert.equal(wrapped429?.resetAt, NOW + 90 * 1000);
@@ -192,7 +182,6 @@ test("xai 429 is an inferred quota without a reset; the retry-delay wrapper depe
     classify("xai", 'xai API error (429): {"error":"insufficient_quota"}')?.kind,
     "billing",
   );
-  // xAI text on another provider is not an xAI limit.
   assert.equal(classify("some-other", XAI_429), undefined);
 });
 
@@ -227,7 +216,6 @@ test("google (Antigravity): the provider's formatted kind decides the classifica
     resetsAt,
     detail: "You have exhausted your capacity on this model. Your quota will reset after 5h.",
   });
-  // The provider's quota wording is on the host billing list; it must still be a quota.
   assert.match(quotaMessage, /quota exceeded/);
   assert.deepEqual(classify("google", quotaMessage), {
     provider: "google",
@@ -242,7 +230,6 @@ test("google (Antigravity): the provider's formatted kind decides the classifica
     kind: "quota",
     confidence: "inferred",
   });
-  // provider-retry.js may wrap the formatted message; the reset still comes from the message.
   const wrapped = classify("google", wrap(90, quotaMessage));
   assert.equal(wrapped?.kind, "quota");
   assert.equal(wrapped?.resetAt, Date.parse(resetsAt));
@@ -266,9 +253,6 @@ test("google (Antigravity): the provider's formatted kind decides the classifica
   ] as const) {
     assert.equal(antigravity({ kind, status: 400 }), undefined, kind);
   }
-  // Text the Antigravity transport did not format comes from Pi's built-in Gemini API-key
-  // provider and keeps the generic path `google` always had: host billing words are billing,
-  // anything else is not a limit.
   assert.deepEqual(classify("google", "Quota exceeded for this project"), {
     provider: "google",
     modelId: "m",
@@ -277,7 +261,6 @@ test("google (Antigravity): the provider's formatted kind decides the classifica
   });
   assert.equal(classify("google", "429 status code (no body)"), undefined);
   assert.equal(classify("google", "Connection error."), undefined);
-  // The formatted text on another provider is classified by that provider's rules.
   assert.equal(classify("anthropic", quotaMessage)?.kind, "billing");
 });
 
@@ -321,7 +304,6 @@ test("limited OpenAI models on either provider fall back to comparable Anthropic
     { provider: "synthetic", id: "hf:moonshotai/Kimi-K3" },
   ];
   const openaiClosed = (provider: string): boolean => provider === "openai";
-  // A limited manually chosen openai model resolves its tier through the same id on openai-codex.
   const sol = { provider: "openai", id: "gpt-6.1-sol" };
   assert.deepEqual(pickFallback(table, sol, { available, scoped: [], isClosed: openaiClosed }), {
     provider: "anthropic",
@@ -748,12 +730,10 @@ test("pickFallback prefers an available access-program variant and skips a hidde
     pickFallback(table, astra, { available: [...ALL, mythos], scoped: [], isClosed: open }),
     mythos,
   );
-  // The entitlement filter leaves Mythos out of `available` for an account without access.
   assert.deepEqual(
     pickFallback(table, astra, { available: ALL, scoped: [], isClosed: open }),
     fable,
   );
-  // The variant of the limited model is never its own fallback.
   assert.equal(
     fallbackCandidates(table, mythos).some((ref) => ref.id === "claude-mythos-5-1"),
     false,
@@ -780,7 +760,6 @@ test("the repository table offers xai/grok-4.7 only after every first-party cand
       (provider: string): boolean =>
         providers.includes(provider);
 
-    // (a) One first-party provider closed: the other one wins in every tier, never xai.
     for (const current of available.filter((ref) => ref.provider === "anthropic")) {
       const picked = pickFallback(table, current, {
         available,
@@ -797,7 +776,6 @@ test("the repository table offers xai/grok-4.7 only after every first-party cand
       });
       assert.equal(picked?.provider, "anthropic", `${current.id} -> ${JSON.stringify(picked)}`);
     }
-    // A limited openai/* model with the Anthropic account also closed stays first-party.
     assert.deepEqual(
       pickFallback(
         table,
@@ -807,14 +785,12 @@ test("the repository table offers xai/grok-4.7 only after every first-party cand
       { provider: "openai-codex", id: "gpt-6.2-sol" },
     );
 
-    // (b) Every tier candidate closed: Grok 4.7 before Kimi K3.1 Pro.
     const opus = { provider: "anthropic", id: "claude-opus-5-5" };
     const firstPartyClosed = closedOnly("anthropic", "openai-codex");
     assert.deepEqual(
       pickFallback(table, opus, { available, scoped: [], isClosed: firstPartyClosed }),
       grok,
     );
-    // An unavailable tier candidate counts like a closed one.
     assert.deepEqual(
       pickFallback(table, opus, {
         available: [grok, kimi],
@@ -824,7 +800,6 @@ test("the repository table offers xai/grok-4.7 only after every first-party cand
       grok,
     );
 
-    // (c) xai not available, or its account closed: Kimi K3.1 Pro, then Kimi K3.
     assert.deepEqual(
       pickFallback(table, opus, {
         available: available.filter((ref) => ref.provider !== "xai"),
@@ -850,8 +825,6 @@ test("the repository table offers xai/grok-4.7 only after every first-party cand
       kimi,
     );
 
-    // (d) A manually selected Grok 4.7 is in no tier: its limit falls back to the rest of the
-    // last-resort list only, even while first-party providers are open.
     assert.deepEqual(
       pickFallback(table, grok, { available, scoped: [], isClosed: closedOnly("xai") }),
       kimi,
@@ -941,7 +914,6 @@ test("structured input is confirmed from its own reset, ignoring root-branch dat
       snapshotReads += 1;
       return { observedAt: NOW, windows: [windowAt(10, NOW + HOUR)] };
     },
-    // A root-session entry near the failure time must not replace the child's own reset.
     codexEntry: { observedAt: NOW, resetAt: NOW + 5 * HOUR, accountId: "root-acct" },
   };
   const child = quota("openai-codex", {
@@ -967,7 +939,6 @@ test("structured input is confirmed from its own reset, ignoring root-branch dat
   );
   assert.equal(snapshotReads, 2, "window data is read, but shows no exhausted window");
 
-  // Without a reset the structured label alone proves nothing new; normal corroboration runs.
   const noReset = quota("openai-codex", { confidence: "structured" });
   await corroborateUsageLimit(context, noReset);
   assert.equal(snapshotReads, 3);
@@ -993,7 +964,6 @@ test("an elapsed structured reset is not ready while live data shows an exhauste
     evidence: "confirmed",
   });
 
-  // A later structured reset outranks an earlier window reset.
   const later = quota("openai-codex", { confidence: "structured", resetAt: 200_000 });
   const laterResult = await corroborateUsageLimit(
     {
@@ -1005,7 +975,6 @@ test("an elapsed structured reset is not ready while live data shows an exhauste
   assert.equal(laterResult.ready, false);
   assert.equal(laterResult.classification.resetAt, 200_000);
 
-  // No live data: the elapsed structured reset alone decides readiness.
   for (const context of [
     { now: () => 2000, usageSnapshot: snapshots(undefined) },
     {
@@ -1023,7 +992,6 @@ test("an elapsed structured reset is not ready while live data shows an exhauste
     });
   }
 
-  // A stale reading whose exhausted window already reset does not block.
   const staleElapsed = await corroborateUsageLimit(
     {
       now: () => 2000,
@@ -1053,7 +1021,6 @@ test("policy corroborate reads the owner's Codex entry only for the owner's fail
   const foreign = quota("openai-codex", { confidence: "parsed", sessionId: "child-1" });
   const result = await policy.corroborate(foreign);
   assert.equal(entryReads, 0, "a child's failure never reads the root branch entry");
-  // Nothing confirms the child's limit, so it covers only the model that failed.
   assert.deepEqual(result, {
     ready: false,
     classification: {
@@ -1301,7 +1268,6 @@ test("the repository fallback table loads and mirrors the model-guidance tiers",
   }
 });
 
-/** A real policy whose clock and usage reader the test drives. */
 function recheckPolicy(read: (provider: string) => Promise<ProviderUsageSnapshot | undefined>) {
   let clock = NOW;
   let reads = 0;
@@ -1370,7 +1336,6 @@ test("a reading older than the closure keeps it only through a window still exha
   const h = recheckPolicy(async () => snapshot);
   h.policy.closeProvider("anthropic", "acct", NOW + 24 * HOUR);
   assert.equal((await h.policy.recheck("anthropic", "acct")).open, false);
-  // The same stale reading without a blocking window proves nothing, so the provider is tried.
   snapshot = { observedAt: NOW - MIN, windows: [windowAt(100, NOW - 1)] };
   assert.deepEqual(await h.policy.recheck("anthropic", "acct"), {
     open: true,
@@ -1402,13 +1367,11 @@ test("a success reopens only when its request started after the closure, and ski
   h.advance(MIN);
   h.policy.reopen("anthropic", "acct", h.now());
   assert.equal(h.policy.isClosed("anthropic", "acct"), false);
-  // A caller's own closure written before that success is answered from it alone.
   assert.deepEqual(await h.policy.recheck("anthropic", "acct", NOW), {
     open: true,
     detail: "a request succeeded after the limit",
   });
   assert.equal(h.reads(), reads);
-  // A caller's closure written after the success still needs live evidence.
   assert.equal((await h.policy.recheck("anthropic", "acct", h.now() + 1)).open, false);
 });
 

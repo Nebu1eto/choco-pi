@@ -71,9 +71,7 @@ export interface WebSearchConfig extends ConfigObject {
     activity?: KeyId;
   };
   ssrf?: {
-    /** CIDR ranges exempted from the SSRF guard (e.g. fake-IP proxy ranges). */
     allowRanges?: string[];
-    /** Skip local hostname DNS preflight when an HTTP(S)_PROXY env var applies. */
     trustEnvProxy?: boolean;
   };
 }
@@ -109,7 +107,6 @@ export function loadConfig(): WebSearchConfig {
   return getCachedWebSearchConfig();
 }
 
-/** Persists config updates; rejects with the persistence error so callers can report it. */
 export async function saveConfig(updates: Partial<WebSearchConfig>): Promise<void> {
   const patch: ConfigObject = {};
   for (const [key, value] of Object.entries(updates)) {
@@ -159,7 +156,6 @@ function canonicalSchemaRequired(): { required?: string[] } {
   return isRequiredList(required) ? { required: required.map(camelToSnake) } : {};
 }
 
-// Tool parameters are snake_case; the canonical shared-router request keeps its camelCase names.
 function snakeSchemaProperties() {
   const renamed = Object.entries(canonicalSchemaProperties()).map(
     ([name, schema]) => [camelToSnake(name), schema] as const,
@@ -169,8 +165,6 @@ function snakeSchemaProperties() {
     required_capabilities: arr(oneOf(SNAKE_CAPABILITY_NAMES), { uniqueItems: true }),
   };
 }
-// The canonical shared-router properties are renamed to snake_case and closed, so a camelCase
-// name fails validation; the tool adds only the optional curator `workflow`.
 export const webSearchParams: JsonSchema = {
   type: "object",
   properties: {
@@ -344,7 +338,6 @@ export function getCuratorTimeoutSeconds(): number {
   const source = loadConfig();
   const explicit = normalizeCuratorTimeoutSeconds(source.curatorTimeoutSeconds);
   if (explicit !== undefined) return explicit;
-  // Remote users must notice and click a printed link, so allow more idle time.
   return resolveCuratorNetworkConfig().enabled
     ? DEFAULT_REMOTE_CURATOR_TIMEOUT_SECONDS
     : DEFAULT_CURATOR_TIMEOUT_SECONDS;
@@ -379,8 +372,6 @@ export async function getProviderAvailability(
     google: [...(scope?.adapters.values() ?? [])].some((adapter) => adapter.family === "google"),
     xai: [...(scope?.adapters.values() ?? [])].some((adapter) => adapter.family === "xai"),
   };
-  // Google and xAI are explicit-only: the shared router never includes them in "all", so they
-  // cannot enable "all".
   const { google: _explicitOnlyGoogle, xai: _explicitOnlyXai, ...fanoutProviders } = providers;
   return { all: Object.values(fanoutProviders).some(Boolean), ...providers };
 }

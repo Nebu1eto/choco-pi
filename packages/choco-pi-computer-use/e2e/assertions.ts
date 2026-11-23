@@ -29,9 +29,7 @@ export async function jsonl(path: string): Promise<RecordValue[]> {
       try {
         const data: JsonValue = JSON.parse(line);
         if (isJsonObject(data)) return data;
-      } catch {
-        /* rejected below */
-      }
+      } catch {}
       throw new Error(`INVALID_JSONL ${path}:${index + 1}`);
     });
 }
@@ -39,46 +37,28 @@ export type Evidence = {
   events: RecordValue[];
   session: RecordValue[];
   requests: RecordValue[];
-  /** Tier B: target/holder fixture logs bracketed by the Pi process lifetime. */
   fixture?: FixtureEvidence;
   intervention?: RecordValue;
 };
-/** Informational model-behavior evidence; never a verdict on its own. */
 export type ScenarioNotes = {
-  /** Persisted act_ui tool results. */
   actCalls: number;
-  /** act/actBatch requests in the daemon log (including harness-injected ones). */
   dispatchedActRequests: number;
-  /** act_ui calls that failed validation before reaching the daemon, with their error text. */
   rejected_before_dispatch: { index: number; error: string }[];
-  /** Whether another act_ui call followed a foreground_required refusal; null when none occurred. */
   reissuedAfterForegroundRequired: boolean | null;
-  /**
-   * S5 only: which layer refused the stale action. `observation_refresh_required` is the TS
-   * refusal (no act reached the daemon); `stale_look` is the helper's pre-delivery refusal of the
-   * one act that did, attributed by `requestId` (`response`) or, when the daemon log carries no
-   * response, by the stale look id (`lookId`).
-   */
   staleRefusal?: {
     path: "observation_refresh_required" | "stale_look";
     attributedBy?: "response" | "lookId";
   };
-  /** Tier B only: fixture state and scenario-specific evidence (see tier-b.ts). */
   tierB?: TierBNotes;
 };
 export type Verification = {
-  /** Assertion failures; any entry makes the scenario FAIL. */
   errors: string[];
-  /** Set when nothing assertion-relevant was dispatched, so the scenario cannot PASS. */
   inconclusive?: "no_dispatch" | "no_effect_observed";
   notes: ScenarioNotes;
 };
 const allowedPolicies = ["background", "ax_only"];
-/** Scenarios whose assertions are about a dispatched action; no dispatch makes them inconclusive. */
 const dispatchScenarios: readonly ScenarioId[] = ["S1", "S2", "S3", "S4", "S6"];
-/** Mutation the harness sends in S5; the fake daemon logs it like any request. */
 const staleMutation = "bump_root_generation";
-/** The helper's stale-look refusal text (fake daemon and native bridge.swift). */
 const staleLookText = /Look id '([^']+)' is no longer available/;
 function resultText(message: JsonField): string {
   const content = field(message, "content");
@@ -88,7 +68,6 @@ function resultText(message: JsonField): string {
     .filter((part) => part !== "")
     .join("\n");
 }
-/** Every `requestId` string anywhere in an execution trace (aggregate, steps, refusals). */
 function traceRequestIds(value: JsonField, into: Set<string>): Set<string> {
   if (Array.isArray(value)) for (const item of value) traceRequestIds(item, into);
   else if (isJsonObject(value))
@@ -98,7 +77,6 @@ function traceRequestIds(value: JsonField, into: Set<string>): Set<string> {
     }
   return into;
 }
-/** Semantic request ids of a logged act (`requestId`) or actBatch (per-action `requestId`s). */
 function wireRequestIds(row: RecordValue): string[] {
   if (isString(row.requestId)) return [row.requestId];
   const actions = row.actions;
@@ -119,7 +97,6 @@ function isForegroundRequired(message: JsonField): boolean {
 function isActRequest(row: RecordValue): boolean {
   return row.cmd === "act" || row.cmd === "actBatch";
 }
-/** The action name of a logged act (`action`) or of every action in an actBatch. */
 function wireActions(row: RecordValue): string[] {
   if (isString(row.action)) return [row.action];
   const actions = row.actions;
@@ -127,12 +104,6 @@ function wireActions(row: RecordValue): string[] {
     ? actions.map((action) => field(action, "action")).filter(isString)
     : [];
 }
-/**
- * S5: the one act that reached the daemon after the mutation and was refused there as stale before
- * delivery. Attribution is by the logged daemon response (`response.error.code`) when present,
- * otherwise by the stale look id quoted in the only rejected act_ui result. Returns undefined when
- * the evidence does not prove that path.
- */
 function staleLookRefusal(
   acts: RecordValue[],
   rejected: ScenarioNotes["rejected_before_dispatch"],
@@ -154,7 +125,6 @@ function staleLookRefusal(
     ? { row, attributedBy: "lookId" }
     : undefined;
 }
-/** Semantic request id of the typeText in a logged act or actBatch. */
 function typingRequestId(row: RecordValue): string | undefined {
   if (isString(row.requestId)) return row.requestId;
   const actions = row.actions;
@@ -163,11 +133,6 @@ function typingRequestId(row: RecordValue): string | undefined {
     : undefined;
   return text(field(typed, "requestId"));
 }
-/**
- * S3: the helper answered the only typeText with `didnt`. Pass when that act was sent once, nothing
- * was sent after it, nothing escalated to the foreground, and the result reports the didnt on the
- * attributed step or as a foreground_required refusal of a didnt background attempt.
- */
 function scoreDidnt(all: RecordValue[], typing: RecordValue[], traces: JsonObject[]): string[] {
   const errors: string[] = [];
   if (typing.length !== 1)
@@ -189,8 +154,6 @@ function scoreDidnt(all: RecordValue[], typing: RecordValue[], traces: JsonObjec
     if (field(entry, "escalatedToForeground") === true || field(entry, "escalationReason"))
       errors.push("escalated to foreground");
     const attempt = field(entry, "backgroundAttempt");
-    // The bridge records the refused background try as `backgroundAttempt:{outcome:"didnt"}`;
-    // any other outcome means the helper refused or escalation was considered.
     if (attempt !== undefined && field(attempt, "outcome") !== "didnt")
       errors.push(`backgroundAttempt outcome ${String(field(attempt, "outcome"))}`);
   }
@@ -206,11 +169,6 @@ function scoreDidnt(all: RecordValue[], typing: RecordValue[], traces: JsonObjec
   if (field(step, "outcome") !== "didnt" && !refusedDidnt) errors.push("didnt not reported");
   return [...new Set(errors)];
 }
-/**
- * S4: the helper held the typeText past the transport timeout. Pass when the transport cancelled
- * that request by its semantic id, the helper acknowledged `stopped`, nothing was sent after the
- * cancel, and the act_ui result reports the cancellation with its stop point.
- */
 function scoreCancel(all: RecordValue[], typing: RecordValue[], messages: JsonField[]): string[] {
   const errors: string[] = [];
   const typed = typing[0];
@@ -237,20 +195,10 @@ function scoreCancel(all: RecordValue[], typing: RecordValue[], messages: JsonFi
     );
   });
   if (!cancelled) errors.push("act_ui result not reported as cancelled with stoppedAt");
-  // The fake daemon logs an act when it answers it; a held act answered after the cancel carries
-  // the cancelled reply.
   if (field(field(typed.response, "error"), "code") !== "cancelled")
     errors.push("typeText act not answered as cancelled");
   return errors;
 }
-/**
- * S6: one ungranted background attempt refused with `foreground_required` and `effectPossible:
- * false`, then exactly one granted foreground retry of the same target, reported as an escalation.
- * The retry answers `worked`, or `unknown` when HID delivery cannot attest its effect (the fake,
- * like the helper, answers a granted HID click on a view without an AX action this way); the
- * escalated trace must report the same outcome, so an `unknown` is never scored as a claimed
- * change.
- */
 function scoreGrant(requests: RecordValue[], traces: JsonObject[]): string[] {
   const foreground = requests.filter((row) => row.policy === "foreground");
   const retry = foreground[0];
@@ -272,11 +220,6 @@ function scoreGrant(requests: RecordValue[], traces: JsonObject[]): string[] {
   errors.push(...grantTraceErrors(retry, traces));
   return errors;
 }
-/**
- * Policy, delivery and frontmost evidence of one executed trace entry. `required` entries (steps,
- * or a step-less aggregate) must carry the fields; an aggregate over steps is checked only for the
- * fields it actually has.
- */
 function checkDelivery(entry: JsonField, required: boolean, label: string, errors: string[]): void {
   const policy = text(field(entry, "deliveryPolicy"));
   if (
@@ -308,10 +251,6 @@ export function verdictOf(errors: readonly string[], inconclusive?: string): str
   if (errors.length) return `FAIL(${errors.join("; ")})`;
   return inconclusive ? `INCONCLUSIVE(${inconclusive})` : "PASS";
 }
-/**
- * Whether later scenarios are blocked after S1. Only S1's isolation checks decide this: a scenario
- * assertion failure never blocks, while failed or never-run isolation checks do.
- */
 export function isolationBlock(isolation: readonly string[] | undefined): string | undefined {
   if (isolation === undefined) return "isolation-unproven";
   return isolation.length ? "isolation" : undefined;
@@ -335,7 +274,6 @@ export function verify(
   );
   const sessionResults = cuResults.filter((row) => field(row.message, "toolName") === "act_ui");
   const executions = sessionResults.map((row) => field(field(row.message, "details"), "execution"));
-  /** Only results that reached the daemon carry an execution trace. */
   const traces = executions.filter(isJsonObject);
   const rejected: ScenarioNotes["rejected_before_dispatch"] = [];
   sessionResults.forEach((row, index) => {
@@ -356,8 +294,6 @@ export function verify(
     )
       errors.push(`execution mismatch at ${i}`);
   }
-  // Headless configuration is a property of the scenario, checked once over every CU result
-  // that reports it (find_roots/observe_ui/act_ui); rejected calls carry no config.
   const configs = cuResults
     .map((row) => field(field(row.message, "details"), "config"))
     .filter(isJsonObject);
@@ -365,15 +301,10 @@ export function verify(
   else if (configs.some((config) => config.headless !== false))
     errors.push("headless config incorrect");
   const requests = e.requests.filter(isActRequest);
-  // S5: acts logged after the harness mutation, and the stale-look refusal they may prove.
   const mutationIndex = e.requests.findIndex((row) => row.fixtureMutation === staleMutation);
   const actsAfterMutation =
     mutationIndex < 0 ? [] : e.requests.slice(mutationIndex + 1).filter(isActRequest);
   const staleLook = scenario === "S5" ? staleLookRefusal(actsAfterMutation, rejected) : undefined;
-  // A rejected call must not have reached the daemon: every act request must belong to an
-  // executed result (or a cancellation). S7's harness-injected second-session act has no
-  // requestId and is excluded there only; S5's act proven refused as stale by the helper is
-  // attributed to that refusal.
   if (rejected.length) {
     const attributed = new Set<string>();
     for (const trace of traces) traceRequestIds(trace, attributed);
@@ -384,7 +315,6 @@ export function verify(
       const ids = wireRequestIds(row);
       if (scenario === "S7" && ids.length === 0) return false;
       if (row === staleLook?.row) return false;
-      // Tier B S5: the helper refused this act as stale before delivery (logged reply).
       if (
         tier === "b" &&
         scenario === "S5" &&
@@ -466,7 +396,6 @@ export function verify(
     if (e.intervention?.ok !== true) errors.push("fixture mutation not acknowledged");
     if (mutationIndex < 0) errors.push("fixture mutation not logged");
     const refreshRequired = sessionResults.some((row) => {
-      // The bridge reports the stale refusal in the result text; details may be empty.
       const evidence = `${JSON.stringify(field(row.message, "details") ?? null)}\n${resultText(row.message)}`;
       return evidence.includes("observation_refresh_required") && evidence.includes('"stale"');
     });
@@ -525,7 +454,6 @@ export function isolationCheck(
   stderr: string,
   rawEvents: string,
   rawSession: string,
-  /** Tier B: the dev helper executable, which may live outside the scratch root. */
   allowedHelper?: string,
 ): string[] {
   const errors: string[] = [];

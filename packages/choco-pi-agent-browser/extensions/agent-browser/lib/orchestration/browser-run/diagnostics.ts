@@ -107,9 +107,6 @@ export async function collectNavigationSummary(options: {
   );
   if (!url || !/^[a-z][a-z0-9+.-]*:/i.test(url)) return undefined;
   if (isFileUrl(url) || isAboutBlankUrl(url)) return { url };
-  // Reuse the title already observed for this exact URL instead of spending a second probe. Titles can
-  // change without a URL change on SPAs, but this summary is only a "last observed" page label; the URL
-  // stays live-probed on every call.
   if (
     options.priorTarget?.title &&
     normalizeComparableUrl(options.priorTarget.url) === normalizeComparableUrl(url)

@@ -1,12 +1,3 @@
-/**
- * The programmatic compact bridge across registrations.
- *
- * Each extension registration (root session, child session, every `/reload`)
- * adds one entry to a single `AgentSession.prototype.compact` patch (and its
- * `AgentSession.prototype.prompt` wrapper) and removes it on
- * `session_shutdown`; the last one out restores the host's methods. This file
- * runs in its own process so no earlier registration is still live.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -32,11 +23,9 @@ import {
   reply,
 } from "./host-boundary-fixture.ts";
 
-/** The host's own methods, read before any registration patched them. */
 const STOCK_COMPACT = AgentSession.prototype.compact;
 const STOCK_PROMPT = AgentSession.prototype.prompt;
 
-/** The host's rejection of a prompt during a manual compaction (Pi 1.4.0). */
 const HOST_REJECTION = /Cannot submit a prompt while compaction is in progress/;
 
 const SUMMARY = [
@@ -59,7 +48,6 @@ const SUMMARY = [
   "- None",
 ].join("\n");
 
-/** Background on; the usage threshold is never crossed, so only compact() prepares. */
 const SIDECAR = {
   enabled: true,
   text: true,
@@ -112,7 +100,6 @@ async function startHost(file: string): Promise<Host> {
   });
 }
 
-/** Shut a host down the way the runtime does on quit or `/reload`. */
 async function shutDown(host: Host): Promise<void> {
   await host.session.extensionRunner.emit({ type: "session_shutdown", reason: "reload" });
   await host.dispose();
@@ -132,7 +119,6 @@ interface CompactionGate {
   readonly extension: ExtensionFactory;
 }
 
-/** A `session_before_compact` handler that holds every host compaction until released. */
 function compactionGate(): CompactionGate {
   let open = (): void => undefined;
   const released = new Promise<void>((resolve) => {
@@ -152,17 +138,12 @@ function compactionGate(): CompactionGate {
   return gate;
 }
 
-/** A sidecar that turns the background feature off: every compact() is the host's own. */
 async function sidecarOff(dir: string): Promise<string> {
   const file = join(dir, "background-compaction-off.json");
   await writeFile(file, JSON.stringify({ ...SIDECAR, enabled: false }));
   return file;
 }
 
-// Contract with the installed Pi (1.4.0): its own prompt() rejects a prompt that arrives
-// during a manual compaction (agent-session.js:1648-1649). The bridge's prompt wrapper
-// exists only for that; if this fails after a Pi upgrade, the host waits (or queues) on
-// its own and the wrapper can go.
 test("the stock host rejects a prompt issued during a manual compaction", async () => {
   assert.equal(liveSessionCompactDefers(), 0, "no bridge before any registration");
   assert.equal(AgentSession.prototype.prompt, STOCK_PROMPT, "the host's own prompt");
@@ -206,7 +187,6 @@ test(
       assert.notEqual(patched, original, "the first registration installed the patch");
       assert.notEqual(patchedPrompt, STOCK_PROMPT, "and the prompt wrapper");
       assert.equal(liveSessionCompactDefers(), 1);
-      // A second registration (a reload or child session) adds an entry, not a patch.
       second = await startHost(file);
       assert.equal(liveSessionCompactDefers(), 2, "both registrations are live");
       assert.equal(AgentSession.prototype.compact, patched, "the second one did not stack");
@@ -215,7 +195,6 @@ test(
       second = undefined;
       assert.equal(liveSessionCompactDefers(), 1, "only the departed registration left");
       assert.equal(AgentSession.prototype.compact, patched, "exactly one patch remains");
-      // The remaining registration still takes a programmatic compact.
       const ownerKey = mainOwnerKey(first.manager.getSessionId());
       await first.session.prompt("GO");
       const hostEvents: string[] = [];
@@ -242,7 +221,6 @@ test(
         false,
         "with its original attributes",
       );
-      // A later registration (after /reload) installs a fresh single patch.
       first = await startHost(file);
       assert.equal(liveSessionCompactDefers(), 1);
       assert.notEqual(AgentSession.prototype.compact, original);
@@ -262,7 +240,6 @@ interface SessionHolder {
   session: AgentSession | undefined;
 }
 
-/** A host with the bridge installed and the feature off, so compact() is the host's own. */
 async function startGatedHost(
   dir: string,
   gate: CompactionGate,
@@ -330,11 +307,9 @@ test("an extension command issued during a manual compaction runs at once", asyn
     await host.session.prompt("GO");
     const compacted = host.session.compact();
     await waitFor(() => gate.entered, "the host compaction started");
-    // Resolves while the compaction is still held: the command was not made to wait.
     await host.session.prompt("/probe");
     assert.deepEqual(ran, [true], "ran during the compaction");
     assert.equal(host.session.isCompacting, true, "the compaction is still running");
-    // Text the host does not dispatch as a command (`expandPromptTemplates: false`) waits.
     const plain = host.session.prompt("/probe", { expandPromptTemplates: false });
     gate.release();
     await compacted;
@@ -351,16 +326,12 @@ test("an extension command issued during a manual compaction runs at once", asyn
   }
 });
 
-/** Put back the host's methods and drop a slot a stacked patch retained. */
 function restoreHostMethods(): void {
   AgentSession.prototype.compact = STOCK_COMPACT;
   AgentSession.prototype.prompt = STOCK_PROMPT;
   Reflect.deleteProperty(globalThis, Symbol.for("choco-pi:compaction-session-compact-bridge:v1"));
 }
 
-// A later patch on top of ours keeps the slot alive when the last registration leaves; the
-// prompt wrapper must stay with it, or a reinstall after /reload would only add a defer and
-// run without it (or wrap prompt a second time).
 test(
   "a slot retained under a stacked compact patch keeps the prompt wrapper for the next install",
   { timeout: 30_000 },
@@ -374,7 +345,6 @@ test(
       const ours = AgentSession.prototype.compact;
       const wrapped = AgentSession.prototype.prompt;
       assert.notEqual(wrapped, STOCK_PROMPT, "the first install wrapped prompt");
-      // Another extension wraps compact after us.
       const later: typeof STOCK_COMPACT = async function laterCompact(this: AgentSession, ...args) {
         return ours.apply(this, args);
       };
@@ -384,7 +354,6 @@ test(
       assert.equal(liveSessionCompactDefers(), 0, "no registration left");
       assert.equal(AgentSession.prototype.compact, later, "the later patch is left in place");
       assert.equal(AgentSession.prototype.prompt, wrapped, "the prompt wrapper stays");
-      // A reinstall after /reload reuses the slot.
       host = await startHost(file);
       assert.equal(liveSessionCompactDefers(), 1);
       assert.equal(AgentSession.prototype.prompt, wrapped, "no second prompt wrapper");
@@ -407,7 +376,6 @@ test(
       host = await startGatedHost(dir, gate);
       const ours = AgentSession.prototype.compact;
       const wrapped = AgentSession.prototype.prompt;
-      // Another extension wraps prompt after us.
       const later: typeof STOCK_PROMPT = async function laterPrompt(this: AgentSession, ...args) {
         return wrapped.apply(this, args);
       };
@@ -421,7 +389,6 @@ test(
       assert.equal(liveSessionCompactDefers(), 1, "the reinstall reused the slot");
       assert.equal(AgentSession.prototype.compact, ours, "no second compact patch");
       assert.equal(AgentSession.prototype.prompt, later, "no second prompt wrapper");
-      // Through the later patch, our wrapper still makes a prompt wait for the compaction.
       await host.session.prompt("GO");
       const compacted = host.session.compact();
       await waitFor(() => gate.entered, "the host compaction started");

@@ -76,7 +76,6 @@ export type HarnessCheckRegistration = {
   onSessionShutdown: (handler: EventHandler<SessionShutdownEvent>) => void;
   onSessionTree: (handler: EventHandler<SessionTreeEvent>) => void;
   checkHarness?: (options: HarnessOptions) => Promise<HarnessReport>;
-  /** Names of the policy-disabled built-in extensions the host currently loads. */
   observeBuiltinExtensions?: () => readonly string[];
   observeActiveHostTools?: () => NonNullable<HarnessOptions["activeHostTools"]>;
 };
@@ -92,11 +91,6 @@ export type HarnessCheckExecutionDependencies = {
 
 type SourcedEntry = { name?: string; sourceInfo: { path: string } };
 
-/**
- * Whether a source path registers choco-pi's `tool_search`: the root `tool-search.ts`
- * extension, or the scoped search choco-pi-subagents adds to an extension-enabled child
- * as the inline extension `subagent-tool-search` (the root extension skips children).
- */
 function isChocoToolSearchSource(sourcePath: string): boolean {
   if (sourcePath === "<inline:subagent-tool-search>") return true;
   return sourcePath.replaceAll("\\", "/").endsWith("/extensions/tool-search.ts");
@@ -115,14 +109,6 @@ export function activeHostTools(
   };
 }
 
-/**
- * Policy-disabled built-in extensions that registered a tool or command.
- *
- * Pi names a built-in extension's resources `builtin:<name>` in their source
- * info. An extension that registered nothing, or that Pi omitted because
- * another extension replaced it, leaves no trace here; Pi 1.0.4 does not hand
- * extensions its load warnings.
- */
 export function loadedBuiltinExtensions(entries: readonly SourcedEntry[]): string[] {
   const paths = new Set(entries.map((entry) => entry.sourceInfo.path));
   return DISABLED_BUILTIN_EXTENSIONS.filter((name) => paths.has(`builtin:${name}`));

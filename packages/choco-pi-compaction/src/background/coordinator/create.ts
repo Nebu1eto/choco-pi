@@ -1,4 +1,3 @@
-/** Coordinator status, registration, and the public factory. */
 import { AdoptionDelivery } from "../adoption.ts";
 import { systemClock } from "../scheduler.ts";
 import type {
@@ -11,8 +10,6 @@ import { containStaleOwner, finishCurrent, invalidate } from "./state.ts";
 import { requestPreparation } from "./preparation.ts";
 import { arbitrate, reconcileCommit } from "./arbitration.ts";
 import { recoverNewestFirst } from "./recovery.ts";
-
-// ---- status and registration ----
 
 function status(state: CoordinatorState): DetailedCoordinatorStatus {
   const { ownerKey, ownerGeneration } = state;
@@ -57,7 +54,6 @@ function status(state: CoordinatorState): DetailedCoordinatorStatus {
   };
 }
 
-/** Register by id; the returned disposer only removes the exact registration it created. */
 function registerById<T extends { readonly id: string }>(
   registry: Map<string, T>,
   item: T,

@@ -11,7 +11,6 @@ import type {
 } from "../src/pi-rpc/protocol.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 
-/** A session manager that only knows the single session it was built with. */
 class SingleSessionManager implements SessionManagerLike {
   private readonly session: PiAcpSession;
 
@@ -46,7 +45,6 @@ class SingleSessionManager implements SessionManagerLike {
   async shutdownAll(): Promise<void> {}
 }
 
-/** A Pi process fake exposing a mutable model and thinking selection. */
 class ConfigurableProcess implements PiRpcProcessLike {
   readonly setModelCalls: Array<{ provider: string; modelId: string }> = [];
   readonly thinkingLevels: PiThinkingLevel[] = [];
@@ -86,7 +84,6 @@ class ConfigurableProcess implements PiRpcProcessLike {
   }
 }
 
-/** Replace `setTimeout` with a recorder so scheduled work never runs during a test. */
 class TimerRecorder {
   readonly callbacks: Array<() => void> = [];
 
@@ -97,7 +94,6 @@ class TimerRecorder {
     const callbacks = this.callbacks;
     const record = (callback: () => void): NodeJS.Timeout => {
       callbacks.push(callback);
-      // Hand back a genuine (already cleared) handle so callers can still unref it.
       const handle = realSetTimeout(() => {}, 0);
       clearTimeout(handle);
       return handle;
@@ -110,7 +106,6 @@ class TimerRecorder {
   }
 }
 
-/** Build an agent whose only session is backed by `proc`. */
 function agentWithSession(conn: FakeAgentSideConnection, proc: PiRpcProcessLike): PiAcpAgent {
   const agent = new PiAcpAgent(asAgentConn(conn), {});
   const session = new PiAcpSession({
@@ -121,8 +116,6 @@ function agentWithSession(conn: FakeAgentSideConnection, proc: PiRpcProcessLike)
     conn: asAgentConn(conn),
   });
   const sessions: SessionManagerLike = new SingleSessionManager(session);
-  // `sessions` is a private implementation detail of `PiAcpAgent`; `Object.assign`
-  // installs the fake through the same property without weakening any declared type.
   Object.assign(agent, { sessions });
   return agent;
 }

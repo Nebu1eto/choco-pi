@@ -29,7 +29,6 @@ const FunctionCallSchema = obj(
   { open: true },
 );
 
-/** google.ai Part as JSON: only the members this transport reads are declared. */
 const PartSchema = obj(
   {
     text: opt(str()),
@@ -104,11 +103,6 @@ function classify(value: KeyedValue): StreamResponse {
   throw antigravityMalformedResponse("stream event has neither a response nor an error");
 }
 
-/**
- * Classifies one decoded SSE data payload: a streamed response (wrapped in `{response}` as
- * v1internal sends it, or bare as the public Gemini API does), or an in-stream google.rpc
- * error, which is thrown as its AntigravityError. Anything else is malformed_response.
- */
 export function parseStreamChunk(data: string): StreamResponse {
   let value: unknown;
   try {
@@ -120,10 +114,6 @@ export function parseStreamChunk(data: string): StreamResponse {
   return classify(value);
 }
 
-/**
- * A whole non-SSE 2xx body: a google.rpc error envelope (thrown), one response, or a JSON array
- * of responses. Anything else is malformed_response.
- */
 export function parseJsonBody(text: string): StreamResponse[] {
   let value: unknown;
   try {

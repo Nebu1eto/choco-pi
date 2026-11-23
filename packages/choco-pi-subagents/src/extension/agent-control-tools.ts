@@ -1,6 +1,3 @@
-/**
- * Agent control tool registrations.
- */
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { hostParams } from "../schema-bridge.ts";
 import { obj, str, bool, oneOf, opt, arr } from "@earendil-works/pi-schema";
@@ -30,7 +27,6 @@ import { resolveStopOutcome } from "../stop-subagent.ts";
 import { errorResult, textResult, formatLifetimeTokens } from "./helpers.ts";
 import type { SubagentsRuntime } from "./runtime.ts";
 
-/** Registers the status, tree, result, steer, and stop tools. */
 export function installAgentControlTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
   pi.registerTool(
     defineTool({
@@ -87,10 +83,6 @@ export function installAgentControlTools(pi: ExtensionAPI, rt: SubagentsRuntime)
       },
     }),
   );
-
-  // ---- get_subagent_result tool ----
-
-  // ---- read-only whole-tree views (root only; never consume or steer) ----
 
   const TreeStatusFilterSchema = oneOf(["all", "active", "terminal"], {
     description: "Which records to list. Default: all.",
@@ -271,13 +263,11 @@ export function installAgentControlTools(pi: ExtensionAPI, rt: SubagentsRuntime)
           output += record.result?.trim() || "No output.";
         }
 
-        // Terminal claim above already marked exactly this generation consumed.
         if (claim.kind === "terminal") {
           rt.notifications.cancelNudge(record.id);
           rt.core.manager.journalRecord(record.id);
         }
 
-        // Verbose: include full conversation
         if (params.verbose && record.session) {
           const conversation = getAgentConversation(record.session);
           if (conversation) {
@@ -289,8 +279,6 @@ export function installAgentControlTools(pi: ExtensionAPI, rt: SubagentsRuntime)
       },
     }),
   );
-
-  // ---- steer_subagent tool ----
 
   pi.registerTool(
     defineTool({
@@ -324,8 +312,6 @@ export function installAgentControlTools(pi: ExtensionAPI, rt: SubagentsRuntime)
           );
         }
         const envelope = formatSteerMessage(ROOT_AGENT_PATH, params.message);
-        // UI steering (overlay composer, prompt mentions and fullscreen focus)
-        // converges on this same manager path, including pre-session queueing.
         const queuedBeforeSession = !record.session;
         if (!rt.core.manager.steer(record.id, envelope)) {
           return errorResult(
@@ -357,8 +343,6 @@ export function installAgentControlTools(pi: ExtensionAPI, rt: SubagentsRuntime)
       },
     }),
   );
-
-  // ---- stop_subagent tool ----
 
   pi.registerTool(
     defineTool({
@@ -406,8 +390,6 @@ export function installAgentControlTools(pi: ExtensionAPI, rt: SubagentsRuntime)
           );
         }
 
-        // A stop acknowledgement is not a terminal-result read. Running cleanup
-        // still owns publication and its eventual completion notification.
         if (!rt.core.manager.abort(record.id)) {
           return errorResult(
             `Failed to stop agent ${record.id}. It is no longer running or queued.`,

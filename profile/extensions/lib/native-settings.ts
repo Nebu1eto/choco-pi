@@ -14,54 +14,38 @@ export const NATIVE_SETTINGS_SECTION_ID = "pi";
 const MODEL_ROW_ID = "piModel";
 const SCOPED_MODELS_ROW_ID = "piScopedModels";
 
-/** The Pi row that carries the reasoning effort picker. */
 export const THINKING_ROW_ID = "thinking";
 
-/** Where a command asks the settings dialog to open. */
 export interface NativeSettingsFocus {
   section: string;
   focusId: string;
   openSubmenu: boolean;
 }
 
-/** The Model tab row holding Pi's model picker. */
 export const MODEL_PICKER_FOCUS: NativeSettingsFocus = {
   section: "model",
   focusId: MODEL_ROW_ID,
   openSubmenu: true,
 };
 
-/** The Model tab row holding Pi's reasoning effort picker. */
 export const EFFORT_PICKER_FOCUS: NativeSettingsFocus = {
   section: "model",
   focusId: THINKING_ROW_ID,
   openSubmenu: true,
 };
 
-/**
- * Labels that read better in this panel than in Pi's own settings menu, where
- * the surrounding rows give more context.
- */
 const PI_ROW_LABELS = new Map<string, string>([["thinking", "Reasoning effort"]]);
 
-/** Tabs the profile layout adds for settings that no built-in choco-ui section covers. */
 export const TERMINAL_SECTION_ID = "terminal";
 export const SESSION_SECTION_ID = "session";
 export const MODEL_SECTION_ID = "model";
 export const TOOLS_SECTION_ID = "tools";
 
-/** Row ids this module adds next to the rows Pi builds itself. */
 export const PI_MODEL_ROW_ID = MODEL_ROW_ID;
 export const PI_SCOPED_MODELS_ROW_ID = SCOPED_MODELS_ROW_ID;
 
-/**
- * Bridge state lives on `globalThis` rather than in module scope because
- * `/reload` re-imports this module while the already-patched prototype keeps
- * running; a module-scoped closure would then serve a stale extension runner.
- */
 const NATIVE_SETTINGS_BRIDGE = Symbol.for("choco-pi.native-settings-bridge");
 
-/** Structural view of the interactive mode; the fields this bridge reaches for are stable host internals. */
 export interface NativeSettingsHost {
   showSettingsSelector: () => void;
   showSelector: (create: (done: () => void) => RuntimeValue) => void;
@@ -70,17 +54,9 @@ export interface NativeSettingsHost {
 type SelectorFactory = (done: () => void) => RuntimeValue;
 
 interface NativeSettingsBridge {
-  /** Pi's own `showSettingsSelector`, kept so the native menu stays reachable as a fallback. */
   original: (this: NativeSettingsHost) => void;
-  /** Pi's own `/model` handler, kept for the argument form this bridge leaves alone. */
   originalModelCommand?: (this: NativeSettingsHost, searchTerm?: string) => Promise<void>;
-  /**
-   * Opens the unified dialog. Replaced on every main-session extension load;
-   * subagent child loads never touch it, so it can't be left bound to a child's
-   * runtime once that child is disposed.
-   */
   open?: (host: NativeSettingsHost, focus?: NativeSettingsFocus) => void;
-  /** Most recent interactive mode instance seen by the patched methods. */
   host?: NativeSettingsHost;
 }
 
@@ -88,7 +64,6 @@ function bridgeStore(): Record<PropertyKey, RuntimeValue> {
   return reinterpretHostValue<Record<PropertyKey, RuntimeValue>>(globalThis);
 }
 
-/** Reads one property from a host value, treating anything nullish as absent. */
 function propertyOf(value: RuntimeValue, key: string): RuntimeValue {
   if (value === undefined || value === null) return undefined;
   return reinterpretHostValue<Record<string, RuntimeValue>>(value)[key];
@@ -103,12 +78,6 @@ function readBridge(): NativeSettingsBridge | undefined {
     : undefined;
 }
 
-/**
- * The live session's reasoning effort, read from the interactive host rather
- * than from an `ExtensionAPI` captured at load time. A captured `pi` goes stale
- * after session replacement or `/reload`, while the host always holds the
- * session that is in use right now.
- */
 export function hostThinkingLevel(host: NativeSettingsHost): string | undefined {
   let level: RuntimeValue;
   try {
@@ -119,12 +88,6 @@ export function hostThinkingLevel(host: NativeSettingsHost): string | undefined 
   return isString(level) ? level : undefined;
 }
 
-/**
- * Runs the dialog opener, falling back to Pi's own UI when the opener is bound
- * to a runtime that has since been retired. A stale opener stays broken, so it
- * is dropped until the next main-session load installs a fresh one. Anything
- * other than the host's stale-context failure still propagates.
- */
 function openOrFallback(
   bridge: NativeSettingsBridge,
   open: NonNullable<NativeSettingsBridge["open"]>,
@@ -141,19 +104,6 @@ function openOrFallback(
   }
 }
 
-/**
- * Routes Pi's built-in `/settings` to the unified dialog and remembers the live
- * interactive mode so the Pi section can read the real settings rows.
- *
- * Pi dispatches `/settings` before extension commands and hides extension
- * commands that collide with a built-in name, so an extension command called
- * `settings` can never run. Taking over `showSettingsSelector` is the only way
- * to make `/settings` open something else.
- *
- * Subagent children run in this process and load every extension again. Their
- * loads must leave the bridge alone (`inChildLoad`): an opener installed by a
- * child would outlive the child's runtime and throw on the next `/settings`.
- */
 export function installNativeSettingsBridge(
   open: (host: NativeSettingsHost, focus?: NativeSettingsFocus) => void,
   options: { inChildLoad?: boolean } = {},
@@ -189,9 +139,6 @@ export function installNativeSettingsBridge(
     else bridge.original.call(this);
   };
 
-  // `/model` without a pattern used to replace the editor with the picker. It
-  // opens the dialog on the row that holds the same picker instead, while
-  // `/model <pattern>` keeps Pi's matching and its pre-filtered selector.
   const modelCommand = prototype["handleModelCommand"];
   if (isFunction(modelCommand)) {
     bridge.originalModelCommand =
@@ -213,8 +160,6 @@ export function installNativeSettingsBridge(
     };
   }
 
-  // Runs once at startup and again after every /reload, so the host is known
-  // before the user ever opens the dialog through /preferences.
   const setupAutocompleteProvider = prototype["setupAutocompleteProvider"];
   if (isFunction(setupAutocompleteProvider)) {
     const inner =
@@ -231,15 +176,10 @@ export function installNativeSettingsBridge(
   }
 }
 
-/** Opens Pi's own settings menu; used when the unified dialog is unavailable. */
 export function openNativeSettingsMenu(host: NativeSettingsHost): void {
   readBridge()?.original.call(host);
 }
 
-/**
- * Builds a command context bound to the host's live session, so the bridge can
- * open a dialog that normally receives one from an extension command dispatch.
- */
 export function createHostCommandContext(host: NativeSettingsHost): RuntimeValue | undefined {
   const runner = propertyOf(propertyOf(host, "session"), "extensionRunner");
   const create = propertyOf(runner, "createCommandContext");
@@ -256,13 +196,6 @@ interface NativeSettingsRows {
   onChange: (id: string, newValue: string) => void;
 }
 
-/**
- * Runs a host method that would replace the editor with a selector, and returns
- * what it built instead of showing it. Pi assembles its selectors inside those
- * methods, wired to its own callbacks, so collecting from `showSelector` is the
- * only way to reuse one without rebuilding it — and a rebuilt copy would drift
- * from Pi with every release.
- */
 function captureHostSelector(
   host: NativeSettingsHost,
   invoke: () => void,
@@ -286,11 +219,6 @@ function captureHostSelector(
   return captured;
 }
 
-/**
- * Builds Pi's real settings rows and hands back the list plus its change
- * handler, so every runtime effect (theme switching, chat rebuilds, transport
- * changes) stays in Pi's own callbacks.
- */
 function captureNativeSettingsRows(host: NativeSettingsHost): NativeSettingsRows | undefined {
   const bridge = readBridge();
   if (!bridge) return undefined;
@@ -337,7 +265,6 @@ function currentThinkingLevel(host: NativeSettingsHost): string | undefined {
   return isString(level) ? level : undefined;
 }
 
-/** Shown in place of the picker when Pi's model selector cannot be collected. */
 function unavailablePicker(done: (value?: string) => void): Component {
   return {
     render: () => ["", "  The model selector is unavailable in this session.", ""],
@@ -348,19 +275,12 @@ function unavailablePicker(done: (value?: string) => void): Component {
 
 const BOX_DRAWING_ONLY = /^[\u2500-\u257F\s]+$/;
 
-/** A rule Pi drew around a selector, as opposed to a blank or a content line. */
 function isRuleLine(line: string): boolean {
   const text = stripTerminalSequences(line);
   return text.trim().length > 0 && BOX_DRAWING_ONLY.test(text);
 }
 
-/**
- * Drops the rules Pi draws around a selector meant to replace the editor. The
- * panel already frames its own body, so an embedded selector would otherwise
- * double the line above and below it.
- */
 function withoutOuterRules(component: Component): Component {
-  // The rows the last frame dropped, so a mouse row maps back to the selector's own.
   let dropped = { top: 0, total: 0 };
   return {
     render: (width: number) => {
@@ -381,11 +301,6 @@ function withoutOuterRules(component: Component): Component {
   };
 }
 
-/**
- * One of Pi's editor-replacing selectors, rendered inside the settings list
- * instead. Every such selector applies its own change and then calls the
- * collected `done`, so this only disposes it and reports the row's new value.
- */
 function embeddedHostPicker(
   host: NativeSettingsHost,
   method: string,
@@ -410,24 +325,17 @@ function embeddedHostPicker(
   );
   const component = propertyOf(created, "component");
   if (component === undefined || component === null) return unavailablePicker(done);
-  // The list forwards input by hand, but the search field only draws its cursor
-  // while it believes it holds focus.
   const record = reinterpretHostValue<Record<string, RuntimeValue>>(component);
   if ("focused" in record) record["focused"] = true;
   return withoutOuterRules(reinterpretHostValue<Component>(component));
 }
 
-/** How many models Ctrl+P cycles through, as the scoped-models row shows it. */
 function scopedModelsSummary(host: NativeSettingsHost): string {
   const scoped = propertyOf(propertyOf(host, "session"), "scopedModels");
   const count = Array.isArray(scoped) ? scoped.length : 0;
   return count === 0 ? "all models" : `${count} selected`;
 }
 
-/**
- * The row that picks the session model. Pi builds no such row for its settings
- * menu, because `/model` covers it there.
- */
 function modelRow(host: NativeSettingsHost): SettingItem {
   return {
     id: MODEL_ROW_ID,
@@ -439,7 +347,6 @@ function modelRow(host: NativeSettingsHost): SettingItem {
   };
 }
 
-/** Restores the session reasoning picker that Pi no longer includes in its settings rows. */
 function thinkingRow(host: NativeSettingsHost): SettingItem {
   return {
     id: THINKING_ROW_ID,
@@ -451,9 +358,6 @@ function thinkingRow(host: NativeSettingsHost): SettingItem {
   };
 }
 
-/**
- * The row that scopes the Ctrl+P cycle, carrying what `/scoped-models` opened.
- */
 function scopedModelsRow(host: NativeSettingsHost): SettingItem {
   return {
     id: SCOPED_MODELS_ROW_ID,
@@ -465,12 +369,6 @@ function scopedModelsRow(host: NativeSettingsHost): SettingItem {
   };
 }
 
-/**
- * Applies a row's rename to the submenu it opens. Pi titles those submenus from
- * its own wording, so a renamed row would otherwise open a panel still carrying
- * the old name. Only the renamed rows are wrapped, and a title Pi rewords later
- * simply stops matching.
- */
 function relabelSubmenu(component: Component, from: string, to: string): Component {
   const pattern = new RegExp(from.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
   return {
@@ -481,7 +379,6 @@ function relabelSubmenu(component: Component, from: string, to: string): Compone
   };
 }
 
-/** Applies this panel's wording to a row, including the submenu it opens. */
 function relabeled(row: SettingItem): SettingItem {
   const label = PI_ROW_LABELS.get(row.id);
   if (label === undefined) return row;
@@ -494,13 +391,6 @@ function relabeled(row: SettingItem): SettingItem {
   return renamed;
 }
 
-/**
- * Pi's settings rows as one source section. The host layout places each row
- * by id; a row it neither places nor hides stays on this section's own "Pi"
- * tab, so a row a later Pi adds is never dropped. Returns an empty list when
- * no interactive mode is available (non-TUI runs), and a single explanatory
- * row when Pi's rows could not be read.
- */
 export function buildNativeSettingsSections(): PreferencesExtraSection[] {
   const host = readBridge()?.host;
   if (!host) return [];
@@ -519,15 +409,11 @@ export function buildNativeSettingsSections(): PreferencesExtraSection[] {
     ];
   };
   const handleChange = (id: string, newValue: string): PreferencesSectionChange => {
-    // These pickers already applied their change; the row only has to redraw.
     if (id === MODEL_ROW_ID || id === SCOPED_MODELS_ROW_ID || id === THINKING_ROW_ID) {
       return { kind: "update" };
     }
     if (!onChange) return { kind: "update" };
     onChange(id, newValue);
-    // The TUI mode row used to need a re-read after a refused switch; the
-    // profile pins that setting and the layout hides the row, so every
-    // remaining row redraws from the value it was given.
     return { kind: "update" };
   };
 

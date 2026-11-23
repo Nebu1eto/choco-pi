@@ -42,8 +42,6 @@ test("the verifier role keeps write tools for scratch and runs with fresh contex
 
 test("role model and thinking follow model_locked pin, caller, then role default precedence", async (t) => {
   await useProfileAgents(t);
-  // The fork ships TypeScript source only, so these load straight from `src/`
-  // under Node's type stripping.
   const packageRoot = resolve("packages/choco-pi-subagents/src");
   const { loadCustomAgents } = await import(
     pathToFileURL(resolve(packageRoot, "custom-agents.ts")).href
@@ -53,7 +51,6 @@ test("role model and thinking follow model_locked pin, caller, then role default
   );
   const implementer = (await loadCustomAgents(process.cwd())).get("implementer");
   assert.ok(implementer);
-  // The implementer takes caller overrides: it declares overridable defaults, not pins.
   assert.ok(implementer.model, "implementer declares a default model");
   assert.ok(implementer.thinking, "implementer declares a default thinking level");
   assert.notEqual(implementer.modelLocked, true, "implementer does not lock its model");
@@ -74,7 +71,6 @@ test("role model and thinking follow model_locked pin, caller, then role default
   assert.deepEqual(fromCaller.overriddenCallerFields, []);
   assert.equal(fromCaller.thinking, caller.thinking);
 
-  // A role file with `model_locked: true` pins its model and thinking against the caller.
   const lockedDir = await mkdtemp(join(tmpdir(), "subagent-config-"));
   try {
     await mkdir(join(lockedDir, ".pi", "agents"), { recursive: true });
@@ -264,8 +260,6 @@ test("the advisor role is internal: only the advisor tool may spawn it", async (
   const dispatch = resolveSpawnTypeIn(registry, "Advisor");
   assert.ok(!dispatch.ok || dispatch.type !== "advisor", "Agent tool never dispatches it");
 
-  // /btw's side-chat role: internal, and model-free because the fork pins the
-  // main session's model and thinking level.
   const sideChat = getAgentConfigIn(registry, "side-chat");
   assert.ok(sideChat, "side-chat stays in the registry for /btw");
   assert.equal(sideChat.internal, true);

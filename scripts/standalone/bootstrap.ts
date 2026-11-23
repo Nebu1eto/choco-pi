@@ -1,11 +1,3 @@
-/**
- * Installs the app's dependencies: the step install.sh runs after it moved the
- * checkout and before stage 1 (manage.ts install). It runs before
- * `node_modules` exists, so it imports only Node built-ins and the
- * dependency-free installer modules. It takes no arguments: the app is this
- * checkout and the install home is the checkout's parent (`<home>/app`).
- * Every runtime directory it creates is journaled (provenance.ts) at once.
- */
 import { spawn } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
@@ -27,7 +19,6 @@ import {
 
 export const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-/** Runs `command` with inherited stdio; rejects unless it exits 0. */
 export function run(
   command: string,
   args: readonly string[],
@@ -49,10 +40,6 @@ export function run(
   });
 }
 
-/**
- * The pnpm to run and the runtime directories selecting it created;
- * `onCreated` hears of a downloaded pnpm as soon as it is in place.
- */
 export async function selectPnpm(
   runtime: string,
   pins: RuntimePins,
@@ -69,23 +56,8 @@ export async function selectPnpm(
   };
 }
 
-/**
- * pnpm's writable locations, all under `runtime`: the store, metadata cache
- * and state (flags below) and PNPM_HOME (environment only), which pnpm 12
- * otherwise creates as ~/Library/pnpm or $XDG_DATA_HOME/pnpm even for a
- * project install.
- */
 const PNPM_DIRECTORIES = ["pnpm-store", "pnpm-cache", "pnpm-state", "pnpm-home"] as const;
 
-/**
- * pnpm 12 accepts any `--config.<key>` silently, so each of these was checked
- * against its effect: store-dir, cache-dir and state-dir each keep their
- * files out of the user's home, and an explicit store-dir is used as given
- * instead of a default or volume-root store. `pm-on-fail=error` makes a
- * packageManager mismatch an error instead of a download of another pnpm
- * (`manage-package-manager-versions` no longer does);
- * assertPackageManagerPin already rules that mismatch out.
- */
 export function pnpmInstallArgs(runtime: string): string[] {
   return [
     "install",
@@ -100,7 +72,6 @@ export function pnpmInstallArgs(runtime: string): string[] {
   ];
 }
 
-/** The environment of `pnpm install`: PNPM_HOME has no command-line form. */
 export function pnpmInstallEnvironment(
   runtime: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -123,11 +94,6 @@ export async function assertPackageManagerPin(app: string, pins: RuntimePins): P
   }
 }
 
-/**
- * Installs the app's dependencies. Every runtime directory this call creates
- * (pnpm directories that did not exist, a downloaded pnpm) goes to `record`
- * before `pnpm install` runs, so a failed install still owns it.
- */
 export async function installDependencies(
   app: string,
   runtime: string,
@@ -139,7 +105,6 @@ export async function installDependencies(
   for (const entry of PNPM_DIRECTORIES) {
     const directory = path.join(runtime, entry);
     if (await exists(directory)) continue;
-    // Journaled before it exists: from here on only this install creates it.
     await record(directory);
     await mkdir(directory);
   }

@@ -1,14 +1,3 @@
-/**
- * Cross-extension RPC handlers for the subagents extension.
- *
- * Exposes ping, spawn, and stop RPCs over the pi.events event bus,
- * using per-request scoped reply channels.
- *
- * Reply envelope follows pi-mono convention:
- *   success → { success: true, data?: T }
- *   error   → { success: false, error: string }
- */
-
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { validateSpawnCwd } from "./agent-manager.ts";
 import { type ModelRegistry, resolveModel } from "./model-resolver.ts";
@@ -21,19 +10,15 @@ type RpcWireValue = RpcScalar | RpcWireValue[] | { [key: string]: RpcWireValue }
 type RpcWireObject = { [key: string]: RpcWireValue };
 type RpcEventPayload = Parameters<Parameters<ExtensionAPI["events"]["on"]>[1]>[0];
 
-/** Minimal event bus interface needed by the RPC handlers. */
 export interface EventBus {
   on: ExtensionAPI["events"]["on"];
   emit: ExtensionAPI["events"]["emit"];
 }
 
-/** RPC reply envelope — matches pi-mono's RpcResponse shape. */
 export type RpcReply<T = void> = { success: true; data?: T } | { success: false; error: string };
 
-/** RPC protocol version — bumped when the envelope or method contracts change. */
 export const PROTOCOL_VERSION = 2;
 
-/** Minimal AgentManager interface needed by the spawn/stop RPCs. */
 export interface SpawnCapable {
   spawn(
     pi: ExtensionAPI,
@@ -50,10 +35,6 @@ export interface RpcDeps {
   pi: ExtensionAPI;
   getCtx: () => ExtensionContext | undefined;
   manager: SpawnCapable;
-  /**
-   * Reload agent definitions before a spawn resolves its type, so an agent
-   * file added mid-session is spawnable over RPC. Async: the load reads files.
-   */
   refreshAgents?: () => Promise<void>;
 }
 
@@ -134,10 +115,6 @@ function parseStopRequest(raw: RpcWireValue): StopRpcRequest {
   return { requestId: requestId(raw), agentId };
 }
 
-/**
- * Wire a single RPC handler: listen on `channel`, parse its request, run
- * `fn(params)`, and emit the reply on `channel:reply:${requestId}`.
- */
 function handleRpc<P extends RpcRequest, R>(
   events: EventBus,
   channel: string,
@@ -165,11 +142,8 @@ function handleRpc<P extends RpcRequest, R>(
   });
 }
 
-/** Register ping, spawn, and stop RPC handlers on the event bus. */
 export function registerRpcHandlers(deps: RpcDeps): RpcHandle {
   const { events, pi, getCtx, manager, refreshAgents } = deps;
-  // Cleared when the spawn handler is unsubscribed, so a request that was
-  // waiting on the agent reload does not spawn into a shut-down activation.
   let spawnSubscribed = true;
 
   const unsubPing = handleRpc(events, "subagents:rpc:ping", parsePingRequest, () => {
@@ -181,17 +155,11 @@ export function registerRpcHandlers(deps: RpcDeps): RpcHandle {
     "subagents:rpc:spawn",
     parseSpawnRequest,
     async ({ type, prompt, options }) => {
-      // The cwd's directory check is asynchronous, so it runs here, alongside
-      // the reload, to keep a bad cwd an error reply instead of an agent that
-      // fails right after starting. The run re-checks it when it starts.
       await Promise.all([refreshAgents?.(), validateSpawnCwd(options?.cwd)]);
       if (!spawnSubscribed) throw new Error("Subagent RPC handler was disposed");
-      // Read after the reload: the session may have changed while it ran.
       const ctx = getCtx();
       if (!ctx) throw new Error("No active session");
 
-      // Cross-extension RPC callers naturally forward a serializable model name.
-      // Resolve it to a host Model before passing options to AgentManager.
       let normalizedOptions: any = options ?? {};
       const modelName = wireString(options?.model);
       if (modelName !== undefined) {

@@ -63,11 +63,9 @@ type FastEditorState = {
   getModel: () => Model<Api> | undefined;
   isEnabled: () => boolean;
   style: (text: string) => string;
-  /** Root session Daybreak request and outcome; absent leaves the badge off. */
   getDaybreak?: () => DaybreakEditorState | undefined;
 };
 
-/** Daybreak request plus its last reported entitlement outcome. */
 export type DaybreakEditorState = { requested: boolean | "auto"; outcome: DaybreakOutcome };
 
 type FocusedModelControlsRegistry = Map<
@@ -101,7 +99,6 @@ export type FocusedFastEditorState = {
   baseUrl?: string;
   supported: boolean;
   active: boolean;
-  /** The focused child's own Daybreak state; when absent no Daybreak badge renders. */
   daybreak?: DaybreakEditorState;
 };
 
@@ -133,11 +130,6 @@ const DAYBREAK_BADGES = {
   "security-key-required": "daybreak needs security key",
 } satisfies Record<DaybreakOutcome, string>;
 
-/**
- * Editor badge text for a Daybreak state. Only a requested blue/red outcome
- * reads as a grant; every other requested state names why it is not applied.
- * The caller gates the current model; a stale grant must not survive a model change.
- */
 export function daybreakEditorBadge(daybreak: DaybreakEditorState | undefined): string | undefined {
   if (!daybreak?.requested) return undefined;
   return DAYBREAK_BADGES[daybreak.outcome];
@@ -163,7 +155,6 @@ function focusedFastEditorState(): FocusedFastEditorState | undefined {
     active: isBoolean(current?.fastModeActive) && current.fastModeActive,
   };
   if (isBoolean(current?.daybreakRequested) || current?.daybreakRequested === "auto") {
-    // A requested state without a known outcome stays honestly unknown.
     const fallback: DaybreakOutcome = current.daybreakRequested ? "pending" : "off";
     state.daybreak = {
       requested: current.daybreakRequested,
@@ -208,7 +199,6 @@ function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
   return isObject(value) && value !== null && !Array.isArray(value);
 }
 
-/** Suffix for a saved Fast request that the current model or authentication does not apply. */
 export function fastInactiveNote(reason: string | undefined): string {
   return ` (saved; ${reason ?? "inactive for this model"})`;
 }
@@ -229,10 +219,6 @@ export function restoreFastMode(entries: readonly SessionEntry[], fallback = fal
 
 export const DAYBREAK_USAGE = "Usage: /daybreak [on|off|status]";
 
-/**
- * Applies one /daybreak action to a session controller. `status` only reads:
- * it never advances the revision an entitlement lookup is keyed on.
- */
 export function applyDaybreakAction(
   controller: DaybreakController | undefined,
   actionInput: string,
@@ -250,10 +236,6 @@ export function applyDaybreakAction(
   return describe(controller.set(requested));
 }
 
-/**
- * Daybreak metadata belongs only to canonical ChatGPT Codex models. Hide a saved
- * request and any stale grant completely when the active model is ineligible.
- */
 function projectDaybreakForModel<
   T extends { requested: boolean | "auto"; outcome: DaybreakOutcome },
 >(state: T | undefined, model: Model<Api> | undefined): T | undefined {
@@ -345,7 +327,6 @@ export function appendFocusedModelToEditorMetadata(
           .replace(providerPattern, focused.provider ?? rootModel.provider)
       : line,
   );
-  // The focused child's state supersedes the root's; the root outcome never leaks in.
   const badges: string[] = [];
   if (focused.supported && focused.active) badges.push("fast");
   const daybreakBadge = daybreakEditorBadge(
@@ -384,7 +365,6 @@ export function wrapFastModeEditorFactory(
   }) as FastEditorFactory;
 
   Object.defineProperty(wrappedFactory, FAST_EDITOR_FACTORY, { value: state });
-  // Zentui uses these symbols to retain editor ownership across settings changes and cleanup.
   for (const symbol of ZENTUI_EDITOR_SYMBOLS) {
     if (!(symbol in baseFactory)) continue;
     Object.defineProperty(wrappedFactory, symbol, {
@@ -416,9 +396,7 @@ export function installFastModeEditorWhenReady(
         ui.setEditorComponent(wrapFastModeEditorFactory(factory, state));
         return;
       }
-    } catch {
-      // Zentui may be replacing the editor while this retry runs.
-    }
+    } catch {}
 
     attempts++;
     if (attempts < maxAttempts) schedule(tryInstall, intervalMs);
@@ -506,7 +484,6 @@ export default function modelControls(pi: ExtensionAPI): void {
         generation: stateGeneration,
         initial: { requested: DEFAULT_DAYBREAK, source: "default" },
         entries: ctx.sessionManager.getBranch(),
-        // The global preference is re-read on every start, so a default seed is not persisted.
         persist: (state) => {
           if (state.source !== "default") pi.appendEntry(DAYBREAK_ENTRY, daybreakEntryData(state));
         },
@@ -515,15 +492,12 @@ export default function modelControls(pi: ExtensionAPI): void {
     daybreakController = controller;
     unsubscribeDaybreak = controller.subscribe(() => {
       if (daybreakBridge.get(sessionId) !== controller) return;
-      // setStatus uses the same repaint path as /fast; no extra status row is displayed.
       withLiveCtx(() => ctx.ui.setStatus("daybreak-refresh", undefined));
     });
-    // Only a default-source request follows the global preference; explicit and inherited win.
     if (controller.getState().source !== "default") {
       daybreakSeed = Promise.resolve();
       return;
     }
-    // Seed the default-source request from the global preference before any provider request.
     daybreakSeed = readAgentPreferencesAsync().then(
       (preferences) => {
         if (daybreakBridge.get(sessionId) !== controller) return;
@@ -531,9 +505,7 @@ export default function modelControls(pi: ExtensionAPI): void {
         if (state.source === "default" && state.requested !== preferences.daybreak)
           controller.set(preferences.daybreak, "default");
       },
-      () => {
-        // An unreadable settings file leaves the off default in place.
-      },
+      () => {},
     );
   };
 
@@ -548,7 +520,6 @@ export default function modelControls(pi: ExtensionAPI): void {
     daybreakSeed = Promise.resolve();
   };
 
-  // The host awaits session_start, so the default Daybreak seed settles before any request.
   pi.on("session_start", (_event, ctx) => {
     registerState(ctx);
     const daybreakSeeded = daybreakSeed;
@@ -556,8 +527,6 @@ export default function modelControls(pi: ExtensionAPI): void {
     if (sessionId) focusedModelControlsRegistry().set(sessionId, { setFast, setDaybreak });
     const generation = ++editorInstallGeneration;
     if (ctx.mode !== "tui") return daybreakSeeded;
-    // Local editors load before package editors. Retry for up to five seconds so
-    // decoration starts only after Zentui has produced the final metadata row.
     installFastModeEditorWhenReady(
       ctx.ui,
       {
@@ -626,8 +595,6 @@ export default function modelControls(pi: ExtensionAPI): void {
       }
 
       const labels = levels.map((level) => (level === current ? `${level} (current)` : level));
-      // A bare /effort opens the settings dialog on the row that holds the
-      // picker, so the prompt and the panel lead to the same place.
       if (await openPreferencesPicker(ctx, current, EFFORT_PICKER_FOCUS)) return;
 
       const selected = await ctx.ui.select("Reasoning effort", labels);
@@ -646,7 +613,6 @@ export default function modelControls(pi: ExtensionAPI): void {
       try {
         updateModel(ctx.model);
         const status = setFast(args);
-        // Hosts without the TUI editor badge need the notice as confirmation.
         if (
           ctx.mode !== "tui" ||
           args.trim().toLowerCase() === "status" ||
@@ -657,8 +623,6 @@ export default function modelControls(pi: ExtensionAPI): void {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
         return;
       }
-      // The editor indicator is the confirmation. Avoid appending a status row:
-      // repeated height changes corrupt regular scrollback in Ghostty + Zellij.
       ctx.ui.setStatus("fast-mode-refresh", undefined);
     },
   });
@@ -682,8 +646,6 @@ export default function modelControls(pi: ExtensionAPI): void {
   });
 
   pi.on("before_provider_request", (event, ctx) => {
-    // Always strip an existing Daybreak access field: no bridge outcome attests the
-    // current auth or model. The provider finalizer applies the actual entitlement.
     const payload = stripStaleDaybreakAccess(event.payload) ?? event.payload;
     const decision = (
       registeredSessionId ? bridge.get(registeredSessionId) : fastController
@@ -693,7 +655,6 @@ export default function modelControls(pi: ExtensionAPI): void {
     return payload === event.payload ? undefined : payload;
   });
 
-  // Pi prices an xAI Fast turn at the base model rate; reprice server-confirmed Fast responses.
   const xaiFastPricing = createXaiFastPricing();
   pi.on("provider_stream_event", (event) => xaiFastPricing.observe(event.provider, event.data));
   pi.on("message_end", (event) => {

@@ -1,8 +1,3 @@
-/**
- * `self uninstall`: removes what install.json and the creation journal record.
- * Dependency-free, so an install whose dependencies never got installed can
- * still be removed from its journal alone (manage.ts runs it without the CLI).
- */
 import { lstat, readlink, realpath, rm, rmdir, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -16,22 +11,16 @@ import {
 } from "./provenance.ts";
 import { exists, samePath } from "./provision.ts";
 
-/** Where uninstall reports each line: info for removed and kept paths, warn for skipped entries. */
 export type UninstallLog = { info(line: string): void; warn(line: string): void };
 
 export type UninstallOptions = {
-  /** The launcher contract's CHOCO_PI_HOME. */
   home: string;
-  /** The launcher contract's CHOCO_PI_LAUNCHER. */
   launcher: string;
-  /** install.json, or null when the install failed before writing it. */
   manifest: InstallManifest | null;
-  /** Also remove agent/ and lsp/ (user state). */
   purge: boolean;
   log: UninstallLog;
 };
 
-/** True when `link` is a symlink whose target is `launcher`. */
 export async function isOurLink(link: string, launcher: string): Promise<boolean> {
   try {
     if (!(await lstat(link)).isSymbolicLink()) return false;
@@ -46,7 +35,6 @@ function isInsideOrSame(parent: string, child: string): boolean {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-/** Removes `target` without following it: a symlink loses only the link. */
 async function removeWithoutFollowing(target: string): Promise<void> {
   if ((await lstat(target)).isSymbolicLink()) await unlink(target);
   else await rm(target, { recursive: true, force: true });
@@ -94,9 +82,6 @@ export async function uninstall(options: UninstallOptions): Promise<void> {
   const ordered = owned
     .filter((entry) => entry !== binLink && entry !== manifestFile)
     .toSorted((left, right) => right.length - left.length);
-  // Each entry is resolved right before its removal, and the resolved path is
-  // what gets removed: an ancestor symlinked out of the home, or a path that
-  // lands in user state, ~/.pi or the user's home, is kept and reported.
   for (const target of ordered) {
     const resolution = await resolveOwnedEntry(installHome, target);
     if (resolution.kind === "missing") continue;

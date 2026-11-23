@@ -1,7 +1,3 @@
-/**
- * The /diff pane's view: the shared changes view with the pane's key hint and
- * key list. Hosts (dock, overlay) and the controller construct this.
- */
 import { ChangesView, type ChangesViewOptions } from "../../lib/changes/view/changes-view.ts";
 import { COPY_KEY } from "../../lib/changes/view/keys.ts";
 
@@ -20,7 +16,6 @@ export {
 export const KEY_HINT =
   "j/k file · ↑↓ line · ⇧↑↓ range · f/F finding · e open all · c note · a ask · ←→ turn · tab editor · ? help";
 
-/** The `?` key list, one entry per line. */
 export const HELP_LINES: readonly string[] = [
   "j/k       move between files     g/G      top/bottom",
   "↑/↓       move through file rows and the lines of open files",
@@ -47,7 +42,6 @@ export type PaneViewDependencies = Omit<ChangesViewOptions, "keyHint" | "helpLin
 export class PaneView extends ChangesView {
   constructor(dependencies: PaneViewDependencies) {
     super({
-      // The line cursor, with a hunk's header as the stop that selects the whole hunk.
       cursor: "line",
       hunkStops: true,
       freeSelection: true,

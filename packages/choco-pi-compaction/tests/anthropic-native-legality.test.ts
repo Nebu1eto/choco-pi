@@ -1,12 +1,3 @@
-/**
- * Anthropic native cut legality.
- *
- * Wire fixtures come from the INSTALLED Anthropic adapter (fake fetch) for a
- * model with mid-conversation effort and system messages, so they contain the
- * real wire roles. Legality is decided from those roles only, at wire level
- * (`judgeWireCut`) and at entry level through the branch mapping
- * (`resolveEntryCut`); the wire is never stripped or reordered.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -143,7 +134,6 @@ async function wireFor(messages: readonly Message[]): Promise<WireMessage[]> {
   return body.messages;
 }
 
-/** One projected entry per message, IDs e1..eN, as the host would project them. */
 function project(messages: readonly Message[]): ProjectedSessionEntry[] {
   return messages.map((message, index) => {
     const id = `e${index + 1}`;
@@ -184,15 +174,15 @@ function indexOfText(wire: readonly WireMessage[], text: string): number {
 }
 
 const TRANSCRIPT: readonly Message[] = [
-  user("USER-ONE"), // e1
-  assistant("ASSISTANT-ONE", ["t1"]), // e2
-  toolResult("t1"), // e3
-  assistant("ASSISTANT-TWO"), // e4
-  user("USER-THREE-A"), // e5
-  user("USER-THREE-B"), // e6
-  { role: "system", content: MID_SYSTEM, timestamp: 0 }, // e7
-  assistant("ASSISTANT-THREE"), // e8
-  user("USER-FOUR"), // e9
+  user("USER-ONE"),
+  assistant("ASSISTANT-ONE", ["t1"]),
+  toolResult("t1"),
+  assistant("ASSISTANT-TWO"),
+  user("USER-THREE-A"),
+  user("USER-THREE-B"),
+  { role: "system", content: MID_SYSTEM, timestamp: 0 },
+  assistant("ASSISTANT-THREE"),
+  user("USER-FOUR"),
 ];
 
 test(
@@ -220,13 +210,11 @@ test(
 );
 
 test("entry-level cuts are judged on the mapped wire", { timeout: 20_000 }, async () => {
-  // Short no-tool session, cut preferred at the branch tip (a manual /compact with
-  // keepRecentTokens 1): the chooser must retain the last exchange, not refuse.
   const PLAIN: readonly Message[] = [
-    user("PLAIN-ONE"), // e1
-    assistant("PLAIN-ONE-REPLY"), // e2
-    user("PLAIN-TWO"), // e3
-    assistant("PLAIN-TWO-REPLY"), // e4
+    user("PLAIN-ONE"),
+    assistant("PLAIN-ONE-REPLY"),
+    user("PLAIN-TWO"),
+    assistant("PLAIN-TWO-REPLY"),
   ];
   {
     const wire = await wireFor(PLAIN);
@@ -259,7 +247,6 @@ test("entry-level cuts are judged on the mapped wire", { timeout: 20_000 }, asyn
   });
   assert.deepEqual(verdict("e4"), { ok: true, prefixLength: indexOfText(wire, "USER-THREE-A") });
   assert.deepEqual(verdict("e5"), { ok: false, reason: "no-legal-cut", code: "same-role" });
-  // The first kept entry is a system message: it cannot be placed first (refused, never edited).
   assert.deepEqual(verdict("e6"), {
     ok: false,
     reason: "incompatible",
@@ -271,19 +258,15 @@ test("entry-level cuts are judged on the mapped wire", { timeout: 20_000 }, asyn
     code: "first-kept-not-user",
   });
   assert.deepEqual(verdict("e8"), { ok: true, prefixLength: indexOfText(wire, "USER-FOUR") });
-  // Summarizing the whole captured request keeps its trailing effort system message in the prefix.
   assert.deepEqual(verdict("e9"), { ok: true, prefixLength: wire.length });
   assert.equal(wire.at(-1)?.role, "system");
   const kept = resolveEntryCut(capture, "e8");
   assert.ok(kept.ok);
   assert.equal(kept.projectedSuccessor, "e9");
   assert.equal(kept.unmappedPrefixKeys, 0);
-  // Choose the latest legal cut at or before the preference that still retains
-  // a successor (prepare refuses a tail cut with no-retained-entry), else defer.
   assert.equal(chooseLegalCutEntry(capture, "e7"), "e4");
   assert.equal(chooseLegalCutEntry(capture, "e9"), "e8");
   assert.equal(chooseLegalCutEntry(capture, "e3"), "defer");
-  // Every legal cut, latest first, for a caller whose branch refuses the first.
   assert.deepEqual([...legalCutEntries(capture, "e9")], ["e8", "e4"]);
   assert.deepEqual(
     [...legalCutEntries(capture, "e9", { branchExtendsCapture: true })],
@@ -328,9 +311,6 @@ test("mapping failures refuse instead of guessing", { timeout: 20_000 }, async (
   const transcript: Message[] = [user("DUP"), assistant("MID"), user("DUP"), assistant("END")];
   const wire = await wireFor(transcript);
   const entries = project(transcript);
-  // Identical text on both sides of the cut, both copies sent: each wire copy
-  // owns the next unclaimed entry in order, so the cut is resolved by position
-  // (formerly refused as ambiguous-cut).
   const positional = resolveEntryCut(captureOf(wire, entries), "e2");
   assert.ok(positional.ok, JSON.stringify(positional));
   const secondCopy = wire.findLastIndex((message) =>
@@ -338,15 +318,12 @@ test("mapping failures refuse instead of guessing", { timeout: 20_000 }, async (
   );
   assert.ok(secondCopy > indexOfText(wire, "DUP"), "both copies were sent");
   assert.equal(positional.prefixLength, secondCopy, "the second copy is the first kept message");
-  // Only one copy was sent and MID is missing: the copy could be either entry,
-  // so the alignment stays ambiguous across the cut.
   const oneCopy = await wireFor([user("DUP"), assistant("END")]);
   assert.deepEqual(resolveEntryCut(captureOf(oneCopy, entries), "e2"), {
     ok: false,
     reason: "incompatible",
     code: "ambiguous-cut",
   });
-  // A summarized entry the wire never carried: a gap, not a silent omission.
   const gapEntries = project([
     user("USER-ONE"),
     assistant("ASSISTANT-ONE"),

@@ -9,8 +9,6 @@ import { PiAcpSession, type StopReason } from "../src/acp/session.ts";
 import { PiRpcProcess, type PiPromptDisposition } from "../src/pi-rpc/process.ts";
 import { FakeAgentSideConnection, FakePiRpcProcess, asAgentConn } from "./helpers-fakes.ts";
 
-// Each prompt message selects the exact `data` payload the stub returns, so the real
-// `PiRpcProcess` decodes genuine Pi RPC response frames.
 const STUB_PI = `#!/usr/bin/env node
 const readline = require("node:readline");
 const payloads = {
@@ -38,7 +36,6 @@ function bounded<T>(promise: Promise<T>, label: string, ms = 5_000): Promise<T> 
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-/** A turn observed without awaiting it, so tests can assert it is still pending. */
 type TrackedTurn = {
   settlements: StopReason[];
   done: Promise<void>;
@@ -52,7 +49,6 @@ function track(promise: Promise<StopReason>): TrackedTurn {
   return { settlements, done };
 }
 
-/** Let acknowledgement callbacks, emit flushes, and settlement microtasks drain. */
 function drain(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 20));
 }
@@ -105,7 +101,6 @@ test("PiRpcProcess.prompt decodes each Pi 1.0.4 disposition and rejects malforme
       );
     }
 
-    // A rejected acknowledgement leaves the transport usable for later commands.
     assert.equal(await bounded(proc.prompt("started"), "after malformed"), "started");
   } finally {
     await proc?.shutdown(50);
@@ -168,7 +163,6 @@ test("a late handled acknowledgement cannot settle the turn that events already 
   const first = track(session.prompt("first"));
   const second = track(session.prompt("second"));
 
-  // Events settle the first turn before its acknowledgement arrives, which starts the second.
   proc.emit({ type: "agent_settled" });
   await bounded(first.done, "first turn settles from events");
   await drain();

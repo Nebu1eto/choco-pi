@@ -186,7 +186,6 @@ test("agent files: deprecated aliases promote, unknown keys and shadowing warn",
   const locked = agents.get("locked");
   assert.equal(locked?.modelLocked, true);
   assert.equal(locked?.model, "prov/locked");
-  // The workspace file wins wholesale — no merge — and declares no model.
   const reviewer = agents.get("reviewer");
   assert.equal(reviewer?.model, undefined);
   assert.equal(reviewer?.sourcePath, join(workspaceAgents, "reviewer.md"));
@@ -206,7 +205,6 @@ test("agent files: deprecated aliases promote, unknown keys and shadowing warn",
     joined,
   );
 
-  // An unchanged reload does not repeat the warnings.
   const before = warnings.length;
   await loadCustomAgents(join(root, "project"));
   assert.equal(warnings.length, before);

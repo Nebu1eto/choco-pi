@@ -85,7 +85,6 @@ function isDecodedImage(image: DecodedImage): boolean {
   return Number.isSafeInteger(expectedLength) && image.data.length >= expectedLength;
 }
 
-/** Decode the PNG or JPEG payload into the RGBA pixels used by the mosaic encoder. */
 export function decodeBase64Image(base64Data: string, mimeType: string): DecodedImage | undefined {
   const format = imageMimeType(mimeType);
   if (!format) return undefined;
@@ -185,7 +184,6 @@ function sgrBackground(color: RgbColor): string {
   return `\x1b[48;2;${color.red};${color.green};${color.blue}m`;
 }
 
-/** Convert decoded RGBA pixels into ANSI truecolor Unicode half-block lines. */
 export function renderHalfBlockPixels(
   image: DecodedImage,
   options: HalfBlockImageOptions = {},
@@ -214,7 +212,6 @@ export function renderHalfBlockPixels(
   return lines;
 }
 
-/** Decode a base64 PNG/JPEG and return its ANSI truecolor Unicode half-block mosaic. */
 export function renderHalfBlockImage(
   base64Data: string,
   mimeType: string,
@@ -241,7 +238,6 @@ function mosaicDisabled(value: string | undefined): boolean {
   }
 }
 
-/** Whether terminal state permits the text mosaic fallback instead of inline graphics. */
 export function shouldRenderHalfBlockMosaic(input: HalfBlockMosaicGateInput): boolean {
   return (
     input.imageProtocol === null &&

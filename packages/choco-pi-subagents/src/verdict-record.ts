@@ -1,14 +1,3 @@
-/**
- * verdict-record.ts — Durable record of the structured block a reviewer or
- * verifier ends its final message with.
- *
- * Review roles end with a `choco-pi-review` block, verification roles with a
- * `choco-pi-verdict` block. {@link recordVerdict} parses the role's block,
- * writes `<scratch>/verdicts/<work_task>/<agentId>.json` atomically, and
- * returns one status line for the parent. It never throws: every failure
- * becomes a line that says the run is unrecorded.
- */
-
 import { isAbsolute } from "node:path";
 import {
   parseStructuredBlock,
@@ -27,40 +16,26 @@ import type { AgentRecord } from "./types.ts";
 export const VERDICT_RECORD_PREFIX = "Verdict record:";
 const REASON_MAX_CHARS = 300;
 
-/** Terminal statuses whose final message is the agent's own conclusion. */
 const CONCLUDED_STATUSES: ReadonlySet<string> = new Set(["completed", "steered"]);
 
 export interface VerdictRecordInput {
   agentId: string;
   agentType: string;
   workTask: string;
-  /** Lineage scratch root; records live under `<scratchDir>/verdicts/<workTask>`. */
   scratchDir: string;
-  /** The run's final assistant text (before any manager notices). */
   text: string | undefined;
-  /** Terminal record status of the run. */
   status: string;
   error?: string;
-  /**
-   * The run's outcome now. Read again before the record write and after it;
-   * a run that stopped meanwhile is recorded as stopped. Defaults to
-   * `status` and `error`.
-   */
   outcome?: () => { status: string; error?: string };
   now?: Date;
 }
 
 export interface VerdictRecordOutcome {
   status: AgentParseRecord["status"] | "failed";
-  /** One line for the parent, always starting with {@link VERDICT_RECORD_PREFIX}. */
   line: string;
   path?: string;
 }
 
-/**
- * The current generation's verdict line when a (truncated) result preview does
- * not already show it, so a notification can repeat it outside the preview.
- */
 export function verdictLineMissingFrom(
   record: Pick<
     AgentRecord,
@@ -75,7 +50,6 @@ export function verdictLineMissingFrom(
   return preview.includes(line) ? undefined : line;
 }
 
-/** Whether runs of `type` are recorded (review and verification roles). */
 export function isVerdictRole(type: string): boolean {
   return roundClassOf(type) !== undefined;
 }
@@ -157,19 +131,10 @@ function parseFor(roundClass: RoundClass, input: VerdictRecordInput): Parsed {
   return { status: "parsed", verdict: verdict.value };
 }
 
-/** The FAILED line for a run whose record could not even be attempted. */
 export function failedVerdictLine(agentType: string, reason: string): string {
   return `${VERDICT_RECORD_PREFIX} FAILED - ${oneLine(reason)}; ${unrecorded(roundClassOf(agentType) ?? "review")}`;
 }
 
-/**
- * Parse, write and summarize one settled run. Never throws.
- * Callers guarantee `agentType` is a verdict role; any other type is treated as review.
- *
- * `outcome` is read again before the record write and after it: when the run
- * stopped meanwhile, the record is written (or rewritten) as `missing`, so a
- * stopped run never leaves a parsed record behind.
- */
 export async function recordVerdict(input: VerdictRecordInput): Promise<VerdictRecordOutcome> {
   const roundClass = roundClassOf(input.agentType) ?? "review";
   const current = (): { status: string; error?: string } =>
@@ -214,7 +179,6 @@ export async function recordVerdict(input: VerdictRecordInput): Promise<VerdictR
     try {
       path = await write();
       parsedOnDisk = parsed.status === "parsed";
-      // A stop that landed during the write: the record must not stay parsed.
       if (parsed.status === "parsed" && !concluded()) {
         parsed = parseFor(roundClass, { ...input, ...current() });
         path = await write();

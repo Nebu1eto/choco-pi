@@ -305,13 +305,10 @@ test("pending required input removes only the accepted steer, not tool outputs",
     });
     assert.deepEqual(statuses, ["sent", "accepted"]);
     socket.emit({ type: "response.completed", response: { id: "r1", status: "completed" } });
-    while (!(await events.next()).done) {
-      /* original response */
-    }
+    while (!(await events.next()).done) {}
     socket.emit({ type: "response.created", response: { id: "r2" } });
     socket.emit({ type: "response.completed", response: { id: "r2", status: "completed" } });
     for await (const _event of connection.responseEvents(undefined, 1000)) {
-      /* successor */
     }
     assert.deepEqual(statuses, ["sent", "accepted", "applied"]);
   } finally {
@@ -481,7 +478,6 @@ for (const errorFirst of [false, true]) {
       await assert.rejects(
         async () => {
           for await (const _event of connection.responseEvents(undefined, 1000)) {
-            /* drain */
           }
         },
         (error: Error) => isWebSocketMessageTooBigError(error),
@@ -504,9 +500,7 @@ test("oversized close between turns marks the owner for SSE without an active re
   await events.next();
   assert.equal(connection.steer("change"), true);
   socket.emit({ type: "response.completed", response: { id: "r1", status: "completed" } });
-  while (!(await events.next()).done) {
-    /* drain the original response */
-  }
+  while (!(await events.next()).done) {}
   connection.finish();
   try {
     socket.close(1009, "message too big");

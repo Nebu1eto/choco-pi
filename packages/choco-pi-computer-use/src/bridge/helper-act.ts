@@ -119,17 +119,10 @@ export function executionTraceFromAct(
   });
 }
 
-/** Pessimistic default: unless the helper states nothing was delivered, an effect is possible. */
 export function errorEffectPossible(error: Error): boolean {
   return !("effectPossible" in error && error.effectPossible === false);
 }
 
-/**
- * Whether a refusal proves nothing took effect: `effectPossible: false`, and
- * either no pid pointer attempt preceded it or that attempt verifiably showed
- * no change. An attempt with a change or without a verdict (inconsistent
- * evidence) counts as a possible effect, so it is never retried or prompted.
- */
 export function refusalProvesNoEffect(
   effectPossibleFlag: boolean | undefined,
   evidence: HelperRefusalEvidence | undefined,
@@ -212,12 +205,10 @@ export function isKeyboardAction(action: NativePreparedAction): boolean {
   return action.action === "typeText" || action.action === "keypress";
 }
 
-/** A ref click that only pointer input can realize (no AX press, not a text input). */
 export function isPointerOnlyClick(action: NativePreparedAction): boolean {
   return (action.action === "click" || action.action === "press") && action.pointerOnly;
 }
 
-/** Best effort: records the user's frontmost app and window before granted input steals focus. */
 export async function captureUserFocus(
   session: ForegroundSession | undefined,
   signal?: AbortSignal,
@@ -228,18 +219,10 @@ export async function captureUserFocus(
   try {
     const front = await currentPlatformBackend.getFrontmost(signal);
     session.focusBefore = { pid: front.pid, windowTitle: front.windowTitle };
-  } catch {
-    // The window title is optional evidence; the act reply still carries frontmostBefore.
-  }
+  } catch {}
   throwIfAborted(signal);
 }
 
-/**
- * After a transaction that delivered granted foreground input, return focus to
- * the app the user had in front. Best effort: never changes the act outcome.
- * Skipped when the target was already frontmost, when the target did not end
- * frontmost, or when the user moved to a third app meanwhile.
- */
 export async function restoreFocusAfterGrantedInput(
   execution: ExecutionTrace,
   target: ResolvedTarget,
@@ -263,9 +246,6 @@ export async function restoreFocusAfterGrantedInput(
   if (after !== target.pid)
     return record(false, after === before ? "focus_not_taken" : "user_switched");
   if (signal?.aborted) return record(false, "aborted");
-  // The last act reply can be stale (a later wait step, or slow settling):
-  // confirm the target is still frontmost right now so a user who moved to
-  // another app meanwhile is never pulled back.
   let current: number;
   try {
     current = (await currentPlatformBackend.getFrontmost(signal)).pid;
@@ -291,15 +271,6 @@ export async function restoreFocusAfterGrantedInput(
   }
 }
 
-/**
- * Delivers one action exactly once. Foreground delivery is used only when the
- * action wants it and a host-issued grant covers the target; otherwise the
- * helper's foreground need becomes a structured refusal. The one retry happens
- * after a background refusal that proved non-delivery, when a grant covers the
- * target or the user grants it at the host prompt. A refusal after a delivered
- * background pid pointer attempt is never retried in the same call: the grant
- * flow still runs, and the model must observe before acting again.
- */
 export async function helperAct(
   target: ResolvedTarget,
   action: NativePreparedAction,
@@ -349,12 +320,6 @@ export async function helperAct(
   if (policy === "foreground") await captureUserFocus(session, signal);
   const first = await attempt(policy);
   const firstRefusal = helperRefusalSignal(first);
-  // The only escalation: the helper refused a background attempt before any
-  // delivery, and a host grant covers the target (from config, env, or an
-  // earlier session answer) or the user grants it now. Exactly one retry.
-  // A pid pointer attempt that verifiably changed nothing still runs the grant
-  // flow (session grant, dialog, "Always allow"), but its input was delivered,
-  // so the retry is deferred to the next call after the model observes.
   if (policy !== "background" || firstRefusal?.effectPossible !== false)
     return attemptTrace(target, action, headless, policy, first);
   const delivered = firstRefusal.evidence?.pidPointerAttempted === true;
@@ -393,12 +358,6 @@ export async function helperAct(
   return trace;
 }
 
-/**
- * Actions the helper may deliver as an ungranted background pid pointer
- * attempt: a pointer-only ref click, a coordinate click/press or scroll, and
- * any drag. Under a covering grant they go to foreground directly, so a
- * granted call never repeats a background attempt first.
- */
 export function mayPidPointerAttempt(action: NativePreparedAction): boolean {
   if (action.action === "click" || action.action === "press")
     return "x" in action.target || action.pointerOnly;
@@ -406,11 +365,6 @@ export function mayPidPointerAttempt(action: NativePreparedAction): boolean {
   return action.action === "drag";
 }
 
-/**
- * A refusal after a delivered background pid pointer attempt: no same-call
- * retry. The refusal tells the model to observe first and whether a grant now
- * covers the target, so the next call goes to foreground directly.
- */
 export function deferRetryAfterDelivery(trace: ExecutionTrace, target: ResolvedTarget): void {
   trace.retryDeferred = true;
   trace.retryDeferredReason = "pid_pointer_delivered_without_observable_change";
@@ -424,7 +378,6 @@ export function deferRetryAfterDelivery(trace: ExecutionTrace, target: ResolvedT
     : `${refusal.grantHint} Call observe_ui on the target and confirm whether the action took effect before acting on it again.`;
 }
 
-/** A helper foreground_required refusal, thrown or returned, with its delivery evidence. */
 export function helperRefusalSignal(attempt: HelperAttempt): HelperRefusalSignal | undefined {
   if (attempt.thrown) return attempt.thrown;
   const error = attempt.result.error;
@@ -505,9 +458,6 @@ export function refusalForResult(
       evidence,
     );
   }
-  // A `didnt` is a foreground need for foreground-wanting, keyboard, and
-  // pointer-only click actions. It proves delivery happened, so it is never
-  // retried (effectPossible stays true). Headless ax_only batches map it too.
   if (policy === "foreground" || result.outcome !== "didnt") return undefined;
   if (headless && !isPointerOnlyClick(action)) return undefined;
   if (!action.wantsForeground && !isKeyboardAction(action) && !isPointerOnlyClick(action))
@@ -590,10 +540,6 @@ export function rootDeltaLines(execution: ExecutionTrace): string[] {
   });
 }
 
-/**
- * An error decided before anything was sent. In a multi-action call it names
- * the action and states that nothing was sent; a single action keeps its message.
- */
 export function batchPreparationError(actions: UiAction[], index: number, error: Error): Error {
   if (actions.length === 1) return error;
   return new Error(
@@ -612,8 +558,6 @@ export function aggregateExecutions(steps: ExecutionTrace[]): ExecutionTrace {
   const refusedAt = steps.findIndex((step) => step.refusal !== undefined);
   const refused = refusedAt >= 0 ? steps[refusedAt] : undefined;
   const escalated = steps.find((step) => step.escalatedToForeground === true);
-  // A top-level policy or delivery is reported only when every delivering step
-  // (waits deliver nothing) agrees.
   const delivering = steps.filter((step) => step.strategy !== "wait");
   const shared = <T>(values: Array<T | undefined>): T | undefined =>
     values.length > 0 && values.every((value) => value !== undefined && value === values[0])
@@ -647,12 +591,10 @@ export function aggregateExecutions(steps: ExecutionTrace[]): ExecutionTrace {
   );
 }
 
-/** "Action 1 was delivered" / "Actions 1-3 were delivered" for `count` delivered actions. */
 export function deliveredActionsText(count: number): string {
   return count === 1 ? "Action 1 was delivered" : `Actions 1-${count} were delivered`;
 }
 
-/** "act_ui stopped at action N (…) in <where>: <error> Actions 1-K were delivered; …" */
 export function stoppedSummary(
   failure: { index: number; error: Error },
   actions: UiAction[],
@@ -666,7 +608,6 @@ export function stoppedSummary(
   return `act_ui stopped at ${failed} in ${where}: ${asSentence(failure.error.message)} ${deliveredActionsText(failure.index)}; ${failed} ${landed}; later actions were not sent.`;
 }
 
-/** The message unchanged, with a final period when it ends without punctuation. */
 export function asSentence(message: string): string {
   const trimmed = message.trimEnd();
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;

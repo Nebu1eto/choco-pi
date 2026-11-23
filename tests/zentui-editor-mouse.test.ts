@@ -34,12 +34,10 @@ test(
         editor.handleMouse(at(editor, "hello"));
         assert.deepEqual(editor.getCursor(), { line: 0, col: 0 }, `${where}: first column`);
 
-        // Past the end of a row the cursor goes to the row's end.
         const end = at(editor, "second");
         editor.handleMouse({ ...end, x: WIDTH - 3 });
         assert.deepEqual(editor.getCursor(), { line: 1, col: 11 }, `${where}: row end`);
 
-        // The frame's own rows take focus and leave the cursor alone.
         for (const y of [0, frame.length - 1]) {
           assert.deepEqual(
             editor.handleMouse({ ...end, x: 5, y }),
@@ -49,8 +47,6 @@ test(
         }
         assert.deepEqual(editor.getCursor(), { line: 1, col: 11 }, `${where}: unmoved`);
 
-        // A press on the text is taken (it may start a selection) and already moves the
-        // cursor; released on the same cell it is a click, and nothing is selected.
         assert.deepEqual(
           editor.handleMouse(at(editor, "world", "press")),
           { handled: true, capture: true, focus: true, render: true },
@@ -64,7 +60,6 @@ test(
           false,
           `${where}: no selection`,
         );
-        // A press on the frame's own rows is still left to Pi's text selection.
         assert.equal(editor.handleMouse({ ...end, type: "press", x: 5, y: 0 }), undefined, where);
         assert.equal(editor.handleMouse({ ...end, type: "drag", x: 9, y: 0 }), undefined, where);
       }
@@ -103,7 +98,6 @@ test(
     assert.equal(editor.handleMouse(at(editor, "world", "press")), undefined);
     assert.deepEqual(editor.getCursor(), { line: 1, col: 11 }, "the cursor stays");
 
-    // An editor with its own handler gets coordinates of its own frame.
     const own = make.wrapped({
       ...base,
       handleMouse: (event: TuiMouseEvent) => {

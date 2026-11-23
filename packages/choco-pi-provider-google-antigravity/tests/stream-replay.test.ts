@@ -43,7 +43,6 @@ const signedTurn = [
   }),
 ];
 
-/** Runs one request and returns the contents it sent. */
 async function sentContents(
   messages: Message[],
   modelId = "gemini-3.8-flash",
@@ -90,12 +89,10 @@ function toolResult(id: string): Message {
   };
 }
 
-/** The compaction summary message Pi converts into a leading user turn. */
 function summary(text: string) {
   return { role: "compactionSummary" as const, summary: text, tokensBefore: 1000, timestamp: 0 };
 }
 
-/** Every model functionCall turn is answered by the next user turn, id for id. */
 function assertNoOrphanCalls(contents: JsonValue | undefined): void {
   assert.ok(Array.isArray(contents));
   assert.equal(at(contents, 0, "role"), "user", "contents must open with a user turn");

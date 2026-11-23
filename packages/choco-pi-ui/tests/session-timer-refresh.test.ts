@@ -14,7 +14,6 @@ type ZentuiModule = {
 
 async function loadZentui(): Promise<ZentuiModule> {
   // SAFETY: `session-timer.js` is compiled from session-timer.ts and exports
-  // `createSessionTimerTick`, matching the shape declared above.
   return (await loadZentuiModule("session-timer.js")) as ZentuiModule;
 }
 

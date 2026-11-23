@@ -1,10 +1,6 @@
 import type { FactRule } from "../fact-provider-types.ts";
 import type { Diagnostic } from "../types.ts";
 
-/**
- * cors-wildcard — Access-Control-Allow-Origin: * (TS/JS/Python/Go). Regex/line-based
- * (no compiler); formerly SN-004 in the SonarJS-inspired batch (#402).
- */
 export const corsWildcardRule: FactRule = {
   id: "cors-wildcard",
   requires: ["file.content"],
@@ -21,20 +17,12 @@ export const corsWildcardRule: FactRule = {
       const line = lines[i];
       if (/^\s*(?:\/\/|\*|#|\/)/.test(line)) continue;
       const isWildcard =
-        // TS/JS: header assignment or cors() call
         (/["']Access-Control-Allow-Origin["']/.test(line) && /["']\*["']/.test(line)) ||
         /origin\s*:\s*["']\*["']/.test(line) ||
         (/cors\s*\(/.test(line) && /\*/.test(line)) ||
-        // Python (FastAPI CORSMiddleware / Flask-CORS):
-        // wildcard allow_origins/origins assignment
         /(?:allow_origins|origins)\s*=\s*["']\*["']/.test(line) ||
-        // wildcard allow_origins/origins array assignment
         /(?:allow_origins|origins)\s*=\s*[[(]["']\*["']/.test(line) ||
-        // Go (gin-cors, chi-cors, gorilla):
-        // AllowAllOrigins enabled
         /AllowAllOrigins\s*:\s*true/.test(line) ||
-        // wildcard AllowOrigins/AllowedOrigins slice
-        // Use [^*\n]{0,60} instead of .* to prevent super-linear backtracking
         /Allow(?:ed)?Origins[^*\n]{0,60}\*/.test(line);
 
       if (isWildcard) {

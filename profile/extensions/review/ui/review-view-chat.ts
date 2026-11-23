@@ -1,7 +1,3 @@
-/**
- * The review's side chat: its slash commands, opening and closing it, and
- * what a question may carry (the selected line and its hunk, never the diff).
- */
 import { propertiesWhen, type RuntimeValue } from "../../lib/runtime-values.ts";
 import type { SlashCommand } from "@earendil-works/pi-tui";
 import { REVIEW_CHAT_THINKING_LEVELS, type ReviewChatContext } from "../core/ask.ts";
@@ -10,11 +6,6 @@ import { hiddenPaths } from "./review-view-comments.ts";
 import { leave } from "./review-view-lifecycle.ts";
 import { notify, setFocus, type ReviewContext, type ReviewSession } from "./review-view-state.ts";
 
-/**
- * The chat input also completes its own runnable commands, exactly
- * like the main prompt: `/` opens the command menu, and arguments
- * complete from the live model catalog and Pi's thinking levels.
- */
 export function createChatCommands(ctx: ReviewSession): SlashCommand[] {
   return [
     {
@@ -57,11 +48,6 @@ export function createChatCommands(ctx: ReviewSession): SlashCommand[] {
   ];
 }
 
-/**
- * Extend the command menu with everything the chat's session can
- * actually run. `chatCommands` is the same array the completion
- * provider reads, so appending here reaches the open menu too.
- */
 export function refreshChatCommands(ctx: ReviewContext): void {
   if (!ctx.chat) return;
   const known = new Set(ctx.chatCommands.map((command) => command.name));
@@ -76,7 +62,6 @@ export function refreshChatCommands(ctx: ReviewContext): void {
   ctx.tui.requestRender();
 }
 
-/** A side-chat tool call that finished may have edited files: read the changes again. */
 export function watchToolCalls(ctx: ReviewContext): void {
   const current = ctx.chat;
   if (!current || ctx.closed) return;
@@ -94,7 +79,6 @@ export function openChat(ctx: ReviewContext): void {
     if (!ctx.chat) {
       ctx.chat = ctx.createChat({
         cwd: ctx.options.reviewRoot,
-        // Read at every tool call: a file revealed with v is allowed from then on.
         hiddenPaths: () => hiddenPaths(ctx),
         ...propertiesWhen(ctx.options.chatModel, () => ({ model: ctx.options.chatModel })),
         ...propertiesWhen(ctx.options.chatThinkingLevel, () => ({
@@ -105,8 +89,6 @@ export function openChat(ctx: ReviewContext): void {
         watchToolCalls(ctx);
         ctx.tui.requestRender();
       });
-      // Start the session now so the command menu, model status, and
-      // first answer do not all wait for session creation later.
       void ctx.chat
         .prepare(ctx.options.reviewRoot)
         .then(() => refreshChatCommands(ctx))
@@ -119,7 +101,6 @@ export function openChat(ctx: ReviewContext): void {
   }
 }
 
-/** What the side chat may know: the selected line and its hunk, never the diff itself. */
 export function chatContext(ctx: ReviewContext): ReviewChatContext | undefined {
   const position = ctx.changes.commentPosition();
   const current = ctx.changes.currentDisplayHunk();
@@ -142,7 +123,6 @@ export function closeChat(ctx: ReviewContext): void {
   setFocus(ctx, "review");
 }
 
-/** `/model` and `/effort` change the chat's own session, mirroring the main prompt's commands. */
 export async function handleChatCommand(
   ctx: ReviewContext,
   kind: "model" | "effort" | "reload",
@@ -195,18 +175,12 @@ export async function handleChatCommand(
 
 export function submitChat(ctx: ReviewContext, question: string): void {
   const prompt = question.trim();
-  // pi-tui clears the editor before this runs, so a question the agent
-  // cannot take yet would otherwise be lost. History is what gets it back.
   ctx.chatInput.remember(question);
   if (!ctx.chat || prompt.length === 0) return;
-  // Commands need no diff context and may run while a reply streams;
-  // only a real question waits for the previous turn.
   const command = prompt.match(/^\/(model|effort|reload|quit|exit)(?:\s+(.*))?$/);
   if (command) {
     ctx.chatInput.setText("");
     if (command[1] === "quit" || command[1] === "exit") {
-      // Leaving from the chat behaves exactly like `q`: the review
-      // record is saved and the view closes.
       leave(ctx);
       return;
     }
@@ -214,14 +188,10 @@ export function submitChat(ctx: ReviewContext, question: string): void {
     void handleChatCommand(ctx, kind, command[2]?.trim() ?? "");
     return;
   }
-  // Every other slash command routes to the chat session's own command
-  // surface: extension commands execute, skills and prompt templates
-  // run as real turns — the same behavior as the main prompt.
   const sessionCommand = prompt.match(/^\/(\S+)(?:\s|$)/);
   if (sessionCommand) {
     const name = sessionCommand[1]!;
     if (!ctx.chat.commands().some((info) => info.name === name)) {
-      // Leave the typo in the editor for correction.
       ctx.chatInput.setText(prompt);
       notify(ctx, `/${name} is not available in the review chat.`, "warning");
       ctx.tui.requestRender();

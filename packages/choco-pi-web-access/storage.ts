@@ -112,8 +112,6 @@ export type ResultsResetReason =
 export type DiskLookupStatus = "hit" | "miss" | "expired";
 
 let lastResetReason: ResultsResetReason = "unknown";
-// Incremented synchronously by every map reset so async disk lookups can detect a reset that
-// happened while they were awaiting and avoid repopulating a cleared map.
 let cacheGeneration = 0;
 
 function recordReset(reason: ResultsResetReason, dropped: number): void {
@@ -694,7 +692,6 @@ async function readFetchCacheFromDisk(id: string, now: number): Promise<DiskLook
   } catch {
     return { status: "miss" };
   } finally {
-    // A close failure cannot change an already-decided read-only lookup result.
     if (handle) await handle.close().catch(() => undefined);
   }
 }
@@ -704,12 +701,6 @@ export type StoredResultLookup =
   | { data: StoredSearchData; source: "disk"; cached: boolean; message: string }
   | { data: null; reset: ResultsResetReason; disk: DiskLookupStatus; message: string };
 
-/**
- * Resolve a stored result from memory, falling back to the on-disk fetch cache when the
- * in-memory map was reset (session start/tree navigation, shutdown, or deletion). A disk hit is
- * cached in the map only when no reset happened during the read; otherwise the caller still gets
- * the data but the cleared map stays untouched.
- */
 export async function resolveStoredResult(id: string): Promise<StoredResultLookup> {
   const reset = lastResetReason;
   const memory = getResult(id);
@@ -768,9 +759,7 @@ export function deleteResult(id: string): boolean {
           });
         }
       }
-    } catch {
-      // Best-effort unlink: the in-memory entry is still removed, and TTL pruning reclaims the file.
-    }
+    } catch {}
   }
   const deleted = storedResults.delete(id);
   recordReset("delete", deleted ? 1 : 0);

@@ -9,12 +9,6 @@ import {
 
 const markdownlint = createAvailabilityChecker("markdownlint-cli2", ".cmd");
 
-// markdownlint-cli2 text output does not include per-violation fixability,
-// so we keep a static allowlist of MD### rules whose --fix is deterministic.
-// Sourced from the rule pages in
-// https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md — every
-// entry below is documented as "Fixable: yes" (or equivalent). Update when
-// markdownlint adds or changes auto-fix support.
 const MARKDOWNLINT_FIXABLE_RULES = new Set<string>([
   "MD001",
   "MD004",
@@ -48,20 +42,10 @@ const MARKDOWNLINT_FIXABLE_RULES = new Set<string>([
   "MD058",
 ]);
 
-// markdownlint-cli2 output: `path:line[:col] [error|warning] MD###/name[/name…] message`
-// Two things the original parser missed (→ silent 0 diagnostics, #212):
-//   1. cli2 emits a severity token (`error`/`warning`) between the col and the
-//      rule code — older markdownlint-cli did not.
-//   2. some rules carry MULTIPLE slash-separated names (e.g.
-//      `MD041/first-line-heading/first-line-h1`).
-// The severity token is optional so older/relative-path output still parses.
 function parseMarkdownlintOutput(raw: string, filePath: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   for (const line of raw.split(/\r?\n/)) {
     if (!line.trim()) continue;
-    // Rule code is MD### followed by one or more slash-joined names. Use a
-    // single char class (`[\w/-]+`) rather than a nested quantifier
-    // (`(?:/[\w-]+)+`) so there's no super-linear backtracking (S5852).
     const match = line.match(
       /^.*?:(\d+)(?::(\d+))?\s+(?:error|warning)?\s*(MD\d+\/[\w/-]+)\s+(.+)$/,
     );
@@ -110,8 +94,6 @@ const markdownlintRunner: RunnerDefinition = {
 
     if (!cmd) return { status: "skipped", diagnostics: [], semantic: "none" };
 
-    // Shared config-args seam (#1247): the autofix path consumes the same
-    // builder, so the package-owned fallback config can never drift.
     const configArgs = markdownlintConfigArgs(cwd);
     const result = await safeSpawnAsync(cmd, [...configArgs, ctx.filePath], {
       timeout: 15000,

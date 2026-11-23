@@ -8,11 +8,6 @@ import { command } from "./preflight.ts";
 const LSREGISTER =
   "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 
-/**
- * One scenario attempt's fixture instances: logs, pids, and the `.cu-quit`/`.cu-resize`
- * directory. `pids` fills in as each instance logs `launched`, so a partially launched run
- * still names every instance to stop. `closed` is set by the first `quitFixture`.
- */
 export interface FixtureRun {
   dir: string;
   logs: Record<FixtureRole, string>;
@@ -20,7 +15,6 @@ export interface FixtureRun {
   closed: boolean;
 }
 
-/** A not-yet-launched run for `dir`; the caller holds it so cleanup sees partial launches. */
 export function newFixtureRun(dir: string): FixtureRun {
   return {
     dir,
@@ -30,9 +24,7 @@ export function newFixtureRun(dir: string): FixtureRun {
   };
 }
 
-/** A failed fixture launch, after every instance it started was stopped. */
 export class FixtureLaunchError extends Error {
-  /** Harness defects from stopping the partially launched instances. */
   readonly defects: string[];
   constructor(message: string, defects: string[]) {
     super(message);
@@ -41,7 +33,6 @@ export class FixtureLaunchError extends Error {
   }
 }
 
-/** Process and timing seams of `launchFixture`; tests inject fakes. */
 export interface LaunchDeps {
   open: (args: string[]) => Promise<{ code: number; stderr: string }>;
   quit: (run: FixtureRun) => Promise<string[]>;
@@ -57,7 +48,6 @@ async function rows(path: string): Promise<RecordValue[]> {
   } catch {
     return [];
   }
-  // A line being appended while read is dropped; only complete JSON objects count.
   return input.split("\n").flatMap((line) => {
     try {
       const value: JsonValue = JSON.parse(line);
@@ -74,7 +64,6 @@ export async function fixtureRows(run: FixtureRun, role: FixtureRole): Promise<R
 
 const pause = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 
-/** Poll a fixture log until `match` finds a row, at most `ms`. */
 async function waitFor(
   run: FixtureRun,
   role: FixtureRole,
@@ -100,23 +89,14 @@ function alive(pid: number | undefined): boolean {
   }
 }
 
-/** Bundle id of the frontmost application according to LaunchServices. */
 export async function frontmostBundle(): Promise<string | undefined> {
   const front = await command("lsappinfo", ["front"]);
   const asn = front.stdout.trim();
   if (front.code !== 0 || !asn) return undefined;
   const info = await command("lsappinfo", ["info", "-only", "bundleid", asn]);
-  // macOS 27 prints `bundleID="…"`; older releases print `"CFBundleIdentifier"="…"`.
   return /(?:bundleID|"CFBundleIdentifier")="([^"]+)"/i.exec(info.stdout)?.[1];
 }
 
-/**
- * Launch the holder (activated by LaunchServices, then once by itself) and the target with
- * `open -g` (never activated) into `run`, a fresh directory per attempt: a reused directory
- * would carry a stale `.cu-quit` (the new instances quit at once) and old `launched` rows.
- * Any failure after the directory exists stops every instance started so far, then throws a
- * `FixtureLaunchError` carrying the cleanup defects.
- */
 export async function launchFixture(
   build: FixtureBuild,
   run: FixtureRun,
@@ -124,10 +104,8 @@ export async function launchFixture(
 ): Promise<void> {
   await mkdir(dirname(run.dir), { recursive: true });
   try {
-    // Not recursive: an existing directory (EEXIST) is refused rather than reused.
     await mkdir(run.dir);
   } catch (error) {
-    // Nothing was started, and a reused directory must not receive this run's `.cu-quit`.
     run.closed = true;
     const why = error instanceof Error ? error.message : String(error);
     throw new FixtureLaunchError(`FIXTURE_LAUNCH directory: ${why}`, []);
@@ -163,7 +141,6 @@ export async function launchFixture(
     if (!targetUp || !isNumber(targetUp.pid))
       throw new Error("FIXTURE_LAUNCH target did not start");
     run.pids.target = targetUp.pid;
-    // Let window server and AX settle before the frontmost proof.
     await pause(deps.settleMs);
   } catch (error) {
     const why = error instanceof Error ? error.message : String(error);
@@ -171,11 +148,6 @@ export async function launchFixture(
   }
 }
 
-/**
- * Stop a partially launched run: adopt the pid of any instance that logged `launched` after its
- * wait gave up, then quit. `.cu-quit` also stops an instance that starts later still, since both
- * apps poll for it from launch.
- */
 async function stopPartial(run: FixtureRun, deps: LaunchDeps): Promise<string[]> {
   for (const role of ["holder", "target"] as const) {
     if (run.pids[role] !== undefined) continue;
@@ -189,10 +161,6 @@ async function stopPartial(run: FixtureRun, deps: LaunchDeps): Promise<string[]>
   }
 }
 
-/**
- * The holder must be frontmost before a scenario: LaunchServices names it, its own log ends
- * active, and the target never became active. Returns the failed condition, if any.
- */
 export async function holderFrontmost(run: FixtureRun): Promise<string | undefined> {
   const front = await frontmostBundle();
   if (front !== fixtureApps.holder.bundleId) return `frontmost is ${front ?? "unknown"}`;
@@ -205,7 +173,6 @@ export async function holderFrontmost(run: FixtureRun): Promise<string | undefin
   return undefined;
 }
 
-/** S5 out-of-band mutation: the target resizes and moves its own window; bounded ack. */
 export async function resizeTarget(run: FixtureRun): Promise<RecordValue> {
   const at = Date.now();
   await writeFile(join(run.dir, ".cu-resize"), `${at}\n`);
@@ -219,11 +186,6 @@ export async function resizeTarget(run: FixtureRun): Promise<RecordValue> {
   return { ok: true, requestedAt: at, at: done.ts ?? at, from: done.from, to: done.to };
 }
 
-/**
- * Quit both instances: `.cu-quit`, then SIGTERM, then SIGKILL, each bounded. Returns harness
- * defects for any instance that survived or never logged `quitting`. Runs once per run; later
- * calls (a caller's cleanup after `launchFixture` already stopped a partial launch) return [].
- */
 export async function quitFixture(run: FixtureRun): Promise<string[]> {
   if (run.closed) return [];
   run.closed = true;
@@ -258,12 +220,10 @@ export async function quitFixture(run: FixtureRun): Promise<string[]> {
   return defects;
 }
 
-/** Signal a pid that may have exited since the liveness check; ESRCH is not an error here. */
 function signal(pid: number, name: NodeJS.Signals): void {
   try {
     process.kill(pid, name);
   } catch (error) {
-    // Exited meanwhile; `alive` decides what survived. Anything else (EPERM) is a real failure.
     if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
   }
 }
@@ -276,7 +236,6 @@ const defaultLaunchDeps: LaunchDeps = {
   settleMs: 800,
 };
 
-/** Remove the scratch bundles from the LaunchServices database after the run. */
 export async function unregisterFixture(build: FixtureBuild): Promise<void> {
   for (const app of [build.target, build.holder]) await command(LSREGISTER, ["-u", app]);
 }

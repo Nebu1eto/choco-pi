@@ -1,57 +1,22 @@
-/**
- * Shared write-plumbing for the hand-rolled NDJSON debug loggers in clients/.
- *
- * One buffered async writer replaces eight drifting copies of append+rotate.
- * `log()`/`append()` are synchronous-call, async-write: they enqueue a
- * serialized line and a single in-flight `fs.promises.appendFile` drains the
- * queue — no `appendFileSync` on the per-edit hot path (latency-logger alone
- * fired ~10–20 sync appends per edit, #454/#361/#368).
- *
- * Errors are swallowed best-effort, matching every current logger. A
- * best-effort SYNC flush is registered on `process.on("exit")` (appendFileSync
- * is fine at exit — not the hot path; no child spawning, #234). Normal drains
- * use promise-based mkdir/append/truncate, while rotation stays synchronous
- * inside the already-deferred drain so it cannot race a flushSync rename. A
- * The shared writer state uses the `NDJSON_GLOBAL_STATE_SCHEMA` protocol:
- * version 1 (the 6a8a0994 shape) is upgraded in place to current version 2,
- * retaining its queues while replacing stale exit flushers. A pre-7e4b9120
- * private-queue shape is fenced rather than adopted, because its queues cannot
- * be migrated safely.
- */
-
 import { isBoolean, isObjectRecord, isString, type LspBoundaryValue } from "./runtime-guards.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { normalizeFilePath } from "./path-utils.ts";
 import { redactSecrets } from "./redact/secrets.ts";
 
-/** A queued write ("line") or an in-band truncate op (latency clear). */
 type QueueItem = { kind: "line"; line: string } | { kind: "truncate" };
 
 export interface NdjsonLoggerOptions {
-  /** Absolute log file path, or a lazy resolver (diagnostic-logger keys on the date). */
   filePath: string | (() => string);
-  /**
-   * Rotation threshold in bytes. Absent = never rotate (preserves the loggers
-   * that don't rotate today). At/above the threshold the file is renamed to
-   * `<filePath>.1` (previous backup removed first, Windows-safe).
-   */
   maxBytes?: number;
-  /** Backup path for rotation. Defaults to `<filePath>.1`. Ignored without maxBytes. */
   backupPath?: string | (() => string);
 }
 
 export interface NdjsonLogger {
-  /** Serialize `obj`, redact secrets, and enqueue one NDJSON line. */
-
   log(obj: LspBoundaryValue): void;
-  /** Redact and enqueue a serialized line without a trailing newline. */
   append(line: string): void;
-  /** Enqueue a truncate op in the same serialized queue (clear-without-racing). */
   truncate(): void;
-  /** Resolves once everything enqueued so far is on disk. */
   flush(): Promise<void>;
-  /** Best-effort SYNC flush of any buffered lines — safe to call at process exit. */
   flushSync(): void;
 }
 
@@ -67,16 +32,6 @@ function runBestEffort(operation: () => void): void {
   }
 }
 
-// One shared exit handler flushes every logger — avoids an EventEmitter
-// MaxListeners warning once more than ~10 loggers exist (we ship eight, plus
-// diagnostic + test instances). No child spawning at teardown (#234).
-//
-// Keep the registry on globalThis as well as in module state. Vitest can
-// re-evaluate this module after vi.resetModules(), and pi can load the source
-// and compiled entry through separate module graphs; a module-local guard then
-// registers one process listener per graph and recreates the warning. Symbol.for
-// gives those graphs one process-wide state without exposing a public global
-// property name.
 interface NdjsonWriterState {
   file: string;
   maxBytes?: number;
@@ -84,10 +39,8 @@ interface NdjsonWriterState {
   queue: QueueItem[];
   drainPromise: Promise<void> | null;
   inFlightBatch: QueueItem[] | null;
-  /** Operations to replay after a late in-flight write (truncate ordering). */
   syncRepairItems: QueueItem[] | null;
   ensuredDir: boolean;
-  /** One canonical exit flusher per file, never one per logger facade. */
   exitFlusher: () => void;
 }
 
@@ -96,7 +49,6 @@ const NDJSON_LEGACY_GLOBAL_STATE_VERSION = 1;
 const NDJSON_GLOBAL_STATE_VERSION = 2;
 
 interface NdjsonGlobalState {
-  /** Versioned protocol: only states with shared writer queues are adoptable. */
   schema: string;
   version: number;
   writers: Map<string, NdjsonWriterState>;
@@ -155,10 +107,6 @@ function isLegacyGlobalState(value: LspBoundaryValue): value is LegacyNdjsonGlob
 let ndjsonGlobalState: NdjsonGlobalState | undefined;
 let legacyGlobalState: LegacyNdjsonGlobalState | undefined;
 if (isSharedWriterState(existingGlobalState)) {
-  // The 7e4b9120 graph had no version marker and 6a8a0994 used version 1.
-  // Both shapes are bridgeable: retain their queues, but replace every stale
-  // exit flusher with a closure from this module graph. A current state is
-  // left untouched so it keeps exactly one canonical flusher per writer.
   const needsFlusherMigration =
     existingGlobalState.schema !== NDJSON_GLOBAL_STATE_SCHEMA ||
     existingGlobalState.version !== NDJSON_GLOBAL_STATE_VERSION;
@@ -184,9 +132,6 @@ if (isSharedWriterState(existingGlobalState)) {
     registeredLogFiles: new Set<string>(),
   };
 } else if (isLegacyGlobalState(existingGlobalState)) {
-  // Do not mutate or replace this state: its private queues and exit flusher
-  // closures are not observable, so adopting it would falsely claim safety.
-  // New facades fail closed in requireCurrentGlobalState().
   legacyGlobalState = existingGlobalState;
 }
 
@@ -197,29 +142,14 @@ const registeredLogFiles: Set<string> =
   legacyGlobalState?.registeredLogFiles ??
   new Set<string>();
 
-/** Test-only view of the canonical per-file exit flushers (see ndjson-logger.test.ts). */
 export function _exitFlushersForTest(): ReadonlySet<() => void> {
   return exitFlushers;
 }
 
-// Auto-derived retention coverage (clients/log-cleanup.ts): every *static*
-// filePath a createNdjsonLogger instance is constructed with self-registers
-// here at module-load time — the moment latency-logger.ts, bus-events-logger.ts,
-// etc. call createNdjsonLogger(), the sweep in log-cleanup.ts picks the file up
-// automatically. No second hand-maintained list to forget (the exact mistake
-// that left actionable-warnings/ast-grep-tools/dead-code, then bus-events.log,
-// unrotated — see log-cleanup.ts's module doc).
-//
-// A *lazy* filePath (a resolver function, e.g. diagnostic-logger's date-keyed
-// `logs/{date}.jsonl`) is deliberately NOT registered: those already live
-// under the `logs/` subdirectory and are covered by log-cleanup's separate
-// `*.jsonl` daily-log sweep, not the single-file rotation list.
-/** Every absolute path registered by a static-filePath createNdjsonLogger instance. */
 export function getRegisteredLogFiles(): ReadonlySet<string> {
   return registeredLogFiles;
 }
 
-/** Test-only reset — each test file gets a clean registry (see ndjson-logger.test.ts). */
 export function _resetRegisteredLogFilesForTest(): void {
   registeredLogFiles.clear();
 }
@@ -273,14 +203,6 @@ function applyQueueItemSync(state: NdjsonWriterState, item: QueueItem): void {
 }
 
 function flushStateSync(state: NdjsonWriterState): void {
-  // Drain the in-memory queue synchronously — safe at process exit.
-  // The in-flight async batch is INCLUDED even though its appendFile may
-  // also land: if the process dies before the threadpool issues that
-  // write, skipping the prefix would drop the whole batch. The per-line
-  // writer deliberately traded duplicate lines at exit for never-drops
-  // (#935 review) — keep that trade. If a late in-flight append crosses a
-  // truncate, the post-truncate operations are replayed after that append
-  // completes so pre-truncate data cannot be reintroduced.
   const inFlight = state.inFlightBatch;
   const inFlightAtHead =
     inFlight !== null && inFlight.every((item, index) => state.queue[index] === item);
@@ -310,8 +232,6 @@ function createWriterState(
   const globalState = requireCurrentGlobalState();
   const existing = globalState.writers.get(file);
   if (existing) {
-    // A partially initialized global state from another graph still needs to
-    // be enrolled, but it must never get a second queue or exit flusher.
     assertCompatibleWriterOptions(existing, maxBytes, backupPath);
     if (!exitFlushers.has(existing.exitFlusher)) registerWriter(existing);
     return existing;
@@ -346,9 +266,7 @@ async function ensureDirAsync(state: NdjsonWriterState): Promise<void> {
   try {
     await fs.promises.mkdir(path.dirname(state.file), { recursive: true });
     state.ensuredDir = true;
-  } catch {
-    // telemetry is best-effort
-  }
+  } catch {}
 }
 
 function rotateIfNeeded(state: NdjsonWriterState): void {
@@ -359,9 +277,7 @@ function rotateIfNeeded(state: NdjsonWriterState): void {
     const backup = state.backupPath ?? `${state.file}.1`;
     runBestEffort(() => fs.rmSync(backup, { force: true }));
     fs.renameSync(state.file, backup);
-  } catch {
-    // no file yet, or rename raced — nothing to rotate
-  }
+  } catch {}
 }
 
 async function applyQueueItemAsync(state: NdjsonWriterState, item: QueueItem): Promise<void> {
@@ -370,22 +286,13 @@ async function applyQueueItemAsync(state: NdjsonWriterState, item: QueueItem): P
     if (item.kind === "truncate") {
       await fs.promises.writeFile(state.file, "");
     } else {
-      // Rotation is deliberately synchronous here. This function is only
-      // reached from the already-deferred drain, and keeping stat/rm/rename
-      // in one synchronous section prevents flushSync from racing a late
-      // async rename after it has written new data.
       rotateIfNeeded(state);
       await fs.promises.appendFile(state.file, item.line);
     }
-  } catch {
-    // telemetry is best-effort
-  }
+  } catch {}
 }
 
 async function drainLoop(state: NdjsonWriterState): Promise<void> {
-  // Peek, write, then remove — an item stays in the queue until it is on
-  // disk, so a teardown flushSync (which abandons this async loop) never
-  // drops an item this loop had already dequeued but not yet written.
   while (state.queue.length > 0) {
     const item = state.queue[0];
     await ensureDirAsync(state);
@@ -398,9 +305,6 @@ async function drainLoop(state: NdjsonWriterState): Promise<void> {
       if (item.kind === "truncate") {
         await fs.promises.writeFile(state.file, "");
       } else {
-        // Rotation is kept synchronous inside the deferred drain. The
-        // append remains async, but no awaited rotation step can run after
-        // flushSync has written to the active file.
         rotateIfNeeded(state);
         await fs.promises.appendFile(
           state.file,
@@ -409,12 +313,8 @@ async function drainLoop(state: NdjsonWriterState): Promise<void> {
           pending.map((queued) => (queued as { kind: "line"; line: string }).line).join(""),
         );
       }
-    } catch {
-      // telemetry is best-effort
-    }
+    } catch {}
     for (const written of pending) {
-      // flushSync may have drained this prefix while the append is in
-      // flight. Never remove newer items from a later enqueue.
       if (state.queue[0] !== written) break;
       state.queue.shift();
     }
@@ -432,9 +332,6 @@ async function drainLoop(state: NdjsonWriterState): Promise<void> {
 }
 
 function drain(state: NdjsonWriterState): Promise<void> {
-  // Serialize: a single in-flight drain owns the canonical per-file queue.
-  // This guard lives in global state, so module re-evaluation cannot create a
-  // second drainer for the same path.
   if (!state.drainPromise) {
     state.drainPromise = Promise.resolve()
       .then(() => drainLoop(state))
@@ -447,9 +344,6 @@ function drain(state: NdjsonWriterState): Promise<void> {
 
 export function createNdjsonLogger(options: NdjsonLoggerOptions): NdjsonLogger {
   const states = new Set<NdjsonWriterState>();
-  // Static logger paths are canonicalized once. Lazy diagnostic paths are
-  // resolved at enqueue time, but each resolved raw path is canonicalized only
-  // once (normally once per date), keeping realpath work off the hot path.
   const canonicalPaths = new Map<string, string>();
   const staticFile = isString(options.filePath) ? normalizeLogPath(options.filePath) : undefined;
   const staticBackupPath =

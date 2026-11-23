@@ -10,7 +10,6 @@ import {
   parseArtifactInput,
 } from "./artifacts.ts";
 
-/** A unique text that identifies one branch entry inside a serialized payload. */
 export interface EntryMarker {
   entryId: string;
   text: string;
@@ -22,7 +21,6 @@ interface MarkerPosition {
   offset: number;
 }
 
-/** Every string in the payload, depth-first in serialization order. */
 function payloadStrings(payload: ArtifactInput): string[] {
   if (isString(payload)) return [payload];
   if (Array.isArray(payload)) return payload.flatMap(payloadStrings);
@@ -56,7 +54,6 @@ function assertUnambiguous(ordered: readonly MarkerPosition[]): void {
   }
 }
 
-/** Entry IDs present in the payload, in wire order. Never infer an ID from order alone. */
 export function mapPayload(payload: ArtifactInput, markers: readonly EntryMarker[]): string[] {
   const strings = payloadStrings(payload);
   const positions = new Map<string, MarkerPosition>();
@@ -73,7 +70,6 @@ export function mapPayload(payload: ArtifactInput, markers: readonly EntryMarker
   return ordered.map(({ entryId }) => entryId);
 }
 
-/** True when any string anywhere inside the (unredacted) value contains `text`. */
 export function containsText(value: ArtifactInput, text: string): boolean {
   if (!isArtifactInput(value)) throw new Error("Invalid marker search input");
   if (isString(value)) return value.includes(text);
@@ -122,7 +118,6 @@ export function recordBranch(recorder: Recorder, entries: readonly SessionEntry[
   return recorder.record("branch", entries.map(branchRecord));
 }
 
-/** Wraps the installed adapter's fetch: the actual serialized request is the evidence. */
 export function capturingFetch(
   recorder: Recorder,
   markers: () => readonly EntryMarker[],

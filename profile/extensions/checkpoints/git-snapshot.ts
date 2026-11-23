@@ -11,12 +11,7 @@ import { isNumber, isString, propertiesWhen, type RuntimeValue } from "../lib/ru
 
 const MAX_BUFFER = 128 * 1024 * 1024;
 
-/** Why a checkpoint could not be captured, which decides whether retrying helps. */
-export type CheckpointFailureKind =
-  /** The working tree has no usable Git repository, so no later turn can succeed. */
-  | "unsupported"
-  /** A concurrent Git process, a locked index, or an I/O error that may clear. */
-  | "transient";
+export type CheckpointFailureKind = "unsupported" | "transient";
 
 export class CheckpointError extends Error {
   readonly kind: CheckpointFailureKind;
@@ -29,26 +24,17 @@ export class CheckpointError extends Error {
 }
 
 export type GitRepository = {
-  /** Absolute working-tree root. */
   root: string;
-  /** Absolute Git directory, worktree-specific when the checkout is a linked worktree. */
   gitDir: string;
-  /** Absolute path of the index this checkout uses. */
   indexFile: string;
 };
 
 export type GitSnapshot = {
-  /** Tree of every non-ignored working-tree file, tracked or not. */
   worktreeTree: string;
-  /** Tree of the Git index. Absent while the index holds unmerged entries. */
   indexTree?: string;
-  /** Blob holding the raw index file, used to restore staging byte for byte. */
   indexBlob?: string;
-  /** HEAD commit when the capture ran. Absent on an unborn branch. */
   head?: string;
-  /** Commit that keeps every object above reachable from `ref`. */
   commit?: string;
-  /** Ref that anchors this session's checkpoint chain. */
   ref?: string;
 };
 
@@ -61,8 +47,6 @@ export type ChangeSummary = {
 type GitEnvironment = NodeJS.ProcessEnv;
 
 function identityEnvironment(indexFile?: string): GitEnvironment {
-  // An inherited GIT_INDEX_FILE would silently redirect every checkpoint
-  // command at some other process's index, so it is dropped rather than merged.
   const { GIT_INDEX_FILE: _inherited, ...ambient } = process.env;
   return {
     ...ambient,
@@ -71,8 +55,6 @@ function identityEnvironment(indexFile?: string): GitEnvironment {
     GIT_AUTHOR_EMAIL: "checkpoint@choco-pi.local",
     GIT_COMMITTER_NAME: "choco-pi",
     GIT_COMMITTER_EMAIL: "checkpoint@choco-pi.local",
-    // Checkpoint work is read-mostly; never let Git opportunistically rewrite
-    // the repository index just to refresh stat data.
     GIT_OPTIONAL_LOCKS: "0",
   };
 }
@@ -89,10 +71,6 @@ function describeGitFailure(error: RuntimeValue): string {
   );
 }
 
-/**
- * The error a promisified `execFile` rejects with: the raw failure carrying the
- * captured output, which {@link describeGitFailure} reads its detail from.
- */
 function failureWithOutput<Output>(result: CapturedExec<Output>): ExecFileException | undefined {
   const { error, stdout, stderr } = result;
   if (!error) return undefined;
@@ -116,7 +94,6 @@ async function git(cwd: string, args: readonly string[], environment?: GitEnviro
   return result.stdout.trim();
 }
 
-/** Binary git output with the inherited environment; failures reject with the raw error. */
 async function gitBuffer(cwd: string, args: readonly string[]): Promise<Buffer> {
   const result = await execFileCaptureBuffer("git", args, { cwd, maxBuffer: MAX_BUFFER });
   const failure = failureWithOutput(result);
@@ -124,7 +101,6 @@ async function gitBuffer(cwd: string, args: readonly string[]): Promise<Buffer> 
   return result.stdout;
 }
 
-/** Runs a Git command whose failure is an expected outcome rather than an error. */
 async function optionalGit(
   cwd: string,
   args: readonly string[],
@@ -138,7 +114,6 @@ async function optionalGit(
 }
 
 async function gitWithInput(cwd: string, args: readonly string[], input: string): Promise<string> {
-  // No output cap: batch input can name every checkpoint ref at once.
   const { stdout, stderr, error } = await execFileCapture("git", args, {
     cwd,
     env: identityEnvironment(),
@@ -147,7 +122,6 @@ async function gitWithInput(cwd: string, args: readonly string[], input: string)
   });
   if (!error) return stdout;
   if (isSpawnFailure(error)) throw error;
-  // A signal-terminated child has no exit code, which reads as `null` like a spawn close event.
   const code = isNumber(error.code) ? error.code : null;
   throw new Error(stderr.trim() || `git ${args[0] ?? ""} exited with code ${code}`);
 }
@@ -187,10 +161,6 @@ async function withScratchDirectory<Result>(
   }
 }
 
-/**
- * Copies the live index without locking it. `copyFile` opens the source once, so
- * a concurrent Git process renaming a new index into place cannot tear the copy.
- */
 async function copyIndexFile(repository: GitRepository, destination: string): Promise<boolean> {
   try {
     await copyFile(repository.indexFile, destination);
@@ -200,23 +170,11 @@ async function copyIndexFile(repository: GitRepository, destination: string): Pr
   }
 }
 
-/**
- * Records staged and working-tree state without touching the repository index.
- *
- * Every write goes to a scratch index inside the Git directory, so a checkpoint
- * never contends for `index.lock` and never fails because another agent, a
- * sub-agent, or the user is running Git at the same moment. Seeding the scratch
- * index from the live index also preserves its stat cache, which keeps `add -A`
- * from rehashing the whole working tree on every turn.
- */
 export async function captureGitSnapshot(
   cwd: string,
   options: {
-    /** Ref that anchors the session's checkpoint chain. */
     ref: string;
-    /** Commit subject recorded on the checkpoint. */
     message: string;
-    /** Previous snapshot in this session; reused verbatim when nothing changed. */
     previous?: GitSnapshot;
   },
 ): Promise<GitSnapshot> {
@@ -234,7 +192,6 @@ export async function captureGitSnapshot(
     await git(root, ["add", "-A", "--", "."], identityEnvironment(worktreeIndex));
     const worktreeTree = await git(root, ["write-tree"], identityEnvironment(worktreeIndex));
 
-    // An unmerged index has no tree. The raw index blob still restores it exactly.
     const indexTree = await optionalGit(root, ["write-tree"], identityEnvironment(stagedIndex));
     const indexBlob = await git(root, [
       "hash-object",
@@ -287,20 +244,6 @@ async function refTip(root: string, ref: string): Promise<string | undefined> {
   return optionalGit(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
 }
 
-/**
- * Appends a checkpoint to the ref's existing chain.
- *
- * The parent is read from the ref rather than from the caller's in-memory
- * state, because a resumed session starts with no memory of the checkpoints it
- * already recorded. Chaining onto whatever the ref currently holds is what
- * keeps those earlier checkpoints reachable instead of orphaning them on the
- * first capture after a restart.
- *
- * The ref is moved with a compare-and-swap against that same parent, so a
- * concurrent writer can never have its chain silently dropped. A lost swap is
- * retried with backoff: the losing attempt leaves an unreferenced commit that
- * `git gc` reclaims, which is the cheap side of never losing a chain.
- */
 async function extendCheckpointChain(
   root: string,
   ref: string,
@@ -318,7 +261,6 @@ async function extendCheckpointChain(
       "-m",
       message,
     ]);
-    // An empty old value asserts the ref does not exist yet.
     const swapped = await optionalGit(root, ["update-ref", ref, commit, parent ?? ""]);
     if (swapped !== undefined) return commit;
     const backoff = Math.min(100, 5 * 2 ** attempt);
@@ -330,10 +272,6 @@ async function extendCheckpointChain(
   );
 }
 
-/**
- * Builds a side tree that keeps the raw index blob and the staged tree reachable
- * from the checkpoint commit, so ordinary `git gc` cannot prune either one.
- */
 async function writeMetadataTree(
   repository: GitRepository,
   scratch: string,
@@ -359,7 +297,6 @@ async function treePaths(root: string, tree: string): Promise<Set<string>> {
   return new Set(stdout.toString("utf8").split("\0").filter(Boolean));
 }
 
-/** Removes directories left empty after a file deletion, stopping at the root. */
 async function pruneEmptyDirectories(root: string, relativePath: string): Promise<void> {
   let directory = path.dirname(path.join(root, relativePath));
   while (directory.startsWith(root) && directory !== root) {
@@ -374,10 +311,6 @@ async function pruneEmptyDirectories(root: string, relativePath: string): Promis
   }
 }
 
-/**
- * Writes the recorded index back through Git's own lock-and-rename protocol so
- * a concurrent reader never observes a partial index.
- */
 async function restoreIndexFile(repository: GitRepository, indexBlob: string): Promise<void> {
   const content = await gitBuffer(repository.root, ["cat-file", "blob", indexBlob]);
   const lockFile = `${repository.indexFile}.lock`;
@@ -397,17 +330,9 @@ async function restoreIndexFile(repository: GitRepository, indexBlob: string): P
     }
   }
   await rename(lockFile, repository.indexFile);
-  // Stat data in the restored index predates the files just written back.
-  // Refreshing reports genuinely modified paths on stdout and exits non-zero.
   await optionalGit(repository.root, ["update-index", "-q", "--refresh"]);
 }
 
-/**
- * Restores working-tree files and the index to `target`.
- *
- * `current` must describe the state on disk right now; its file list is what
- * makes untracked-file deletion exact instead of a best guess.
- */
 export async function restoreSnapshotFiles(
   cwd: string,
   target: GitSnapshot,
@@ -431,9 +356,6 @@ export async function restoreSnapshotFiles(
     const hasIndex = await copyIndexFile(repository, scratchIndex);
     const environment = identityEnvironment(scratchIndex);
     if (!hasIndex) await git(root, ["read-tree", "--empty"], environment);
-    // `--reset -u` applies reset --hard semantics against the scratch index, so
-    // it rewrites files whose stat data no longer matches and drops removals,
-    // while the repository index stays untouched until the swap below.
     await git(root, ["read-tree", "--reset", "-u", target.worktreeTree], environment);
   });
 
@@ -446,10 +368,6 @@ export async function restoreSnapshotFiles(
   }
 }
 
-/**
- * Restores `target`, rolling the working tree back to `safety` if the restore
- * fails part way through.
- */
 export async function restoreGitSnapshot(
   cwd: string,
   target: GitSnapshot,
@@ -464,9 +382,7 @@ export async function restoreGitSnapshot(
         message: "choco-pi checkpoint recovery",
       });
       await restoreSnapshotFiles(cwd, safety, partial);
-    } catch {
-      // Keep the original failure; the safety checkpoint stays selectable.
-    }
+    } catch {}
     throw error;
   }
 }
@@ -497,19 +413,9 @@ export async function summarizeChanges(
 }
 
 export type HeadDrift = {
-  /** Commits added since the checkpoint, or 0 when HEAD moved some other way. */
   commits: number;
 };
 
-/**
- * Reports whether HEAD moved since a checkpoint was taken.
- *
- * A rollback restores files and the index but deliberately leaves HEAD alone,
- * because rewriting branch history would throw away commits the checkpoint
- * knows nothing about. When HEAD has moved, the restored state is still exact
- * but reads as a large staged diff against the newer commit, so callers warn
- * before proceeding.
- */
 export async function headDriftSince(
   cwd: string,
   snapshotHead: string | undefined,
@@ -534,15 +440,11 @@ export function sessionCheckpointRef(sessionId: string): string {
   return `${CHECKPOINT_REF_PREFIX}/${segment}`;
 }
 
-/** Objects a session's own entries depend on, whoever recorded them. */
 export type CheckpointAnchors = {
-  /** Checkpoint commits; each one carries its whole chain with it. */
   commits: readonly string[];
-  /** Trees from checkpoints predating chained commits, which anchor nothing. */
   trees: readonly string[];
 };
 
-/** Keeps only the ids Git can still resolve, in one batch lookup. */
 async function existingObjects(root: string, ids: readonly string[]): Promise<string[]> {
   if (ids.length === 0) return [];
   const report = await gitWithInput(
@@ -558,17 +460,6 @@ async function existingObjects(root: string, ids: readonly string[]): Promise<st
   return ids.filter((id) => alive.has(id));
 }
 
-/**
- * Re-anchors checkpoints a session inherited rather than recorded.
- *
- * A forked session carries its parent's checkpoint entries, and a session
- * resumed after its own ref expired carries its own. Both cases reference
- * objects that only some other ref keeps alive, so the picker would offer a
- * rollback whose objects `git gc` may already have taken. Pointing this
- * session's ref at them makes the fork independent of the parent's retention.
- *
- * @returns the adoption commit, or undefined when there was nothing to adopt.
- */
 export async function adoptCheckpoints(
   cwd: string,
   options: { ref: string; anchors: CheckpointAnchors },
@@ -583,7 +474,6 @@ export async function adoptCheckpoints(
   if (liveCommits.length === 0 && liveTrees.length === 0) return undefined;
 
   const tip = await refTip(root, options.ref);
-  // One chain collapses to a single parent; unrelated chains keep one each.
   const minimal =
     liveCommits.length > 1
       ? ((
@@ -597,7 +487,6 @@ export async function adoptCheckpoints(
           ?.split("\n")
           .filter(Boolean) ?? liveCommits)
       : liveCommits;
-  // Nothing new to hold when the ref already reaches every adopted commit.
   if (liveTrees.length === 0 && tip && minimal.length === 1 && minimal[0] === tip) return undefined;
 
   return withScratchDirectory(repository, "choco-pi-adopt-", async (scratch) => {
@@ -612,14 +501,11 @@ export async function adoptCheckpoints(
   });
 }
 
-/** Holds trees that no commit references, so they survive as ordinary content. */
 async function writeAdoptedTree(
   repository: GitRepository,
   scratch: string,
   trees: readonly string[],
 ): Promise<string> {
-  // `write-tree` on an empty index names the empty tree without writing it, and
-  // a commit pointing at an object Git never stored fails `git fsck`.
   if (trees.length === 0) {
     return (
       await gitWithInput(repository.root, ["hash-object", "-w", "-t", "tree", "--stdin"], "")
@@ -637,27 +523,12 @@ async function writeAdoptedTree(
 const DEFAULT_RETENTION_DAYS = 14;
 export const CHECKPOINT_RETENTION_ENV = "CHOCO_PI_CHECKPOINT_RETENTION_DAYS";
 
-/**
- * How long an untouched checkpoint ref is kept.
- *
- * Sessions recorded before this extension chained its checkpoints left one ref
- * per turn, and those refs are what still make old sessions rewindable, so they
- * expire on the same clock instead of being deleted outright. Set the
- * environment variable to `0` to reclaim every idle checkpoint at once.
- */
 export function checkpointRetentionMs(environment: NodeJS.ProcessEnv = process.env): number {
   const configured = Number(environment[CHECKPOINT_RETENTION_ENV]);
   const days = Number.isFinite(configured) && configured >= 0 ? configured : DEFAULT_RETENTION_DAYS;
   return days * 24 * 60 * 60 * 1000;
 }
 
-/**
- * Deletes checkpoint refs whose newest commit is older than `maxAgeMs`.
- *
- * Each session updates its own ref every turn, so an active session's ref never
- * ages out. Dropping a ref only makes its objects unreachable; ordinary `git gc`
- * reclaims the space later.
- */
 export async function pruneCheckpointRefs(
   cwd: string,
   options: { maxAgeMs: number; keepRef?: string },

@@ -6,15 +6,11 @@ function unexpectedHostService(name: string): never {
 
 export interface ToolContextFixtureOptions {
   cwd?: string;
-  /** Tools the fixture reports as callable through `executeTool()`. */
   tools?: ExtensionToolContext["tools"];
-  /** Backs `executeTool()`; without it, any nested call fails the test. */
   executeTool?: ExtensionToolContext["executeTool"];
-  /** Backs `sessionManager`; without it, any access fails the test. */
   sessionManager?: ExtensionToolContext["sessionManager"];
 }
 
-/** A structurally complete tool context whose unused host services fail loudly. */
 export function createToolContextFixture(
   options: ToolContextFixtureOptions = {},
 ): ExtensionToolContext {

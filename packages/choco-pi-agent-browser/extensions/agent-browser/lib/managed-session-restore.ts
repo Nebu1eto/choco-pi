@@ -249,7 +249,6 @@ export function agentBrowserExplicitConfigIsPresent(
   return hasExplicitConfigArg(args) || hasUpstreamEnvValue(parentEnv, AGENT_BROWSER_CONFIG_ENV);
 }
 
-/** Explicit config overrides disable restore; passive files are ignored because every browser-backed subprocess pins a protected empty config. */
 export function agentBrowserConfigBlocksManagedRestore(
   _cwd: string,
   parentEnv: NodeJS.ProcessEnv = getAgentBrowserProcessEnvironment(),
@@ -591,7 +590,6 @@ export function getManagedSessionRestoreEnv(
   };
 }
 
-/** Commit sticky suppression only after an owned-context subprocess has actually started. */
 export function commitManagedSessionRestoreSuppression(
   options: ManagedSessionRestoreEnvOptions,
 ): void {

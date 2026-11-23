@@ -10,7 +10,6 @@ import {
 
 const SLOT = Symbol.for("choco-pi:compaction-token-counters/v1");
 
-/** Whether the compaction slot (protocol v1) lists the counter for `google`. */
 function isRegistered(): boolean {
   const table: unknown = Object.getOwnPropertyDescriptor(globalThis, SLOT)?.value;
   if (!(table instanceof Map)) return false;

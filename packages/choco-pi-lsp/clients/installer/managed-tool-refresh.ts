@@ -1,43 +1,6 @@
 import type { ProtocolDictionary } from "../../tools/runtime-values.ts";
 import type { RuntimeValue } from "../../tools/runtime-values.ts";
 import { isRuntimeNumber, isRuntimeObject, isRuntimeString } from "../../tools/runtime-values.ts";
-/**
- * Periodic version refresh for choco-pi-lsp's managed npm tools (#1730).
- *
- * `~/.choco-pi-lsp/tools/package.json` records ranges, not versions — `npm install
- * knip` writes `"knip": "^6.4.1"` and a lockfile pinning 6.4.1. Nothing ever
- * re-resolved that range, so the managed copy stayed on the version present at
- * first install for the life of the machine. A managed knip 28 minors behind
- * produced 62 unused-export findings on a tree the same project's own knip
- * reported clean, and acting on those findings deletes live code. Every managed
- * npm tool drifts the same way; a stale pyright or biome is the same wrong
- * verdict, quieter.
- *
- * The policy, and the constraints each part answers:
- *
- * - Bounded. At most `maxPerSession` tools (default 1) are refreshed per
- *   session, and each tool is eligible again only once per `intervalMs`
- *   (default 7 days). A managed tools tree with 22 entries therefore costs at
- *   most one `npm update` spawn per session, never one per run and never a
- *   22-package burst.
- * - Off the hot path. `runManagedToolRefresh` is never awaited by a caller
- *   that serves a user request; `runtime-session.ts` schedules it on an
- *   unref'd background timer after `session_start` has already returned.
- * - Non-blocking for availability. A refresh failure never removes or hides
- *   the installed copy. `npm update` leaves the existing tree in place, and
- *   this module never touches `node_modules` itself, so the current version
- *   keeps serving.
- * - Re-armed per session, not per process. The per-session budget is keyed to
- *   the degradation ledger's session generation, so a long-lived process that
- *   serves many `/new` sessions re-checks eligibility each time — and the
- *   REAL cooldown lives in the persisted stamp, not in process memory, so a
- *   restart loop cannot turn a 7-day cadence into an every-launch one.
- * - Empty is not the same as errored. A missing stamp file means "never
- *   refreshed" and makes every tool eligible. An UNREADABLE stamp file means
- *   the cadence is unknown; the session degrades once and refreshes nothing,
- *   rather than treating unknown as fresh (drift forever) or as stale (a
- *   22-package burst on every session).
- */
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -62,14 +25,7 @@ import {
 const STATE_FILENAME = ".refresh-state.json";
 const STATE_VERSION = 1;
 
-/** Default per-tool refresh cadence: once a week. */
 const DEFAULT_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
-/**
- * Cooldown after a FAILED refresh. Shorter than the success cadence — a failure
- * is usually a transient network or registry problem worth retrying sooner —
- * but still a real cooldown, so a permanently offline machine spawns at most
- * one `npm update` per tool per day rather than one per session.
- */
 const DEFAULT_RETRY_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MAX_PER_SESSION = 1;
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -97,14 +53,9 @@ function refreshTimeoutMs(): number {
   return numericEnv("CHOCO_PI_LSP_INSTALL_TIMEOUT_MS", DEFAULT_TIMEOUT_MS);
 }
 
-// --- Persisted state ---
-
 export interface ManagedToolRefreshEntry {
-  /** When this tool's refresh last ran, successful or not. */
   checkedAt: number;
-  /** Version installed after that run, when it could be read. */
   version?: string;
-  /** The run failed; `retryIntervalMs` applies instead of `intervalMs`. */
   failed?: boolean;
 }
 
@@ -113,12 +64,6 @@ export interface ManagedToolRefreshState {
   tools: Record<string, ManagedToolRefreshEntry>;
 }
 
-/**
- * Reading the stamp has three outcomes, and collapsing any two of them is the
- * bug: `empty` (no file yet — everything is genuinely due) must not read as
- * `unreadable` (cadence unknown — refresh nothing this session), and neither
- * may read as `ok` with an empty map.
- */
 export type ManagedToolRefreshStateRead =
   | { status: "ok"; state: ManagedToolRefreshState }
   | { status: "empty"; state: ManagedToolRefreshState }
@@ -132,7 +77,6 @@ export function getManagedToolRefreshStatePath(): string {
   return path.join(getManagedToolsDir(), STATE_FILENAME);
 }
 
-/** Coerce one parsed entry, dropping anything whose shape we cannot trust. */
 function parseEntry(value: RuntimeValue): ManagedToolRefreshEntry | undefined {
   if (!value || !isRuntimeObject(value) || Array.isArray(value)) {
     return undefined;
@@ -176,8 +120,6 @@ export async function readManagedToolRefreshState(): Promise<ManagedToolRefreshS
   } catch (err) {
     // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     const code = (err as NodeJS.ErrnoException).code;
-    // ENOENT is the honest "never refreshed" answer. A permission error or a
-    // directory in the file's place is NOT — that is unknown cadence.
     if (code === "ENOENT") return { status: "empty", state: emptyState() };
     return { status: "unreadable", reason: code ?? "read error" };
   }
@@ -189,15 +131,6 @@ export async function readManagedToolRefreshState(): Promise<ManagedToolRefreshS
   }
 }
 
-/**
- * Commit one tool's stamp under the durable-store lock, merging against
- * whatever a sibling choco-pi-lsp process wrote since this process read.
- *
- * A torn or corrupt file is recovered as empty HERE (rather than thrown) so a
- * later commit can replace it. The read path above still reports `unreadable`,
- * which is what suppresses the refresh; this side only has to make sure the
- * file becomes valid again instead of staying corrupt forever.
- */
 async function writeRefreshStamp(toolId: string, entry: ManagedToolRefreshEntry): Promise<void> {
   try {
     await fs.mkdir(getManagedToolsDir(), { recursive: true });
@@ -228,9 +161,6 @@ async function writeRefreshStamp(toolId: string, entry: ManagedToolRefreshEntry)
       },
     });
   } catch (err) {
-    // A stamp that cannot be written means this tool is eligible again next
-    // session. That is noisier than intended but never wrong, so it degrades
-    // rather than throwing into the background timer.
     recordDegradationOnce({
       kind: "managed-tool-refresh",
       subject: toolId,
@@ -244,18 +174,6 @@ async function writeRefreshStamp(toolId: string, entry: ManagedToolRefreshEntry)
   }
 }
 
-/**
- * Stamp a tool as freshly resolved, without refreshing it.
- *
- * Called right after a successful managed install (#1746 review F4). An
- * install already resolved the range against the registry seconds ago, so the
- * tool is by definition current. Without this stamp a fresh machine that
- * installs 22 tools on day one has 22 tools with no stamp, and then burns the
- * next 22 sessions running `npm update` on packages installed minutes earlier.
- *
- * Best-effort by design: a missing stamp costs one wasted update, never a
- * wrong version, so it must not fail an install.
- */
 export async function stampManagedToolInstalled(
   toolId: string,
   packageName: string,
@@ -268,22 +186,12 @@ export async function stampManagedToolInstalled(
   });
 }
 
-// --- Per-session budget ---
-
-// --- Candidate selection ---
-
 export interface RefreshCandidate {
   toolId: string;
   packageName: string;
   binaryName: string;
 }
 
-/**
- * Registry entries that are BOTH refreshable and actually installed in the
- * managed tree. An entry choco-pi-lsp has never installed has no version to move,
- * and `npm update` on it would install it — turning a refresh into an
- * unrequested download.
- */
 async function installedRefreshCandidates(): Promise<RefreshCandidate[]> {
   const nodeModules = path.join(getManagedToolsDir(), "node_modules");
   const candidates: RefreshCandidate[] = [];
@@ -291,18 +199,11 @@ async function installedRefreshCandidates(): Promise<RefreshCandidate[]> {
     try {
       await fs.access(path.join(nodeModules, tool.packageName, "package.json"));
       candidates.push(tool);
-    } catch {
-      // Not installed here — nothing to refresh.
-    }
+    } catch {}
   }
   return candidates;
 }
 
-/**
- * Which candidates are due, oldest stamp first. A tool with no stamp sorts
- * first (it has never been refreshed); ties break on toolId so the selection
- * is deterministic and a starved tool eventually reaches the front.
- */
 export function selectStaleTools(
   candidates: readonly RefreshCandidate[],
   state: ManagedToolRefreshState,
@@ -323,9 +224,6 @@ export function selectStaleTools(
   });
 }
 
-// --- Refresh ---
-
-/** Version recorded in an installed package's own `package.json`, if readable. */
 async function readInstalledVersion(packageName: string): Promise<string | undefined> {
   try {
     const raw = await fs.readFile(
@@ -354,7 +252,6 @@ export interface ManagedToolRefreshResult {
   previousVersion?: string;
   currentVersion?: string;
   changed: boolean;
-  /** The updated binary answered `--version`. False also covers a failed spawn. */
   verified: boolean;
   ok: boolean;
 }
@@ -394,12 +291,6 @@ async function refreshOne(
 
   if (spawned.status !== 0 || spawned.error) {
     const reason = (spawned.error?.message ?? spawned.stderr ?? "").slice(0, 200);
-    // "Keeping <old version>" would be an unchecked assertion (#1746 review
-    // F2). The spawn budget kills the package manager where it stands, which
-    // can be mid-write: the tree may hold a new version, a half-written one,
-    // or the old one. So report the version that is actually on disk now, and
-    // drop the cached resolution either way — a killed package manager can
-    // rewrite `.bin` shims without moving the version in `package.json`.
     const onDisk = await readInstalledVersion(candidate.packageName);
     invalidateManagedToolResolution(candidate.toolId);
     recordDegradationOnce({
@@ -429,18 +320,8 @@ async function refreshOne(
   const currentVersion = await readInstalledVersion(candidate.packageName);
   const changed = currentVersion !== undefined && currentVersion !== previousVersion;
 
-  // The update rewrote `node_modules`, so every cached claim about where this
-  // tool resolves — the in-memory path cache and the 24h probe cache — is now
-  // an assertion about a tree that no longer exists. Drop it BEFORE verifying,
-  // so a caller arriving mid-verify re-probes rather than reading the stale
-  // entry (#1746 review F2).
   invalidateManagedToolResolution(candidate.toolId);
 
-  // `installNpmTool` treats verification as mandatory: an install that cannot
-  // run its own binary is not an install. An UPDATE that leaves an unrunnable
-  // binary is the same failure, and it used to pass silently — the version row
-  // was written from `package.json` alone, which a half-written tree still
-  // answers.
   const binPath = resolveManagedNpmBinPath(candidate.binaryName);
   const verified = await verifyToolBinary(binPath);
   if (!verified) {
@@ -449,12 +330,6 @@ async function refreshOne(
       subject: candidate.toolId,
       reason: `binary failed verification after ${pm} update (${previousVersion ?? "unknown"} → ${currentVersion ?? "unknown"})`,
     });
-    // Deliberately NOT removed. `installNpmTool` deletes a freshly installed
-    // package that fails verification because nothing was working before it;
-    // here a working tool existed a moment ago, and deleting the tree takes it
-    // offline for certain rather than probably. The cache invalidation above is
-    // what lets `ensureTool`'s own probe-and-repair path see the breakage and
-    // reinstall. Stamped as failed so the shorter retry cooldown applies.
     logSessionStart(
       `managed-tool-refresh ${candidate.toolId}: ${pm} update ran but ${binPath} failed verification — resolution cache cleared for re-probe (${elapsedMs}ms)`,
     );
@@ -478,8 +353,6 @@ async function refreshOne(
     checkedAt: now,
     ...(currentVersion !== undefined && { version: currentVersion }),
   });
-  // The observability row #1730 asks for: a wrong verdict from a managed tool
-  // can be traced to the version that produced it, and to the moment it moved.
   logSessionStart(
     changed
       ? `managed-tool-refresh ${candidate.toolId}: ${previousVersion ?? "unknown"} → ${currentVersion} via ${pm} update, verified (${elapsedMs}ms)`
@@ -496,32 +369,8 @@ async function refreshOne(
   };
 }
 
-/**
- * The refresh currently running in this process, so a second caller joins it
- * instead of starting a rival one.
- *
- * #1746 review F1: `scheduleManagedToolRefresh` arms on EVERY
- * `handleSessionStart`, and an `npm update` can easily outlive the 30s gap to
- * the next session. Without this, two runs raced through the budget check and
- * both spawned a package manager into the same unlocked managed
- * `node_modules`. The join is the same shape `ensureTool` uses for its own
- * duplicate startup requests (the `ensureInFlight` join in
- * `ensureToolResolved`, `clients/installer/install-orchestration.ts`, cleared
- * when the ensure settles).
- *
- * This is the local form of the single-flight primitive #1753 proposes. When
- * that lands, this is one of its callers.
- */
 let refreshInFlight: Promise<ManagedToolRefreshOutcome> | null = null;
 
-/**
- * Run one session's worth of managed-tool refresh. Never throws: the caller is
- * a background timer with no one to report to.
- *
- * Concurrent callers share one run. The guard is only process-wide; two pi
- * processes can still refresh at the same time, which the per-tool stamp
- * narrows but does not close. See the PR body for that limit stated plainly.
- */
 export function runManagedToolRefresh(
   now: number = Date.now(),
 ): Promise<ManagedToolRefreshOutcome> {
@@ -530,17 +379,6 @@ export function runManagedToolRefresh(
     logSessionStart("managed-tool-refresh: joining the refresh already in flight");
     return joined;
   }
-  // No `await` between starting the run and publishing it, so no third caller
-  // can slip through and start a second one.
-  //
-  // The clear is unconditional. An identity check (`if (refreshInFlight ===
-  // run)`) is the usual companion to this pattern — `package-manager.ts:225`
-  // needs one because its map entry can be replaced by a later caller while an
-  // older probe is still settling. This slot cannot: the line below is its only
-  // writer, and every other caller returns early while it is non-null, so when
-  // this `finally` runs the slot still holds `run`. #1746 review round 2 proved
-  // that branch unreachable (mutating it to an unconditional clear failed no
-  // test), and a branch no input can take is not a guard.
   const run = executeManagedToolRefresh(now).finally(() => {
     refreshInFlight = null;
   });
@@ -552,15 +390,9 @@ async function executeManagedToolRefresh(now: number): Promise<ManagedToolRefres
   if (process.env.CHOCO_PI_LSP_DISABLE_TOOL_REFRESH === "1") {
     return { skipped: "disabled", refreshed: [] };
   }
-  // Reserve BEFORE any await. Reading the budget here and spending it after
-  // the two reads below is the F1 race; `reserveManagedToolRefreshSlot`
-  // checks and takes in one synchronous step, and a run that turns out to
-  // have nothing to do hands the slot straight back.
   if (!reserveManagedToolRefreshSlot(maxPerSession())) {
     return { skipped: "session-budget", refreshed: [] };
   }
-  // Slots this run HOLDS and has not yet spent. Held slots are given back on
-  // every exit that never reached a spawn; a spent slot is gone for good.
   let held = 1;
   const releaseReservation = (): void => {
     while (held > 0) {
@@ -578,9 +410,6 @@ async function executeManagedToolRefresh(now: number): Promise<ManagedToolRefres
 
     const read = await readManagedToolRefreshState();
     if (read.status === "unreadable") {
-      // Unknown cadence. Refreshing nothing is the only answer that neither
-      // drifts forever nor bursts every session; the ledger row is what makes
-      // the suppressed cadence visible instead of silent.
       releaseReservation();
       recordDegradationOnce({
         kind: "managed-tool-refresh",
@@ -599,18 +428,6 @@ async function executeManagedToolRefresh(now: number): Promise<ManagedToolRefres
       return { skipped: "nothing-due", refreshed: [] };
     }
 
-    // Top the reservation up to cover this run's whole walk, in ONE
-    // synchronous block, and capture the total LOCALLY.
-    //
-    // #1746 review round 2 (R2-F1): the loop used to call
-    // `reserveManagedToolRefreshSlot` again for each tool after the previous
-    // tool's awaited refresh. `handleSessionStart` zeroes the global counter,
-    // and a session start landing inside a 120s `npm update` therefore re-armed
-    // the budget the running loop was still spending. Each further session
-    // start bought the same loop another tool, so a long update plus a few
-    // `/new` calls walked the entire 22-tool stale list. A local allowance
-    // cannot be re-armed by anyone: a mid-run reset restores the SESSION's
-    // right to start a new run, which is correct, without extending this one.
     const want = Math.min(maxPerSession(), stale.length);
     while (held < want && reserveManagedToolRefreshSlot(maxPerSession())) {
       held += 1;
@@ -619,9 +436,6 @@ async function executeManagedToolRefresh(now: number): Promise<ManagedToolRefres
 
     const refreshed: ManagedToolRefreshResult[] = [];
     for (const candidate of stale) {
-      // Once a spawn happens the slot is spent for good — a failing tool must
-      // not hand its slot to the next candidate and turn a budget of one into
-      // 22 spawns.
       if (allowance <= 0) break;
       allowance -= 1;
       held -= 1;
@@ -638,7 +452,6 @@ async function executeManagedToolRefresh(now: number): Promise<ManagedToolRefres
     }
     return { refreshed };
   } finally {
-    // A throw before any spawn must not leak the reservation.
     releaseReservation();
   }
 }

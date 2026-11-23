@@ -38,7 +38,6 @@ export type PiRpcSpawnErrorOptions = {
 };
 
 export class PiRpcSpawnError extends Error {
-  /** Underlying spawn error code, e.g. ENOENT, EACCES */
   code?: string;
 
   constructor(message: string, opts?: PiRpcSpawnErrorOptions) {
@@ -57,7 +56,6 @@ const ANSI_ESCAPE_REGEX = new RegExp(
 );
 
 function stripAnsi(s: string): string {
-  // Basic ANSI escape stripping (colors, cursor movement, etc.)
   return s.replace(ANSI_ESCAPE_REGEX, "");
 }
 
@@ -65,36 +63,27 @@ type PiRpcCommand =
   | { type: "prompt"; id?: string; message: string; images?: PiPromptImage[] }
   | { type: "abort"; id?: string }
   | { type: "get_state"; id?: string }
-  // Model
   | { type: "get_available_models"; id?: string }
   | { type: "set_model"; id?: string; provider: string; modelId: string }
-  // Thinking
   | {
       type: "set_thinking_level";
       id?: string;
       level: PiThinkingLevel;
     }
-  // Modes
   | { type: "set_follow_up_mode"; id?: string; mode: PiTurnMode }
   | { type: "set_steering_mode"; id?: string; mode: PiTurnMode }
-  // Compaction
   | { type: "compact"; id?: string; customInstructions?: string }
   | { type: "set_auto_compaction"; id?: string; enabled: boolean }
-  // Session
   | { type: "get_session_stats"; id?: string }
   | { type: "set_session_name"; id?: string; name: string }
   | { type: "export_html"; id?: string; outputPath?: string }
   | { type: "switch_session"; id?: string; sessionPath: string }
-  // Messages
   | { type: "get_messages"; id?: string }
-  // Commands
   | { type: "get_commands"; id?: string };
 
 type SpawnParams = {
   cwd: string;
-  /** Optional override for `pi` executable name/path */
   piCommand?: string;
-  /** If set, pi will persist the session to this exact file (via `--session <path>`). */
   sessionPath?: string;
 };
 
@@ -106,17 +95,11 @@ export type PiRpcInitialState = {
 
 export type PiRpcExit = { code: number | null; signal: NodeJS.Signals | null };
 
-/** Bounded human-readable stdout retained before Pi's NDJSON protocol starts. */
 export type PiRpcPrelude = {
   lines: string[];
   truncated: boolean;
 };
 
-/**
- * The subset of `PiRpcProcess` that sessions, the agent, and test fakes depend on.
- * Only event subscription and prompting are mandatory; every other member is
- * optional so a narrow fake stays assignable without a type assertion.
- */
 export type PiRpcProcessLike = {
   onEvent(handler: (ev: PiRpcEvent) => void): () => void;
   prompt(
@@ -158,14 +141,9 @@ export class PiRpcStaleContextError extends Error {
 type PendingRequest = {
   resolve: (value: PiRpcResponse) => void;
   reject: (error: BoundaryValue) => void;
-  /** Runs synchronously when the response frame is read, before later frames dispatch. */
   onResponseFrame?: () => void;
 };
 
-/**
- * Prompt hooks that observe Pi's stdout order. `onResponseFrame` runs synchronously when
- * the prompt's response frame is read, so events that follow it in the same chunk see it.
- */
 export type PiPromptHooks = {
   onResponseFrame?: () => void;
 };
@@ -201,14 +179,8 @@ export class PiRpcProcess {
     const rl = readline.createInterface({ input: child.stdout });
     rl.on("line", (line) => {
       if (!line.trim()) return;
-      // `parseJsonLine` reports malformed input as undefined; JSON text never decodes
-      // to undefined, so this stays an unambiguous decode failure.
       const frame = parseJsonLine(line);
       if (frame === undefined) {
-        // pi may emit a human-readable prelude on stdout before NDJSON starts.
-        // Capture a bounded prefix so the ACP adapter can surface it on session
-        // start. Once NDJSON starts, fail closed instead of treating malformed
-        // protocol content as more human-readable output.
         if (this.receivedJsonFrame) {
           const error = new Error(
             `Malformed Pi RPC stdout frame after protocol start (bytes=${Buffer.byteLength(line, "utf8")}).`,
@@ -257,8 +229,6 @@ export class PiRpcProcess {
       this.stderrDiagnostic += stripAnsi(chunk.toString("utf8")).slice(0, 8_192);
     });
 
-    // `close` waits for the separated stdio streams to close, so any bounded stderr
-    // diagnostic is available before pending initialization requests are rejected.
     child.on("close", (code, signal) => this.finish({ code, signal }));
 
     child.on("error", (err) => {
@@ -283,40 +253,25 @@ export class PiRpcProcess {
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
     this.settleExit(exit);
-    // Exit notification is the single place session-level state learns the child
-    // is gone. Listeners are detached before dispatch so each fires exactly once
-    // even if a listener re-enters, and a throwing listener cannot starve the
-    // rest: the child is already dead, so there is nothing left to abort.
     const listeners = this.exitListeners;
     this.exitListeners = [];
     for (const listener of listeners) {
       try {
         listener(exit);
-      } catch {
-        // A failed observer must not suppress the remaining observers.
-      }
+      } catch {}
     }
   }
 
-  /** Resolves with the recorded exit once the child has fully exited. */
   get exited(): Promise<PiRpcExit> {
     return this.exitPromise;
   }
 
-  /**
-   * Subscribe to child exit. The listener runs exactly once. A subscriber that
-   * registers after the child already exited is invoked immediately with the
-   * recorded exit, so a late subscriber can never miss the event and hang.
-   * Returns an unsubscribe function that is safe to call more than once.
-   */
   onExit(listener: (exit: PiRpcExit) => void): () => void {
     const recorded = this.exit;
     if (recorded) {
       try {
         listener(recorded);
-      } catch {
-        // Matches the dispatch path in `finish`.
-      }
+      } catch {}
       return () => {};
     }
     this.exitListeners.push(listener);
@@ -341,17 +296,12 @@ export class PiRpcProcess {
       throw error;
     }
 
-    // Speed/robustness for ACP:
-    // - themes are irrelevant in rpc mode and can be noisy/slow to load.
-    // Keep extensions + prompt templates enabled because ACP users may rely on them
-    // (e.g. MCP extensions, prompt templates for workflows).
     const args = [...launch.argsPrefix, "--mode", "rpc", "--no-themes"];
     if (params.sessionPath) args.push("--session", params.sessionPath);
 
     const child = spawn(launch.command, args, {
       cwd: params.cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      // The only addition: tells choco-pi's `/diff` that this client renders native diffs.
       env: { ...process.env, [NATIVE_DIFF_ENV]: "1" },
       shell: false,
     });
@@ -359,8 +309,6 @@ export class PiRpcProcess {
     const generation = proc.generation;
     const launchCommand = launch.command;
 
-    // Ensure spawn failures (e.g. ENOENT when pi isn't installed) are surfaced as a
-    // deterministic error instead of later EPIPE/internal-error noise.
     try {
       await new Promise<void>((resolve, reject) => {
         const onSpawn = () => {
@@ -381,7 +329,6 @@ export class PiRpcProcess {
       });
     } catch (failure) {
       // SAFETY: a rejected spawn settlement carries an arbitrary runtime value;
-      // `errorCode` performs the object/string checks before reading `code`.
       const cause = failure as BoundaryValue;
       const code = errorCode(cause);
       if (code === "ENOENT") {
@@ -440,18 +387,14 @@ export class PiRpcProcess {
     const child = this.child;
     try {
       child.kill("SIGTERM");
-    } catch {
-      // The exit/error handlers remain the canonical settlement path.
-    }
+    } catch {}
 
     const boundedGraceMs = Math.max(0, Math.min(graceMs, 30_000));
     const timer = setTimeout(() => {
       if (this.exit) return;
       try {
         child.kill("SIGKILL");
-      } catch {
-        // The exit/error handlers remain the canonical settlement path.
-      }
+      } catch {}
     }, boundedGraceMs);
     timer.unref();
 
@@ -459,21 +402,11 @@ export class PiRpcProcess {
     return this.shutdownPromise;
   }
 
-  /**
-   * Consumes the bounded prefix of human-readable stdout lines emitted before RPC
-   * NDJSON begins (e.g. Context/Skills/Extensions info), and reports whether the
-   * child emitted additional nonempty prelude lines beyond either retention cap.
-   */
   consumePreludeLines(): PiRpcPrelude {
     const lines = this.preludeLines.splice(0, this.preludeLines.length);
     return { lines, truncated: this.preludeTruncated };
   }
 
-  /**
-   * Submit a prompt and return Pi's disposition for it. A success response without a
-   * recognized `data.disposition` is a protocol error: guessing `started` would wait for
-   * events that may never arrive, and guessing `handled` would end a live run early.
-   */
   async prompt(
     message: string,
     images: PiPromptImage[] = [],

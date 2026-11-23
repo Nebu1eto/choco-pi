@@ -1,6 +1,3 @@
-// Every string /review-assist draws that it did not author is drawn with its
-// control characters as visible glyphs, and text it hands to the editor or a
-// model has them escaped. Pattern: tests/diff-actions-control-chars.test.ts.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
@@ -39,7 +36,6 @@ function model(...files: DiffModel["files"]): DiffModel {
   return { baseSha: "b", headSha: "h", files };
 }
 
-/** Render at a wide and a narrow width; both must be clean and fit. */
 function check(lines: (width: number) => readonly string[]): string {
   for (const width of [WIDTH, NARROW]) {
     const rendered = lines(width);
@@ -71,11 +67,9 @@ test("diff body lines and the hunk header's section text", async () => {
     ),
   ];
   const view = await mount({ model: model(file) });
-  // Unified, then split.
   assert.ok(showsGlyphs(check(view.render)));
   await view.press("v");
   assert.ok(showsGlyphs(check(view.render)));
-  // A folded hunk draws its header in the placeholder.
   await view.press(" ");
   assert.ok(check(view.render).includes("function a␛[31mred"));
 });
@@ -142,7 +136,6 @@ test("a pull request's title, author and base branch from GitHub", async () => {
   assert.ok(screen.includes("base ba␛[31mred"));
 });
 
-/** Just enough of ReviewChat to show a transcript. */
 function staticChat(messages: ReviewChatMessage[]): ReviewChat {
   return {
     ask: async () => {},
@@ -184,7 +177,6 @@ test("side chat: the question, the model's answer, and its tool calls", async ()
   assert.ok(screen.includes("q a␛[31mred"));
   assert.ok(screen.includes("answer a␛[31mred"));
   assert.ok(screen.includes("echo a␛[31mred"), "the tool call's arguments");
-  // Expanded, the tool shows its output too.
   await view.press("\u000f");
   assert.ok(check(view.render).includes("out a␛[31mred"), "the tool's output");
 });
@@ -262,7 +254,6 @@ test("text for the editor and the model escapes control characters but keeps lin
     reviewRoot: `/repo/${NASTY}`,
   });
   assert.equal(rawControlsExceptNewlines(prompt), 0);
-  // Each context field stays on its own line.
   assert.equal(prompt.split("\n").filter((line) => line.startsWith("- ")).length, 6);
 });
 

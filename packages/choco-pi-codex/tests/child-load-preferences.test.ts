@@ -9,7 +9,6 @@ import { CODEX_PREFERENCES_PROVIDER_SYMBOL } from "../src/ui/settings/preference
 
 const SUBAGENTS_MANAGER_KEY = Symbol.for("pi-subagents:manager");
 
-/** Installs a fake subagents registry for one test and restores the slot afterwards. */
 function withChildRegistry(inChild: () => boolean, restore: (cleanup: () => void) => void): void {
   const previous = Object.getOwnPropertyDescriptor(globalThis, SUBAGENTS_MANAGER_KEY);
   Object.defineProperty(globalThis, SUBAGENTS_MANAGER_KEY, {

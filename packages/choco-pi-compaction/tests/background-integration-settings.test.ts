@@ -1,9 +1,3 @@
-/**
- * Background-compaction settings sidecar: lookup precedence and trust,
- * rejection with a visible diagnostic, the backend switch mapping, and the
- * Codex account scope. Defaults, partial overrides and malformed JSON are
- * exercised end to end by the background-integration host and off tests.
- */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -122,7 +116,6 @@ test("the Preferences switch writes an owner-only global sidecar a trusted proje
 
 test("the vendor compaction rows derive the backend switches", () => {
   const table: readonly [boolean, boolean, boolean, boolean][] = [
-    // openai server-side, anthropic server-side -> codexNative, anthropicNative
     [true, true, true, true],
     [true, false, true, false],
     [false, true, false, true],

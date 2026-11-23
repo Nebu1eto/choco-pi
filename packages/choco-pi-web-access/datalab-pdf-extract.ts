@@ -72,14 +72,6 @@ export function getDatalabApiBase(): string {
   return normalized || `${DEFAULT_API_HOST}${API_PREFIX}`;
 }
 
-/**
- * Resolve the processing region. US storage and processing is the default;
- * set `DATALAB_PROCESSING_LOCATION=eu` to use EU data residency at Datalab's
- * documented 1.25× usage rate. Only `eu` and `us` are supported by the API.
- * Config errors are thrown with a `Failed to parse` prefix so the
- * extraction fallback chain treats them as fatal, mirroring how malformed
- * web-search config is handled elsewhere.
- */
 export function getDatalabProcessingLocation(): DatalabProcessingLocation {
   const value =
     normalizeString(process.env.DATALAB_PROCESSING_LOCATION) ?? DEFAULT_PROCESSING_LOCATION;
@@ -142,31 +134,6 @@ interface DatalabConversionState extends JsonObject {
   error?: JsonValue;
 }
 
-/**
- * Convert a PDF buffer to Markdown through the Datalab hosted API.
- *
- * Datalab converts documents with a dedicated extraction engine (Marker),
- * which preserves tables, multi-column reading order, headings, and math
- * where the local `unpdf` fallback only produces flattened text. Conversion
- * is deterministic (no LLM transcription drift), and `accurate` mode handles
- * scanned pages. Completed responses may include a `parse_quality_score` (0–5)
- * for quality gating. Billing is per processed page; the free tier includes a
- * monthly credit (see README) so light use costs nothing.
- *
- * The flow is:
- *   1. request a presigned upload URL for the selected processing region,
- *   2. PUT the PDF bytes directly to storage,
- *   3. confirm the upload to obtain a `datalab://` reference,
- *   4. submit the conversion with that reference, then
- *   5. poll the returned `request_check_url` until `complete` or `failed`.
- *
- * The processing region is fixed at the upload step (US by default; set
- * `DATALAB_PROCESSING_LOCATION=eu` for EU data residency). The convert step
- * deliberately omits `processing_location` because the API rejects multipart form data that
- * carries it; the server processes the file from the storage region it was
- * uploaded to. The uploaded file is deleted best-effort after conversion.
- * The caller's signal and a shared deadline bound the whole exchange.
- */
 export async function extractPDFViaDatalab(
   buffer: ArrayBuffer,
   options: DatalabPDFExtractOptions,
@@ -234,12 +201,6 @@ export async function extractPDFViaDatalab(
     form.append("max_pages", String(options.maxPages));
     form.append("paginate", "true");
 
-    // The conversion itself must NOT repeat processing_location: the API
-    // rejects multipart form data carrying processing_location (HTTP 403).
-    // The region was already fixed when the presigned upload was issued for
-    // storage in the selected region, so the server processes the file
-    // wherever it was stored (US by default; use the env override for EU).
-
     const submit = await fetchDatalab(
       `${getDatalabApiBase()}/convert`,
       {
@@ -252,9 +213,6 @@ export async function extractPDFViaDatalab(
     );
     const state = await readJsonResponse(submit, apiKey);
 
-    // The submit response is an acceptance ack ({ success: true,
-    // request_check_url }) with no status field and no markdown; only the
-    // polled result carries a status. Key on status, never on success.
     if (state.status === "complete") return toResult(state);
     if (state.status === "failed") {
       throw new Error(`Datalab PDF conversion failed: ${state.error ?? "unknown error"}`);
@@ -282,8 +240,6 @@ export async function extractPDFViaDatalab(
 
     throw new Error("Datalab PDF conversion timed out");
   } finally {
-    // File deletion is best-effort. Do not extend a caller's timeout or
-    // cancellation while waiting for a remote cleanup request.
     void deleteDatalabFile(apiKey, fileId);
   }
 }
@@ -345,9 +301,7 @@ async function deleteDatalabFile(apiKey: string, fileId: string): Promise<void> 
       },
       apiKey,
     );
-  } catch {
-    // Best-effort cleanup; a leftover file is not worth failing the conversion.
-  }
+  } catch {}
 }
 
 function toResult(state: DatalabConversionState): DatalabPDFExtractResult {
@@ -488,9 +442,7 @@ async function readResponseText(response: Response): Promise<string> {
       if (bytesRead > MAX_RESPONSE_BYTES) {
         try {
           await reader.cancel();
-        } catch {
-          // The response is already too large; cancellation is best-effort.
-        }
+        } catch {}
         throw new Error("Datalab PDF conversion response too large");
       }
       chunks.push(decoder.decode(value, { stream: true }));

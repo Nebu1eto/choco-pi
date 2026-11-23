@@ -29,7 +29,6 @@ function uniqueChoices(labels: readonly string[]): string[] {
   });
 }
 
-/** Pick from caller-resolved targets; this module never resolves Git ranges or sessions. */
 export async function pickReviewTarget(
   host: TargetPickerHost,
   candidates: readonly ReviewTargetChoice[],
@@ -48,7 +47,6 @@ function resumeLabel(record: ReviewRecord): string {
   return `${describeReviewTarget(record.target)} — ${reviewed} reviewed, ${comments} comment${comments === 1 ? "" : "s"} — ${updated}`;
 }
 
-/** Load and pick a persisted review, newest first. */
 export async function pickReviewRecord(
   host: TargetPickerHost,
   store: ReviewStore,

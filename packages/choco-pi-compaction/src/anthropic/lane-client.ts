@@ -1,20 +1,3 @@
-/**
- * Isolated Anthropic on-demand compaction request (the native lane).
- *
- * The lane sends the frozen prefix of an actually transmitted request (the
- * captured wire messages before the cut, unchanged) with the captured
- * envelope (`model`, `system`, `tools`, `thinking`, metadata), the compaction
- * beta and `compaction: {type: "summarize"}`. Only compaction-incompatible
- * top-level parameters are dropped. The request runs through the INSTALLED
- * Anthropic adapter so endpoint, auth and Claude Code identity headers match
- * the foreground; its payload is replaced through the adapter's `onPayload`.
- *
- * The installed adapter drops the `compaction` block and reports
- * "Unhandled stop reason: compaction". That terminal error is the expected
- * adapter outcome here. The block, stop reason and `usage.iterations` are read
- * from the raw provider stream events instead. Nothing here touches the
- * foreground session; every failure is returned as a typed value.
- */
 import { type Model, normalizeContext, type ProviderHeaders } from "@earendil-works/pi-ai";
 import { stream as installedStream } from "@earendil-works/pi-ai/api/anthropic-messages";
 import { arr, compile, lit, nullable, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
@@ -33,11 +16,6 @@ import { type WireBody, wireBlockMember } from "./capture.ts";
 import { COMPACT_BETA, type CompactionBlock, isCompactionBlock } from "./details.ts";
 import { ERROR_BODY_LIMIT, readBoundedText } from "../shared/http.ts";
 
-// ---------------------------------------------------------------------------
-// Payload
-// ---------------------------------------------------------------------------
-
-/** Top-level keys the lane always sets itself or the API rejects with `compaction`. */
 const REPLACED_KEYS: ReadonlySet<string> = new Set([
   "model",
   "messages",
@@ -51,33 +29,23 @@ const REPLACED_KEYS: ReadonlySet<string> = new Set([
 const isForcedToolChoice = compile(obj({ type: oneOf(["any", "tool"]) }, { open: true })).check;
 
 interface LanePayloadOptions {
-  /** Betas the captured request was sent with (from its `anthropic-beta` header). */
   readonly betas: readonly string[];
   readonly maxOutputTokens: number;
-  /**
-   * Summarization prompt replacing the API's own (`compaction.instructions`).
-   * Blank text is omitted; callers keep it within MAX_COMPACTION_INSTRUCTIONS.
-   */
   readonly instructions?: string;
 }
 
-/** Documented upper bound of `compaction.instructions`, in characters. */
 export const MAX_COMPACTION_INSTRUCTIONS = 16_384;
 
-/** Character count as the API counts it (code points, not UTF-16 units). */
 export function instructionLength(text: string): number {
   return [...text].length;
 }
 
 interface LanePayload {
   readonly payload: WireBody;
-  /** Betas sent with the compaction request (captured betas plus COMPACT_BETA). */
   readonly betas: readonly string[];
-  /** Top-level parameters dropped because the API rejects them on a compaction request. */
   readonly removed: readonly string[];
 }
 
-/** Copy of `output_config` without structured-output `format` or task-budget `remaining`. */
 function compactionOutputConfig(value: JsonValue, removed: string[]): JsonValue | undefined {
   if (!isJsonRecord(value)) return structuredClone(value);
   const result: JsonObject = {};
@@ -96,7 +64,6 @@ function compactionOutputConfig(value: JsonValue, removed: string[]): JsonValue 
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-/** Mutable JSON object built while copying captured request fields. */
 interface JsonObject {
   [key: string]: JsonValue;
 }
@@ -108,10 +75,6 @@ function copyWithout(record: Readonly<JsonObject>, omitted: string): JsonObject 
   return copy;
 }
 
-/**
- * Build the compaction request from a captured body. `prefixLength` wire
- * messages are copied unchanged; nothing after the cut is included.
- */
 export function buildLanePayload(
   body: WireBody,
   prefixLength: number,
@@ -158,10 +121,6 @@ export function buildLanePayload(
   return { payload, betas, removed };
 }
 
-// ---------------------------------------------------------------------------
-// Request
-// ---------------------------------------------------------------------------
-
 type LaneFailureCode =
   | "http-429"
   | "http-529"
@@ -189,7 +148,6 @@ export interface LaneRequest {
   readonly auth: LaneAuth;
   readonly payload: WireBody;
   readonly signal: AbortSignal;
-  /** Absolute epoch milliseconds. */
   readonly deadlineMs: number;
   readonly maxResultBytes: number;
   readonly fetch?: typeof globalThis.fetch;
@@ -201,7 +159,6 @@ interface LaneSuccess {
   readonly ok: true;
   readonly block: CompactionBlock;
   readonly usage: BackgroundUsage;
-  /** "unhandled-stop-reason" is the installed adapter's expected outcome for a compaction stop. */
   readonly adapterOutcome: "unhandled-stop-reason" | "done";
   readonly requests: number;
 }
@@ -214,7 +171,6 @@ export interface LaneFailure {
   readonly retryAfterMs?: number;
   readonly httpStatus?: number;
   readonly stopReason?: string;
-  /** Provider `error.details.error_code` when present (e.g. `compaction_unavailable`). */
   readonly errorCode?: string;
   readonly usage?: BackgroundUsage;
   readonly requests: number;
@@ -325,7 +281,6 @@ interface UsageCounts {
   readonly cache_read_input_tokens?: number | null;
 }
 
-/** Input counts include cache reads/writes: every token the summarizer processed. */
 function inputOf(counts: UsageCounts): number {
   return (
     (counts.input_tokens ?? 0) +
@@ -359,7 +314,6 @@ interface HttpObservation {
   mentionsBeta: boolean;
 }
 
-/** Placeholder transcript; the adapter-built params are replaced through onPayload. */
 const LANE_CONTEXT = normalizeContext({
   messages: [{ role: "user", content: "choco-pi anthropic native compaction lane", timestamp: 0 }],
 });
@@ -407,7 +361,6 @@ interface FailureExtra {
   readonly retryAfterMs?: number;
 }
 
-/** Optional fields are present with undefined when unknown; billed 200 responses carry usage. */
 function failure(
   init: FailureInit,
   http: HttpObservation,
@@ -457,7 +410,6 @@ function classifyHttp(http: HttpObservation, state: StreamState): LaneFailure {
   return failure({ code: "incompatible", reason: "incompatible", retryable: false }, http, state);
 }
 
-/** 200 responses: success requires stop_reason "compaction" and exactly one intact block. */
 function classifyStream(
   http: HttpObservation,
   state: StreamState,
@@ -550,7 +502,6 @@ function collect<T>(state: StreamState, data: T, maxResultBytes: number): void {
       }));
     }
   } else if (data.type !== "message_stop" && data.type !== "content_block_delta") {
-    // A known event type that failed its schema is a malformed provider stream.
     state.invalidEvent = true;
   }
 }
@@ -600,7 +551,6 @@ function preflightFailure(request: LaneRequest, now: () => number): FailureInit 
   return hasAuth(request.auth) ? undefined : NO_AUTH;
 }
 
-/** Forwards the caller's abort and the absolute deadline into one lane controller. */
 class LaneAbortScope {
   readonly controller = new AbortController();
   private expired = false;
@@ -629,7 +579,6 @@ class LaneAbortScope {
   }
 }
 
-/** Provider error body, or undefined when the bounded text is not a recognized error JSON. */
 function parseErrorBody(text: string): Static<typeof ErrorBodySchema> | undefined {
   let parsed: unknown;
   try {
@@ -640,7 +589,6 @@ function parseErrorBody(text: string): Static<typeof ErrorBodySchema> | undefine
   return isErrorBody(parsed) ? parsed : undefined;
 }
 
-/** Record status, retry hints, and the bounded provider error body of one HTTP response. */
 async function observeResponse(
   http: HttpObservation,
   response: Response,
@@ -679,13 +627,11 @@ interface LaneStreamContext {
   readonly now: () => number;
 }
 
-/** Account one raw provider event; abort the lane once the result budget is exceeded. */
 function collectStreamEvent<T>(context: LaneStreamContext, data: T, maxResultBytes: number): void {
   collect(context.state, data, maxResultBytes);
   if (context.state.oversized) context.controller.abort();
 }
 
-/** Stream through the installed adapter; resolve to its terminal event, never reject. */
 async function streamLane(request: LaneRequest, context: LaneStreamContext): Promise<LaneTerminal> {
   const { controller } = context;
   const payload = request.payload;
@@ -736,7 +682,6 @@ function classifyLaneOutcome(
   return classifyStream(http, state, terminal);
 }
 
-/** Run one lane request. Never throws for provider/transport failures. */
 export async function runLaneRequest(request: LaneRequest): Promise<LaneResult> {
   const now = request.now ?? Date.now;
   const http = emptyHttpObservation();

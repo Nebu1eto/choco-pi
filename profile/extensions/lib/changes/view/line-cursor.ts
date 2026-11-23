@@ -1,38 +1,13 @@
-/**
- * The line cursor of the changes view (the interactive review's cursor): pure
- * functions over the files as displayed. A stop is a file row, a folded
- * hunk's placeholder, or one displayed line of an unfolded hunk; a host may
- * make an unfolded hunk's header a stop too (the pane, where it selects the
- * whole hunk).
- *
- * Line indexes count the hunk's displayed lines, which include any context
- * the reviewer revealed around it; hunk ids stay the content-hash ids.
- *
- * An item (a recorded finding or a review comment shown in the body) is a
- * stop too, at the place the body draws it; see {@link ItemPlace}.
- */
 import type { DiffFile, DiffHunk, DiffLine, DiffSide } from "../types.ts";
 
-/** Where the cursor sits. */
 export type LineCursor = {
   path: string;
-  /** Absent on a file row and on an item. */
   hunkId?: string;
-  /** Index into the hunk's displayed lines; absent on a file row or a folded hunk. */
   lineIndex?: number;
-  /** Fixed end of a multi-line selection in the same hunk; absent for one line. */
   anchorIndex?: number;
-  /** The item the cursor is on (a finding or comment row); absent everywhere else. */
   itemId?: string;
 };
 
-/**
- * Where an item sits in its file's body:
- * - `line`: after a displayed line of a hunk (after the hunk's only row when it is folded);
- * - `header`: after a hunk's header;
- * - `before`: between hunks, before the hunk at `hunkIndex` (`hunks.length`: after the last);
- * - `end`: after everything else in the body.
- */
 export type ItemPlace =
   | { kind: "line"; hunkId: string; lineIndex: number }
   | { kind: "header"; hunkId: string }
@@ -41,28 +16,18 @@ export type ItemPlace =
 
 export type CursorItem = { id: string; place: ItemPlace };
 
-/** One listed file as the cursor walks it. */
 export type CursorFile = {
   path: string;
-  /** False while collapsed, hidden or loading: only its row is a stop. */
   open: boolean;
-  /** Displayed hunks; undefined while loading. */
   hunks: readonly DiffHunk[] | undefined;
   folded(hunkId: string): boolean;
-  /** The header of an unfolded hunk is a stop before its lines. */
   hunkStops?: boolean;
-  /** Items in the body, in the order the body draws those at one place. */
   items?: readonly CursorItem[];
-  /**
-   * The body lists the items without its contents (a hidden sensitive file
-   * that is expanded): they follow the file row, in order.
-   */
   itemsOnly?: boolean;
 };
 
 export type CursorRow = { path: string; hunkId?: string; lineIndex?: number; itemId?: string };
 
-/** Items of `file` at one place, in their given order. */
 function itemsAt(
   file: CursorFile,
   test: (place: ItemPlace) => boolean,
@@ -72,7 +37,6 @@ function itemsAt(
     .map((item) => ({ path: file.path, itemId: item.id }));
 }
 
-/** Every stop, in display order. */
 export function cursorRows(files: readonly CursorFile[]): CursorRow[] {
   const rows: CursorRow[] = [];
   for (const file of files) {
@@ -107,7 +71,6 @@ export function cursorRows(files: readonly CursorFile[]): CursorRow[] {
           }
         }
       });
-      // A line past the hunk's displayed lines (its context collapsed): after its last row.
       for (const item of lineItems) {
         if (item.place.kind === "line" && item.place.lineIndex >= hunk.lines.length) {
           rows.push({ path: file.path, itemId: item.id });
@@ -119,7 +82,6 @@ export function cursorRows(files: readonly CursorFile[]): CursorRow[] {
         file,
         (place) =>
           (place.kind === "before" && place.hunkIndex >= hunks.length) ||
-          // An item naming a hunk the file no longer shows goes to the end with the rest.
           ((place.kind === "line" || place.kind === "header") &&
             !hunks.some((hunk) => hunk.id === place.hunkId)),
       ),
@@ -144,7 +106,6 @@ function rowIndex(rows: readonly CursorRow[], cursor: LineCursor | undefined): n
       row.lineIndex === cursor.lineIndex,
   );
   if (exact >= 0) return exact;
-  // A line that is no longer shown (its hunk folded, its context collapsed): the hunk, then the file.
   const hunk = rows.findIndex(
     (row) =>
       row.path === cursor.path && cursor.hunkId !== undefined && row.hunkId === cursor.hunkId,
@@ -153,7 +114,6 @@ function rowIndex(rows: readonly CursorRow[], cursor: LineCursor | undefined): n
   return rows.findIndex((row) => row.path === cursor.path);
 }
 
-/** Move `delta` stops, clamping at either end; any selection collapses. */
 export function moveLine(
   files: readonly CursorFile[],
   cursor: LineCursor | undefined,
@@ -168,23 +128,11 @@ export function moveLine(
   return row ? { ...row } : cursor;
 }
 
-/**
- * The side a comment on this row takes, as GitHub maps it: removed lines
- * exist only in the base (LEFT); added and unchanged lines are addressed on
- * the head (RIGHT) at their new number, the one a person finds in the file as
- * it is now and GitHub's own choice for an unchanged line.
- */
 export function lineCommentSide(line: DiffLine): DiffSide | undefined {
   if (line.newLine !== undefined) return "RIGHT";
   return line.oldLine === undefined ? undefined : "LEFT";
 }
 
-/**
- * The one side that numbers every line from `from` to `to`: RIGHT when they
- * all have a new number, else LEFT when they all have an old one (a range
- * over removed lines and the unchanged lines around them). Undefined when
- * the range mixes removed and added lines, which no single side can address.
- */
 function rangeSide(hunk: DiffHunk, from: number, to: number): DiffSide | undefined {
   const lines = hunk.lines.slice(Math.min(from, to), Math.max(from, to) + 1);
   if (lines.length === 0) return undefined;
@@ -200,7 +148,6 @@ function sideNumber(line: DiffLine | undefined, side: DiffSide): number | undefi
 
 type Selection = { cursorIndex: number; anchorIndex: number };
 
-/** The cursor and anchor in `hunk`; an anchor outside its lines reads as collapsed. */
 function selectionIn(hunk: DiffHunk, cursor: LineCursor): Selection | undefined {
   const index = cursor.lineIndex;
   if (cursor.hunkId !== hunk.id || index === undefined || hunk.lines[index] === undefined) {
@@ -211,7 +158,6 @@ function selectionIn(hunk: DiffHunk, cursor: LineCursor): Selection | undefined 
   return { cursorIndex: index, anchorIndex: anchored ? anchor : index };
 }
 
-/** Displayed line indexes the selection covers, ascending; empty off a line. */
 export function selectedLineIndexes(hunk: DiffHunk, cursor: LineCursor): number[] {
   const selection = selectionIn(hunk, cursor);
   if (!selection) return [];
@@ -220,13 +166,6 @@ export function selectedLineIndexes(hunk: DiffHunk, cursor: LineCursor): number[
   return Array.from({ length: to - from + 1 }, (_unused, offset) => from + offset);
 }
 
-/**
- * Extend the selection by `delta` displayed rows, keeping the anchor fixed.
- *
- * Extension stops at a row with no line number on the anchor's side instead
- * of skipping it: GitHub takes one side per comment, so a range across that
- * boundary would be posted against lines the highlight never showed.
- */
 export function extendSelection(hunk: DiffHunk, cursor: LineCursor, delta: number): LineCursor {
   if (!Number.isInteger(delta) || delta === 0) return cursor;
   const selection = selectionIn(hunk, cursor);
@@ -237,7 +176,6 @@ export function extendSelection(hunk: DiffHunk, cursor: LineCursor, delta: numbe
   for (let moved = 0; moved < Math.abs(delta); moved += 1) {
     const next = index + step;
     if (next < 0 || next >= hunk.lines.length) break;
-    // A range stays one that a single side numbers throughout.
     if (rangeSide(hunk, selection.anchorIndex, next) === undefined) break;
     index = next;
   }
@@ -245,13 +183,11 @@ export function extendSelection(hunk: DiffHunk, cursor: LineCursor, delta: numbe
   return { ...cursor, lineIndex: index, anchorIndex: selection.anchorIndex };
 }
 
-/** Where a comment written now attaches. */
 export type CommentPosition = {
   path: string;
   hunkId: string;
   side: DiffSide;
   line: number;
-  /** Absent for one line: `start_line` equal to `line` is a different comment to GitHub. */
   startLine?: number;
 };
 
@@ -265,7 +201,6 @@ function positionAt(path: string, hunk: DiffHunk, index: number): CommentPositio
     : { path, hunkId: hunk.id, side, line: number };
 }
 
-/** The range spans the anchor and the cursor; its side is the one that numbers all of it. */
 export function currentCommentPosition(
   path: string,
   hunk: DiffHunk,
@@ -286,12 +221,10 @@ export function currentCommentPosition(
   return position;
 }
 
-/** A line the cursor can be sent to; `lineIndex` counts the hunk's own lines. */
 export type LineTarget = { path: string; hunkId: string; lineIndex: number };
 
 export type SearchMatch = LineTarget & { side: DiffSide; line: number; text: string };
 
-/** Changed (added or removed) lines containing `query`, case-insensitively, in file order. */
 export function changedLineMatches(files: readonly DiffFile[], query: string): SearchMatch[] {
   const needle = query.toLocaleLowerCase();
   const matches: SearchMatch[] = [];

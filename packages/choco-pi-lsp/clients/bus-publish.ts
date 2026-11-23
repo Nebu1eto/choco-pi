@@ -1,22 +1,3 @@
-/**
- * Publishes `pilens:files:touched` on pi's shared `pi.events` bus (#482).
- *
- * This is choco-pi-lsp's FIRST `pi.events` broadcast surface: it exists so other
- * extensions in the same session can observe files choco-pi-lsp writes
- * autonomously (autofix/format runners) without reverse-engineering us —
- * writes the agent makes itself via its own tool calls are NOT ours to
- * broadcast; the host already knows about those (see the seam audit in
- * AGENTS.md / issue #482).
- *
- * Versioning policy: the payload is frozen-additive. New optional fields may
- * be added under the same `v: 1`; a breaking/incompatible change to an
- * existing field's meaning must bump `v`.
- *
- * Fire-and-forget: publishing must never affect the write path's success or
- * latency. Any failure (bus unavailable, emit throws) is swallowed; a `dbg`
- * callback is invoked at most once on first failure so a wired caller can log
- * it without spamming.
- */
 import { logBusEvent } from "./bus-events-logger.ts";
 import { normalizeFilePath } from "./path-utils.ts";
 import { appendRecentTouches } from "./recent-touches.ts";
@@ -33,19 +14,9 @@ export const BUS_FILES_TOUCHED_VERSION = 1;
 
 export type FilesTouchedReason = "autofix" | "format";
 
-/**
- * Fix-provenance entry (#502, additive field). Lets a consumer distinguish a
- * choco-pi-lsp-mechanical hunk (autofix/format) from an agent edit when rendering
- * a diff — the slopchop/diff-review use case from #502. Additive-only: old
- * consumers that don't know this field ignore it (frozen-additive discipline,
- * same as every other field on this payload).
- */
 export interface FixProvenanceEntry {
-  /** Absolute, normalized path (same normalization as `paths`). */
   path: string;
-  /** Tool that made the fix (e.g. "prettier", "ruff", "lsp-quickfix"). */
   tool: string;
-  /** Rule/category id, when applicable. */
   ruleId?: string;
   kind: "autofix" | "format";
 }
@@ -56,32 +27,14 @@ export interface FilesTouchedPayload {
   reason: FilesTouchedReason;
   paths: string[];
   cwd: string;
-  /**
-   * #502: optional fix-provenance breakdown for this batch. Best-effort
-   * attribution — some producers (e.g. multi-tool autofix runs) can only
-   * attribute at the tool level across the whole changed-file set, not
-   * confirm which specific file each tool changed; see call sites in
-   * clients/pipeline.ts / clients/runtime-agent-end.ts for per-site notes.
-   */
   fixes?: FixProvenanceEntry[];
 }
 
 const liveEmitter = createLiveBusEmitter();
 let hasLoggedFailure = false;
-// Log-once-per-process guards for the two structural-no-op outcomes below
-// (see bus-events-logger.ts's module doc for why these aren't logged on
-// every call — both are static, session-lifetime facts, not transient
-// per-event failures).
 let hasLoggedUnwired = false;
 let hasLoggedDisabled = false;
 
-/**
- * Wire the emit function from pi's `pi.events` bus. Called once at extension
- * factory time from index.ts (module-level singleton, same pattern as
- * `initLensEvents`). Never called ⇒ `publishFilesTouched` no-ops, which is
- * exactly the state unit tests and the MCP server path run in (no pi host,
- * no `pi.events`).
- */
 export function wireBusEmitter(emitFn: BusEmitFn | undefined): void {
   liveEmitter.wire(emitFn);
 }
@@ -90,7 +43,6 @@ export function wireBusEmitterGetter(getter: BusEmitGetter | undefined): void {
   liveEmitter.wireGetter(getter);
 }
 
-/** Test-only: reset module state between test files. */
 export function _resetForTests(): void {
   liveEmitter.reset();
   hasLoggedFailure = false;
@@ -101,11 +53,6 @@ export function _resetForTests(): void {
 
 let _envCache: boolean | undefined;
 
-/**
- * Lazy env read (house style) so tests can flip `CHOCO_PI_LSP_BUS_PUBLISH` at
- * runtime via `_resetForTests` + re-set the env var. Kill switch: set to `0`
- * to disable publishing outright.
- */
 export function isBusPublishEnabled(): boolean {
   if (_envCache === undefined) {
     _envCache = process.env.CHOCO_PI_LSP_BUS_PUBLISH !== "0";
@@ -117,39 +64,12 @@ export interface PublishFilesTouchedArgs {
   reason: FilesTouchedReason;
   paths: string[];
   cwd: string;
-  /**
-   * Loop guard: set when the write being reported was itself triggered by
-   * an INGESTED bus event (something choco-pi-lsp consumed from `pi.events`).
-   * choco-pi-lsp does not consume any events today (see #482 non-goals), so this
-   * is always false in practice — the flag exists so a future consumer
-   * can't accidentally wire a publish -> react -> publish cycle. When true,
-   * this is a structural no-op regardless of the kill switch or wiring.
-   */
   origin?: "bus";
-  /** Stable session id, for the #492 cross-process record's `sessionId` field. */
   sessionId?: string;
-  /** #502: optional fix-provenance breakdown for this batch (paths pre-normalization; normalized alongside `paths` below). */
   fixes?: FixProvenanceEntry[];
   dbg?: (msg: string) => void;
 }
 
-/**
- * Publish one `pilens:files:touched` event for a logical write batch (one
- * event per call site invocation, not per file). Fire-and-forget: never
- * throws, never awaited by the caller's write path.
- *
- * #492: this is also the producer seam for the cross-process
- * `recent-touches.json` record (clients/recent-touches.ts) — parent and
- * child pi processes run this exact function, so appending here (rather
- * than at each of the several `publishFilesTouched` call sites) guarantees
- * every future call site gets cross-process propagation for free. The
- * append is independent of `busEmit` being wired (a bare/MCP/test host with
- * no `pi.events` still gets a cross-process record — the in-process bus and
- * the on-disk record are two separate deliveries of the same payload, and
- * the record is the ONLY one of the two that survives a process boundary).
- * Fire-and-forget, same as the bus emit: never awaited, failures swallowed
- * and dbg-logged (never break the publish path).
- */
 export function publishFilesTouched(args: PublishFilesTouchedArgs): void {
   if (args.origin === "bus") return;
   if (args.paths.length === 0) return;

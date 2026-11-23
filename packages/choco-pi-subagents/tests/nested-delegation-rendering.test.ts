@@ -104,8 +104,6 @@ const renderContext = {
 for (const background of [false, true]) {
   test(`nested ${background ? "background" : "foreground"} spawn shares root details and card renderers`, async () => {
     const fixture = await createSdkFixture();
-    // This test exercises the role-default path, which requireExplicitModel
-    // would refuse before it resolves anything.
     setRequireExplicitModel(false);
     try {
       const parent = recordFixture("parent");
@@ -137,8 +135,6 @@ for (const background of [false, true]) {
         assert.equal(Object.hasOwn(result.details, field), false, `${field} is not card metadata`);
       }
       assert.equal(result.details.outputFile, child.outputFile);
-      // The fixture registry has no Anthropic model, so the implementer's
-      // default model cannot resolve and the result must say the parent ran.
       const parentModel = fixture.ctx.model;
       assert.ok(parentModel, "fixture session has a model");
       const modelNote = `Note: agent "implementer" default model "anthropic/claude-opus-5-5" is not available; running on ${parentModel.provider}/${parentModel.id} instead.\n\n`;

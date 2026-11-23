@@ -1,12 +1,3 @@
-/**
- * Review-loop helpers for the MCP path: forking a `fresh` worker (so an analysis
- * reflects the latest build, not the long-lived server's stale image) and
- * rebuilding the dist/in-place output so `fresh` picks the change up.
- *
- * Together these close the "stale-process trap": commit → `pilens_rebuild` →
- * `pilens_analyze mode=fresh` measures the just-built code first-hand.
- */
-
 import { type ChildProcessByStdio, spawn } from "node:child_process";
 import type { Readable } from "node:stream";
 import { existsSync } from "node:fs";
@@ -21,13 +12,6 @@ import {
 import { safeSpawnAsync } from "../safe-spawn.ts";
 import type { AnalyzeFileOptions, McpAnalyzeResult } from "./analyze.ts";
 
-/**
- * Which npm script rebuilds the layout the server is running from. A server at
- * `…/dist/mcp/server.js` is the precompiled dist (`build:dist` recreates it); a
- * server at `…/mcp/server.js` is the in-place dev build (`build` emits beside the
- * sources). The forked worker is always resolved relative to the server, so it
- * shares the server's layout — rebuilding that layout updates the worker.
- */
 export function resolveRebuildScript(serverFilePath: string): "build" | "build:dist" {
   return serverFilePath.replace(/\\/g, "/").includes("/dist/") ? "build:dist" : "build";
 }
@@ -37,11 +21,6 @@ export interface FreshAnalyzeOutcome {
   error?: string;
 }
 
-/**
- * Fork `node <workerPath>` to analyze a file in a fresh process. We spawn node
- * directly (no shell) so an interpreter path containing spaces is safe on
- * Windows — `safeSpawnAsync`'s shell mode does not escape the command itself.
- */
 export function analyzeFileFresh(
   workerPath: string,
   file: string,
@@ -59,9 +38,6 @@ export function analyzeFileFresh(
         stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (err) {
-      // SYNCHRONOUS spawn throw (Windows `spawn UNKNOWN`/EINVAL, the pidusage
-      // bug class, #533) — resolve the failure rather than reject/crash the
-      // host; every caller inspects the outcome's `error` field.
       resolve({
         error: `failed to fork worker: ${err instanceof Error ? err.message : String(err)}`,
       });
@@ -109,18 +85,11 @@ export function analyzeFileFresh(
 export interface RebuildOutcome {
   ok: boolean;
   script: string;
-  /** Package manager used to run the script (absent when preflight refused it). */
   packageManager?: NodePackageManager;
   durationMs: number;
   output: string;
 }
 
-/**
- * Rebuilds are safe only from a source checkout. Published packages contain
- * `dist/` but not tsconfig.dist.json, and build:dist deletes dist before tsc.
- * The node_modules check also refuses unusual installs that happen to carry a
- * stray tsconfig.
- */
 export function canRebuildPiLens(repoRoot: string): boolean {
   const inNodeModules = /(^|[\\/])node_modules([\\/]|$)/i.test(repoRoot);
   return !inNodeModules && existsSync(join(repoRoot, "tsconfig.dist.json"));
@@ -129,11 +98,6 @@ export function canRebuildPiLens(repoRoot: string): boolean {
 export const REBUILD_UNAVAILABLE_MESSAGE =
   "pilens_rebuild is unavailable in an installed choco-pi-lsp package. Rebuilding is only safe from a source checkout containing tsconfig.dist.json; reinstall or update choco-pi-lsp through your package manager instead.";
 
-/**
- * Run `<pm> run <script>` in the choco-pi-lsp repo, where `<pm>` is resolved from the
- * repo's lockfile / installed managers. Uses `safeSpawnAsync` (Windows
- * `.cmd`/shell-aware). `ignoreAmbientSignal` — a rebuild must run to completion.
- */
 export async function runRebuild(
   repoRoot: string,
   script: "build" | "build:dist",
@@ -164,7 +128,6 @@ export async function runRebuild(
   };
 }
 
-/** Minimal shape needed to dedupe/aggregate project-scan diagnostics. */
 export type ScanDiagnostic = {
   filePath: string;
   line?: number;
@@ -174,12 +137,6 @@ export type ScanDiagnostic = {
   tool?: string;
 };
 
-/**
- * Dedupe project-scan diagnostics (the cheap scanners can emit the same
- * file:line:rule twice) and aggregate counts by rule and file — so the
- * `pilens_project_scan` tool returns a compact, scannable summary instead of
- * dumping ~100 raw objects into the agent's context.
- */
 export function summarizeScan(diagnostics: readonly ScanDiagnostic[]) {
   const seen = new Set<string>();
   const deduped: ScanDiagnostic[] = [];

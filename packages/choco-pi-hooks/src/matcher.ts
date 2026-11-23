@@ -14,11 +14,6 @@ const NO_MATCHER = new Set<HookEventName>([
   "MessageDisplay",
 ]);
 
-/**
- * The canonical model name model-switch matchers compare against: a dated ID,
- * a context-size suffix such as `[1m]`, and Bedrock or Vertex spellings all
- * reduce to the one name they resolve to.
- */
 export function canonicalModelName(model: string): string {
   return model
     .trim()

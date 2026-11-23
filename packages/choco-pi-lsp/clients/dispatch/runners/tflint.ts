@@ -13,14 +13,6 @@ const tflint = createAvailabilityChecker("tflint", ".exe");
 
 const TFLINT_CONFIG = ".tflint.hcl";
 
-/**
- * tflint resolves `.tflint.hcl` from its own working directory and never walks
- * parents (its only fallback is `~/.tflint.hcl`). We run it from the edited
- * file's directory, so a repo-root config would govern nothing beneath the
- * root unless we name it explicitly. Returns null when `TFLINT_CONFIG_FILE` is
- * set: `--config` outranks the env var in tflint's own precedence, so passing
- * one would override a deliberate choice.
- */
 function findTflintConfig(fileDir: string): string | null {
   if (process.env.TFLINT_CONFIG_FILE) return null;
   const dir = findNearestDirWithAnyBasename(fileDir, [TFLINT_CONFIG]);

@@ -1,12 +1,3 @@
-/**
- * Backend injection through the public registry, the seam the end-to-end
- * harness uses to supply its own backends.
- *
- * This file runs in its own process, so nothing has registered a factory yet.
- * A factory registered for "text" before the extension binds wins over the
- * in-package default (first registration per ID wins), and the coordinator
- * uses it with the main owner key derived by `mainOwnerKey`.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -45,7 +36,6 @@ const SUMMARY = [
   "- None",
 ].join("\n");
 
-/** A summarizer bound to the model's scope that returns SUMMARY and counts its calls. */
 function countingSummarizer(
   model: ReturnType<typeof fakeModel>,
   onCall: () => void,
@@ -71,7 +61,6 @@ function countingSummarizer(
   };
 }
 
-/** The compaction extension reading the given sidecar, with injected retry and cut policies. */
 function compactionWithSidecar(file: string): ExtensionFactory {
   const background = { settingsPaths: () => [file] };
   return (pi) => {
@@ -126,7 +115,6 @@ test("a pre-registered backend factory is used instead of the default", async ()
     );
     await host.session.prompt("GO");
     const deadline = Date.now() + 5_000;
-    // A fast backend is adopted at the same run's agent_before_settle boundary.
     const done = new Set(["ready", "installed"]);
     while (!done.has(getCoordinator(ownerKey)?.status().state ?? "")) {
       if (Date.now() > deadline) throw new Error("candidate never became ready");

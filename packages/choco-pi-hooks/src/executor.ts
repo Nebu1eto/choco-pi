@@ -43,7 +43,6 @@ export interface HookBackends {
   ) => Promise<void> | void;
 }
 
-/** Internal input field naming the project root a session started in; never sent to hooks. */
 export const PROJECT_DIR_FIELD = "_claude_project_dir";
 const SESSION_END_DEFAULT_MS = 1_500;
 const SESSION_END_MAX_MS = 60_000;
@@ -64,13 +63,6 @@ function sessionEndOverrideMs(): number | undefined {
   return Number.isFinite(configured) && configured > 0 ? configured : undefined;
 }
 
-/**
- * Per-handler timeouts for one SessionEnd run. The shared budget is 1.5 seconds,
- * raised to the highest per-hook `timeout` up to 60 seconds, or set outright by
- * `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS`, which also becomes the default for
- * handlers without their own `timeout`.
- */
-/** The shared SessionEnd budget for these handlers. */
 export function sessionEndBudget(handlers: HookHandler[]): number {
   const configured = handlers.flatMap((handler) =>
     handler.timeout === undefined ? [] : [handler.timeout * 1000],
@@ -97,7 +89,6 @@ export function sessionEndTimeouts(handlers: HookHandler[]): Map<HookHandler, nu
   );
 }
 
-/** The JSON a hook receives: the input without host-internal fields. */
 export function hookPayload(input: HookInput): string {
   const { [PROJECT_DIR_FIELD]: _projectDir, ...payload } = input;
   return JSON.stringify(payload);
@@ -116,10 +107,6 @@ async function isDirectory(candidate: string): Promise<boolean> {
   }
 }
 
-/**
- * Command hooks run in the current directory; when it no longer exists they run
- * from the first that does of the session's start directory, home, or temp.
- */
 async function commandDirectory(input: HookInput): Promise<string> {
   for (const candidate of [input.cwd, projectDirOf(input), os.homedir()])
     if (candidate && (await isDirectory(candidate))) return candidate;
@@ -151,12 +138,6 @@ export function substitute(value: JsonValue, input: JsonObject): JsonValue {
   return value;
 }
 
-/**
- * A write that failed only because the child closed its end of stdin before
- * reading it. `EPIPE` is the common case; macOS reports `ENOTCONN` when the
- * peer socket is already gone, and `ECONNRESET` appears on some kernels.
- * Node reports `ERR_STREAM_DESTROYED` once the stream itself is torn down.
- */
 const isStdinClosedCode = compile(
   obj({ code: oneOf(["EPIPE", "ENOTCONN", "ECONNRESET", "ERR_STREAM_DESTROYED"]) }, { open: true }),
 ).check;
@@ -288,11 +269,6 @@ function parseJson(text: string): { value: RuntimeValue } | undefined {
   }
 }
 
-/**
- * Stdout that does not parse as one object. Two or more lines that each parse
- * on their own are plain text unless one of them is an output object that sets
- * a field; everything else is a parse failure.
- */
 function unparsedOutput(trimmed: string, stdout: string): ParsedHookOutput {
   const lines = trimmed.split(/\r?\n/).filter((line) => line.trim());
   const failure = { validationError: "hook output is not valid JSON" };
@@ -344,10 +320,6 @@ export function parseOutput(stdout: string): ParsedHookOutput {
   return { output };
 }
 
-/**
- * An async hook's response is either alone on stdout, possibly across several
- * lines, or on one line of its own among other output.
- */
 export function parseAsyncOutput(stdout: string): ParsedHookOutput {
   const whole = parseOutput(stdout);
   if (whole.output) return whole;
@@ -372,11 +344,9 @@ export async function executeHandler(
   cancel?: AbortSignal,
 ): Promise<RawExecution> {
   const controller = new AbortController();
-  // Teardown cancellation ends a run that its timeout does not bound.
   const onCancel = () => controller.abort();
   if (cancel?.aborted) controller.abort();
   else cancel?.addEventListener("abort", onCancel, { once: true });
-  // A background command hook is not bounded by its timeout; `asyncRewake` still is.
   const timer = runsWithoutTimeout(handler)
     ? undefined
     : setTimeout(() => controller.abort(), timeoutMs ?? timeoutFor(handler, input.hook_event_name));

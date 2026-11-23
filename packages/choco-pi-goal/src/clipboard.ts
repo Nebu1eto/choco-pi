@@ -68,10 +68,7 @@ function runClipboardCommand(
       stderr += chunk.toString("utf8");
     });
 
-    child.stdin?.on("error", () => {
-      // Some clipboard commands close stdin early after accepting input. The
-      // process exit code decides success.
-    });
+    child.stdin?.on("error", () => {});
 
     child.on("close", (code) => {
       if (code === 0) {

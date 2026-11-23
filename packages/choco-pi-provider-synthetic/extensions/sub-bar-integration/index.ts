@@ -43,8 +43,6 @@ const SUB_BAR_LABELS = new Map<string, string>([
 function toUsageSnapshot(quotas: QuotasResponse): UsageSnapshot {
   const windows = toWindows(quotas);
 
-  // toWindows omits the legacy subscription-only 5h window; preserve it so
-  // subscription responses still show a 5h usage bar.
   if (
     !quotas.rollingFiveHourLimit &&
     quotas.subscription?.limit &&
@@ -94,7 +92,6 @@ export function registerSubBarIntegration(pi: ExtensionAPI): void {
     });
   }
 
-  // Receive quota updates from the provider extension
   pi.events.on(SYNTHETIC_QUOTAS_UPDATED_EVENT, (data) => {
     if (!isSyntheticQuotasUpdatedPayload(data)) return;
     if (!isSynthetic() || !subCoreReady) return;

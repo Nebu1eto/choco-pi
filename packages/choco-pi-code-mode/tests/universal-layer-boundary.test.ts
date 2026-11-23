@@ -1,9 +1,3 @@
-/**
- * The universal Code Mode package must not depend on the OpenAI Codex /
- * Responses provider. choco-pi-codex composes this package through the ports
- * in `src/adapter/code-mode/ports.ts` and the host slot in `src/host-slot.ts`;
- * nothing here imports it back, and no relative import leaves this package.
- */
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -13,7 +7,6 @@ import { fileURLToPath } from "node:url";
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(PACKAGE_ROOT, "src");
 
-/** Bare specifiers of the provider and its OpenAI transport dependencies. */
 const FORBIDDEN_PACKAGES = [
   "@choco-pi/codex",
   "openai",

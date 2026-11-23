@@ -9,7 +9,6 @@ import {
   resolveEditor,
 } from "../profile/extensions/review/core/config.ts";
 
-/** Isolated project and agent directories; the real ~/.pi is never touched. */
 async function sandbox(t: { after(fn: () => void | Promise<void>): void }): Promise<{
   cwd: string;
   agentDir: string;
@@ -42,7 +41,6 @@ test("the project config wins over the agent-directory config", async (t) => {
     isEditorAvailable: async () => true,
   });
   assert.equal(config.highlight.maxDiffLines, 111);
-  // The winning file is used whole, so the loser's `enabled: false` is ignored.
   assert.equal(config.highlight.enabled, true);
 });
 

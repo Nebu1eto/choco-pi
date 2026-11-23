@@ -1,24 +1,3 @@
-/**
- * registered-tool-bridge.ts — Expose Pi-registered tools inside code mode.
- *
- * Code mode ships the Codex-native tools (apply_patch, exec_command, ...) in
- * its tools namespace; everything else choco-pi registers — LSP navigation,
- * the MCP gateway, sub-agent and session control, goals, web access — was
- * reachable only as a separate tool call outside exec, so a script could not
- * compose them.
- *
- * Pi hands extensions tool schemas (pi.getAllTools) but not executable
- * definitions, and no event carries the live session. The runner does own
- * them, so this module patches ExtensionRunner.prototype the same way
- * profile/extensions/command-filter.ts does, captures the live instance the first
- * time Pi assembles its tool list, and wraps each definition as a code-mode
- * tool.
- *
- * Bridged tools are deferred: they cost no prompt tokens, appear in ALL_TOOLS
- * for discovery, and run through the same nested-tool preflight as the native
- * ones.
- */
-
 import {
   ExtensionRunner,
   type ExtensionContext,
@@ -32,12 +11,6 @@ import { toNestedTool } from "../../adapter/code-mode/nested-tool-adapter.ts";
 import { enhanceCodeModeNestedToolError } from "./nested-tool-errors.ts";
 import type { ProgrammaticCodeModeToolDefinition } from "./types.ts";
 
-/**
- * Port (LiveContextPort): run a synchronous host-context read and map the
- * canonical stale-context error from `@choco-pi/shared/lifecycle` to
- * `undefined`; every other failure propagates. Same contract as the
- * extension's `withLiveCtx` without depending on `src/extension/`.
- */
 function withLiveCtx<Result>(action: () => Result): Result | undefined {
   try {
     return action();
@@ -54,10 +27,6 @@ type BridgedRunnerPrototype = typeof ExtensionRunner.prototype & {
 
 const BRIDGE_CAPTURE_VERSION = 1;
 
-/**
- * Names code mode must never bridge: its own entry points (recursion) and the
- * Codex-native tools it already exposes with hand-written usage lines.
- */
 export const BRIDGE_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   "exec",
   "wait",
@@ -100,7 +69,6 @@ function fallbackToolSummary(description: string): string {
   return words.slice(0, FALLBACK_SUMMARY_WORD_LIMIT).join(" ") + "…";
 }
 
-/** The single runner method the bridge needs; keeps fakes and tests honest. */
 export type RegisteredToolSource = Pick<ExtensionRunner, "getAllRegisteredTools">;
 
 function bridgedRunnerPrototype(): BridgedRunnerPrototype {
@@ -110,10 +78,6 @@ function bridgedRunnerPrototype(): BridgedRunnerPrototype {
 
 type RuntimeSessionManager = ExtensionContext["sessionManager"] | undefined;
 
-/**
- * The session a runner serves, or `undefined` once Pi has invalidated it. A
- * disposed session's runner throws the canonical stale-context error.
- */
 function liveRunnerProbe(
   runner: ExtensionRunner,
 ): { sessionManager: RuntimeSessionManager } | undefined {
@@ -124,15 +88,6 @@ function liveRunnerProbe(
   });
 }
 
-/**
- * Drop every invalidated runner. The list lives on a process-global prototype,
- * and a runner holds its session manager, every extension instance and the
- * session's closures, so an entry left behind pins a whole disposed subagent
- * session for the rest of the process. Sweeping only the stretch a lookup
- * happened to walk was not enough: the root runner moves to the end each time
- * Pi reassembles its tools, so runners of children that finished earlier sat
- * behind it where no root lookup ever reached them.
- */
 function pruneStaleRunners(runners: ExtensionRunner[]): void {
   for (let index = runners.length - 1; index >= 0; index -= 1) {
     const runner = runners[index];
@@ -148,7 +103,6 @@ function rememberRunner(runner: ExtensionRunner): void {
   runners.push(runner);
 }
 
-/** Install the capture patch once per process. */
 export function installRegisteredToolCapture(): void {
   const prototype = bridgedRunnerPrototype();
   if (prototype.__chocoPiCodeModeToolBridgeVersion === BRIDGE_CAPTURE_VERSION) return;
@@ -160,20 +114,6 @@ export function installRegisteredToolCapture(): void {
   prototype.__chocoPiCodeModeToolBridgeVersion = BRIDGE_CAPTURE_VERSION;
 }
 
-/**
- * The runner whose registry code mode must mirror.
- *
- * Every AgentSession — including each subagent's — builds its own
- * ExtensionRunner and lands in this shared capture list, and a child session
- * deliberately skips whole extensions (choco-pi-subagents returns early
- * there), so the newest live runner is not necessarily the calling session's.
- * Resolving by session identity keeps a root `exec` cell from mirroring a
- * subagent's narrower registry while background agents run, which otherwise
- * hides every orchestration tool from both the tools namespace and the
- * "outside code mode" hint. Without a ctx, with a ctx that has no session
- * manager, or when the caller's session never registered a runner, the newest
- * live runner remains the answer.
- */
 export function registeredToolRunner(ctx?: ExtensionContext): RegisteredToolSource | undefined {
   const runners = bridgedRunnerPrototype().__chocoPiCodeModeToolBridgeRunners ?? [];
   pruneStaleRunners(runners);
@@ -194,7 +134,6 @@ export function registeredToolRunner(ctx?: ExtensionContext): RegisteredToolSour
   return newestLive;
 }
 
-/** Test seam: forget the captured runner. */
 export function resetRegisteredToolCapture(ctx?: ExtensionContext): void {
   const runners = bridgedRunnerPrototype().__chocoPiCodeModeToolBridgeRunners ?? [];
   if (!ctx) {
@@ -215,7 +154,6 @@ const isToolParameters = compile(
   obj({ properties: opt(map(unknown())), required: opt(arr(str())) }, { open: true }),
 ).check;
 
-/** The JSON Schema facets the usage line renders; everything else is opaque. */
 const UsageNodeSchema = obj(
   {
     type: opt(str()),
@@ -232,11 +170,6 @@ const isUsageNode = compile(UsageNodeSchema).check;
 const MAX_USAGE_LITERALS = 8;
 const MAX_USAGE_DEPTH = 2;
 
-/**
- * Render the shape a caller must produce: literal unions inline, arrays with their element
- * shape, and object unions by their discriminator key and values. Plain scalars stay as bare
- * names so the common case keeps its one-line form.
- */
 type UsageNode = Static<typeof UsageNodeSchema>;
 
 function parseUsageNode(candidate: BoundaryValue): UsageNode | undefined {
@@ -277,7 +210,6 @@ function renderUsageValue(node: UsageNode, depth: number): string | undefined {
   return undefined;
 }
 
-/** `key:"a"|"b"` when every branch pins the same key to a literal; otherwise undefined. */
 function unionDiscriminator(branches: readonly BoundaryValue[]): string | undefined {
   const values = new Map<string, string[]>();
   for (const candidate of branches) {
@@ -312,7 +244,6 @@ function usageParams(
     .join(", ");
 }
 
-/** All direct Pi tool names, including tools intentionally excluded from the bridge. */
 export function registeredToolNames(
   runner: RegisteredToolSource | undefined = registeredToolRunner(),
 ): string[] {
@@ -323,16 +254,6 @@ export function registeredToolNames(
     .sort((left, right) => left.localeCompare(right));
 }
 
-/**
- * One compact call line, e.g. `await tools.symbol_search({query, limit?})` or
- * `await tools.harness_check({mode:"automatic"|"full", required_capabilities?:[…]})`.
- *
- * Memoized per registered definition: the schema walk costs ~0.4 ms per tool and the
- * bridge is rebuilt for every rendered code-mode result, so a resumed session with a
- * few hundred results would otherwise block the main thread for seconds. The cache
- * key is the definition object and its `parameters` object, so a re-registered tool
- * or a swapped schema recomputes.
- */
 export function bridgedToolUsage(definition: ToolDefinition): string {
   const cached = usageCache.get(definition);
   if (cached && cached.parameters === definition.parameters) return cached.usage;
@@ -354,11 +275,6 @@ function computeBridgedToolUsage(definition: ToolDefinition): string {
   return "await tools." + definition.name + "({" + params + "})";
 }
 
-/**
- * Wrap every registered tool the bridge may expose. Returns an empty list
- * until Pi has built its tool list once, so a cold start degrades to the
- * native tools rather than failing.
- */
 export function collectBridgedTools(
   runner: RegisteredToolSource | undefined = registeredToolRunner(),
   hasUI = true,

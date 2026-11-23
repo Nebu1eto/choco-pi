@@ -29,7 +29,6 @@ function stubFetch(respond: (request: CapturedRequest) => Response | Promise<Res
   return { calls, fetch: fetchStub };
 }
 
-/** A fetch that never resolves until its signal aborts, then rejects like undici. */
 function hangingFetch() {
   return vi.fn(
     (_input: RequestInfo | URL, init?: RequestInit) =>

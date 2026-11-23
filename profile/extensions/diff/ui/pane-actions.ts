@@ -1,4 +1,3 @@
-/** What the pane sends back to the session: asks, copies, notes, and starting a review. */
 import type { DiffSource, DiffStore, FileBody, FileSummary } from "../../lib/changes/git/model.ts";
 import { plural } from "../../lib/changes/view/rows.ts";
 import type { DiffHunk } from "../../lib/changes/types.ts";
@@ -43,7 +42,6 @@ export function ask(pane: DiffPaneController, session: Session, target: AskTarge
     return;
   }
   const lines = target.lines;
-  // An earlier turn's numbers are of the file as that turn left it.
   const shown = session.source;
   const context =
     shown.kind === "range" && shown.turnOnly
@@ -76,7 +74,6 @@ export function ask(pane: DiffPaneController, session: Session, target: AskTarge
   }
 }
 
-/** The pane's copy key: the selected lines as code, or the cursor's hunk as a diff. */
 export function copy(pane: DiffPaneController, session: Session, target: AskTarget): void {
   const hunk = target.hunk;
   if (!hunk) {
@@ -108,7 +105,6 @@ export function notesFor(pane: DiffPaneController, session: Session): NotesBook 
     file: pane.deps.notesIo ? pane.deps.notesFile?.(session.ctx) : undefined,
     onChange: () => {
       if (!session.alive) return;
-      // Also runs inside the book's file read: a throw here would leave that read rejected for good.
       try {
         session.view?.invalidate();
         session.host?.requestRender();
@@ -148,14 +144,6 @@ export function addNote(
   );
 }
 
-/**
- * The newest loaded body of each note's path, with the revision the store
- * gave it (the snapshot current when that load began). When a body is not of
- * the snapshot current after the loads, the paths are loaded once more. This
- * only improves the chance of a match; whether a body may be used is decided
- * by the caller against the snapshot current when it sends. Undefined when
- * the session ended.
- */
 export async function noteHunks(
   pane: DiffPaneController,
   session: Session,
@@ -181,12 +169,6 @@ export async function noteHunks(
   return loaded;
 }
 
-/**
- * All notes as one message in the editor, with each note's current or last
- * known range (the pane's `a` while there are notes, and `/diff notes
- * send`). The notes are then cleared: they are in the editor, and `a` asks
- * about the cursor's target again.
- */
 export async function sendNotes(pane: DiffPaneController, session: Session): Promise<void> {
   const book = notesFor(pane, session);
   await book.load();
@@ -199,9 +181,6 @@ export async function sendNotes(pane: DiffPaneController, session: Session): Pro
   const store = ensureStore(pane, session);
   const loaded = await noteHunks(pane, session, store, read);
   if (!loaded) return;
-  // No await below: the snapshot read here is the one the text is sent against, and a
-  // body is used only when it is of that snapshot. Anything else leaves the note outdated.
-  // A note another send took while this one waited is not sent twice.
   const held = new Set(book.notes.map((note) => note.id));
   const notes = read.filter((note) => held.has(note.id));
   if (notes.length === 0) return;
@@ -217,7 +196,6 @@ export async function sendNotes(pane: DiffPaneController, session: Session): Pro
   }
   const entries: NoteForMessage[] = notes.map((note) => {
     const file = files.get(note.path);
-    // A path with no body of the current snapshot has no hunks: its notes go as outdated.
     const status = noteStatus(note, file !== undefined, hunks.get(note.path));
     return {
       mention: mentionFor(pane, session, note.path),
@@ -252,7 +230,6 @@ export function startReview(pane: DiffPaneController, session: Session): void {
   let source: DiffSource = state?.kind === "ready" ? state.snapshot.source : session.source;
   if (state?.kind === "ready" && source.kind === "session") {
     const baseline = state.snapshot.baseline;
-    // The agent reviews the same comparison: the working tree against the session's checkpoint.
     if (baseline?.kind === "checkpoint") {
       source = {
         kind: "since-checkpoint",

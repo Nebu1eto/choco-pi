@@ -24,13 +24,10 @@ export interface OfflineProviderOptions {
   readonly state: HostState;
   readonly model: Model<"anthropic-messages">;
   readonly apiKey: string;
-  /** Route through the production capturing provider (Anthropic native replay path). */
   readonly nativeCapture: boolean;
-  /** Foreground requests below this index answer with one tool call. */
   readonly toolCycles: number;
 }
 
-/** Maps a production owner key to the session whose fake lane serves it. */
 export function sessionIdForOwner(ownerKey: string): string {
   if (ownerKey.startsWith(MAIN_PREFIX)) return ownerKey.slice(MAIN_PREFIX.length);
   if (ownerKey.startsWith(CHILD_OWNER_KEY_PREFIX))
@@ -70,7 +67,6 @@ function signaturesOf(body: WireBody): string[] {
   );
 }
 
-/** Fake-server rule mirroring the provider: altered signed blocks are a 400. */
 function tamperResponse(state: HostState, body: WireBody | undefined): Response | undefined {
   if (!body) return undefined;
   const unknown = signaturesOf(body).filter((signature) => !state.issuedSignatures.has(signature));
@@ -116,7 +112,6 @@ function rememberWire(
   return { body, branch, betas: parseBetaHeader(new Headers(init?.headers).get("anthropic-beta")) };
 }
 
-/** The offline fake server for one request: branch capture, latch, tamper rule, response. */
 async function serve(
   options: OfflineProviderOptions,
   dispatch: ResponseDispatch,
@@ -143,11 +138,6 @@ async function serve(
   return response;
 }
 
-/**
- * Registers the offline provider: the installed Anthropic adapter (or the
- * production capturing wrapper) over a scoped capturing fake fetch. Returns a
- * re-register function, since bindExtensions/reload can replace providers.
- */
 export function registerOfflineProvider(
   runtime: ModelRuntime,
   options: OfflineProviderOptions,
@@ -167,7 +157,6 @@ type OfflineStreamSimple = NonNullable<
   Parameters<ModelRuntime["registerProvider"]>[1]["streamSimple"]
 >;
 
-/** The provider's stream: the Anthropic adapter over a capturing fake fetch per request. */
 function offlineStreamSimple(options: OfflineProviderOptions): OfflineStreamSimple {
   return (_model, context, streamOptions) => {
     const summary = getCurrentSystemPrompt(context.messages).includes(SUMMARY_MARKER);

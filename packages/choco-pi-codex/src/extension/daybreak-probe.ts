@@ -13,7 +13,6 @@ export type DaybreakProbeContext = Pick<ExtensionContext, "model"> & {
   sessionManager: Pick<ExtensionContext["sessionManager"], "getSessionId">;
 };
 
-/** One serialized lookup lane: synchronous mutations coalesce and stale flights cannot report. */
 export function createCodexDaybreakProbe() {
   let epoch = 0;
   let pending: (() => Promise<void>) | undefined;
@@ -24,7 +23,6 @@ export function createCodexDaybreakProbe() {
   const drain = (): Promise<void> => {
     if (flight) return flight;
     const promise = (async () => {
-      // Delay acquisition until sibling session-start handlers have registered their controller.
       await new Promise<void>((done) => setImmediate(done));
       while (pending) {
         const next = pending;
@@ -60,20 +58,17 @@ export function createCodexDaybreakProbe() {
           let observedRevision = controller.getState().revision;
           unsubscribe = controller.subscribe(() => {
             const state = controller.getState();
-            if (state.revision === observedRevision) return; // report() repaints, not another lookup.
+            if (state.revision === observedRevision) return;
             observedRevision = state.revision;
             void schedule();
           });
         }
         const state = controller.getState();
         if (!state.requested || !model) return;
-        // api.openai.com has no ChatGPT account id or entitlement endpoint: settle as ineligible
-        // without reading credentials (no token refresh) or issuing any lookup.
         if (isOpenAIPlatformModel(model)) {
           controller.report("auth-not-eligible", state.revision);
           return;
         }
-        // A model change cannot display the previous model's grant while this lookup runs.
         controller.report("pending", state.revision);
         const probeRevision = state.revision;
         const isCurrent = (): boolean =>
@@ -112,7 +107,6 @@ export function createCodexDaybreakProbe() {
 
 export function registerCodexDaybreakProbe(pi: ExtensionAPI): void {
   const probe = createCodexDaybreakProbe();
-  // Do not block sibling handlers from registering/seeding their controller.
   pi.on("session_start", (_event, ctx) => {
     void probe.bind(ctx);
   });

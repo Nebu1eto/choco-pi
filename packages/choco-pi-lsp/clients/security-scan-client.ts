@@ -1,18 +1,3 @@
-/**
- * Shared machinery for choco-pi-lsp's session-scan security clients
- * (gitleaks #130, govulncheck #132, trivy #131).
- *
- * Each of those surfaces findings from an external CLI scanner with the same
- * lifecycle plumbing: a one-time availability resolution (PATH probe, optionally
- * followed by an auto-install) shared across concurrent first-time callers, plus
- * per-target scan re-entrancy so concurrent scans of the same root share a single
- * process. That plumbing was copy-pasted three times; this base owns it once and
- * lets each subclass supply only the tool-specific probe/install
- * (`doEnsureAvailable`) and the scan invocation.
- *
- * Refs: #130, #131, #132
- */
-
 import * as path from "node:path";
 import { createSubsystemLogger } from "./extension-log.ts";
 import { safeSpawnAsync } from "./safe-spawn.ts";
@@ -36,16 +21,6 @@ type GetAvailabilityVerdictResultContract = {
 };
 
 export abstract class SecurityScanClient<TResult> {
-  /**
-   * Availability memo, backed by the shared transient-aware latch (#1467).
-   *
-   * Assigning `false` still means "durable: this machine does not have the
-   * tool" — every existing subclass write keeps its meaning. A transient
-   * failure must expire instead: `probeVersion` latches its own transient
-   * verdicts (#1501), and any other transient failure (a scan or install
-   * timeout) goes through `markTransientlyUnavailable`, so the tool can come
-   * back without a host restart.
-   */
   private readonly availabilityLatch = createAvailabilityLatch();
 
   protected get available(): boolean | null {
@@ -64,13 +39,6 @@ export abstract class SecurityScanClient<TResult> {
     this.logDurableAbsence();
   }
 
-  /**
-   * Latch a durable absence WITH the facts behind it. Prefer this over
-   * `available = false` wherever the call site knows what actually failed — a
-   * `missing` row carrying `install: "failed"` is a retry candidate, one
-   * carrying `install: "not-attempted"` is a policy decision, and a bare one is
-   * a plain absence. Only the record can tell them apart.
-   */
   protected noteDurableAbsence(
     evidence: ProbeEvidence,
     options: { elapsedMs?: number } = {},
@@ -79,16 +47,6 @@ export abstract class SecurityScanClient<TResult> {
     this.logDurableAbsence(evidence, options.elapsedMs);
   }
 
-  /**
-   * One record per durable-absence ASSERTION, whether or not the call site had
-   * evidence. Before this, `available = false` after a failed install was a
-   * silent latch: the tool went quiet for the session with nothing in
-   * latency.log to audit (#1500). Bounded — the verdict latches, so at most one
-   * row per client per session.
-   *
-   * `elapsedMs` is whatever the caller measured (an install attempt's duration);
-   * there is no probe here, so it is 0 unless the caller has something real.
-   */
   private logDurableAbsence(evidence?: ProbeEvidence, elapsedMs = 0): void {
     logAvailabilityDecision({
       tool: this.toolName,
@@ -102,7 +60,6 @@ export abstract class SecurityScanClient<TResult> {
     });
   }
 
-  /** Outcome of the most recent `probeVersion` call. */
   protected lastProbeOutcome: AvailabilityOutcome | null = null;
 
   private ensureInFlight: Promise<boolean> | null = null;
@@ -111,20 +68,11 @@ export abstract class SecurityScanClient<TResult> {
   protected readonly log: (msg: string) => void;
   protected readonly toolName: string;
 
-  /**
-   * @param toolName binary / installer id used for probes, logs and auto-install
-   * @param verbose  when true, diagnostics are written to stderr
-   */
   protected constructor(toolName: string, verbose = false) {
     this.toolName = toolName;
     this.log = verbose ? createSubsystemLogger(toolName) : () => {};
   }
 
-  /**
-   * Resolve (once) whether the scanner is usable, sharing the probe promise
-   * across concurrent first-time callers. The tool-specific probe + optional
-   * install lives in `doEnsureAvailable`.
-   */
   async ensureAvailable(): Promise<boolean> {
     if (this.available !== null) return this.available;
     if (this.ensureInFlight) return this.ensureInFlight;
@@ -136,23 +84,8 @@ export abstract class SecurityScanClient<TResult> {
     }
   }
 
-  /** Tool-specific PATH probe + optional auto-install. Sets `this.available`. */
   protected abstract doEnsureAvailable(): Promise<boolean>;
 
-  /**
-   * Spawn `toolName <versionArgs>` and report whether it answered cleanly.
-   * Classifies the failure (`lastProbeOutcome`) and emits one
-   * availability-decision record, so a probe that keeps timing out is visible
-   * in latency.log rather than inferred from silence (#1467).
-   *
-   * Latch ownership is split by outcome: success and durable failures leave
-   * `this.available` to the caller (a missing binary may still be
-   * auto-installed), while a TRANSIENT failure is latched by the seam itself
-   * with its cooldown — the retry schedule only exists once the latch owns
-   * the verdict, and the record is incomplete without it (#1501). Callers
-   * must not re-mark a probe transient (a second noteUnavailable would
-   * double-escalate the cooldown).
-   */
   protected async probeVersion(versionArgs: string[]): Promise<boolean> {
     const sampler = startHostStallSampler();
     const startedAt = Date.now();
@@ -187,10 +120,6 @@ export abstract class SecurityScanClient<TResult> {
       hostStallMs,
     });
     this.lastProbeOutcome = outcome;
-    // A transient verdict's record is incomplete without the retry schedule,
-    // and the schedule only exists once the latch owns the verdict — so the
-    // seam writes the expiring verdict itself, at log time (#1501). Durable
-    // outcomes stay caller-owned (a missing binary may still be installed).
     const retryAfterMs =
       outcome === "transient" ? this.availabilityLatch.noteUnavailable("transient", cause) : 0;
     logAvailabilityDecision({
@@ -209,29 +138,10 @@ export abstract class SecurityScanClient<TResult> {
     return false;
   }
 
-  /** True when the last probe failed for a reason that is not the tool's fault. */
   protected probeWasTransient(): boolean {
     return this.lastProbeOutcome === "transient";
   }
 
-  /**
-   * Record a non-durable unavailability: the verdict expires after a cooldown
-   * and the next `ensureAvailable` re-probes.
-   *
-   * Returns that cooldown in ms so the caller can put it in its decision
-   * record. A latch you can read in `latency.log` without the retry schedule
-   * beside it only tells you the tool is off, not when it comes back.
-   *
-   * For NON-probe transient failures only (scan/install timeouts):
-   * `probeVersion` latches and logs its own transient verdicts (#1501), so
-   * re-marking one here would double-escalate the cooldown.
-   *
-   * Pass `opts.operationClass: "install"` when the failed operation was a
-   * network install/compile rather than a cheap probe (#1497): the retry
-   * escalates on the install-class schedule, on its OWN cooldown slot (a
-   * cheap probe failure can never shorten it), and latches for the session at
-   * the attempt ceiling, in which case the return is 0 (latched).
-   */
   protected markTransientlyUnavailable(
     cause: AvailabilityCause = "probe-timeout",
     opts?: { operationClass?: "probe" | "install" },
@@ -239,28 +149,10 @@ export abstract class SecurityScanClient<TResult> {
     return this.availabilityLatch.noteUnavailable("transient", cause, opts);
   }
 
-  /**
-   * The cause the LATCH settled on, which is not always the cause the caller
-   * passed in: at the install-class ceiling the latch rewrites it to
-   * `install-retry-exhausted` (#1497). A decision record built from the
-   * caller's own cause would say `probe-timeout` for a verdict that is no
-   * longer being retried, so the record reads it back from here.
-   */
   protected latchedCause(): AvailabilityCause | null {
     return this.availabilityLatch.getCause();
   }
 
-  /**
-   * #1623: public window onto the availability verdict for callers OUTSIDE
-   * the dispatch graph (mode=full's fresh-fetch) that need to say WHY
-   * `ensureAvailable()` most recently returned false — using the SAME
-   * `AvailabilityOutcome`/`AvailabilityCause` taxonomy every dispatch-side
-   * message is built from, rather than a re-guessed "binary unavailable"
-   * that can't tell a transient retry-cooldown probe from a durable absence.
-   * `latchedCause()`/`lastProbeOutcome` above stay `protected` for
-   * dispatch-internal callers; this is the one public seam for everyone
-   * else.
-   */
   getAvailabilityVerdict(): GetAvailabilityVerdictResultContract {
     return {
       outcome: this.availabilityLatch.getOutcome(),
@@ -269,21 +161,12 @@ export abstract class SecurityScanClient<TResult> {
     };
   }
 
-  /**
-   * Standard availability path for the GitHub-release tools (gitleaks, trivy):
-   * PATH probe first, then fall back to the choco-pi-lsp installer's `ensureTool`.
-   * Records the resolved binary path and sets `this.available`.
-   */
   protected async ensureViaInstaller(versionArgs: string[]): Promise<boolean> {
     if (await this.probeVersion(versionArgs)) {
       this.available = true;
       return true;
     }
     if (this.probeWasTransient()) {
-      // A timed-out probe is not evidence the tool is absent, so it must not
-      // trigger an install NOR latch a permanent `false`. probeVersion has
-      // already recorded the expiring verdict and its retry schedule
-      // (#1501) — re-marking it here would double-escalate the cooldown.
       this.log(`${this.toolName} availability probe timed out; not installing, will retry`);
       return false;
     }
@@ -292,17 +175,6 @@ export abstract class SecurityScanClient<TResult> {
     const installStartedAt = Date.now();
     const installed = await ensureTool(this.toolName);
     if (!installed) {
-      // #1500: this classification is ASSERTED, not derived. It is justified —
-      // the probe already classified a genuine absence, and a failed repair
-      // leaves the tool absent — but the install failure has no taxonomy of
-      // its own, so a network blip and a permanently unavailable release look
-      // identical from here. Record what happened rather than only the verdict.
-      //
-      // `ensureTool` answers the same empty result whether it TRIED and failed
-      // or declined to try (auto-install off, project trust denied), so the
-      // attempt is read from the reason it records rather than assumed — the
-      // review found `install: "failed"` being written for attempts that never
-      // happened.
       const attempt = getInstallAttempt(this.toolName);
       this.log(
         attempt?.outcome === "failed"
@@ -317,11 +189,6 @@ export abstract class SecurityScanClient<TResult> {
     this.binaryPath = installed;
     this.available = true;
     this.log(`${this.toolName} auto-installed at ${installed}`);
-    // The probe already wrote a latched `unavailable` row (#1500's durable
-    // assertion doesn't fire here — install SUCCEEDED — but probeVersion's
-    // verdict still did, before this call ever ran). Without a compensating
-    // row, the durable record says the lane is off when it just came back
-    // on: the exact defect #1606 was filed over.
     logAvailabilityDecision({
       tool: this.toolName,
       verdict: "available",
@@ -339,11 +206,6 @@ export abstract class SecurityScanClient<TResult> {
     return true;
   }
 
-  /**
-   * Per-target scan re-entrancy: when a scan for `key` is already running, the
-   * concurrent caller shares the in-flight promise instead of spawning a second
-   * process. The entry is cleared when the run settles.
-   */
   protected dedupeScan(key: string, run: () => Promise<TResult>): Promise<TResult> {
     return dedupeInFlight(this.inFlight, key, run, () =>
       this.log(`Scan already in flight for ${key}; sharing result`),

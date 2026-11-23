@@ -1,6 +1,3 @@
-// The JSON document `tlc.ts check` prints. The wrapper validates its own output
-// against this schema before printing it, and tests use it to read the output.
-
 import {
   arr,
   bool,

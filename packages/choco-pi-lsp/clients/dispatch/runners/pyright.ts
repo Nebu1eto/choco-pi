@@ -1,12 +1,3 @@
-/**
- * Pyright runner for dispatch system
- *
- * Provides real Python type-checking (not just linting).
- * Catches type errors like: result: str = add(1, 2)  # Type "int" not assignable to "str"
- *
- * Requires: pyright (pip install pyright or npm install -g pyright)
- */
-
 import { logExtension } from "../../extension-log.ts";
 import { getLSPService } from "../../lsp/index.ts";
 import { safeSpawnAsync } from "../../safe-spawn.ts";
@@ -24,10 +15,6 @@ const pyrightRunner: RunnerDefinition = {
   timeoutMs: 75_000,
 
   async run(ctx: DispatchContext): Promise<RunnerResult> {
-    // Always allow pyright CLI fallback even when LSP is enabled.
-    // LSP can be present but still fail transiently for a file; in that case,
-    // pyright provides a resilient second signal path.
-    // When LSP is enabled (not disabled via --no-lsp), connect to the LSP service for this file
     if (!ctx.pi.getFlag("no-lsp")) {
       const lspService = getLSPService();
       await lspService.getClientForFile(ctx.filePath);
@@ -35,41 +22,32 @@ const pyrightRunner: RunnerDefinition = {
 
     const cwd = ctx.cwd || process.cwd();
 
-    // Get pyright command - try multiple strategies
     let cmd: string | null = null;
 
-    // Strategy 1: Check cached availability (fast path)
     if (await pyright.isAvailableAsync(cwd)) {
       cmd = pyright.getCommand(cwd);
     }
 
-    // Strategy 2: use the shared availability taxonomy and install suppression.
     if (!cmd) {
       const installedPath = await resolveAvailableOrInstall(pyright, "pyright", cwd);
       if (installedPath) cmd = installedPath;
     }
 
-    // Strategy 3: Direct PATH check (handles module cache staleness)
     if (!cmd) {
       const { findCommandAsync } = await import("../../safe-spawn.ts");
       const foundCmd: string | null = await findCommandAsync("pyright");
       if (foundCmd) cmd = foundCmd;
     }
 
-    // If still no pyright, skip this runner
     if (!cmd) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
 
-    // Run pyright with JSON output. Pass cwd so pyright resolves
-    // pyrightconfig.json / the project venv from the project root rather than
-    // falling back to process.cwd() (which mis-resolves in multi-root setups).
     const result = await safeSpawnAsync(cmd, ["--outputjson", ctx.filePath], {
       timeout: 60000,
       cwd,
     });
 
-    // Pyright returns non-zero when errors found, that's OK
     if (result.error) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
@@ -94,7 +72,6 @@ const pyrightRunner: RunnerDefinition = {
         diagnostics,
         semantic: hasErrors ? "blocking" : diagnostics.length > 0 ? "warning" : "none",
       };
-      // choco-pi-lsp-ignore: missing-error-propagation
     } catch {
       logExtension({
         subsystem: "runner:pyright",
@@ -114,13 +91,9 @@ const pyrightRunner: RunnerDefinition = {
 function parsePyrightOutput(data: any, _filePath: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
 
-  // Pyright JSON output has generalDiagnostics array
   const generalDiags = data.generalDiagnostics || [];
 
   for (const diag of generalDiags) {
-    // Skip if not for this file (pyright may output diagnostics for imports)
-    // For now, include all - caller will filter if needed
-
     diagnostics.push({
       id: `pyright-${diag.rule || diag.start?.line || "unknown"}`,
       message: diag.message || "Type error",

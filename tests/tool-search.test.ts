@@ -39,7 +39,6 @@ interface FakeTool {
   exposure?: ToolExposure;
 }
 
-/** The context members the policy reads: a fresh session with no recorded tools. */
 interface FakeContext {
   sessionManager: { getBranch(): [] };
 }
@@ -95,7 +94,6 @@ test("registers choco-pi's tool_search, which replaces Pi's built-in", () => {
 });
 
 test("activates tool_search with the lean surface before the first request", async () => {
-  // tool_search registers inactive (defaultActive: false).
   const host = fakeHost(
     [{ name: "read" }, { name: "deferred_probe" }, { name: "apply_patch" }, searchTool],
     ["deferred_probe"],
@@ -126,7 +124,6 @@ test("search loads after the lock survive later turns and model changes", async 
   host.emit("before_agent_start");
   assert.deepEqual(host.active, ["read", "tool_search"]);
 
-  // What tool_search does on a match outside Code Mode: an additive activation.
   host.active = [...host.active, "mcp__radius__issues"];
   const commits = host.commits.length;
   host.emit("before_agent_start");
@@ -138,8 +135,6 @@ test("search loads after the lock survive later turns and model changes", async 
 });
 
 test("a fresh session start carries search-loaded tools but not inactive-by-policy direct tools", () => {
-  // A resumed transcript restores both a tool the search loaded and a direct
-  // tool the lean surface defers.
   const host = fakeHost(
     [
       { name: "read" },
@@ -285,8 +280,6 @@ async function runToolSearch(session: AgentSession, query: string): Promise<stri
 test("real Pi session: tool_search is active on turn one and loads late deferred tools", async () => {
   let registerLate: (() => void) | undefined;
   const lateDeferred: ExtensionFactory = (pi) => {
-    // A built-in MCP server connects after session_start and registers its
-    // tools with deferred exposure.
     registerLate = () =>
       pi.registerTool({
         name: "mcp__radius__list_issues",
@@ -321,11 +314,8 @@ test("real Pi session: tool_search is active on turn one and loads late deferred
 
 interface LateToolFixture {
   session: AgentSession;
-  /** The active tools once the session has started. */
   started: string[];
-  /** Registers the recorded deferred tool, as an MCP server connecting late would. */
   registerLate(): void;
-  /** Sends a prompt the faux model answers without tool calls. */
   prompt(text: string): Promise<void>;
   close(): Promise<void>;
 }
@@ -334,11 +324,8 @@ const LATE_TOOL = "mcp__late__probe";
 const UNRECORDED_TOOL = "extra_direct";
 
 interface LateToolOptions {
-  /** Entries of an earlier session to resume. */
   resume?: FileEntry[];
-  /** Load choco-pi's tool-search policy; off for a Pi-only control. */
   toolSearch?: boolean;
-  /** The `tools` option Pi's CLI passes from `--tools`. */
   tools?: string[];
 }
 
@@ -381,7 +368,6 @@ async function lateToolFixture(options: LateToolOptions = {}): Promise<LateToolF
         }),
       });
   };
-  // The control runs Pi's own built-in search in place of choco-pi's.
   const search = options.toolSearch === false ? createToolSearchExtension() : toolSearch;
   const fixture = await sdkSession([search, fixtureTools], options.resume, options.tools);
   const { session, modelRuntime } = fixture;
@@ -401,7 +387,6 @@ async function lateToolFixture(options: LateToolOptions = {}): Promise<LateToolF
   };
 }
 
-/** Records `declared` the way Pi does with a request: as a system message's added tools. */
 function recordTools(sessionManager: SessionManager, declared: readonly string[]): void {
   sessionManager.appendMessage({
     role: "system",
@@ -423,7 +408,6 @@ function appendUserTurn(sessionManager: SessionManager, text: string): string {
   });
 }
 
-/** Records `declared`, adds two user turns, and navigates back to the first one. */
 async function recordAndNavigateBack(session: AgentSession, declared: string[]): Promise<void> {
   recordTools(session.sessionManager, declared);
   const target = appendUserTurn(session.sessionManager, "first");
@@ -431,7 +415,6 @@ async function recordAndNavigateBack(session: AgentSession, declared: string[]):
   assert.equal((await session.navigateTree(target, { summarize: false })).cancelled, false);
 }
 
-/** Entries of an earlier session whose transcript recorded `declared`, then `removed`. */
 function sessionThatRecorded(
   declared: readonly string[],
   removed: readonly string[] = [],
@@ -486,7 +469,6 @@ test("real Pi session: a recorded tool still unregistered at the next request ex
   const fixture = await lateToolFixture();
   try {
     await recordAndNavigateBack(fixture.session, [...fixture.started, LATE_TOOL]);
-    // Like Pi's pending tools, the restored name is dropped once a request records the loadout.
     await fixture.prompt("before registration");
     fixture.registerLate();
     await fixture.prompt("after registration");
@@ -496,8 +478,6 @@ test("real Pi session: a recorded tool still unregistered at the next request ex
   }
 });
 
-// On resume, MCP servers are still connecting when the lean surface first commits, and that
-// commit clears Pi's pending recorded tools. The control shows Pi alone keeps the tool.
 for (const toolSearchLoaded of [false, true]) {
   const subject = toolSearchLoaded ? "with the lean surface" : "Pi alone (control)";
   test(`real Pi session: ${subject} keeps a searched tool that registers after resume`, async () => {
@@ -516,11 +496,6 @@ for (const toolSearchLoaded of [false, true]) {
   });
 }
 
-// Pi applies the CLI's `--tools +name/-name` modifiers to the loadout it restores on resume,
-// in order, so the last modifier naming a tool decides. The CLI both leaves them in argv and
-// passes them as the session's `tools` option, so the fixture does both. With a recorded direct
-// tool, the lean surface's first commit deactivates part of the restored loadout, which drops
-// Pi's pending tools, and choco-pi's own carry-over must honor the modifiers instead.
 for (const [tools, kept] of [
   [`-${LATE_TOOL}`, false],
   [`-${LATE_TOOL},+${LATE_TOOL}`, true],
@@ -616,7 +591,6 @@ test("real Pi session: in Code Mode tool_search lists exec-callable tools and lo
   const fixture = await sdkSession([toolSearch, codeMode]);
   try {
     const { session } = fixture;
-    // Let the lean surface's deferred session-start commit run first.
     await new Promise((resolve) => setImmediate(resolve));
     session.setActiveToolsByName(["exec", "wait", "tool_search"]);
     const active = session.getActiveToolNames();

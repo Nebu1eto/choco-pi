@@ -45,7 +45,6 @@ const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve
 
 const POLICY: UsageRequestPolicy = { minIntervalMs: 60_000, maxStaleMs: 60 * 60_000 };
 
-/** In-memory stand-in for the shared cache file. */
 function memoryStorage(): UsageCacheStorage & { entries: () => Record<string, UsageCacheEntry> } {
   let stored: Record<string, UsageCacheEntry> = {};
   return {
@@ -120,7 +119,6 @@ test("registers /quota as a plain-text alias for /usage outside the TUI", async 
   assert.deepEqual(statusKeys, ["choco-pi.report"], "the structured report precedes the notice");
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0]?.[1], "info");
-  // No provider is signed in: absent providers are omitted rather than listed as not signed in.
   assert.equal(notifications[0]?.[0], "");
 });
 
@@ -423,7 +421,6 @@ test("caches a tab's concise and expanded bodies separately", async () => {
     ["context", true],
     ["context", false],
   ]);
-  // Toggling back paints the cached concise body instead of blanking to "loading".
   assert.deepEqual(paints, [
     "loading",
     "context-brief",
@@ -437,7 +434,6 @@ test("caches a tab's concise and expanded bodies separately", async () => {
 
 const NOW = Date.parse("2026-08-20T12:00:00Z");
 
-/** A Codex payload whose 5-hour window resets `resetInHours` from `NOW`. */
 function codexPayload(usedPercent: number, resetInHours: number): RuntimeValue {
   return {
     plan_type: "pro",
@@ -459,7 +455,6 @@ test("a fixed window is paced against the share of it that has passed", () => {
   assert.equal(quotaHealth(window, NOW), "under");
   assert.equal(quotaHealth({ ...window, percent: 60 }, NOW), "over");
   assert.equal(quotaHealth({ ...window, percent: 100 }, NOW), "exhausted");
-  // Without a stated window length there is no clock to judge the usage by.
   assert.equal(quotaHealth({ ...window, windowSeconds: undefined }, NOW), "unknown");
 });
 
@@ -474,7 +469,6 @@ test("Claude windows carry the length their reset time is measured against", () 
     usage.windows.map((window) => window.windowSeconds),
     [5 * 3_600, 7 * 86_400],
   );
-  // 3h of a 5h window gone against 10% used, then 2d of 7d left against 90% used.
   assert.deepEqual(
     usage.windows.map((window) => quotaHealth(window, NOW)),
     ["under", "over"],
@@ -535,10 +529,8 @@ test("a refilling bucket is paced by how its level moved, not by a clock", () =>
     health: "over",
     label: "spending faster than it refills",
   });
-  // An idle gap between regeneration ticks holds the level and must read as green.
   assert.equal(refillPace({ capacity: 1_000, remaining: 800 }, previous, minute)?.health, "under");
   assert.equal(refillPace({ capacity: 1_000, remaining: 850 }, previous, minute)?.health, "under");
-  // A changed capacity is a plan change, and a near-simultaneous pair is noise.
   assert.equal(refillPace({ capacity: 2_000, remaining: 750 }, previous, minute), undefined);
   assert.equal(refillPace({ capacity: 1_000, remaining: 750 }, previous, 1_000), undefined);
   assert.equal(refillPace({ capacity: 1_000, remaining: 750 }, undefined, minute), undefined);
@@ -546,7 +538,6 @@ test("a refilling bucket is paced by how its level moved, not by a clock", () =>
 
 function syntheticPayload(remainingCredits: string, percentRemaining = 40): RuntimeValue {
   return {
-    // Synthetic retired this limit; a stale field must not resurface in /usage.
     rollingFiveHourLimit: {
       nextTickAt: "2026-08-20T12:15:00Z",
       tickPercent: 0.05,
@@ -575,7 +566,6 @@ test("Synthetic usage reports only weekly credits, not the retired five-hour lim
 });
 
 function syntheticPlanPayload(percentRemaining: number): RuntimeValue {
-  // Shape returned by /v2/quotas since Synthetic replaced weeklyTokenLimit.
   return {
     subscription: { limit: 500, requests: 0, renewsAt: "2026-08-20T12:15:00Z" },
     search: { hourly: { limit: 250, requests: 0, renewsAt: "2026-08-20T12:15:00Z" } },
@@ -623,14 +613,12 @@ test("Synthetic pacing compares the stored reading with the live one", () => {
     ["under"],
   );
 
-  // With nothing to compare against, a refilling bucket has no pace at all.
   const alone = normalizeSyntheticUsage(syntheticPayload("$39.00"), undefined, NOW);
   assert.deepEqual(
     alone.windows.map((window) => quotaHealth(window, NOW)),
     ["unknown"],
   );
 
-  // An exhausted bucket outranks the pace verdict.
   const empty = normalizeSyntheticUsage(syntheticPayload("$0.00", 0), previous, NOW);
   assert.equal(quotaHealth(empty.windows[0], NOW), "exhausted");
 });
@@ -801,11 +789,6 @@ function registryContext(tokens: Record<string, string>): ExtensionContext {
   });
 }
 
-/**
- * Registry fake for the `openai` usage entry: `credential` is the host's stored
- * credential type, and every token or network path throws so the test proves
- * neither is touched.
- */
 type OpenAIFixture = { ctx: ExtensionContext; tokenRequests: string[] };
 
 function openaiContext(
@@ -881,7 +864,6 @@ test("openai usage entry distinguishes API keys, absent auth, and a broken regis
     },
   });
   assert.deepEqual(openaiUsage(broken), { name: "ChatGPT", status: "not connected", windows: [] });
-  // Configured, but the host cannot report the credential type: still no request.
   const unknownType = reinterpretHostValue<ExtensionContext>({
     modelRegistry: { getProviderAuthStatus: () => ({ configured: true }) },
   });
@@ -893,7 +875,6 @@ test("openai usage entry distinguishes API keys, absent auth, and a broken regis
 
 test("a Codex sign-in without an account id falls back to the openai state", async (t) => {
   t.mock.method(globalThis, "fetch", () => Promise.reject(new Error("no network in tests")));
-  // A token without chatgpt_account_id (an expired or foreign sign-in) is not a Codex sign-in.
   const { ctx } = openaiContext("oauth", "not-a-jwt", {
     provider: "openai-codex",
     id: "gpt-6-sol",
@@ -910,7 +891,6 @@ test("a Codex sign-in without an account id falls back to the openai state", asy
   const signedOut = await readProviderUsages(
     openaiContext(undefined, "not-a-jwt", { provider: "openai-codex", id: "gpt-6-sol" }).ctx,
   );
-  // An unusable Codex credential with no openai sign-in is listed as absent, not a row.
   assert.deepEqual(signedOut.providers, []);
   assert.deepEqual(signedOut.absent, ["Claude", "ChatGPT", "Google", "Grok", "Synthetic"]);
 });
@@ -956,15 +936,12 @@ test("an active openai-codex model reads the Codex credential", async (t) => {
 test("the ChatGPT entry prefers the active twin, then Codex, then openai", async (t) => {
   t.mock.method(globalThis, "fetch", () => Promise.reject(new Error("no network in tests")));
   const anthropic = { provider: "anthropic", id: "claude-opus-5-5" };
-  // Both signed in, another provider active: Codex is selected and its token is read.
   const both = openaiContext("oauth", "not-a-jwt", anthropic);
   assert.equal(chatgptUsageProvider(both.ctx), "openai-codex");
   await readProviderUsages(both.ctx);
   assert.deepEqual(both.tokenRequests, ["openai-codex"]);
-  // Only openai signed in: never reads a Codex token.
   const openaiOnly = openaiContext("oauth", undefined, anthropic);
   assert.equal(chatgptUsageProvider(openaiOnly.ctx), "openai");
-  // Active Codex model without a Codex credential: openai still reports.
   const codexActive = openaiContext("oauth", undefined, { provider: "openai-codex", id: "x" });
   assert.equal(chatgptUsageProvider(codexActive.ctx), "openai");
   assert.equal(chatgptUsageProvider(openaiContext(undefined).ctx), undefined);

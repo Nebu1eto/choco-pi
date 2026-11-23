@@ -28,7 +28,6 @@ export const DEFAULT_SETTINGS: AdvisorSettings = {
   model: "anthropic/claude-fable-5-2",
   effort: "low",
 };
-// Open object, as TypeBox's was: unknown keys pass validation (and are kept on read).
 const isSettingsLayer = compile(
   obj(
     {
@@ -43,7 +42,6 @@ const isSettingsLayer = compile(
 const jsonObjectSchema = map(unknown());
 const isJsonObject = compile(jsonObjectSchema).check;
 type JsonObject = Static<typeof jsonObjectSchema>;
-/** A missing-file error: any object carrying `code: "ENOENT"` (errors are not JSON, so the schema is open). */
 const isMissingError = compile(obj({ code: lit("ENOENT") }, { open: true })).check;
 
 export interface SettingsLayer {

@@ -1,7 +1,3 @@
-/**
- * Tool calls in the review's side chat, drawn through the exact component
- * the main agent's transcript uses.
- */
 import { isJsonRecord, isString } from "../../lib/runtime-values.ts";
 import {
   createBashToolDefinition,
@@ -78,10 +74,6 @@ export function renderToolEntry(
 ): readonly string[] {
   let toolView = ctx.toolViews.get(entry.toolCallId);
   if (!toolView) {
-    // The session's registered definition carries the tool's own
-    // renderers — exactly what the main transcript passes — so
-    // extension and MCP tools render their concise titles instead
-    // of the raw argument/output fallback.
     let registeredDefinition: ToolExecutionDefinition;
     try {
       // SAFETY: ReviewChat exposes the host definition consumed by ToolExecutionComponent.
@@ -124,8 +116,6 @@ export function renderToolEntry(
             ? { ...item, text: terminalSafeValue(item.text) }
             : item,
         ),
-        // Pi's renderers draw details as given (an edit's diff, paths), so they are
-        // made terminal-safe here too.
         details: terminalSafeValue(result.details),
         isError: entry.isError === true,
       },
@@ -134,17 +124,11 @@ export function renderToolEntry(
     toolView.result = entry.result;
     toolView.done = entry.done;
   }
-  // Expanded keeps the component's own wrapping at the pane width,
-  // where full content is the point.
   if (ctx.toolsExpanded) return toolView.component.render(width);
   const wide = toolView.component.render(Math.max(width, COLLAPSED_TOOL_RENDER_WIDTH));
-  // A failed tool keeps its message visible even collapsed; hiding
-  // an error behind Ctrl+O would read as a hang.
   if (entry.isError === true) {
     return wide.map((line) => truncateToWidth(line, width, "…"));
   }
-  // Collapsed to the maximum: the one-line call title, like a folded
-  // row, with Ctrl+O holding everything else.
   const title = wide.find((line) => stripTerminalSequences(line).trim().length > 0);
   return title === undefined ? [] : [truncateToWidth(title, width, "…")];
 }

@@ -208,7 +208,7 @@ interface BoundaryToolParameters {
   include_content?: boolean;
   language?: string;
   num_results?: number;
-  numResults?: number; // pre-snake_case spelling, sent only to prove rejection
+  numResults?: number;
   offset?: number;
   provider?: string | string[];
   provider_options?: Record<string, Record<string, string>>;
@@ -367,8 +367,6 @@ async function execute(
 ) {
   const toolCallId = `canonical-${Date.now()}`;
   const context = host.runner.createToolContext(toolCallId, undefined);
-  // createToolContext defines tools/executeTool as non-enumerable properties; carry them
-  // explicitly because the spread below copies only enumerable members.
   return host.tool.execute(toolCallId, parameters, undefined, onUpdate, {
     ...context,
     tools: context.tools,

@@ -8,20 +8,14 @@ interface ForegroundDispatch {
   readonly sessionId: string;
   readonly index: number;
 }
-/** Awaited inside the actual fake transport before a foreground response is returned. */
 export type ForegroundObserver = (dispatch: ForegroundDispatch) => Promise<void>;
 export interface ResponseDispatch {
   readonly sessionId: string;
   readonly index: number;
   readonly summary: boolean;
 }
-/** Consulted by the offline fake server before the default scripted response. */
 export type ResponseOverride = (dispatch: ResponseDispatch) => Response | undefined;
 
-/**
- * Memory-only parsed copy of one actual serialized request. It can hold
- * signatures, so it is never recorded; scenarios record derived booleans only.
- */
 export interface WireRequest {
   readonly sessionId: string;
   readonly index: number;
@@ -33,10 +27,6 @@ export interface WireRequest {
   readonly status: number;
 }
 
-/**
- * Memory-only parsed copy of one offline xAI foreground request (it can hold
- * an encrypted compaction item, so it is never recorded).
- */
 export interface XaiWireRequest {
   readonly index: number;
   readonly summary: boolean;
@@ -44,14 +34,12 @@ export interface XaiWireRequest {
   readonly status: number;
 }
 
-/** Memory-only copy of one scripted xAI `/responses/compact` request. */
 export interface XaiLaneRequest {
   readonly model: string;
   readonly instructions: string | undefined;
   readonly inputItems: number;
 }
 
-/** Mutable per-launch harness state shared by the launcher modules. */
 export class HostState {
   disposed = false;
   networkCalls = 0;
@@ -59,14 +47,11 @@ export class HostState {
   mainSessionId = "";
   foregroundObserver: ForegroundObserver | undefined;
   responseOverride: ResponseOverride | undefined;
-  /** Input tokens the default foreground response reports; undefined keeps the fixture's 10. */
   reportedInputTokens: number | undefined;
   readonly requestBranches: RequestBranch[] = [];
   readonly wire: WireRequest[] = [];
-  /** Offline xAI foreground requests and scripted compact-lane requests, in order. */
   readonly xaiWire: XaiWireRequest[] = [];
   readonly xaiLane: XaiLaneRequest[] = [];
-  /** Signatures the fake server issued; any other signature is a tamper (400). */
   readonly issuedSignatures = new Set<string>();
   readonly requestCounts = new Map<string, number>();
   readonly summaryCounts = new Map<string, number>();
@@ -79,7 +64,6 @@ export class HostState {
   assertCurrent(): void {
     if (this.disposed) throw new Error("Harness owner disposed");
   }
-  /** Returns the next 0-based index for the session's request lane. */
   nextIndex(sessionId: string, summary: boolean): number {
     const counts = summary ? this.summaryCounts : this.requestCounts;
     const index = counts.get(sessionId) ?? 0;

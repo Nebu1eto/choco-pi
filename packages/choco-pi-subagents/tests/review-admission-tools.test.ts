@@ -37,7 +37,6 @@ interface TopLevel {
   tool: (name: string, params: ToolArgs) => Promise<string>;
 }
 
-/** The real extension against a temp agent dir, with the manager's spawn stubbed. */
 async function topLevel(t: TestContext): Promise<TopLevel> {
   const dir = await mkdtemp(join(tmpdir(), "choco-pi-review-tools-"));
   const previous = process.env.PI_CODING_AGENT_DIR;
@@ -47,9 +46,7 @@ async function topLevel(t: TestContext): Promise<TopLevel> {
     else process.env.PI_CODING_AGENT_DIR = previous;
     await rm(dir, { recursive: true, force: true });
   });
-  // The profile's roles install as global agents, as scripts/install-profile.ts links them.
   await symlink(join(REPO_ROOT, "profile", "agents"), join(dir, "agents"));
-  // The fixture uses process.cwd().
   const previousCwd = process.cwd();
   process.chdir(REPO_ROOT);
   t.after(() => process.chdir(previousCwd));
@@ -69,7 +66,6 @@ async function topLevel(t: TestContext): Promise<TopLevel> {
       return `agent-${spawns.length}`;
     },
   );
-  // The SDK fixture has no model registry and the spawn is stubbed, so no model is needed.
   setRequireExplicitModel(false);
   t.after(() => setRequireExplicitModel(true));
   const runner = parent.session.extensionRunner;

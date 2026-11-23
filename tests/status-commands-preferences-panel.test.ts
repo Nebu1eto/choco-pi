@@ -214,14 +214,12 @@ async function settle(condition: () => boolean): Promise<void> {
   assert.fail("the Statistics tab did not finish loading");
 }
 
-/** A session root with one project holding one billed call, under a private agent dir. */
 async function statsAgentDir(): Promise<string> {
   const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-stats-dialog-"));
   await addStatsSession(agentDir, "s1");
   return agentDir;
 }
 
-/** Adds one session file with one billed call from a minute ago. */
 async function addStatsSession(agentDir: string, id: string): Promise<void> {
   const project = path.join(agentDir, "sessions", "--work-app--");
   await mkdir(project, { recursive: true });
@@ -292,7 +290,6 @@ test("the Statistics tab scans the agent's session root, cycles period and scope
       "the sub-menu bar names every section",
     );
     assert.ok(stripVTControlCharacters(loaded).includes("Tokens per day"), "Summary opens first");
-    // → steps to By Model at once: the data on screen is laid out again, not reloaded.
     view.dialog.handleInput?.("\u001b[C");
     const models = stripVTControlCharacters(rendered(120));
     assert.ok(models.includes("Claude Opus 5.5 (Anthropic)"), "rows show friendly model names");
@@ -302,7 +299,6 @@ test("the Statistics tab scans the agent's session root, cycles period and scope
     assert.ok(loaded.includes("r cycles period"));
     assert.ok(loaded.includes("←/→ switches section"));
     assert.ok(loaded.includes("Ctrl+O expands"));
-    // Width 1 is below the text tabs' own padding, on this tab as on Status and Context.
     for (const width of [2, 20, 30, 40, 48, 80, 120]) {
       for (const row of view.dialog.render(width)) {
         assert.ok(visibleWidth(row) <= width, `${visibleWidth(row)} columns at width ${width}`);
@@ -321,7 +317,6 @@ test("the Statistics tab scans the agent's session root, cycles period and scope
     await settle(() => rendered(120).includes("Last 24 hours · this project"));
     assert.ok(stripVTControlCharacters(rendered(120)).includes("Tokens per hour"));
 
-    // Leaving and returning keeps the chosen view and paints it from cache at once.
     view.dialog.handleInput?.("1");
     assert.ok(rendered(120).includes("\u001b[31m  Status  "));
     view.dialog.handleInput?.("5");
@@ -343,7 +338,6 @@ test("Ctrl+O and the sub-menu reuse the statistics on screen; a new period reuse
   try {
     const plain = (): string => stripVTControlCharacters(view.dialog.render(120).join("\n"));
     await settle(() => plain().includes("Scanned 1 sessions"));
-    // A second session appears; nothing below may read the logs again within the TTL.
     await addStatsSession(agentDir, "s2");
     view.dialog.handleInput?.("\u000f");
     assert.ok(
@@ -372,7 +366,6 @@ test("the Statistics body scrolls inside a fixed-height window under the tab hea
   const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
   const agentDir = await statsAgentDir();
   process.env["PI_CODING_AGENT_DIR"] = agentDir;
-  // 20 terminal rows leave a 10-row body window, less a row for the wrapped hint.
   const view = openDialog("stats", 20);
   try {
     const plain = (): string[] =>
@@ -407,7 +400,6 @@ test("the Statistics body scrolls inside a fixed-height window under the tab hea
       "scrolling stops at the end",
     );
 
-    // Expanding keeps the same window height and starts at the top.
     view.dialog.handleInput?.("\u000f");
     await settle(() => plain().some((row) => row.includes("Ctrl+O collapses")));
     const expanded = plain();
@@ -481,7 +473,6 @@ test("the Statistics dialog leaves Pi's footer its rows when the header and hint
         );
         for (const width of [40, 54, 80, 140]) {
           const rendered = view.dialog.render(width);
-          // The base budget: everything but the four rows Pi's footer needs.
           assert.ok(rendered.length <= rows - 4, `${rendered.length} rows at ${width}×${rows}`);
           const text = rendered.map((row) => stripVTControlCharacters(row).trim()).join(" ");
           assert.ok(text.includes("Enter/Esc closes"), `the whole hint shows at ${width}×${rows}`);
@@ -501,7 +492,6 @@ test("a slow load from an expired scan never replaces newer statistics under Ctr
   const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
   const agentDir = await statsAgentDir();
   process.env["PI_CODING_AGENT_DIR"] = agentDir;
-  // Hold the first scan's directory read until the newer scan has been shown.
   const fs = (await import("node:fs/promises")).default;
   const { syncBuiltinESMExports } = await import("node:module");
   const readdir = fs.readdir.bind(fs);
@@ -527,7 +517,6 @@ test("a slow load from an expired scan never replaces newer statistics under Ctr
     await settle(() => held);
     await addStatsSession(agentDir, "s2");
     clock += STATS_CACHE_TTL_MS + 1;
-    // All time scans afresh past the TTL; cycling back to 30 days reuses that scan.
     view.dialog.handleInput?.("r");
     await settle(() => plain().includes("All time") && plain().includes("Scanned 2 sessions"));
     for (let step = 0; step < 4; step += 1) view.dialog.handleInput?.("r");
@@ -570,7 +559,6 @@ test("every Statistics sub-menu takes the same 25 body rows in a tall terminal",
             .includes(expanded ? "Ctrl+O collapses" : "Ctrl+O expands"),
         );
         heights.push(rows.length);
-        // The body window: from the Statistics header to the blank row above the hint.
         const top = rows.findIndex((row) => row.includes("Statistics · "));
         const hint = rows.findIndex((row) => row.includes("Tab switches tabs"));
         bodies.push(hint - 1 - top);
@@ -619,7 +607,6 @@ function mouse(
   };
 }
 
-/** The cell where `text` starts on the first dialog row whose plain text includes `row`. */
 function cellOf(dialog: Component, width: number, row: string, text: string) {
   const lines = dialog.render(width).map((line) => stripVTControlCharacters(line));
   const y = lines.findIndex((line) => line.includes(row));
@@ -627,7 +614,6 @@ function cellOf(dialog: Component, width: number, row: string, text: string) {
   return { x: lines[y]?.indexOf(text) ?? -1, y };
 }
 
-/** A press and its click at one cell, with the frame Pi draws between them. */
 function clickAt(dialog: Component, width: number, at: ReturnType<typeof cellOf>) {
   const press = dialog.handleMouse?.(mouse("press", at.x, at.y));
   dialog.render(width);
@@ -649,7 +635,6 @@ test("a click on a tab title switches tabs; a press on plain text is left to Pi"
     assert.ok(plain().includes("Session Info"), "the Status tab shows");
     const body = cellOf(view.dialog, 120, "Session Info", "Session Info");
     assert.equal(view.dialog.handleMouse?.(mouse("press", body.x, body.y)), undefined);
-    // The padding around a title belongs to it, the separator to neither.
     const header = cellOf(view.dialog, 120, "Status  ·  Context", "·  Context");
     assert.equal(view.dialog.handleMouse?.(mouse("press", header.x, header.y)), undefined);
     clickAt(view.dialog, 120, { x: header.x + 1, y: header.y });

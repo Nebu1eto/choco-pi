@@ -34,7 +34,6 @@ export interface BridgeExecSession {
   interactive: boolean;
   nextEmptyPollYieldMs?: number | undefined;
   lastSeq: number;
-  /** Chunks the bridge discarded before the host read them (see {@link poll}). */
   droppedChunks: number;
   startedAt: number;
   updatedAt: number;
@@ -74,7 +73,6 @@ export interface BridgeSessionRuntime {
   shutdown(): Promise<void>;
 }
 
-/** Exit code of a closed session that has none yet. A terminated session without a real failure code exits 143 (SIGTERM). */
 function setClosedExitCode(session: BridgeExecSession, code: number | null | undefined): void {
   if (session.exitCode !== undefined && session.exitCode !== null) return;
   if (session.terminating) {
@@ -90,14 +88,6 @@ function failSession(session: BridgeExecSession, hooks: BridgeSessionHooks, mess
   hooks.onExit(session);
 }
 
-/**
- * The bridge keeps a bounded ring (about 8 MiB) of unread output per process and discards the
- * oldest chunks when the host does not read in time, for example while the event loop is
- * stalled. The discard is only visible as a gap before the first returned chunk; surface it in
- * the transcript so the reader never mistakes a truncated head for the whole output. `nextSeq`
- * alone is not evidence: the bridge spends sequence numbers on exit records that never arrive
- * as chunks.
- */
 function noteDroppedChunks(
   session: BridgeExecSession,
   hooks: BridgeSessionHooks,
@@ -110,7 +100,6 @@ function noteDroppedChunks(
   session.lastSeq = firstSeq - 1;
 }
 
-/** Decodes and emits the chunks; returns whether there were any. */
 function emitChunks(
   session: BridgeExecSession,
   hooks: BridgeSessionHooks,
@@ -155,7 +144,6 @@ function closeSession(
   hooks.onExit(session);
 }
 
-/** The runtime's `poll`, bound to one bridge client. */
 function createSessionPoller(bridge: ExecBridgeClient): BridgeSessionRuntime["poll"] {
   return async (session, hooks, waitMs = 0, maxBytes) => {
     if (!hooks.isOwned(session)) return;
@@ -231,7 +219,6 @@ export function createBridgeSessionRuntime(
   const poll = createSessionPoller(bridge);
   let pollQueue = Promise.resolve();
 
-  // Background polls run one at a time across sessions.
   async function pollBackground(
     session: BridgeExecSession,
     hooks: BridgeSessionHooks,

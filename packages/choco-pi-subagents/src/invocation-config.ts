@@ -9,13 +9,6 @@ import type {
   ThinkingLevel,
 } from "./types.ts";
 
-/**
- * When true (the default), a fresh spawn through the Agent tool or the nested
- * Agent tool must name both `model` and `thinking`; omitting either returns a
- * refusal instead of silently running on a role default or the parent model.
- * Resume, /btw forks, cross-extension RPC, schedules and workflow steps are
- * exempt. Module state (like `scopeModels`) so the nested tools see it too.
- */
 let requireExplicitModel = true;
 
 export function isRequireExplicitModel(): boolean {
@@ -25,30 +18,6 @@ export function setRequireExplicitModel(enabled: boolean): void {
   requireExplicitModel = enabled;
 }
 
-/**
- * The model-facing `isolation` parameter, shared by the `Agent` tool and the
- * nested delegation tool so the two cannot drift.
- *
- * Shape matters more than wording here. As a single-value optional literal,
- * models that fill every optional parameter — the transcript on #231 shows one
- * emitting `resume: ""`, `schedule: ""` and `model: "default"` alongside it —
- * had only `"worktree"` available to fill it with, and kept spawning worktrees
- * across three turns while their own reasoning said to omit the field. Every
- * other optional parameter has an inert filler; this one did not. `"off"` is
- * listed first and described as the default so the harmless value is the
- * obvious one to reach for.
- *
- * The wording tracks Claude Code's own `isolation` parameter, whose phrasing
- * models have the most exposure to: one description on the union rather than
- * per-value ones, opening "Isolation mode.", then a sentence per value in
- * schema order, each with its caveats in a trailing parenthetical. Two clauses
- * are ours, because our shape is not theirs — `"off"` has no counterpart there
- * (their enum is `worktree | remote`, so both of their values do something),
- * and neither does the uncommitted-work warning, which is the specific trap
- * #231 fell into. Deliberately absent is any "only use a worktree when…"
- * restriction: Claude Code's `Agent` tool states the capability and stops, and
- * a second legal value is what lets a model decline one, not being told to.
- */
 const isolationSchemaFields = {
   isolation: opt(
     oneOf(["off", "worktree"], {
@@ -58,22 +27,6 @@ const isolationSchemaFields = {
   ),
 };
 
-/**
- * Build the `isolation` parameter for a tool schema, or nothing when the
- * project disabled worktrees (`worktreeIsolation: false`).
- *
- * Dropping the field beats accepting it and quietly downgrading. The setting is
- * for a project whose model passes `"worktree"` on *every* call, so a
- * per-result "isolation was disabled" note would be noise on every result and
- * would keep raising the salience of a capability that isn't there. With no
- * field there is nothing to pass, nothing to drop, and nothing to explain — the
- * same trade `scheduleParam` makes for disabled scheduling, at zero LLM-context
- * cost. The resolver gate and the `agent-manager` check still cover the paths a
- * schema can't reach: agent files, the scheduler, and cross-extension RPC.
- *
- * Like `scheduleParam`, this is read once at tool registration — flipping the
- * setting needs a new pi session for the schema to change.
- */
 export function isolationParam(enabled: boolean): Partial<typeof isolationSchemaFields> {
   return enabled ? isolationSchemaFields : {};
 }
@@ -92,38 +45,18 @@ interface AgentInvocationParams {
   fast_mode?: boolean;
   daybreak?: boolean;
   model_override_reason?: string;
-  /**
-   * Untyped on purpose. Both tool schemas now build this field conditionally
-   * and spread it, which erases TypeBox's literal inference to `unknown` (the
-   * `schedule` param has the same shape). The resolver below narrows by
-   * comparison rather than trusting the declaration, which also makes it safe
-   * for the cross-extension RPC path, where options arrive unvalidated.
-   */
   isolation?: unknown;
 }
 
-/** Where the effective model string came from; "inherit" means the parent runtime. */
 export type ModelInputSource = ModelSource;
 
-/** Caller fields a frontmatter pin overrode. */
 export type OverriddenCallerField = "model" | "thinking";
 
 interface ResolvedAgentInvocationConfig {
   modelInput?: string;
   modelFromParams: boolean;
-  /** "inherit" when nothing chose a model and the parent runtime applies. */
   modelSource: ModelInputSource;
-  /**
-   * True only when the caller's model is in effect AND differs from the role's
-   * declared model. Scope policy treats a caller echoing the role's own model
-   * as the role's choice (warn-and-proceed), not as a runtime override.
-   */
   callerOverridesRoleModel: boolean;
-  /**
-   * Caller-supplied fields a `model_locked` agent definition discarded. Spawn
-   * paths report these so an orchestrator learns its override did not apply
-   * instead of assuming it did.
-   */
   overriddenCallerFields: OverriddenCallerField[];
   thinking?: ThinkingLevel;
   maxTurns?: number;
@@ -140,19 +73,7 @@ interface ResolvedAgentInvocationConfig {
 }
 
 interface ResolveOptions {
-  /**
-   * Run mode when neither the agent file nor the caller chooses one. The
-   * top-level Agent tool defaults to background; nested spawns stay foreground
-   * because a settled parent aborts the children it owns.
-   */
   defaultRunInBackground?: boolean;
-  /**
-   * Whether worktree isolation is permitted at all. False when the project set
-   * `worktreeIsolation: false`, which drops a requested worktree rather than
-   * failing the call: the fail-loud precedent covers spawns that *cannot* work,
-   * while this one is the user opting out, and throwing would break exactly the
-   * calls the `"off"` value exists to tolerate. Defaults to allowed.
-   */
   worktreeAllowed?: boolean;
 }
 
@@ -161,15 +82,10 @@ export function resolveAgentInvocationConfig(
   params: AgentInvocationParams,
   opts?: ResolveOptions,
 ): ResolvedAgentInvocationConfig {
-  // Precedence first, collapse second — reversing these loses the veto, since
-  // an agent file's "off" only outranks a caller's "worktree" while it is still
-  // a value. Everything downstream then sees "worktree" or nothing at all.
   const requested = agentConfig?.isolation ?? params.isolation;
   const isolation =
     requested === "worktree" && opts?.worktreeAllowed !== false ? "worktree" : undefined;
 
-  // Frontmatter model/thinking are overridable defaults; `model_locked` makes
-  // them pins that outrank the caller.
   const locked = agentConfig?.modelLocked === true;
   const requestedThinking = locked
     ? agentConfig?.thinking
@@ -230,21 +146,12 @@ export function resolveJoinMode(
   return runInBackground ? defaultJoinMode : undefined;
 }
 
-/**
- * Notes a spawn result carries about model and effort resolution. Both the
- * top-level Agent tool and the nested delegation tool prepend these, so an
- * orchestrator learns when its override was discarded by a frontmatter pin or
- * when the agent definition's model was unavailable and the parent runtime ran
- * instead. Without them both outcomes are silent and indistinguishable from the
- * requested one.
- */
 export function describeModelResolution(args: {
   agentLabel: string;
   resolved: Pick<
     ResolvedAgentInvocationConfig,
     "modelInput" | "modelSource" | "overriddenCallerFields"
   >;
-  /** True when `modelInput` failed to resolve and the parent model runs. */
   modelUnavailable: boolean;
   parentModel: { provider: string; id: string } | undefined;
 }): string {
@@ -271,7 +178,6 @@ export function describeModelResolution(args: {
   return notes.length > 0 ? `${notes.join("\n")}\n\n` : "";
 }
 
-/** `provider/id, thinking, definition` facts a role file declares. */
 function roleFacts(config: AgentConfig | undefined) {
   return {
     definition: config?.sourcePath ?? "built-in",
@@ -280,26 +186,16 @@ function roleFacts(config: AgentConfig | undefined) {
   };
 }
 
-/**
- * One-line role summary for tool descriptions and `/agents`: what the role
- * declares and where it was loaded from, so a shadowing definition is visible.
- */
 export function describeRoleModel(name: string, config: AgentConfig | undefined): string {
   return `${name}: ${describeRoleDeclaration(config)}`;
 }
 
-/** `model …, thinking …, definition …` for one role, without its name. */
 export function describeRoleDeclaration(config: AgentConfig | undefined): string {
   const facts = roleFacts(config);
   const lock = config?.modelLocked === true ? " (locked)" : "";
   return `model ${facts.model}${lock}, thinking ${facts.thinking}, definition ${facts.definition}`;
 }
 
-/**
- * The `requireExplicitModel` refusal, or undefined when the spawn may proceed.
- * Callers apply it to fresh spawns only — resume, /btw, RPC, schedules and
- * workflow steps are exempt by never calling it.
- */
 export function explicitModelRefusal(
   name: string,
   config: AgentConfig | undefined,
@@ -317,11 +213,6 @@ export function explicitModelRefusal(
   );
 }
 
-/**
- * Refuses a fresh spawn of a Flagship-tier model for a role that does not
- * itself declare a Flagship model, unless `model_override_reason` is given.
- * Same call sites as `explicitModelRefusal`. `flagship` holds normalized ids.
- */
 export function tierRefusal(
   name: string,
   config: AgentConfig | undefined,
@@ -341,16 +232,11 @@ export function tierRefusal(
   );
 }
 
-/** Appends the audited override reason to a model line when one was given. */
 export function withOverrideReason(line: string, reason: string | undefined): string {
   const trimmed = reason?.trim();
   return trimmed ? `${line} · override reason: ${trimmed}` : line;
 }
 
-/**
- * Provenance for the effective spawn model. An unavailable configured model
- * runs on the parent, so it reports `inherit` — the line names what ran.
- */
 export function buildModelProvenance(args: {
   model: { provider: string; id: string } | undefined;
   source: ModelSource;
@@ -366,7 +252,6 @@ export function buildModelProvenance(args: {
   };
 }
 
-/** `Model: provider/id (source: …) · thinking: … · definition: …` */
 export function formatModelLine(provenance: ModelProvenance): string {
   return (
     `Model: ${provenance.model ?? "unknown"} (source: ${provenance.source}) · ` +

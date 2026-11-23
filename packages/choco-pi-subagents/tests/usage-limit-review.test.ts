@@ -1,9 +1,3 @@
-/**
- * Review corrections for the "On Usage Limit" manager paths: queued wake
- * ownership, exclusive resume, owner-scoped closures, corroboration verdicts,
- * cancelled evaluation, foreground-resume and worktree parking, and nested
- * resume with a model.
- */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { access, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
@@ -34,7 +28,6 @@ import { waitFor } from "./wait-for.ts";
 const HOUR = 3_600_000;
 const SOL = "openai/gpt-5.6-sol";
 const OPUS = "anthropic/claude-opus-4-5";
-/** Model ids for availability checks: the child runs Opus; Sonnet is another Anthropic model. */
 const OPUS_ID = "claude-opus-4-5";
 const SONNET_ID = "claude-sonnet-4-5";
 const LIMIT = "Codex usage limit reached (plus plan). Resets in ~60m.";
@@ -80,7 +73,6 @@ test("a queued post-reset continuation keeps promise ownership when stopped", as
     const record = manager.getRecord(parkedId);
     assert.equal(record?.status, "waiting_for_reset");
 
-    // B takes the only pool slot on another provider.
     manager.spawn(env.pi, env.context(), "implementer", "B", {
       ...background,
       model: env.models.sol,
@@ -122,7 +114,6 @@ test("session switch and dispose release a queued continuation's promise without
   const state = policyState({
     preference: "auto-resume",
     classification: { kind: "quota", confidence: "parsed", resetAt: Date.now() + 60_000 },
-    // Two settle-time checks (one per manager), then both wake-ups report capacity.
     corroborate: (count) => ({ ready: count > 2 }),
   });
   const installed = installPolicy(state, env.owner);
@@ -144,7 +135,6 @@ test("session switch and dispose release a queued continuation's promise without
         ...background,
         model: env.models.sol,
       });
-      // Both managers share the owner's closure; reopen it for the second one.
       cleanupProviders();
     }
     t.mock.timers.tick(90_000);
@@ -237,7 +227,6 @@ test("the owning root's policy closure blocks spawn and drain; other owners are 
     manager.spawn(env.pi, other, "implementer", "other owner", background);
     assert.equal(runs.length, 1, "another owner spawns on the same provider");
 
-    // Queued under the closing owner: the drain consults the same closure.
     closed = false;
     const queuedId = manager.spawn(env.pi, env.context(), "implementer", "queued", background);
     assert.equal(manager.getRecord(queuedId)?.status, "queued");
@@ -331,15 +320,13 @@ for (const scenario of [
         );
         assert.equal(state.closed.length, 1);
         assert.equal(manager.isProviderAvailable("anthropic", env.owner, OPUS_ID), false);
-        // Confirmed evidence closes the account; unconfirmed only the failed model.
-        const confirmed = scenario.parked; // only the confirmed scenario parks
+        const confirmed = scenario.parked;
         assert.equal(manager.isProviderAvailable("anthropic", env.owner), !confirmed);
         assert.equal(manager.isProviderAvailable("anthropic", env.owner, SONNET_ID), !confirmed);
       } else {
         assert.equal(record?.usageLimit, undefined, "no usage-limit block");
         assert.deepEqual(state.closed, [], "no closure");
         assert.deepEqual(usageEvents, []);
-        // The transient gate holds the failed model only, for every owner.
         assert.equal(manager.isProviderAvailable("anthropic", env.owner, OPUS_ID), false, "gate");
         assert.equal(manager.isProviderAvailable("anthropic", "another-owner", OPUS_ID), false);
         assert.equal(manager.isProviderAvailable("anthropic", env.owner, SONNET_ID), true);
@@ -484,7 +471,6 @@ for (const ending of ["continuation", "stop"] as const) {
         ...background,
         isolation: "worktree",
       });
-      // Worktree creation runs git asynchronously once the run starts.
       await waitFor(() => runs.length > 0, "the run started");
       const record = manager.getRecord(id);
       const worktree = record?.worktree;
@@ -514,11 +500,9 @@ for (const ending of ["continuation", "stop"] as const) {
         assert.equal(manager.abort(id), true);
         assert.equal(record?.status, "stopped");
       }
-      // The deferred cleanup runs git asynchronously; publication follows it.
       await waitFor(() => record?.worktreeResult !== undefined, "the final settle's cleanup");
       await flush();
       if (ending === "stop") {
-        // A user stop is a cancellation: the worktree is retained untouched.
         t.after(() => rm(worktree.path, { recursive: true, force: true }));
         assert.deepEqual(record?.worktreeResult, {
           hasChanges: false,

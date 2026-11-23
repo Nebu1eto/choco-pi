@@ -17,10 +17,6 @@ function normalizeHintInput(value: string): string {
 function hasHintToken(value: string, tokens: readonly string[]): boolean {
   const escaped = tokens.map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   const alternatives = escaped.join("|");
-  // Path/word boundaries are deliberately explicit: a token must occupy a
-  // segment (or a dot/dash/underscore-separated word), never an arbitrary
-  // substring. The second expression preserves camelCase names such as
-  // authStore and DatabaseClient without making `adb` match `db`.
   return (
     new RegExp(`(?:^|[/_.\\-\\s])(?:${alternatives})(?=[/_.\\-\\s]|$)`, "i").test(value) ||
     new RegExp(
@@ -36,10 +32,6 @@ function hasHintToken(value: string, tokens: readonly string[]): boolean {
   );
 }
 
-/**
- * Deterministic feature-kind hint derived from package/entity/file names.
- * Inspired by clawpatch's packageKind() heuristic.
- */
 export function inferFeatureKind(nameOrPath: string): FeatureHintKind {
   const normalized = normalizeHintInput(nameOrPath);
   if (
@@ -62,10 +54,6 @@ export function inferFeatureKind(nameOrPath: string): FeatureHintKind {
   return "library";
 }
 
-/**
- * Deterministic trust-boundary hints derived from package/entity/file names.
- * These are advisory metadata for context injection, not security findings.
- */
 export function inferTrustBoundaries(nameOrPath: string): TrustBoundary[] {
   const normalized = normalizeHintInput(nameOrPath);
   const boundaries = new Set<TrustBoundary>();

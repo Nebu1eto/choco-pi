@@ -1,11 +1,6 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
-// Replaces inline RFC 2397 data: URIs in extracted text with explicit bounded
-// omission markers so base64 payloads never reach model-visible tool results,
-// the fetch cache, or session persistence. Carved out of the original
-// persistence-safety layer; only the text-sanitization path is retained.
-
 const MAX_DATA_URI_HEADER_CHARS = 1024;
 const MAX_MIME_CHARS = 127;
 const MAX_MARKER_SOURCE_CHARS = 180;
@@ -119,8 +114,6 @@ function isBareDataUriTerminator(ch: string): boolean {
   return code <= 32 || code === 127 || ch === '"' || ch === "`" || ch === "<" || ch === ">";
 }
 
-/** Scan one candidate exactly once. Enclosures consume malformed whitespace and
- * balanced inner parentheses so invalid payload suffixes cannot escape. */
 function scanDataUriCandidate(text: string, start: number): ScannedDataUriCandidate {
   const enclosure = dataUriEnclosure(text, start);
   let comma = -1;
@@ -163,24 +156,22 @@ function headerEndsWithBase64(text: string, headerStart: number, comma: number):
 
 function isMimeTokenChar(code: number): boolean {
   if (code < 33 || code > 126) return false;
-  // RFC 2045 token = printable ASCII excluding tspecials. Slash is handled
-  // separately as the single type/subtype separator.
   switch (code) {
-    case 34: // "
-    case 40: // (
-    case 41: // )
-    case 44: // ,
-    case 47: // /
-    case 58: // :
-    case 59: // ;
-    case 60: // <
-    case 61: // =
-    case 62: // >
-    case 63: // ?
-    case 64: // @
-    case 91: // [
-    case 92: // backslash
-    case 93: // ]
+    case 34:
+    case 40:
+    case 41:
+    case 44:
+    case 47:
+    case 58:
+    case 59:
+    case 60:
+    case 61:
+    case 62:
+    case 63:
+    case 64:
+    case 91:
+    case 92:
+    case 93:
       return false;
     default:
       return true;
@@ -319,8 +310,6 @@ function sanitizeTextInternal(text: string, sourcePath: string, state: Sanitizat
     const end = candidate.end;
     const headerStart = start + 5;
     const missingComma = candidate.comma < 0;
-    // A bare prose label such as "data: value" is not an inline URI. Enclosed
-    // or non-empty comma-less candidates are malformed URIs and are removed.
     if (missingComma && end === headerStart && candidate.enclosure === null) {
       scanFrom = end;
       continue;
@@ -331,9 +320,6 @@ function sanitizeTextInternal(text: string, sourcePath: string, state: Sanitizat
       ? "base64"
       : "percent-encoded";
     const mimeType = normalizeMimeType(text, headerStart, headerEnd);
-    // Without the required comma, the post-scheme bytes are ambiguous. Count
-    // and digest the whole omitted segment on the encoded basis rather than
-    // retaining any header/payload-looking suffix.
     const payload = missingComma
       ? text.slice(headerStart, end)
       : text.slice(candidate.comma + 1, end);
@@ -391,7 +377,6 @@ function sanitizeTextInternal(text: string, sourcePath: string, state: Sanitizat
   return pieces.join("");
 }
 
-/** Replace every recognized RFC 2397-style inline data URI in one string. */
 export function sanitizeInlineDataUris(
   text: string,
   sourcePath: string,
@@ -405,5 +390,3 @@ export function sanitizeInlineDataUris(
     ),
   };
 }
-
-/** Sanitize every string leaf in a JSON-compatible value with one ordinal sequence. */

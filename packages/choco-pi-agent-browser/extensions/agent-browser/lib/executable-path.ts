@@ -13,9 +13,7 @@ export async function executableExistsOnPath(command: string): Promise<boolean> 
         const candidate = join(directory, `${command}${extension}`);
         await access(candidate, fsConstants.X_OK);
         if ((await stat(candidate)).isFile()) return true;
-      } catch {
-        // Try the next PATH candidate.
-      }
+      } catch {}
     }
   }
   return false;

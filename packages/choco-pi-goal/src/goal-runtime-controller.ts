@@ -183,7 +183,6 @@ export function createGoalRuntimeController(pi: ExtensionAPI): GoalRuntimeContro
   });
 
   let recoveryOwnershipOwner: string | undefined;
-  // Latest live context of this activation; cleared synchronously on shutdown.
   let latestCtx: ExtensionContext | null = null;
   let unsubscribeRevoke: (() => void) | undefined;
 
@@ -196,8 +195,6 @@ export function createGoalRuntimeController(pi: ExtensionAPI): GoalRuntimeContro
     }
   };
 
-  // /stop (all): pause an active goal and drop the provider-limit auto-resume timer. Both
-  // reports are emitted synchronously; reopening admission never resumes the goal.
   const handleRevoke = (request: RevokeRequest): void => {
     const ctx = latestCtx;
     if (request.scope !== "all" || ctx === null) return;
@@ -206,7 +203,6 @@ export function createGoalRuntimeController(pi: ExtensionAPI): GoalRuntimeContro
     try {
       providerLimitAutoResume.clear();
       if (wasActive) {
-        // Account elapsed time while the goal is still active; the aborted turn's tokens are not counted.
         goalAccounting.accountProgress(ctx, false, 0, true);
         stateController.pauseForAbort(ctx);
       } else {
@@ -287,7 +283,6 @@ export function createGoalRuntimeController(pi: ExtensionAPI): GoalRuntimeContro
       return eventHandlers.onSessionStart(event, ctx);
     },
     async onSessionShutdown(event, ctx) {
-      // Invalidate host access before the first await so a session installed meanwhile keeps its own.
       runtimeAccess.dispose();
       latestCtx = null;
       unsubscribeRevoke?.();
@@ -302,7 +297,6 @@ export function createGoalRuntimeController(pi: ExtensionAPI): GoalRuntimeContro
   };
 }
 
-/** The root session id keys the shared usage-limit policy; a stale context yields no owner. */
 function ownerSessionId(ctx: ExtensionContext): string | undefined {
   try {
     return ctx.sessionManager.getSessionId();

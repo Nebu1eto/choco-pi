@@ -1,5 +1,3 @@
-// Fixture replay: files written by the TypeBox-validated HEAD must still load after the pi-schema migration.
-// The fixtures are hand-built from HEAD's schemas (clients/*.ts), not produced by the code under test.
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -69,7 +67,6 @@ test("codebase model: HEAD-format file loads; open objects, missing and non-fini
     await writeFile(file, JSON.stringify(missing));
     assert.equal(loadCodebaseModel(cwd, identity), undefined);
 
-    // JSON.parse("1e999") is Infinity; TypeBox Number rejected it and so must the migrated schema.
     await writeFile(
       file,
       JSON.stringify(modelFixture).replace('"totalTokens":12', '"totalTokens":1e999'),

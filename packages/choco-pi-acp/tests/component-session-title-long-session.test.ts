@@ -6,8 +6,6 @@ import { join } from "node:path";
 
 import { listPiSessions } from "../src/acp/pi-sessions.ts";
 
-// Ensures we still pick up session_info.name even if it is older than the tail window.
-
 test("listPiSessions: finds session_info.name even when it is outside the tail window", async () => {
   const root = mkdtempSync(join(tmpdir(), "pi-acp-test-"));
   const sessionsDir = join(root, "sessions", "--p--");
@@ -30,7 +28,6 @@ test("listPiSessions: finds session_info.name even when it is outside the tail w
     name: "Named Early",
   });
 
-  // Create a large filler so the name is far outside the last 256KB tail.
   const fillerLine = JSON.stringify({
     type: "message",
     id: "m",

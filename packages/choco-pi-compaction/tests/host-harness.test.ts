@@ -1,11 +1,3 @@
-/**
- * Harness and fixture self-checks.
- *
- * The baseline defect proof only exercises two fixtures, so these tests verify
- * that every fixture still lands on the cut point it claims and that the fake
- * provider reproduces the host's failure and abort paths. A fixture whose cut
- * point silently drifts would make later tests assert nothing.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
@@ -134,8 +126,6 @@ test("the fake provider honors the host's compaction abort signal", async () => 
     ordinaryCut(host.sessionManager);
     const pending = host.session.compact();
     const rejection = assert.rejects(pending, /Compaction cancelled/);
-    // The host creates its compaction abort controller only after its internal
-    // abort() settles, so wait until the summarization request is in flight.
     for (let attempt = 0; attempt < 1_000 && host.calls.length === 0; attempt++) {
       await delay(1);
     }

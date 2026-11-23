@@ -1,12 +1,3 @@
-/**
- * Recorded review findings and `/review-assist` comments as items in a
- * file's body: where each one goes, which lines of the file are quoted around
- * the ones outside every hunk, and the rows each draws open or closed.
- *
- * Pure: the view passes the displayed hunks and its own state; nothing here
- * reads files or holds host state. Every recorded string is made
- * terminal-safe here before it is drawn.
- */
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { RecordedFinding } from "../findings.ts";
 import { MAX_EXCERPT_LINES } from "../git/model.ts";
@@ -16,26 +7,20 @@ import { BODY_INDENT } from "./body-block.ts";
 import type { ItemPlace } from "./line-cursor.ts";
 import type { PaneColor, PaneStyler } from "./rows.ts";
 
-/** Lines quoted above a finding's first line and below its last. */
 export const EXCERPT_RADIUS = 2;
 
-/** Where a comment is in the diff the view shows. */
 export type CommentPlacement =
   | { status: "placed"; hunkId: string; side: DiffSide; line: number; startLine: number }
   | { status: "outdated"; message: string };
 
-/** A `/review-assist` comment as the view shows it; read-only. */
 export type PaneComment = {
-  /** Unique among every comment the view is given. */
   id: string;
   path: string;
   side: DiffSide;
   line: number;
   startLine?: number;
   body: string;
-  /** Which review it belongs to, such as "session review". */
   label: string;
-  /** Where its text is in `file` now (the file as displayed). */
   locate(file: DiffFile): CommentPlacement;
 };
 
@@ -46,29 +31,20 @@ export type ViewItem =
       id: string;
       comment: PaneComment;
       outdated?: string;
-      /**
-       * Where a placed comment's lines are in the diff shown, on its placement's
-       * side (the stored range shifted, its length kept). Absent while it is not
-       * placed: the stored range is drawn.
-       */
       placedRange?: { start: number; end: number };
     };
 
 export type PlacedItem = {
   item: ViewItem;
   place: ItemPlace;
-  /** Between hunks: the file line the item follows, in its excerpt group. */
   line?: number;
 };
 
-/** Lines `from`..`to` of the file quoted between two hunks, with the items placed in them. */
 export type ExcerptGroup = { hunkIndex: number; from: number; to: number };
 
 export type FileItems = {
-  /** In display order: the order the body draws them and the cursor visits them. */
   items: PlacedItem[];
   groups: ExcerptGroup[];
-  /** The group each item between hunks belongs to, by item id. */
   groupOf: ReadonlyMap<string, ExcerptGroup>;
 };
 
@@ -86,15 +62,10 @@ export function hunkContains(hunk: DiffHunk, line: number): boolean {
   return hunk.newLines > 0 && line >= hunk.newStart && line <= hunk.newStart + hunk.newLines - 1;
 }
 
-/** Last new-side line a hunk covers; the line before it for a hunk that adds none. */
 function hunkEnd(hunk: DiffHunk): number {
   return hunk.newLines > 0 ? hunk.newStart + hunk.newLines - 1 : hunk.newStart;
 }
 
-/**
- * Index of the last line at or before new-side line `target`, after which a
- * finding on that line is shown; undefined when it belongs after the header.
- */
 function insertionLine(hunk: DiffHunk, target: number): number | undefined {
   let index: number | undefined;
   hunk.lines.forEach((line, lineIndex) => {
@@ -103,7 +74,6 @@ function insertionLine(hunk: DiffHunk, target: number): number | undefined {
   return index;
 }
 
-/** The displayed line a comment sits under, or -1 when its line is not displayed. */
 function commentLineIndex(hunk: DiffHunk, side: DiffSide, line: number): number {
   return hunk.lines.findIndex((entry) =>
     side === "LEFT"
@@ -121,11 +91,6 @@ function findingSpan(finding: RecordedFinding): { start: number; end: number } |
 
 type Draft = PlacedItem & { start?: number };
 
-/**
- * Place a file's findings and comments. `file` holds the hunks as displayed;
- * undefined when the body shows no hunks (hidden, binary, too large,
- * unreadable, gone): every item then goes to the end and nothing is quoted.
- */
 export function placeItems(
   findings: readonly RecordedFinding[],
   comments: readonly PaneComment[],
@@ -215,7 +180,6 @@ export function placeItems(
   return arrange(drafts, hunks);
 }
 
-/** Group the items between hunks into excerpts, then put every item in display order. */
 function arrange(drafts: Draft[], hunks: readonly DiffHunk[]): FileItems {
   const groups: ExcerptGroup[] = [];
   const groupOf = new Map<string, ExcerptGroup>();
@@ -284,28 +248,18 @@ function arrange(drafts: Draft[], hunks: readonly DiffHunk[]): FileItems {
   return { items, groups, groupOf };
 }
 
-/* ------------------------------------------------------------- drawing */
-
 export type ItemDrawing = {
   open: boolean;
   selected: boolean;
   width: number;
   styler: PaneStyler;
-  /** Finding: the record predates the file's last change. */
   mayBeOutdated?: boolean;
-  /** Finding: its work task's review verdict, when recorded. */
   verdict?: string;
-  /**
-   * The column the item's text starts at: the text column of the code line it
-   * sits under, so it reads as part of the code. Defaults to the body's indent.
-   */
   textColumn?: number;
 };
 
-/** An item keeps at least this many columns for its text, however deep its line is indented. */
 export const ITEM_MIN_TEXT_COLUMNS = 40;
 
-/** `column` limited so an item drawn there keeps {@link ITEM_MIN_TEXT_COLUMNS} of `width`. */
 export function itemTextColumn(column: number, width: number): number {
   return Math.max(BODY_INDENT.length, Math.min(column, width - ITEM_MIN_TEXT_COLUMNS));
 }
@@ -322,7 +276,6 @@ export function severityColor(finding: RecordedFinding): PaneColor {
   return "muted";
 }
 
-/** `text`'s lines made terminal-safe and wrapped to `width`, each behind `indent`. */
 function paragraph(
   text: string,
   width: number,
@@ -336,15 +289,9 @@ function paragraph(
     .map((line) => `${indent}${paint(line)}`);
 }
 
-/**
- * An item's rows: one when closed (marker, severity or range, and the start
- * of its text), its full record when open. The first row is the cursor's;
- * it is drawn inverted while selected.
- */
 export function itemLines(item: ViewItem, drawing: ItemDrawing): string[] {
   const { styler, width, open } = drawing;
   const marker = open ? "▾" : "▸";
-  // The marker and its lead take the two columns before the text column.
   const pad = " ".repeat(
     itemTextColumn(drawing.textColumn ?? BODY_INDENT.length, width) - BODY_INDENT.length,
   );
@@ -410,7 +357,6 @@ export function itemLines(item: ViewItem, drawing: ItemDrawing): string[] {
   } else {
     const comment = item.comment;
     const color: PaneColor = item.outdated === undefined ? "accent" : "dim";
-    // A placed comment is labelled where it was found; the stored range may predate an edit above it.
     const range = item.placedRange
       ? rangeText(item.placedRange.start, item.placedRange.end)
       : rangeText(comment.startLine ?? comment.line, comment.line);
@@ -431,7 +377,6 @@ export function itemLines(item: ViewItem, drawing: ItemDrawing): string[] {
       }
     }
   }
-  // The cursor's item is marked as well as inverted, so it shows without colors too.
   const lead = drawing.selected ? styler.fg("accent", "▶ ") : BODY_INDENT;
   const head = truncateToWidth(`${lead}${first}`, Math.max(1, width - pad.length), "…");
   return [
@@ -440,7 +385,6 @@ export function itemLines(item: ViewItem, drawing: ItemDrawing): string[] {
   ];
 }
 
-/** One quoted line of the file: its number and its text, dimmed. */
 export function excerptLine(
   number: number,
   text: string,
@@ -456,7 +400,6 @@ export function excerptLine(
   );
 }
 
-/** The row above a quote: which lines of the file it shows. */
 export function excerptHeader(
   group: ExcerptGroup,
   width: number,

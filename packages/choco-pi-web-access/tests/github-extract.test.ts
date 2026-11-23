@@ -20,15 +20,11 @@ function processIsAlive(pid) {
   try {
     process.kill(pid, 0);
     try {
-      // Container PID 1 may reap orphaned descendants slowly. A zombie is
-      // already terminated and can no longer hold or read from a terminal.
       const state = readFileSync(`/proc/${pid}/stat`, "utf8")
         .replace(/^.*\) /, "")
         .split(" ")[0];
       if (state === "Z") return false;
-    } catch {
-      // Non-Linux platforms do not expose /proc; kill(0) remains the check.
-    }
+    } catch {}
     return true;
   } catch {
     return false;
@@ -228,9 +224,6 @@ test("normalizeClonePath expands ~ to HOME", async () => {
   });
 
   assert.equal(child.status, 0, child.stderr);
-  // The test passes if the config loads without error
-  // We can't directly test the expanded path without exporting loadGitHubConfig
-  // but we've verified the code doesn't crash
 });
 
 test("normalizeClonePath expands $HOME and other env vars", async () => {

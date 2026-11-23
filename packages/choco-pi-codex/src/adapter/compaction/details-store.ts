@@ -23,22 +23,10 @@ import {
   type NativeCompactionIdentity,
 } from "../compaction/types.ts";
 
-/**
- * Checkpoint identity to match. `accountScope` (the background lane's
- * `sha256:` account digest) is compared only for entries that carry
- * `background.providerScope`; entries without it keep provider/api/model/baseUrl
- * matching.
- */
 export type NativeCompactionEntryMatch = Partial<NativeCompactionIdentity> & {
   readonly accountScope?: string | undefined;
 };
 
-/**
- * Validate plain JSON-like data and construct a detached JSON tree in one walk: scalars (finite
- * numbers only), arrays, and plain objects (Object.prototype or null prototype) whose undefined
- * members are omitted. Anything else (functions, bigint, symbols, class instances, boxed
- * primitives, holes) yields undefined.
- */
 function constructJsonValue<T>(value: T): JsonValue | undefined {
   if (value === null) return null;
   if (isBoolean(value)) return value;
@@ -71,12 +59,10 @@ function constructJsonValue<T>(value: T): JsonValue | undefined {
   }
   return output;
 }
-/** Validate plain JSON-like data, construct a detached JSON tree and omit undefined object fields. */
 export function cloneCodexCompactionJson<T>(value: T): JsonValue | undefined {
   return constructJsonValue(value);
 }
 
-/** Legacy readers remain valid; background records require complete versioned lineage. */
 export function isBackgroundNativeCompactionDetails<T>(
   value: T,
 ): value is T & BackgroundNativeCompactionDetails {
@@ -120,7 +106,6 @@ export function isBackgroundNativeCompactionDetails<T>(
   );
 }
 
-/** Same-account/model replay only; portability must be proven outside this adapter. */
 export function isCodexBackgroundScopeCompatible(
   details: BackgroundNativeCompactionDetails,
   scope: ProviderScope,
@@ -165,11 +150,6 @@ export function persistCodexBackgroundDetails(
   return detached;
 }
 
-/**
- * The lane-journal route of a host compaction trigger: `manual` and
- * `threshold` as they are; overflow recovery (and any other trigger) is the
- * foreground route.
- */
 export function codexLaneRoute(reason: SessionBeforeCompactEvent["reason"]): LaneRoute {
   return reason === "manual" || reason === "threshold" ? reason : "foreground";
 }
@@ -211,12 +191,6 @@ function entryMatches(entry: NativeCompactionEntry, match: NativeCompactionEntry
   );
 }
 
-/**
- * Whether a found native entry also matches `match` (account and model
- * included). Callers locate the entry by provider/api/baseUrl and then check
- * this, so an account mismatch is reported instead of silently skipping to an
- * older entry.
- */
 export function nativeCompactionEntryMatches(
   entry: NativeCompactionEntry,
   match: NativeCompactionEntryMatch,

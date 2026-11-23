@@ -35,10 +35,8 @@ test("stdout is JSON only as one object; other object-shaped text is a parse fai
   assert.deepEqual(parseOutput("[1, 2]"), { plainText: "[1, 2]" });
   assert.deepEqual(parseOutput("{ not json"), { plainText: "{ not json" });
   assert.ok(parseOutput("{ not json }").validationError);
-  // Lines that each parse are plain text unless one of them sets an output field.
   assert.deepEqual(parseOutput('{"a": 1}\n{"b": 2}'), { plainText: '{"a": 1}\n{"b": 2}' });
   assert.ok(parseOutput('{"a": 1}\n{"continue": false}').validationError);
-  // An async response may sit on one line of its own among other output.
   assert.deepEqual(parseAsyncOutput('progress\n{"systemMessage": "done"}\n').output, {
     systemMessage: "done",
   });
@@ -257,7 +255,6 @@ test("an untimed async hook is cancelled at teardown instead of blocking it", as
     delivered.push("result");
   };
   await engine.run({ ...input("SessionStart", { source: "startup" }), cwd: process.cwd() });
-  // Still running after its timeout: background command hooks are not bounded by it.
   const settled = await Promise.race([
     engine.waitForBackground().then(() => true),
     new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1_500)),

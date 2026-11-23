@@ -5,29 +5,15 @@ import type { RuntimeValue } from "@choco-pi/shared/runtime-values";
 import { cloneGoal } from "./state.ts";
 import type { GoalEntrySource, GoalResult, ThreadGoal } from "./types.ts";
 
-/**
- * Publishes each live goal runtime at `globalThis[Symbol.for("choco-pi-goal:runtime")]` as
- * `Map<ownerSessionId, GoalRuntimeAccess>` so host integrations (such as the host bridge) can read
- * the current goal and complete it without importing this package. Consumers validate the slot and
- * entry structurally. Each runtime adds and removes only its own entry; the slot is deleted once no
- * runtime remains.
- */
 export const GOAL_RUNTIME_SYMBOL = Symbol.for("choco-pi-goal:runtime");
 
-/** The part of a session context that identifies its owning session. */
 export interface SessionOwnedContext {
   sessionManager: Pick<ExtensionContext["sessionManager"], "getSessionId">;
 }
 
 export interface GoalRuntimeAccess<Ctx extends SessionOwnedContext = ExtensionContext> {
   readonly owner: string;
-  /** Current goal with live active-time usage, or null; always a copy. */
   getGoal(): ThreadGoal | null;
-  /**
-   * Marks the current goal complete through the same path as `update_goal`, recorded as a command.
-   * Call synchronously with the owning session's current context; a foreign or stale context, a
-   * disposed runtime, or a missing goal yields `ok: false` without changing state.
-   */
   completeGoal(ctx: Ctx): GoalResult;
 }
 
@@ -37,12 +23,7 @@ export interface GoalRuntimeAccessSource<Ctx extends SessionOwnedContext = Exten
 }
 
 export interface GoalRuntimeAccessPublisher<Ctx extends SessionOwnedContext = ExtensionContext> {
-  /**
-   * Publishes this runtime under `owner`, replacing its previous publication. Returns the published
-   * entry, or undefined when there is no owner or a foreign value occupies the slot.
-   */
   install(owner: string | undefined): GoalRuntimeAccess<Ctx> | undefined;
-  /** Removes only this runtime's entry; deletes the slot once empty. */
   dispose(): void;
 }
 
@@ -58,7 +39,6 @@ function ensureRegistry(): Map<RuntimeValue, RuntimeValue> | undefined {
     return slot;
   }
   if (slot !== undefined) {
-    // A foreign value occupies the symbol; never clobber it.
     return undefined;
   }
   const registry = new Map<RuntimeValue, RuntimeValue>();
@@ -79,7 +59,6 @@ function contextSessionId(ctx: SessionOwnedContext): string | undefined {
   try {
     return ctx.sessionManager.getSessionId();
   } catch (error) {
-    // A stale context cannot identify its session; any other failure is the caller's to see.
     if (isStaleContextError(error)) {
       return undefined;
     }

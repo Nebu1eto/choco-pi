@@ -23,7 +23,6 @@ import { isRuntimeObject, isRuntimeString } from "../tools/runtime-values.ts";
 const SNAKE_KEY = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
 const SNAKE_OR_KEBAB_VALUE = /^[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*$/;
 
-/** Tool parameter schemas whose camelCase keys were renamed; each root is now closed. */
 const RENAMED_TOOLS = [
   "diagnostics_report",
   "lsp_diagnostics",
@@ -37,7 +36,6 @@ const RENAMED_TOOLS = [
   "diagnostic_mark",
 ];
 
-/** Pass-through subtrees: LSP protocol objects keep the protocol's own key names. */
 const PASS_THROUGH_PROPERTIES = new Set(["lsp_navigation.call_hierarchy_item"]);
 
 function isDictionary<T>(value: T): value is T & ProtocolDictionary {
@@ -85,7 +83,6 @@ function schemaNaming(value: ProtocolValue | undefined, at: string, failures: st
 }
 
 function hostParse(schema: ProtocolDictionary, args: ProtocolDictionary): boolean {
-  // Same validator configuration the Pi host applies to tool-call arguments.
   return compile(schema, { coerce: true }).parse(structuredClone(args)).ok;
 }
 

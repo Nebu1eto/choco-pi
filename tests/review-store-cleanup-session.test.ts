@@ -93,14 +93,12 @@ function session(fileSystem?: ReviewCleanupFileSystem): ReviewCleanupSession {
   });
 }
 
-// Runs first: this file's default (agent-directory) session must still be unused.
 test("an explicitly placed store does not clean unless asked", async (t) => {
   const base = await sandbox(t);
   const old = await writeRecord(base, REPO, "old", 8 * DAY);
   const store = createReviewStore(base);
   await store.list(OTHER);
   await store.load(OTHER, targetKey(target("x")));
-  // A scheduled pass would run on the next timer turn; give it several.
   for (let turn = 0; turn < 5; turn += 1) await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(await exists(old), true);
 });
@@ -144,7 +142,6 @@ test("a saved record is protected for the rest of the session", async (t) => {
   const unrelated = await writeRecord(base, REPO, "unrelated", 8 * DAY);
   const loaded = await createReviewStore(base).load(REPO, targetKey(target("saved")));
   assert.ok(loaded);
-  // Hold the pass at its first step until the saved file looks old again.
   let release: () => void = () => {};
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -276,7 +273,6 @@ test("a load or list racing the quarantine waits and sees the record after it is
     async rename(from, to) {
       await nodeReviewCleanupFileSystem.rename(from, to);
       if (from !== raced) return;
-      // Opened and listed while the record sits under its quarantine name.
       loading = store.load(REPO, targetKey(target("raced")));
       listing = store.list(REPO);
       await turns();
@@ -285,7 +281,6 @@ test("a load or list racing the quarantine waits and sees the record after it is
   };
   const cleanup = session(fileSystem);
   const store = createReviewStore(base, undefined, { cleanup });
-  // Starts the pass; protects only a record that does not exist.
   await store.load(OTHER, targetKey(target("none")));
   const result = await cleanup.settled();
   assert.equal(missedWhileHeld, true, "the reads ran while the file was away");
@@ -305,7 +300,6 @@ test("a read waiting on a record the pass holds returns once the pass is stopped
     ...nodeReviewCleanupFileSystem,
     async rename(from, to) {
       await nodeReviewCleanupFileSystem.rename(from, to);
-      // The pass's next step never finishes (a stuck file system).
       heldUp = true;
       await neverSettles;
     },

@@ -3,18 +3,6 @@ import type { Diagnostic } from "../types.ts";
 import type { FunctionSummary } from "../facts/function-facts.ts";
 import type { TryCatchSummary } from "../facts/try-catch-facts.ts";
 
-/**
- * Flags async functions that call IO/network/DB boundaries but have no
- * try/catch protection AND have non-trivial complexity.
- *
- * Rationale: boundary wrappers with high CC and no error handling are the
- * most common source of unhandled-rejection crashes and silent data loss.
- * Simple pass-throughs are excluded — they're expected to propagate errors.
- */
-
-// Entries ending with '.' are namespace prefixes (startsWith match).
-// All other entries are exact callee names — prevents e.g. "spawn" matching "spawned.map"
-// or "fetch" matching "fetchWithRetry".
 const IO_NAMESPACE_PREFIXES = [
   "db.",
   "prisma.",
@@ -53,7 +41,7 @@ const IO_EXACT_CALLEES = new Set([
   "stat",
 ]);
 
-const CC_THRESHOLD = 6; // raised from 4 — avoids flagging simple async wrappers with one IO call
+const CC_THRESHOLD = 6;
 
 function callsToBoundary(outgoingCalls: string[]): string | undefined {
   for (const callee of outgoingCalls) {
@@ -65,27 +53,13 @@ function callsToBoundary(outgoingCalls: string[]): string | undefined {
 }
 
 function hasCatchCoverage(fn: FunctionSummary, catches: TryCatchSummary[]): boolean {
-  // A catch block is considered covering if it is non-empty and does one of:
-  // - rethrows the error
-  // - logs it (console.error / logger.*)
-  // - has no binding (catch {} — intentional swallow)
-  // - returns a structured value (return { ... } / return false / return null)
-  //   This handles the common "return structured error" pattern in IO helpers.
-  // Also handles Promise-executor pattern: if the function body itself resolves/rejects
-  // via new Promise((resolve) => {...}) we treat it as covered at the call site.
   if (fn.outgoingCalls.some((c) => c === "resolve" || c === "reject")) return true;
 
   return catches.some((c) => {
     if (c.line < fn.line) return false;
     if (c.isEmpty) return false;
     if (c.hasRethrow || c.hasLogging || c.catchParam === null) return true;
-    // Catch body contains a return statement → structured error result
     if (/\breturn\b/.test(c.bodyText)) return true;
-    // Catch body falls back by mutating existing state (e.g. extending a
-    // validity window on refresh failure) instead of rethrowing/logging/
-    // returning. That's still a real handler — the exception doesn't
-    // escape uncaught — just expressed via assignment rather than one of
-    // the three shapes above (#969).
     if (c.catchHasFallbackAssignment) return true;
     return false;
   });
@@ -106,7 +80,7 @@ export const unsafeBoundaryRule: FactRule = {
 
     for (const f of fns) {
       if (!f.isAsync) continue;
-      if (f.isPassThroughWrapper) continue; // expected to propagate
+      if (f.isPassThroughWrapper) continue;
       if (f.cyclomaticComplexity < CC_THRESHOLD) continue;
 
       const boundaryCalle = callsToBoundary(f.outgoingCalls);

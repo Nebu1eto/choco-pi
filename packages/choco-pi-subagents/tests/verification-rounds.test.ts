@@ -126,7 +126,6 @@ test("releasing a verification ticket refunds the verification ledger only", asy
 test("an existing schema-1 review ledger file still loads and is extended in place", async (t) => {
   const dir = await tempDir(t);
   const file = join(dir, `${SESSION}.json`);
-  // Exactly what the pre-change store wrote.
   const legacy = {
     schemaVersion: 1,
     rootSessionId: SESSION,
@@ -159,8 +158,6 @@ test("an existing schema-1 review ledger file still loads and is extended in pla
   assert.deepEqual(saved.workTasks.alpha.rounds.slice(0, 2), legacy.workTasks.alpha.rounds);
 });
 
-// --- Top-level Agent tool and /verify-continue ------------------------------------
-
 const verifierRole = join(REPO_ROOT, "profile", "agents", "verifier.md");
 const hasVerifierRole = await access(verifierRole).then(
   () => true,
@@ -179,7 +176,6 @@ async function topLevel(t: TestContext) {
     else process.env.PI_CODING_AGENT_DIR = previous;
     await rm(dir, { recursive: true, force: true });
   });
-  // The profile's roles install as global agents, as scripts/install-profile.ts links them.
   await symlink(join(REPO_ROOT, "profile", "agents"), join(dir, "agents"));
   const previousCwd = process.cwd();
   process.chdir(REPO_ROOT);

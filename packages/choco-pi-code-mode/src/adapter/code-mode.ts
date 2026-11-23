@@ -54,8 +54,6 @@ export async function registerCodexCodeMode(
   const isActive = (ctx: BoundaryValue) =>
     // SAFETY: registerCodeModeTools invokes isActive with Pi's current ExtensionContext.
     policy.isActive(ctx as ExtensionContext);
-  // Capture Pi's runner so every registered tool can be bridged into the
-  // tools namespace; harmless when the bridge is never used.
   installRegisteredToolCapture();
   const customToolsRuntime = await registerCustomTools(pi, undefined, {
     isActive,
@@ -103,7 +101,6 @@ export async function registerCodexCodeMode(
   };
 }
 
-/** Provider-neutral name of {@link registerCodexCodeMode}; the Codex name stays for existing callers. */
 export const registerCodeMode = registerCodexCodeMode;
 
 export function createNestedTools(
@@ -210,13 +207,8 @@ export function createNestedTools(
       ),
     );
   }
-  // Provider-contributed tools (Codex: web__run, image_gen__imagegen) keep
-  // their slot between the core tools and the bridged session tools.
   if (runtime.codeMode.optionalNestedTools)
     tools.push(...runtime.codeMode.optionalNestedTools(ctx));
-  // Everything else Pi has registered (LSP, MCP, sub-agents, sessions, goals,
-  // web access) rides along as deferred tools: no prompt cost, callable as
-  // tools.<name>(...) inside a block, discoverable through ALL_TOOLS.
   tools.push(...collectBridgedTools(registeredToolRunner(ctx), ctx?.hasUI ?? false));
   return scopeCodeModeToolsToSessionPermissions(tools, activeToolNames);
 }

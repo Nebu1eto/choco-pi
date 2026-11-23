@@ -1,7 +1,3 @@
-/**
- * types.ts — Type definitions for the subagent system.
- */
-
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { JournalRunOptions } from "./revival-journal.ts";
@@ -10,194 +6,84 @@ import type { LifetimeUsage } from "./usage.ts";
 
 export type { SubagentUsageLimit, ThinkingLevel };
 
-/** Agent type: any string name (built-in defaults or user-defined). */
 export type SubagentType = string;
 
-/** Names of the three embedded default agents. */
 export const DEFAULT_AGENT_NAMES = ["general-purpose", "Explore", "Plan"] as const;
 
-/** Memory scope for persistent agent memory. */
 export type MemoryScope = "user" | "project" | "local";
 
-/**
- * Isolation mode for agent execution.
- *
- * `"off"` exists for the caller's benefit, not the runtime's: models that fill
- * every optional parameter had no legal way to decline a single-value
- * `isolation` field and kept spawning worktrees they had just reasoned their
- * way out of (#231, #184). It is an input spelling only —
- * `resolveAgentInvocationConfig` collapses it to `undefined`, so nothing
- * downstream sees a value other than `"worktree"`. In an agent file it is a
- * genuine veto, since agent config outranks tool-call params.
- */
 export type IsolationMode = "worktree" | "off";
 
-/** Unified agent configuration — used for both default and user-defined agents. */
 export interface AgentConfig {
   name: string;
-  /** UI name. `display_name` wins; Claude Code's `name` is accepted as a fallback. */
   displayName?: string;
-  /** Claude Code-compatible name color (named color or #RRGGBB). */
   color?: string;
   description: string;
   builtinToolNames?: string[];
-  /** Raw `ext:` selector entries from the `tools:` CSV, e.g. ["ext:foo", "ext:bar/x"].
-   * Presence of any entry flips extension tools to an explicit allowlist. */
   extSelectors?: string[];
-  /** Tool denylist — these tools are removed even if `builtinToolNames` or extensions include them. */
   disallowedTools?: string[];
-  /** true = inherit all, string[] = only listed, false = none */
   extensions: true | string[] | false;
-  /** Extension-name denylist applied after the `extensions:` include set. Exclude wins.
-   * Plain canonical names only (case-insensitive); no paths, no wildcard. */
   excludeExtensions?: string[];
-  /** true = inherit all, string[] = only listed, false = none */
   skills: true | string[] | false;
-  /**
-   * Declared model ("provider/modelId"). An overridable default: a caller's
-   * `model` wins unless `modelLocked` is set. `default_model:` is a
-   * deprecated frontmatter alias for the same field.
-   */
   model?: string;
-  /** Declared thinking level; overridable like `model` unless `modelLocked`. */
   thinking?: ThinkingLevel;
-  /**
-   * `model_locked: true` — the declared model and thinking level are pins that
-   * outrank the caller (the pre-default semantics of `model:`/`thinking:`).
-   */
   modelLocked?: boolean;
   maxTurns?: number;
-  /** Persist this subagent as a normal pi session instead of keeping it in memory only. */
   persistSession?: boolean;
-  /** Write the subagent's .output transcript. Defaults to true; false suppresses only that transcript. */
   outputTranscript?: boolean;
-  /** Optional session directory used when persistSession is true. Omitted = pi's normal session location. */
   sessionDir?: string;
-  /**
-   * Nested delegation, off by default: undefined = no nested tools;
-   * "all" = any enabled agent; string[] = only those agent types.
-   */
   allowedSubagents?: "all" | string[];
   systemPrompt: string;
   promptMode: "replace" | "append";
-  /** Default for spawn: fork parent conversation. undefined = caller decides. */
   inheritContext?: boolean;
-  /** Default for spawn: run in background. undefined = caller decides. */
   runInBackground?: boolean;
-  /** Default for spawn: no extension tools. undefined = caller decides. */
   isolated?: boolean;
-  /** Default fast-mode request. Caller parameters override this default. */
   fastMode?: boolean;
-  /** Default Daybreak request. Caller parameters override this default. */
   daybreak?: boolean;
-  /** Persistent memory scope — agents with memory get a persistent directory and MEMORY.md */
   memory?: MemoryScope;
-  /**
-   * Isolation mode — "worktree" runs the agent in a temporary git worktree,
-   * "off" refuses one even when the caller asks (frontmatter outranks params).
-   */
   isolation?: IsolationMode;
-  /** true = this is an embedded default agent (informational) */
   isDefault?: boolean;
-  /** false = agent is hidden from the registry */
   enabled?: boolean;
-  /**
-   * true = only first-party code may spawn this agent by its literal name
-   * (`manager.spawn`); every caller-supplied type resolution — the Agent and
-   * nested tools, workflows, the scheduler, RPC, mentions, resume and BTW —
-   * treats it as unknown. The advisor role is internal: the advisor tool owns
-   * its model, effort and prompt, and a direct spawn would inherit the parent.
-   */
   internal?: boolean;
-  /** Where this agent was loaded from */
   source?: "default" | "project" | "global";
-  /** Path of the .md it was loaded from. Unset for embedded defaults. */
   sourcePath?: string;
 }
 
 export type JoinMode = "async" | "group" | "smart";
 
-/**
- * Display mode for the persistent above-editor agent widget.
- * - `all`: show every agent (foreground + background).
- * - `background`: hide foreground agents (they already render inline as the
- *   Agent tool result, #118); show background/queued/scheduled/RPC.
- * - `off`: hide the widget entirely.
- */
 export type WidgetMode = "all" | "background" | "off";
 
-/**
- * How `@handle message` starts an agent that is not already running.
- * - `model`: inject Claude Code's `agent_mention` reminder and let the main
- *   model spawn it with the `Agent` tool, which is what Claude Code does.
- * - `direct`: spawn it here, immediately, with the typed message as its prompt
- *   and no main-model turn spent.
- * - `off`: `@` means only "attach a file" again.
- *
- * Messaging a running agent and resuming a finished one are direct in every
- * mode — Claude Code only differs from us on the *new* invocation.
- */
 export type AgentMentionMode = "model" | "direct" | "off";
 
-/**
- * What survives a record's eviction so `@handle` keeps working. The live record
- * is discarded after ~10 minutes, but the pi session it wrote is still on disk,
- * and this is the little that is needed to find and describe it again.
- */
 export interface AgentTombstone {
   handle: string;
   alias?: string;
   id: string;
   type: SubagentType;
   description: string;
-  /** Always set — a record with no session file is never tombstoned. */
   sessionFile: string;
   completedAt: number;
 }
 
-/**
- * What `@handle` resolved to: an agent still in memory, or the remains of one
- * whose conversation can be reopened from disk.
- */
 export type MentionResolution =
   | { kind: "live"; record: AgentRecord }
   | { kind: "tombstone"; entry: AgentTombstone };
 
-/** Where a spawn's effective model came from. */
 export type ModelSource = "pin" | "caller" | "default" | "inherit";
 
-/**
- * Model provenance captured at spawn, surfaced on spawn results, the
- * `subagents:record` journal entry and the completion notification.
- */
 export interface ModelProvenance {
-  /** Effective `provider/id`, or undefined when no model was resolvable. */
   model?: string;
   source: ModelSource;
   thinking?: string;
-  /** Agent definition file, or undefined for an embedded built-in. */
   definition?: string;
 }
 
 export interface AgentRecord {
   id: string;
   type: SubagentType;
-  /**
-   * Typeable name for the `@handle message` prompt mention, derived from the
-   * agent type and numbered when any live identity collides (`explore`,
-   * `explore-2`). Nested handles stay hidden from top-level UI/mention surfaces
-   * but remain globally unique addresses for agent messaging.
-   */
   handle?: string;
-  /**
-   * A second, memorable handle from the spawner's `name` (`@auth-audit`), drawn
-   * from the same namespace as `handle` so the two can never collide. Purely
-   * additive: `handle` is assigned regardless, so a named agent stays reachable
-   * by its type and `@explore` never comes to mean "start another one".
-   */
   alias?: string;
   description: string;
-  /** Model/thinking/definition provenance captured when the spawn resolved. */
   modelProvenance?: ModelProvenance;
   status:
     | "queued"
@@ -209,80 +95,40 @@ export interface AgentRecord {
     | "budget_exceeded"
     | "watchdog_stopped"
     | "error"
-    /**
-     * Parked after a provider usage limit under the root `auto-resume`
-     * preference. Not terminal: the generation stays unpublished, no pool slot
-     * is held, and a wake-up resumes it on the same model or settles it.
-     */
     | "waiting_for_reset"
-    /**
-     * The host stopped this run without settling it (graceful suspend for
-     * quit/reload/switch). Not a final outcome: durable revival continues it.
-     */
     | "interrupted";
   result?: string;
-  /** Terminal-boundary snapshot, captured before owned-child cleanup. */
   pendingDependents?: {
     id: string;
     handle?: string;
     status: "running" | "queued" | "waiting_for_reset";
   }[];
   error?: string;
-  /** Provider usage-limit details for the current generation chain, if one was hit. */
   usageLimit?: SubagentUsageLimit;
   toolUses: number;
   startedAt: number;
   completedAt?: number;
   session?: AgentSession;
-  /** Initial cost of a cloned /btw session, tied to that session's stats identity. */
   sessionCostBaseline?: { sessionId: string; cost: number };
   abortController?: AbortController;
   promise?: Promise<string>;
   groupId?: string;
   joinMode?: JoinMode;
-  /**
-   * Current execution generation. The manager increments this before every
-   * spawn/resume run so read claims from an earlier run cannot affect a later
-   * one. Optional only for compatibility with cross-extension/test fixtures;
-   * production records initialize it synchronously at spawn.
-   */
   resultGeneration?: number;
-  /** First cancellation request for the current generation; immutable until the next run. */
   cancellation?: {
     generation: number;
-    /**
-     * `suspend` is a graceful host suspend (quit/reload/switch): the run is
-     * journaled as interrupted and its settle path publishes nothing.
-     */
     cause: "budget" | "watchdog" | "user_stop" | "parent_signal" | "shutdown" | "suspend";
     reason: string;
     requestedAt: number;
   };
-  /** Current generation whose final status/output has been published atomically. */
   terminalResultGeneration?: number;
-  /**
-   * Work task and root session of the admitted review or verification round
-   * this agent runs under; set from its admission ticket. Absent for ungated
-   * roles and exempt launches, which are not verdict-recorded.
-   */
   verdictTask?: { workTask: string; rootSessionId: string };
-  /** Generation whose verdict recording has started (exactly once per run). */
   verdictRecordedGeneration?: number;
-  /** Status line of the current generation's verdict record, also appended to `result`. */
   verdictRecord?: string;
-  /** Active generation for which one status read has already been returned. */
   activeResultReadGeneration?: number;
-  /** Terminal generation whose result was returned by get_subagent_result. */
   consumedResultGeneration?: number;
-  /**
-   * Suppresses completion notification after an inline result, explicit stop,
-   * workflow aggregation, or get_subagent_result consumption. Generation-aware
-   * read refusal uses consumedResultGeneration instead of this broader flag.
-   */
   resultConsumed?: boolean;
-  /** Steering messages queued before the session was ready. */
   pendingSteers?: string[];
-  /** Worktree info if the agent is running in an isolated worktree. */
   worktree?: {
     path: string;
     branch: string;
@@ -290,106 +136,36 @@ export interface AgentRecord {
     workPath: string;
     hookManaged?: boolean;
   };
-  /** Repository the worktree was created from (the spawn's base cwd). */
   worktreeRepo?: string;
-  /**
-   * Durable revival: consecutive automatic revivals after unclean exits.
-   * Undefined means 0. Journaled with every snapshot.
-   */
   revivals?: number;
-  /** Set by an explicit stop (stop_subagent, UI, RPC); never revived. */
   stoppedByUser?: boolean;
-  /**
-   * Original task prompt, kept for the subagent journal until the child
-   * session file is confirmed to hold the conversation, then cleared.
-   */
   spawnPrompt?: string;
-  /** Serializable spawn/run options captured at spawn for the journal. */
   runOptions?: JournalRunOptions;
-  /** Accepted base cwd, snapshotted before the parent context can retire. */
   spawnCwd?: string;
-  /** Model the spawn requested; the live session model wins once it exists. */
   spawnModel?: { provider: string; id: string };
-  /**
-   * The child session was created in memory (`persist_session: false`): no
-   * file can reopen it, so a revival must not re-run it from the prompt.
-   */
   inMemorySession?: boolean;
-  /** Worktree cleanup result after agent completion. */
   worktreeResult?: { hasChanges: boolean; branch?: string; path?: string; retained?: true };
-  /** The tool_use_id from the original Agent tool call. */
   toolCallId?: string;
-  /** Path to the streaming output transcript file. */
   outputFile?: string;
-  /**
-   * The agent's pi session file, when it was persisted (`persist_session`, or
-   * the `rememberAgents` default). Captured so a mention can reopen the
-   * conversation after the record itself has been evicted; undefined for an
-   * in-memory session, which leaves nothing to reopen.
-   */
   sessionFile?: string;
-  /** Cleanup function for the output file stream subscription. */
   outputCleanup?: () => void;
-  /**
-   * Lifetime usage breakdown, accumulated via `message_end` events. Survives
-   * compaction. Total = input + output + cacheWrite (cacheRead deliberately
-   * excluded — see issue #38). Initialized to zeros at spawn.
-   */
   lifetimeUsage: LifetimeUsage;
-  /** Number of times this agent's session has compacted. Initialized to 0 at spawn. */
   compactionCount: number;
-  /**
-   * Whether this agent was spawned to run in the background. Tri-state, set at
-   * spawn from `SpawnOptions.isBackground`: `true` = background, `false` =
-   * foreground (has an inline Agent tool-result surface), `undefined` = the
-   * caller never declared it (e.g. a cross-extension RPC spawn, which is detached
-   * and has no inline surface). The widget's background-only filter keys off this
-   * — and excludes only explicit `false`, so `undefined` agents stay visible.
-   * Reliable across ALL spawn paths, unlike the UI-only `invocation` snapshot,
-   * which only the Agent-tool path populates.
-   */
   isBackground?: boolean;
-  /** Resolved spawn params, captured for UI display. Fixed at spawn time. */
   invocation?: AgentInvocation;
-  /**
-   * Orchestrator-owned BTW side conversation. These remain top-level records
-   * (`parentAgentId` is unset), so maxConcurrent, handles, FleetView and focus
-   * mode treat them like every other root subagent while the UI can label and
-   * deliver them differently.
-   */
   sideConversation?: boolean;
-  /**
-   * Fork time of a /btw session. Messages older than this were inherited from
-   * the main conversation: the model keeps them, but viewers hide them.
-   */
   transcriptStartAt?: number;
-  /** Aggregate workflow and step identity for FleetView grouping/tagging. */
   workflowId?: string;
   workflowStepId?: string;
-  /**
-   * Stop-control epoch this record's current run was authorised under, and the root
-   * session it belongs to. A completion notification may trigger a turn only while
-   * that root's latch is open at the same epoch; set at spawn and refreshed at resume.
-   */
   admissionEpoch?: number;
   admissionRoot?: string;
-  /** Nesting depth: top-level subagent = 1. */
   depth?: number;
-  /** Parent agent ID for ownership-scoped nested controls. */
   parentAgentId?: string;
-  /** Effective inherited nesting cap for this branch. */
   maxSubagentDepth?: number;
-  /**
-   * Session id of the root (main) session this branch descends from. Nested
-   * spawns inherit it so their transcripts file under the same session
-   * directory as their ancestors' instead of the child session's own id.
-   */
   rootSessionId?: string;
-  /** Accepted fast-mode request for the current generation. */
   fastModeRequested?: boolean;
   fastModeSource?: "default" | "explicit" | "inherited";
   fastModeRevision?: number;
-  /** Mutable bootstrap snapshot so accepted updates win before session_start/prewarm. */
   fastModeInitialization?: {
     requested: boolean;
     source: "default" | "explicit" | "inherited";
@@ -406,7 +182,6 @@ export interface AgentRecord {
 }
 
 export interface AgentInvocation {
-  /** Short display name, e.g. "haiku" — only set when different from parent. */
   modelName?: string;
   thinking?: ThinkingLevel;
   maxTurns?: number;
@@ -422,11 +197,9 @@ export interface AgentInvocation {
   daybreak?: boolean;
 }
 
-/** Details attached to custom notification messages for visual rendering. */
 export interface NotificationDetails {
   id: string;
   description: string;
-  /** Agent type, so the notice can carry the same role badge as its launch row. */
   type?: string;
   status: string;
   toolUses: number;
@@ -437,9 +210,7 @@ export interface NotificationDetails {
   outputFile?: string;
   error?: string;
   resultPreview: string;
-  /** Provider usage-limit block, when the outcome involved one. */
   usageLimit?: SubagentUsageLimit;
-  /** Additional agents in a group notification. */
   others?: NotificationDetails[];
 }
 
@@ -449,24 +220,14 @@ export interface EnvInfo {
   platform: string;
 }
 
-/**
- * A subagent spawn registered to fire on a schedule.
- *
- * Stored at `<cwd>/.pi/subagent-schedules/<sessionId>.json`. Session-scoped:
- * survives `/resume` but resets on `/new`, mirroring pi-chonky-tasks.
- */
 export interface ScheduledSubagent {
   id: string;
-  /** Unique within store. Defaults to `description`. */
   name: string;
   description: string;
-  /** Raw user input — cron expr | "+10m" | ISO | "5m". */
   schedule: string;
   scheduleType: "cron" | "once" | "interval";
-  /** Computed at create time for interval/once. */
   intervalMs?: number;
 
-  // spawn params (subset of Agent tool params; no inherit_context, no resume)
   subagent_type: SubagentType;
   prompt: string;
   model?: string;
@@ -481,39 +242,28 @@ export interface ScheduledSubagent {
   fast_mode?: boolean;
   daybreak?: boolean;
 
-  // state
   enabled: boolean;
-  /** ISO timestamp. */
   createdAt: string;
   lastRun?: string;
   lastStatus?: "success" | "error" | "running";
-  /** Refreshed on every fire and on store load. */
   nextRun?: string;
   runCount: number;
 }
 
 export interface ScheduleStoreData {
-  /** For future migrations. */
   version: 1;
   jobs: ScheduledSubagent[];
 }
 
-/** Workflow seam the manager uses to cancel workflows before it stops their agents. */
 export interface StopWorkflowPort {
-  /** Ids of running or waiting workflows started by `rootSessionId`. */
   runningFor(rootSessionId: string): string[];
-  /** Cancel one workflow; returns true when it was still running or waiting. */
   cancel(workflowId: string): boolean;
 }
 
-/** Result of a user stop: counts are final; `settled` resolves with retained worktree paths. */
 export interface UserStopResult {
   agents: number;
   workflows: number;
-  /** Child session ids of every targeted record, snapshotted before any settle. */
   ownerSessionIds: string[];
-  /** Every record stopped now, or already stopped and still settling. */
   records: AgentRecord[];
-  /** Resolves once each targeted record has published its terminal generation. */
   settled: Promise<string[]>;
 }

@@ -33,7 +33,6 @@ function validRows(rows: string[], innerWidth: number): string[] | undefined {
   return nonEmpty.every((row) => visibleWidth(row) <= innerWidth) ? nonEmpty : undefined;
 }
 
-/** Prefer project identity alone, with middle/right status on the second row. */
 export function reflowFullFooter(zones: FooterZones, innerWidth: number): string[] | undefined {
   const preferred = validRows([zones.left, joinZones([zones.middle, zones.right])], innerWidth);
   if (preferred) return preferred;

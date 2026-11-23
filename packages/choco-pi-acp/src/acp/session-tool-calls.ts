@@ -1,6 +1,3 @@
-/**
- * Tool-call projection helpers: locations, bounded raw input, metadata, and ACP tool kinds for Pi tool calls.
- */
 import {
   type PiToolArguments,
   type PiToolResult,
@@ -31,7 +28,6 @@ import {
 import { isAbsolute, resolve as resolvePath } from "node:path";
 import { MAX_EXTENSION_UI_TEXT_LENGTH } from "./session-extension-ui.ts";
 
-/** Bounded report of how a tool call's raw input was shortened before publication. */
 export type RawInputTruncation = {
   truncated: true;
   originalCharacters?: number;
@@ -43,32 +39,27 @@ export type BoundedToolRawInput = {
   truncation?: RawInputTruncation;
 };
 
-/** The `tool_call_update` variant of an ACP session update. */
 export type ToolCallUpdateNotification = Extract<
   SessionUpdate,
   { sessionUpdate: "tool_call_update" }
 >;
 
-/** ACP `_meta` payload published alongside a non-bash tool call. */
 export type ToolCallMeta = {
   editorToolPresentation: EditorToolPresentation;
   piAcp?: { rawInputTruncation: RawInputTruncation };
 };
 
-/** ACP `_meta` payload published alongside a bash tool call. */
 export type BashToolCallMeta = {
   terminal_info: BashTerminalInfo;
   editorToolPresentation: EditorToolPresentation | undefined;
 };
 
-/** ACP `_meta` payload published for streamed bash terminal output. */
 export type BashOutputMeta = {
   terminal_output?: BashTerminalOutput;
   terminal_exit?: BashTerminalExit;
   editorToolPresentation: EditorToolPresentation | undefined;
 };
 
-/** One `{ oldText, newText }` pair pi's edit tool applies to a file. */
 export type ParsedEdit = {
   oldText: string;
   newText: string;
@@ -94,10 +85,6 @@ export function getToolPath(args: PiToolArguments): string | undefined {
   return stringField(args, "path") ?? stringField(args, "file_path");
 }
 
-/**
- * The entries of a tool call's `edits` field. Pi also normalizes stringified
- * edits, so a JSON string is decoded before the array shape is checked.
- */
 export function editEntries(args: PiToolArguments): BoundaryValue[] {
   if (!isBoundaryRecord(args)) return [];
   const edits = args.edits;
@@ -105,9 +92,6 @@ export function editEntries(args: PiToolArguments): BoundaryValue[] {
   return isBoundaryArray(decoded) ? decoded : [];
 }
 
-// Match pi's current edit schema: { path, edits: [{ oldText, newText }] }, with
-// legacy top-level oldText/newText still accepted. Pi also normalizes stringified edits.
-// https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/tools/edit.ts
 export function getParsedEdits(args: PiToolArguments): ParsedEdit[] {
   const parsed: ParsedEdit[] = [];
 
@@ -154,10 +138,6 @@ export function toToolCallLocations(
   return [location];
 }
 
-/**
- * Tool arguments while the model is still streaming them: the decoded object when
- * pi already supplies one, otherwise the partial JSON text decoded if it parses.
- */
 export function streamedToolArguments(toolCall: PiAssistantToolCall | undefined): PiToolArguments {
   const args = toolCall?.arguments;
   if (isObjectValue(args) || isBoundaryArray(args)) return args;
@@ -201,7 +181,6 @@ export function toolCallMeta(
 ): ToolCallMeta {
   const meta: ToolCallMeta = { editorToolPresentation: presentation };
   const truncation = boundedInput.truncation;
-  // Untruncated raw input needs no truncation report at all.
   if (truncation) meta.piAcp = { rawInputTruncation: truncation };
   return meta;
 }
@@ -220,7 +199,6 @@ export function toToolKind(toolName: string): ToolKind {
   }
 }
 
-/** How the session publishes a bash tool call: a new call or an update of one. */
 export type BashToolCallParams = {
   sessionUpdate: "tool_call" | "tool_call_update";
   toolCallId: string;
@@ -232,7 +210,6 @@ export type BashToolCallParams = {
   presentation?: EditorToolPresentation;
 };
 
-/** The ACP update announcing a bash tool call, embedding a terminal when requested. */
 export function bashToolCallUpdate(params: BashToolCallParams, cwd: string): SessionUpdate {
   const title = bashCommand(params.args) ?? params.toolName;
 
@@ -263,7 +240,6 @@ export function bashToolCallUpdate(params: BashToolCallParams, cwd: string): Ses
   };
 }
 
-/** One bash output publication for a tool call the session is tracking. */
 export type BashOutputParams = {
   toolCallId: string;
   status: "in_progress" | "completed" | "failed";
@@ -274,10 +250,6 @@ export type BashOutputParams = {
   locations?: ToolCallLocation[];
 };
 
-/**
- * The ACP update streaming a bash tool call's output: `delta` is the output not yet
- * published, and a terminal status adds the exit metadata.
- */
 export function bashOutputUpdate(params: BashOutputParams, delta: string): SessionUpdate {
   const meta: BashOutputMeta = { editorToolPresentation: params.presentation };
   if (delta) {

@@ -119,7 +119,6 @@ export async function readProcessStartIdentity(
   return await currentProcessStartIdentityPromise;
 }
 
-/** Return undefined when a native-Windows marker predates the versioned PowerShell identity format. */
 export function processStartIdentitiesMatch(
   recorded: string,
   current: string,

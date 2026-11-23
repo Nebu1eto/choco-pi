@@ -16,7 +16,6 @@ import type {
 } from "../src/pi-rpc/protocol.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 
-/** A session manager that hands out one prepared session and records closures. */
 class SingleSessionManager implements SessionManagerLike {
   readonly closeCalls: string[] = [];
 
@@ -51,7 +50,6 @@ class SingleSessionManager implements SessionManagerLike {
   async shutdownAll(): Promise<void> {}
 }
 
-/** A Pi process fake whose model probe fails after a successful spawn. */
 class FailingModelProbeProcess implements PiRpcProcessLike {
   private readonly failure: string;
   private readonly state: PiState;
@@ -78,7 +76,6 @@ class FailingModelProbeProcess implements PiRpcProcessLike {
   }
 }
 
-/** Run `call` and return the `RequestError` it must reject with. */
 async function rejectionOf(call: () => Promise<void>): Promise<RequestError> {
   try {
     await call();
@@ -123,8 +120,6 @@ test("PiAcpAgent: newSession returns AUTH_REQUIRED when pi reports an auth error
   const store = new SessionStore(sessionMapPath);
   store.upsert({ sessionId: "s-auth", cwd: process.cwd(), sessionFile });
   const agent = new PiAcpAgent(asAgentConn(conn), {});
-  // `sessions` and `store` are private implementation details of `PiAcpAgent`;
-  // `Object.assign` installs the fakes without weakening any declared type.
   Object.assign(agent, { sessions, store });
 
   const error = await rejectionOf(async () => {
@@ -150,8 +145,6 @@ test("PiAcpAgent: newSession returns Internal error on non-auth model probe fail
 
   const sessions = new SingleSessionManager(session);
   const agent = new PiAcpAgent(asAgentConn(conn), {});
-  // `sessions` is a private implementation detail of `PiAcpAgent`; `Object.assign`
-  // installs the fake through the same property without weakening any declared type.
   Object.assign(agent, { sessions });
 
   const error = await rejectionOf(async () => {

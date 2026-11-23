@@ -1,10 +1,3 @@
-/**
- * Usable capture ring (D8): only an HTTP 200 answer to a mapped request is a
- * usable capture. The host's retries of a failing request (Pi's default
- * `maxRetries` is 3, so four non-200 answers per prompt) go to a separate
- * diagnostics ring and never evict the last usable capture; lane selection
- * consults the usable ring for the owner's own scope.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -83,7 +76,6 @@ function overloaded(): Response {
   );
 }
 
-/** A session with one projected user message, and a captured stream answering per `respond`. */
 function rig(sessionId: string, respond: (index: number) => Response) {
   const manager = SessionManager.inMemory("/capture-ring");
   manager.appendMessage({ role: "user", content: "RING-PROMPT", timestamp: 0 });

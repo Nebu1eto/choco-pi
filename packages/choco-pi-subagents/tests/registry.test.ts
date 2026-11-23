@@ -161,8 +161,6 @@ test("root activation wires the live manager into a persisted turn-start status 
   assert.ok(rootEntry);
 
   try {
-    // The manager inserts the running record synchronously; the deliberately
-    // incomplete context may then make the detached child setup settle as an error.
     const id = rootEntry.spawn(
       root.pi,
       reinterpretHostValue<ExtensionContext>({ cwd: process.cwd() }),

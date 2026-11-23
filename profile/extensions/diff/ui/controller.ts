@@ -1,27 +1,3 @@
-/**
- * `/diff` pane controller: command, shortcuts, session lifecycle, refresh
- * wiring, automatic opening, and preferences.
- *
- * The pane shows the session source (changes since the session's first file
- * checkpoint) whenever it opens without an explicit source; `/diff source …`
- * applies until the pane closes. Nothing runs before the user first opens the
- * pane, the `diffPaneDefault` preference asks for startup opening (`on`) or
- * auto-opening on a resumed checkpointed session (`auto`), or a possibly
- * file-changing tool call ends under `auto`: no store, no git, no timers, no
- * TUI probe. Sessions without the interactive terminal UI get the command (as
- * an inline list) but never a host and never open anything by themselves.
- *
- * Default status (`diffPaneDefault` in `/preferences`):
- * - `on`: opens when a TUI session starts; closing with `/diff` closes it for
- *   the current session without changing the preference.
- * - `off`: never opens by itself; `/diff` still opens and closes it manually.
- * - `auto` (default): opens only when the session has changes — after a tool
- *   call that is not known to be read-only, a subagent completion, or resuming
- *   a session with an existing checkpoint baseline. Never falls back to an
- *   overlay or inline list; leaves one hint per session when docking fails.
- *   Closing the pane stops automatic opening for the rest of the session until
- *   the user opens it again.
- */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { sanitizeTerminalText } from "../../lib/changes/terminal-text.ts";
 import type { DiffPaneDefault } from "../../lib/agent-preferences.ts";
@@ -116,8 +92,6 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
     }
   });
 
-  // Synchronous: hosts are removed before Pi tears the session down, and the
-  // pending preference write (if any) starts now instead of on a timer.
   pi.on("session_shutdown", () => {
     if (pane.current) shutdown(pane, pane.current);
     if (pane.prefsStore) void pane.prefsStore.flush();
@@ -128,7 +102,6 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
     if (!READ_ONLY_TOOLS.has(event.toolName)) autoOpenInBackground(pane);
   });
   pi.on("agent_settled", () => requestRefresh(pane, "settled"));
-  // `!cmd` shell commands emit nothing after they run; the next turn catches them.
   pi.on("turn_start", () => requestRefresh(pane, "turn"));
   for (const channel of SUBAGENT_DONE_EVENTS) {
     pi.events.on(channel, () => {
@@ -141,7 +114,6 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
     description: "Show this session's changes in a side pane",
     getArgumentCompletions: (prefix) => {
       const typed = prefix.trim();
-      // An exact match offers nothing to complete; listing it makes Enter accept it instead of running.
       const items = DIFF_SUBCOMMANDS.filter(
         (item) => item.value.startsWith(typed) && item.value !== typed,
       ).map((item) => ({ value: item.value, label: item.value, description: item.description }));
@@ -151,8 +123,6 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
       const session = sessionFor(pane, ctx);
       const command = parseDiffCommand(args);
       if (ctx.mode !== "tui") {
-        // No terminal UI (print, RPC, ACP, subagent sessions): answer inline, never mount.
-        // In the editor the usage text is Markdown-escaped: `<columns>` would be read as HTML.
         const editor = editorRendersMarkdown(pane.env);
         if (command.kind === "invalid") {
           ctx.ui.notify(editor ? markdownText(command.message) : command.message, "warning");
@@ -167,7 +137,6 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
           await showInline(pane, session, undefined);
         } else if (command.kind === "source-branch") {
           const choice = await branchSource(pane, session, command.base);
-          // git's own text from a failed default-base lookup reaches a plain terminal here.
           if (choice.kind === "none")
             ctx.ui.notify(
               editor ? noBaseMarkdown(choice) : sanitizeTerminalText(choice.message),
@@ -184,7 +153,6 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
       }
       switch (command.kind) {
         case "invalid":
-          // In the open pane when there is one: an overlay can cover a notification.
           say(pane, session, command.message, "warning");
           return;
         case "toggle":

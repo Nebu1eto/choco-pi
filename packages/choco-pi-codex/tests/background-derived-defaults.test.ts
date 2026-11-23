@@ -16,7 +16,6 @@ after(async () => {
   await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
 });
 
-/** An empty agent directory and an untrusted project, so no sidecar exists anywhere. */
 async function location() {
   const root = await mkdtemp(join(tmpdir(), "codex-derived-defaults-"));
   roots.push(root);
@@ -43,7 +42,6 @@ test("no sidecar anywhere: the Codex lane follows responsesCompaction, like the 
     agentDir,
   });
   assert.deepEqual(off, { enabled: false, blockImages: false });
-  // The host resolves the same lanes through the same seam.
   const host = await loadEffectiveBackgroundSettings(
     { cwd, agentDir, projectTrusted: false },
     { openaiServerSide: true, anthropicServerSide: false },
@@ -96,7 +94,6 @@ test("an invalid sidecar disables the lane with no Codex notice; the host owns t
   );
   assert.match(host.diagnostic ?? "", /not valid JSON/);
 
-  // Through the integration: repeated refreshes and generations show nothing from Codex.
   const notices: string[] = [];
   const manager = SessionManager.inMemory();
   const ctx: CodexBackgroundContext = {

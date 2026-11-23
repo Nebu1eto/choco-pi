@@ -9,7 +9,6 @@ import {
 } from "../providers/openai-codex/native-features.ts";
 import { SteeringStatusWidget } from "../ui/steering-status.ts";
 
-/** Side-band delivery only: returning normally lets Pi persist and queue the original input. */
 export function registerNativeFeatures(
   pi: ExtensionAPI,
   isEnabled: () => boolean,

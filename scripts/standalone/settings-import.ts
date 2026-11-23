@@ -1,27 +1,3 @@
-/**
- * `choco-pi self setup --import-pi-settings [--from <settings.json>]`: an
- * opt-in, one-time copy of preferences from Pi's settings into a standalone
- * choco-pi agent directory.
- *
- * It is the only standalone path that reads `~/.pi`, and it reads exactly one
- * file: `--from`, else `$HOME/.pi/agent/settings.json` (HOME from the
- * environment, never PI_CODING_AGENT_DIR, which the launcher points at
- * choco-pi's own agent directory). Nothing else under `~/.pi` is opened,
- * listed, stat'ed or written: no auth.json, sessions, trust.json, mcp.json,
- * models, skills or extensions.
- *
- * Only keys in IMPORTABLE_SETTINGS are copied, each validated against the
- * schema of the code that reads it. Precedence: a value changed in choco-pi
- * always wins. A key is imported when choco-pi lacks it, or when it still holds
- * exactly the value the standalone seed wrote. modelThinkingLevels merges per
- * model: a Pi entry replaces an entry that is absent or still equals the
- * installed profile default.
- *
- * At most once: `<agentDir>/choco-pi/settings-import.json` records the run and
- * is written before settings.json, both atomically. A second run refuses
- * without `--force`; even `--force` treats every key an earlier run imported
- * (or was about to) as the user's, so it never replaces or re-adds one.
- */
 import path from "node:path";
 
 import {
@@ -80,24 +56,12 @@ import {
   writeTextAtomically,
 } from "./settings-seed.ts";
 
-/** Pi 1.6.0's ModelThinkingLevelSchema (pi-ai providers/model-schema). */
 const THINKING_LEVEL = oneOf(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const NON_NEGATIVE_INT = int({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
 const TIMEOUT = union([num({ minimum: 0 }), lit("disabled")]);
 const NAME = str({ minLength: 1 });
 
-/**
- * Every key the import may copy, with the values its reader accepts. Pi keys
- * mirror Pi 1.6.0's SettingsSchema (pi-coding-agent dist/core/settings-schema.js)
- * as closed objects; choco-pi keys mirror their readers in
- * profile/extensions/lib/agent-preferences.ts, profile/extensions/prompt-editor.ts
- * and packages/choco-pi-compaction/src/{anthropic,xai}/mode.ts. No key here is
- * path-valued, an identity, a trust decision, a command, or a credential;
- * tests/standalone-settings-import.test.ts checks that every Pi 1.6.0 key is
- * either here or in EXCLUDED_SETTINGS.
- */
 export const IMPORTABLE_SETTINGS = {
-  // Pi 1.6.0
   defaultProvider: NAME,
   defaultModel: NAME,
   defaultThinkingLevel: THINKING_LEVEL,
@@ -170,7 +134,6 @@ export const IMPORTABLE_SETTINGS = {
   fullscreenScrollbar: oneOf(["auto", "always", "hidden"]),
   fullscreenCopyOnSelect: bool(),
   fullscreenWheelScrollLines: union([num(), lit("auto")]),
-  // choco-pi readers
   [AGENT_LANGUAGE_KEY]: NAME,
   [AGENT_STYLE_KEY]: NAME,
   [AGENT_PERSONA_KEY]: oneOf(PERSONA_VALUES),
@@ -188,7 +151,6 @@ export const IMPORTABLE_SETTINGS = {
   [OPAQUE_HISTORY_KEY]: oneOf(["preserve", "allow-loss"]),
 } satisfies Record<string, Schema<unknown>>;
 
-/** Known keys that are never imported, with the reason the report prints. */
 export const EXCLUDED_SETTINGS = {
   $schema: "a schema reference, not a preference",
   lastChangelogVersion: "a changelog marker",
@@ -221,20 +183,14 @@ const checks = new Map(
 );
 const profileThinkingLevels = new Map(Object.entries(DEFAULT_PROFILE_MODEL_THINKING_LEVELS));
 
-/** True when `key` names an importable preference. */
 export function isImportableSetting(key: string): boolean {
   return checks.has(key);
 }
 
-/**
- * A string that reads as a secret: a URL with user info, a known token
- * prefix, a bearer header, or a long unbroken token-like run.
- */
 const CREDENTIAL_TEXT =
   /:\/\/[^/\s@]*@|^(?:sk|pk|rk)-|^(?:ghp|gho|ghs|ghu|github_pat|xox[abprs]|glpat)[-_]|^AKIA[0-9A-Z]{12}|^AIza|^bearer\s|[A-Za-z0-9_+=-]{40,}/i;
 const CREDENTIAL_NAME = /secret|password|passwd|credential|api[-_]?key|auth|cookie|token$/i;
 
-/** True when any string or object key inside `value` looks like a credential. */
 export function looksLikeCredential(value: JsonValue): boolean {
   if (isString(value)) return CREDENTIAL_TEXT.test(value);
   if (Array.isArray(value)) return value.some(looksLikeCredential);
@@ -275,10 +231,6 @@ export async function readImportRecord(agentDir: string): Promise<ImportRecord |
   return parsed;
 }
 
-/**
- * The one file the import reads: `from` resolved against `cwd`, else
- * `$HOME/.pi/agent/settings.json` with HOME from `environment`.
- */
 export function importSourcePath(
   from: string | undefined,
   environment: NodeJS.ProcessEnv = process.env,
@@ -291,10 +243,6 @@ export function importSourcePath(
   return path.join(home, ".pi", "agent", "settings.json");
 }
 
-/**
- * Refuses a second import unless `force`; call before any other setup step so
- * a refused run changes nothing.
- */
 export async function assertImportAllowed(agentDir: string, force: boolean): Promise<void> {
   const record = await readImportRecord(agentDir);
   if (record !== null && !force)
@@ -305,10 +253,6 @@ export async function assertImportAllowed(agentDir: string, force: boolean): Pro
 
 export type ImportResult = ImportRecord & { record_path: string; settings_changed: boolean };
 
-/**
- * Imports `source` into `<agentDir>/settings.json` (see the module comment).
- * Run it after the profile install and the seed, so seeded keys are known.
- */
 export async function importPiSettings(
   agentDir: string,
   source: string,
@@ -381,7 +325,6 @@ export async function importPiSettings(
     const mine = settings[key];
     if (present && equal(mine, value)) continue;
     if (earlier.has(key)) {
-      // An earlier run imported this key, or was about to: it is the user's now.
       kept.push(key);
       continue;
     }
@@ -402,8 +345,6 @@ export async function importPiSettings(
     kept,
   };
   const recordPath = importRecordPath(agentDir);
-  // The record first: if the settings write then fails, these keys stay
-  // unimported, and no later run adds them (at most once, like the seed).
   await writeTextAtomically(recordPath, jsonText(record));
   if (imported.length > 0) await writeTextAtomically(settingsPath, jsonText(settings));
   return {
@@ -415,7 +356,6 @@ export async function importPiSettings(
   };
 }
 
-/** The report lines: key names and reasons only, never a value. */
 export function importReport(result: ImportResult): string[] {
   const lines = [`imported Pi settings from ${result.source}`];
   lines.push(`imported: ${result.imported.length > 0 ? result.imported.join(", ") : "(none)"}`);

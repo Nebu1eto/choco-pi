@@ -73,16 +73,8 @@ import { chooseReviewTarget } from "./ui/target-choice.ts";
 import { describeReviewTarget, pickReviewRecord } from "./ui/target-picker.ts";
 import { installToolDiffRendering } from "./ui/tool-diff.ts";
 
-/**
- * The interactive review command. `/review` is the agent review prompt;
- * persisted names (entry types, review.json) keep `review`.
- */
 export const REVIEW_ASSIST_COMMAND = "review-assist";
 
-/**
- * A multi-line TUI notification built from repository and GitHub text (the
- * submission plan): each line's control characters become glyphs.
- */
 function safeLines(text: string): string {
   return sanitizeTerminalLines(text, "picture");
 }
@@ -90,17 +82,12 @@ function safeLines(text: string): string {
 export const REVIEW_USAGE =
   "Usage: /review-assist [session [turn <n>] | branch <base> [target] | uncommitted | resume | pr <number>]";
 
-/**
- * Read limits for a review: every git call, every file body, and the number
- * of files listed. Whatever they keep out is shown to the user.
- */
 export const REVIEW_DIFF_LIMITS: Partial<DiffLimits> = {
   timeoutMs: 30_000,
   maxFileBytes: 1024 * 1024,
   maxFiles: 2_000,
 };
 
-/** `/review-assist uncommitted`: the working tree against HEAD, an alias of `branch HEAD`. */
 export const UNCOMMITTED_TARGET = { kind: "branch", base: "HEAD" } as const satisfies ReviewTarget;
 
 export type ParsedReviewCommand =
@@ -113,7 +100,6 @@ function invalid(message: string): ParsedReviewCommand {
   return { ok: false, message: `${message} ${REVIEW_USAGE}` };
 }
 
-/** Parse `/review-assist` arguments without performing I/O or throwing on user input. */
 export function parseReviewCommand(argumentText: string, sessionId: string): ParsedReviewCommand {
   const tokens = argumentText.trim().split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return { ok: true, action: "pick" };
@@ -181,7 +167,6 @@ export type ReviewExtensionDependencies = {
   openView?: typeof openReviewView;
   reviewDirectory?: string;
   now?: () => string;
-  /** Stops this session's review-record clean-up; replaced in tests. */
   stopRecordCleanup?: () => void;
 };
 
@@ -190,7 +175,6 @@ type CompletionContext = Pick<ExtensionContext, "cwd" | "sessionManager">;
 function checkpointProvider(pi: ExtensionAPI, ctx: CompletionContext): SessionCheckpointProvider {
   return createSessionCheckpointProvider({
     entries: () => ctx.sessionManager.getBranch(),
-    // Every entry of the session file, so the session baseline is the one /diff uses.
     sessionEntries: () => ctx.sessionManager.getEntries(),
     appendEntry: (customType, record) => pi.appendEntry(customType, record),
   });
@@ -211,18 +195,8 @@ export type TargetDiffReader = (
 const NO_CHECKPOINTS =
   "No file checkpoints are available in this session. Session review needs checkpoints captured at turn start; branch review remains available.";
 
-/**
- * The turn number saved review records hold from before turns were numbered
- * by position: every checkpoint recorded 0. Such a record still opens the
- * diff it showed then, the first checkpointed turn to the working tree.
- */
 const LEGACY_TURN = 0;
 
-/**
- * The shared-layer source that reads a local review target. A session uses
- * the pane's own source and baseline, so `/diff` and `/review-assist
- * session` list the same files; turns are numbered by position.
- */
 async function sourceForTarget(
   root: string,
   target: Exclude<ReviewTarget, { kind: "pr" }>,
@@ -260,10 +234,6 @@ async function sourceForTarget(
   return { kind: "since-checkpoint", checkpointId: turn.tree, label: `turn ${position}` };
 }
 
-/**
- * Whether a local target's changes end at the working tree; a session turn
- * does only when no later turn exists. Pull requests never do.
- */
 async function includesWorkingTree(
   target: ReviewTarget,
   provider: SessionCheckpointProvider,
@@ -276,11 +246,6 @@ async function includesWorkingTree(
   return !turns.some((turn) => turn.turnIndex > target.turnIndex);
 }
 
-/**
- * Read a local target through the shared change layer, every body included,
- * within `REVIEW_DIFF_LIMITS`. `exec` replaces the git process runner in
- * tests; production uses the shared runner, which can kill its processes.
- */
 async function loadTarget(
   exec: ExecRunner | undefined,
   root: string,
@@ -306,18 +271,11 @@ async function loadTarget(
   return (await loadDiffModel(options)).model;
 }
 
-/**
- * Read a local target through the shared change layer, every body included,
- * within `REVIEW_DIFF_LIMITS`. Sensitive files are listed by name only; their
- * contents are not read. `exec` replaces the git process runner in tests;
- * production uses the shared runner, which can kill its processes.
- */
 export function createTargetDiffReader(exec: ExecRunner | undefined): TargetDiffReader {
   return (root, target, provider, runner, isCurrent = () => true) =>
     loadTarget(exec, root, target, provider, runner, isCurrent, undefined);
 }
 
-/** Read one hidden file of a local target after the user asked to see it. */
 function createRevealReader(
   exec: ExecRunner | undefined,
   root: string,
@@ -337,12 +295,6 @@ function createRevealReader(
   };
 }
 
-/**
- * A pull request's patch arrives whole from GitHub, so a sensitive file's
- * text is already in memory: keep it out of the model the view and the
- * assessor see, and hand it back only when the user reveals that file.
- */
-/** A model with sensitive files emptied, and the way to read one back on request. */
 export type HiddenSensitiveModel = { model: DiffModel; reveal: RevealFile };
 
 export function hideSensitiveFiles(model: DiffModel): HiddenSensitiveModel {
@@ -396,14 +348,12 @@ async function loadOrCreateRecord(
   };
 }
 
-/** The session's scratch directory, where reviewer runs record findings (as `/diff` resolves it). */
 function scratchDirOf(sessionId: string): string | undefined {
   const inherited = process.env[SCRATCH_DIR_ENV];
   if (inherited) return inherited;
   return sessionId ? scratchDirForSession(sessionId) : undefined;
 }
 
-/** Recorded reviewer findings, and when each listed file they name last changed. */
 async function readFindings(
   scratch: string,
   root: string,
@@ -432,8 +382,6 @@ async function readFindings(
 
 function recordCompletion(record: ReviewRecord): AutocompleteItem {
   return {
-    // `/review-assist resume` deliberately opens the picker. The descriptive labels
-    // expose available records without adding an undocumented selector grammar.
     value: "resume",
     label: safe(describeReviewTarget(record.target)),
     description: `Updated ${new Date(record.updatedAt).toLocaleString()}`,
@@ -630,7 +578,6 @@ async function submitPullRequestReview(
         record: result.record,
         pullRequest: pullRequestRef(review),
         event: eventForVerdict(result.record.verdict),
-        // Comments written on revealed context are located the way the view did.
         ...propertiesWhen(result.expandedContext, () => ({
           expandedContext: result.expandedContext,
         })),
@@ -638,12 +585,6 @@ async function submitPullRequestReview(
       {
         cwd: review.repositoryRoot,
         runner,
-        // The diff the reader was shown, read once when the review opened. It
-        // decides what goes inline while GitHub's head is still its head; if
-        // the head moved since, the new head's diff is read (its worktree is
-        // named after that head, so it does not touch this review's) and the
-        // comments are re-anchored on it: the inline decision is always made
-        // against the diff of the head sent as commit_id.
         reviewedDiff: parseGitDiff(review.rawDiff, review.baseSha, review.headSha),
         loadHeadDiff: (headSha) =>
           loadPullRequestHeadDiff(
@@ -701,7 +642,6 @@ async function submitPullRequestReview(
   }
 }
 
-/** Register the interactive human review command with injectable local seams for tests. */
 export function registerReviewExtension(
   pi: ExtensionAPI,
   dependencies: ReviewExtensionDependencies = {},
@@ -723,23 +663,14 @@ export function registerReviewExtension(
   pi.on("session_shutdown", () => {
     completionContext = undefined;
     lifecycle.invalidate();
-    // Cancels a scheduled pass and stops a running one; a no-op when none was
-    // scheduled. Housekeeping must not make shutdown fail.
     try {
       (dependencies.stopRecordCleanup ?? stopReviewRecordCleanup)();
-    } catch {
-      // Nothing else to settle: the clean-up only ever deletes stale records.
-    }
+    } catch {}
   });
 
-  // This patch changes rendering only. It neither changes tool execution nor
-  // places a tool diff, review record, or comment in model context.
   try {
     installToolDiffRendering({ config: () => activeConfig });
-  } catch {
-    // A Pi renderer API change must degrade to Pi's stock tool rendering, not
-    // make every project fail while loading the global profile.
-  }
+  } catch {}
 
   pi.registerCommand(REVIEW_ASSIST_COMMAND, {
     description: "Review session, branch, or pull request changes without model context",
@@ -824,10 +755,6 @@ export function registerReviewExtension(
         const config = await readConfig({ cwd: root });
         if (!isCurrent()) return;
         activeConfig = config;
-        // Preparing a pull request review fetches its diff and checks out
-        // a worktree, which can take several seconds; show progress
-        // instead of a frozen prompt. Optional because headless hosts
-        // provide no widget surface.
         const preparingWidget = (text: string | undefined) => {
           if (!isCurrent()) return;
           ctx.ui.setWidget?.("review-preparing", text === undefined ? undefined : [text]);
@@ -875,9 +802,6 @@ export function registerReviewExtension(
           const record = await loadOrCreateRecord(store, repository, target, model, now, preferred);
           if (!isCurrent()) return;
           preparingWidget(undefined);
-          // A target that ends at the working tree can change while it is reviewed
-          // (the side chat may edit files): `r` and finished chat tool calls read it
-          // again, and recorded reviewer findings apply to it. The others are fixed.
           let viewOpen = true;
           const localTarget = target;
           const live = endsAtWorkingTree && !pullRequest;
@@ -891,8 +815,6 @@ export function registerReviewExtension(
             includesWorkingTree: endsAtWorkingTree,
             reviewRoot: pullRequest?.worktreePath ?? root,
             ...propertiesWhen(pullRequest, () => ({ pullRequest: pullRequest!.metadata })),
-            // The side chat continues the user's own model choice: the
-            // main session's current model, not Pi's default.
             ...propertiesWhen(chatModel, () => ({ chatModel })),
             ...propertiesWhen(chatThinkingLevel, () => ({ chatThinkingLevel })),
             listChatModels: async () =>
@@ -923,7 +845,6 @@ export function registerReviewExtension(
           try {
             result = await showView(viewOptions);
           } finally {
-            // A refresh still reading stops with the view.
             viewOpen = false;
           }
           if (!isCurrent()) return;
@@ -945,7 +866,6 @@ export function registerReviewExtension(
         }
       } catch (error) {
         if (!isCurrent()) {
-          // The load stopped because this command no longer owns the session.
           if (error instanceof DiffLoadCancelledError) return;
           rethrowUnlessStaleContext(error);
           return;

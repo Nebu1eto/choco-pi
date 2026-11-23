@@ -8,7 +8,6 @@ import {
 
 const SUBAGENTS_MANAGER_KEY = Symbol.for("pi-subagents:manager");
 
-/** Installs a fake subagents registry for one test and restores the slot afterwards. */
 function withChildRegistry(inChild: () => boolean, restore: (cleanup: () => void) => void): void {
   const previous = Object.getOwnPropertyDescriptor(globalThis, SUBAGENTS_MANAGER_KEY);
   Object.defineProperty(globalThis, SUBAGENTS_MANAGER_KEY, {
@@ -24,7 +23,6 @@ function withChildRegistry(inChild: () => boolean, restore: (cleanup: () => void
 
 const PROVIDER_SYMBOL = Symbol.for("choco-pi.preferences-provider");
 
-/** The deps are never called here: only whether the slot is published matters. */
 type RegisterModule = { registerZentuiPreferencesProvider: (deps: RuntimeValue) => void };
 const UNUSED_DEPS: RuntimeValue = {};
 

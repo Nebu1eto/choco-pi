@@ -1,15 +1,3 @@
-/**
- * Install/runtime diagnostics — a paste-able environment fingerprint for bug
- * reports about extension load failures (#285/#335: `ResolveMessage: Cannot
- * find package …`).
- *
- * This module is deliberately self-contained and dependency-free: it only
- * RESOLVES specifiers (never imports them), reads package.json, and stats files.
- * So it loads and reports correctly even when the very deps that failed (e.g.
- * `typescript`) are unreachable — which is exactly when we need it. Every probe
- * is best-effort and never throws.
- */
-
 import { createRequire } from "node:module";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -18,11 +6,9 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 const ISSUES_URL = "https://github.com/apmantza/choco-pi-lsp/issues";
 
-/** Runtime third-party deps whose resolution is the documented failure surface. */
 const CRITICAL_DEPS = [
   "typescript",
   "minimatch",
-  // Still needed at runtime: tools/schema-bridge.ts imports Type.Unsafe for the registerTool boundary.
   "typebox",
   "js-yaml",
   "vscode-jsonrpc",
@@ -39,8 +25,8 @@ export interface DepStatus {
 
 export interface InstallDiagnostics {
   piLensVersion: string;
-  runtime: string; // e.g. "node 22.23.1" or "bun 1.3.14 (on node shim)"
-  platform: string; // `${os}-${arch}`
+  runtime: string;
+  platform: string;
   packageManager: "npm-hoisted" | "pnpm-symlinked" | "nested" | "unknown";
   pkgDir: string;
   pkgRealDir: string;
@@ -59,12 +45,10 @@ function safe<T>(fn: () => T, fallback: T): T {
   }
 }
 
-/** Gather the environment fingerprint. Never throws. */
 export function collectInstallDiagnostics(): InstallDiagnostics {
   const notes: string[] = [];
   const here = safe(() => path.dirname(fileURLToPath(import.meta.url)), "");
-  const pkgDir = safe(() => path.resolve(here, ".."), here); // dist/clients -> dist; good enough as anchor
-  // Walk up to the real package root (dir holding our package.json).
+  const pkgDir = safe(() => path.resolve(here, ".."), here);
   let root = pkgDir;
   for (let i = 0; i < 6; i++) {
     if (safe(() => fs.existsSync(path.join(root, "package.json")), false)) break;
@@ -153,7 +137,6 @@ export function collectInstallDiagnostics(): InstallDiagnostics {
   };
 }
 
-/** Render a compact, paste-able diagnostic block for a bug report. */
 export function formatInstallDiagnostics<T = undefined>(
   diag: InstallDiagnostics = collectInstallDiagnostics(),
   cause?: T,

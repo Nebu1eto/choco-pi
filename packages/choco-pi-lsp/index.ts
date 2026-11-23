@@ -187,9 +187,7 @@ export default function chocoPiLspExtension(pi: ExtensionAPI): void {
     }
     try {
       pi.registerTool(tool);
-    } catch {
-      // Another extension already registered this literal tool name.
-    }
+    } catch {}
   }
 
   // SAFETY: Every manifest channel was captured from this extension's own pi.on calls; the proxy forwards the same event/context pair.

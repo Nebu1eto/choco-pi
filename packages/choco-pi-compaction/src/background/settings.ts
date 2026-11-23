@@ -1,26 +1,3 @@
-/**
- * Background-compaction settings sidecar.
- *
- * The feature is configured only by `background-compaction.json` next to the
- * profile's other extension sidecars (the same lookup order as
- * `context-cap.json`): the trusted project's `.pi/extensions/`, then the agent
- * directory's `extensions/`, then the profile's own `profile/extensions/`. The
- * first file found wins; no file means the documented defaults: the master
- * switch and the text backend are on, and the native lanes follow the vendor
- * compaction rows (`withDerivedDefaultLanes`).
- *
- * A file that is not valid JSON, fails the frozen sidecar schema in `contract.ts`, or breaks a
- * cross-field rule disables the feature and yields a diagnostic for the
- * caller to show. It never throws on the session path.
- *
- * The Preferences row changes the master switch in the agent directory's
- * sidecar, so a trusted project's sidecar still wins. Switching on a file with
- * no backend switch on also turns on the text backend.
- *
- * The backend switches of the global sidecar are derived from the vendor
- * compaction rows (`deriveBackgroundLanes`): text is always on, and each native
- * lane follows its vendor's server-side mode.
- */
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -35,7 +12,6 @@ import {
 
 const BACKGROUND_COMPACTION_SETTINGS_FILE = "background-compaction.json";
 
-/** Backend IDs the settings switches map onto. */
 export const TEXT_BACKEND_SETTING_ID = "text";
 export const ANTHROPIC_BACKEND_SETTING_ID = "anthropic-native";
 export const CODEX_BACKEND_SETTING_ID = "codex-native-v2";
@@ -46,20 +22,16 @@ const PROFILE_SETTINGS_PATH = fileURLToPath(
 
 export interface LoadedBackgroundSettings {
   readonly settings: Readonly<BackgroundCompactionSettings>;
-  /** File the settings came from; undefined when defaults were used. */
   readonly source: string | undefined;
-  /** User-visible reason the feature was disabled, when the file was rejected. */
   readonly diagnostic: string | undefined;
 }
 
 export interface SettingsLocation {
   readonly cwd: string;
   readonly agentDir: string;
-  /** Untrusted projects cannot switch on paid background work. */
   readonly projectTrusted: boolean;
 }
 
-/** Candidate paths in precedence order. */
 export function backgroundSettingsPaths(location: SettingsLocation): string[] {
   const paths: string[] = [];
   if (location.projectTrusted) {
@@ -70,18 +42,10 @@ export function backgroundSettingsPaths(location: SettingsLocation): string[] {
   return paths;
 }
 
-/** The agent directory's sidecar: the one the Preferences row writes. */
 export function globalBackgroundSettingsPath(agentDir: string): string {
   return join(agentDir, "extensions", BACKGROUND_COMPACTION_SETTINGS_FILE);
 }
 
-/**
- * Set the master switch in the global sidecar, keeping every other key. The
- * write is atomic and owner-only. A file that is not valid JSON or fails the
- * sidecar schema is left untouched and the write is refused. Switching on with
- * every backend off and `text` absent also sets `text`, the backend that works
- * for every model.
- */
 export async function writeGlobalBackgroundEnabled(
   agentDir: string,
   enabled: boolean,
@@ -94,22 +58,17 @@ export async function writeGlobalBackgroundEnabled(
   await writeSidecarAtomic(path, next);
 }
 
-/** Whether each vendor's compaction mode is server-side. */
 export interface VendorCompactionModes {
-  /** OpenAI row: codex `compaction.responsesCompaction`. */
   readonly openaiServerSide: boolean;
-  /** Anthropic row: `compactionAnthropic === "server-side"`. */
   readonly anthropicServerSide: boolean;
 }
 
-/** Backend switches the global sidecar carries, derived from the vendor rows. */
 export interface BackgroundLaneSwitches {
   readonly text: true;
   readonly codexNative: boolean;
   readonly anthropicNative: boolean;
 }
 
-/** Text always runs; each native lane runs when its vendor compacts server-side. */
 export function deriveBackgroundLanes(modes: VendorCompactionModes): BackgroundLaneSwitches {
   return {
     text: true,
@@ -118,11 +77,6 @@ export function deriveBackgroundLanes(modes: VendorCompactionModes): BackgroundL
   };
 }
 
-/**
- * With no sidecar anywhere, the backend switches follow the vendor rows, the
- * same as after switching the Preferences row on. Settings from a file,
- * including a rejected one, are returned unchanged.
- */
 export function withDerivedDefaultLanes(
   loaded: LoadedBackgroundSettings,
   lanes: BackgroundLaneSwitches,
@@ -131,25 +85,16 @@ export function withDerivedDefaultLanes(
   return { ...loaded, settings: { ...loaded.settings, ...lanes } };
 }
 
-/** The global sidecar is malformed and was left untouched. */
 export class SidecarRefusedError extends Error {
   override name = "SidecarRefusedError";
 }
 
 export interface GlobalBackgroundUpdate {
-  /** New master switch; undefined keeps the file's value. */
   readonly enabled?: boolean | undefined;
   readonly lanes: BackgroundLaneSwitches;
-  /** Leave a missing sidecar missing instead of creating it. */
   readonly onlyIfExists?: boolean | undefined;
 }
 
-/**
- * Write the master switch and the derived backend switches to the global
- * sidecar, keeping every other key. Atomic and owner-only; a file that is not
- * valid JSON or fails the sidecar schema is left untouched and the write is
- * refused with {@link SidecarRefusedError}. Returns whether the file changed.
- */
 export async function writeGlobalBackgroundSettings(
   agentDir: string,
   update: GlobalBackgroundUpdate,
@@ -193,7 +138,6 @@ async function writeSidecarAtomic(
   }
 }
 
-/** The sidecar's keys, or undefined when the file does not exist. */
 async function readSidecarForWrite(
   path: string,
 ): Promise<Partial<BackgroundCompactionSettings> | undefined> {
@@ -224,7 +168,6 @@ function disabled(source: string | undefined, diagnostic: string): LoadedBackgro
   return { settings: { ...defaults(), enabled: false }, source, diagnostic };
 }
 
-/** Policy rules the per-field schema cannot express. Returns the first violation. */
 export function crossFieldProblem(settings: BackgroundCompactionSettings): string | undefined {
   if (settings.hysteresis >= settings.prepareAt) {
     return "hysteresis must be lower than prepareAt";
@@ -238,10 +181,6 @@ export function crossFieldProblem(settings: BackgroundCompactionSettings): strin
   return undefined;
 }
 
-/**
- * Validate sidecar text. Exported for tests and for callers that already hold
- * the file contents.
- */
 export function parseBackgroundSettings(
   text: string,
   source: string | undefined,
@@ -254,7 +193,6 @@ export function parseBackgroundSettings(
     return disabled(source, `${label} is not valid JSON; background compaction is disabled`);
   }
   if (!backgroundCompactionSidecarValidator.check(parsed)) {
-    // First violation as ` at <JSON pointer>: <message>`; the pointer form matches the previous diagnostic.
     const first = backgroundCompactionSidecarValidator.errors(parsed)[0];
     const where = first?.path ? ` at ${first.path}` : "";
     const why = first?.message ? `: ${first.message}` : "";
@@ -271,7 +209,6 @@ export function parseBackgroundSettings(
   return { settings: merged, source, diagnostic: undefined };
 }
 
-/** Read the first sidecar found. Missing everywhere means the defaults. */
 export async function loadBackgroundSettings(
   paths: readonly string[],
 ): Promise<LoadedBackgroundSettings> {
@@ -292,12 +229,6 @@ export async function loadBackgroundSettings(
   return { settings: defaults(), source: undefined, diagnostic: undefined };
 }
 
-/**
- * The settings a session runs with: the first sidecar found, or, with none
- * anywhere, the documented defaults with the native lanes derived from the
- * vendor rows. The host and the Codex integration both load through here, so a
- * no-sidecar install binds the same lanes in both packages.
- */
 export async function loadEffectiveBackgroundSettings(
   location: SettingsLocation,
   modes: VendorCompactionModes,
@@ -307,12 +238,10 @@ export async function loadEffectiveBackgroundSettings(
   return withDerivedDefaultLanes(loaded, deriveBackgroundLanes(modes));
 }
 
-/** Whether any background work may run at all. */
 export function backgroundCompactionActive(settings: BackgroundCompactionSettings): boolean {
   return settings.enabled && (settings.text || settings.anthropicNative || settings.codexNative);
 }
 
-/** Host-owned mapping from backend IDs to their switches; unknown IDs are off. */
 export function isBackendEnabled(
   backendId: string,
   settings: Readonly<BackgroundCompactionSettings>,

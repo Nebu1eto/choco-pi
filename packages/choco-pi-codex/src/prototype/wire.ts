@@ -10,7 +10,6 @@ import {
   type Static,
 } from "@earendil-works/pi-schema";
 
-// Prototype wire frames are open JSON objects: unknown members are ignored, as before.
 export const usageSchema = obj(
   { input_tokens: opt(num()), output_tokens: opt(num()) },
   { open: true },
@@ -48,7 +47,6 @@ export const wireEventSchema = obj(
 );
 export type WireEvent = Static<typeof wireEventSchema>;
 export type WireUsage = Static<typeof usageSchema>;
-// Closed: the demo tool takes no arguments, so any member is rejected.
 export const emptyArgumentsSchema = obj({});
 export const demoOutputSchema = obj({ marker: str(), source: lit("synthetic") }, { open: true });
 export const textFrameSchema = str({ maxLength: 1000000 });

@@ -202,7 +202,6 @@ async function openCodexSSE<TApi extends Api>(
 ): Promise<Response> {
   const requestBody = snapshotCodexSSEBody(body);
   const requestFetch = options?.fetch ?? fetch;
-  // The SDK always passes maxRetries; only the isolated background lane narrows the request budget.
   const requestRetries =
     options?.backgroundCompactionLane === true && options.maxRetries !== undefined
       ? Math.min(MAX_SSE_REQUEST_RETRIES, codexStreamMaxRetries(options))
@@ -292,7 +291,6 @@ export function snapshotCodexSSEBody(body: string | Uint8Array): string | Uint8A
 type ResponseLane = Exclude<CodexDiagnosticsLane, "prewarm">;
 type DiagnosticTransport = "websocket" | "sse";
 
-/** Per-stream settings resolved synchronously when the stream is created. */
 interface TransportSetup<TApi extends Api> {
   readonly model: Model<TApi>;
   readonly context: TranscriptContext;
@@ -308,7 +306,6 @@ interface TransportSetup<TApi extends Api> {
   readonly stream: AssistantMessageEventStream;
 }
 
-/** Mutable state of one running stream across WebSocket and SSE attempts. */
 interface TransportRun<TApi extends Api> extends TransportSetup<TApi> {
   output: AssistantMessage;
   readonly diagnostics: CodexDiagnosticsSink | undefined;
@@ -318,7 +315,6 @@ interface TransportRun<TApi extends Api> extends TransportSetup<TApi> {
   streamStarted: boolean;
 }
 
-/** The fully prepared request shared by every attempt. */
 interface PreparedTransportRequest {
   readonly apiKey: string;
   readonly accountId: string;
@@ -334,7 +330,6 @@ interface PreparedTransportRequest {
   readonly streamMaxRetries: number;
 }
 
-/** Overload and rate-limit waits accumulate across both transports. */
 interface RetryBudget {
   overloadRetryCount: number;
   overloadWaitedMs: number;
@@ -535,7 +530,6 @@ async function waitBeforeRetry(
   return true;
 }
 
-/** Records the retry diagnostic and waits; the caller then starts the next attempt. */
 async function retryAfterFailure<T, TApi extends Api>(
   run: TransportRun<TApi>,
   budget: RetryBudget,
@@ -609,7 +603,6 @@ function webSocketFallbackReason(
   return "retry_budget_exhausted";
 }
 
-/** A terminal WebSocket failure that SSE fallback cannot recover. */
 function terminalWebSocketError<T, TApi extends Api>(
   run: TransportRun<TApi>,
   error: T,
@@ -624,7 +617,6 @@ function terminalWebSocketError<T, TApi extends Api>(
   return error;
 }
 
-/** Retries in place, throws, or arms SSE fallback ("fallback"). */
 async function handleWebSocketFailure<T, TApi extends Api>(
   run: TransportRun<TApi>,
   request: PreparedTransportRequest,
@@ -677,8 +669,6 @@ async function handleWebSocketFailure<T, TApi extends Api>(
     throw rateLimitRecoveryBudgetError(error);
   }
   if (!fallbackArmed) throw terminalWebSocketError(run, error, websocketStarted);
-  // Pi supplies resolved request auth, not a force-refresh handle. Keep 401
-  // fallback turn-local so refreshed auth can use WebSockets on the next turn.
   if (!unauthorized) recordWebSocketSseFallback(effectiveOptions?.sessionId);
   run.diagnostics?.({
     type: "fallback",
@@ -691,7 +681,6 @@ async function handleWebSocketFailure<T, TApi extends Api>(
   return "fallback";
 }
 
-/** True when a WebSocket attempt completed the stream; false when SSE fallback is armed. */
 async function runWebSocketAttempts<TApi extends Api>(
   run: TransportRun<TApi>,
   request: PreparedTransportRequest,
@@ -699,8 +688,6 @@ async function runWebSocketAttempts<TApi extends Api>(
 ): Promise<boolean> {
   validateWebSocketTimeoutOptions(run.effectiveOptions);
   for (let attempt = 0; attempt <= request.streamMaxRetries; attempt++) {
-    // Event partials are authoritative snapshots; a fresh partial makes the
-    // next content-start replace failed-attempt output without a second message start.
     if (attempt > 0) run.output = createInitialAssistantMessage(run.model);
     const started = { value: false };
     try {
@@ -790,7 +777,6 @@ async function runSseAttempt<TApi extends Api>(
   run.stream.end();
 }
 
-/** Retries in place (after waiting) or throws the terminal error. */
 async function handleSseFailure<T, TApi extends Api>(
   run: TransportRun<TApi>,
   request: PreparedTransportRequest,
@@ -866,7 +852,6 @@ function emitTransportError<T, TApi extends Api>(run: TransportRun<TApi>, error:
   const errorMessage = createErrorMessage(run.output, error, aborted);
   const sessionId = effectiveOptions.sessionId;
   const usageLimit = aborted || !sessionId ? undefined : resolveCodexUsageLimitDetails(error);
-  // Record before emitting so the extension's message_end handler can drain it.
   if (sessionId && usageLimit)
     recordUsageLimitSignal(sessionId, { ...usageLimit, accountId: run.usageLimitAccountId });
   run.stream.push({

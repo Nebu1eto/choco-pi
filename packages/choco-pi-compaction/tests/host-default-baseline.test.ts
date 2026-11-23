@@ -1,14 +1,3 @@
-/**
- * Characterization test for the defect this package exists to fix.
- *
- * With no compaction extension installed, pi's default summarizer only receives
- * the messages it is about to discard. Evidence of completed work that lives in
- * the retained recent tail never reaches the summarizer, so the summary can only
- * repeat the stale "in progress" claims from the discarded history.
- *
- * These assertions must keep passing after the fix lands: the fix changes what a
- * choco-pi extension contributes, not what the unmodified host does.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -117,9 +106,7 @@ test("the summarizer prompt carries only the discarded history, not the session 
     assert.ok(call);
     assert.ok(call.promptText.startsWith("<conversation>"));
     assert.ok(call.systemPrompt.length > 0);
-    // Pi 1.4.0 sends no summary output cap; summaries use the model's output limit (#9512).
     assert.equal(call.options?.maxTokens, undefined);
-    // The discarded first turn is present; the retained final turn is not.
     assert.ok(call.promptText.includes("Please rewrite the retry backoff."));
     assert.equal(call.promptText.includes("Continue and report the result of the rewrite."), false);
   });

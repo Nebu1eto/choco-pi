@@ -38,10 +38,6 @@ import {
 const run = promisify(execFile);
 const background = { description: "stop", isBackground: true, isolated: true };
 
-// ---------------------------------------------------------------------------
-// Fake coordinator registry (the real one lives in the root extension)
-// ---------------------------------------------------------------------------
-
 type Latch = { epoch: number; closed: boolean };
 
 function installRegistry(t: TestContext, latches: Map<string, Latch>): void {
@@ -91,10 +87,6 @@ function spawn(s: Setup, prompt: string, extra: Record<string, string | boolean>
 
 const noWorkflows: StopWorkflowPort = { runningFor: () => [], cancel: () => false };
 
-// ---------------------------------------------------------------------------
-// Manager: revocation
-// ---------------------------------------------------------------------------
-
 test("root stop cancels queued and running records with cause user_stop and settles once", async (t) => {
   const s = await setup(t, 1);
   const runningId = spawn(s, "running");
@@ -113,7 +105,6 @@ test("root stop cancels queued and running records with cause user_stop and sett
     assert.equal(record?.cancellation?.cause, "user_stop");
     assert.equal(record?.stoppedByUser, true);
   }
-  // The queued record never started: exactly one run exists, and it is aborted.
   assert.equal(s.h.runs.length, 1);
   assert.equal(s.h.runOptions[0]?.signal?.aborted, true);
 
@@ -128,7 +119,6 @@ test("root stop cancels queued and running records with cause user_stop and sett
   assert.deepEqual(await stop.settled, []);
   assert.equal(s.manager.getRecord(runningId)?.terminalResultGeneration, 1);
 
-  // Repeating the request stops nothing new and still resolves.
   const again = s.manager.stopAllForRoot(s.root, noWorkflows);
   assert.equal(again.agents, 0);
   assert.deepEqual(await again.settled, []);
@@ -176,7 +166,6 @@ test("agent-scope stop targets the subtree only and allows nested refs", async (
   assert.equal(s.manager.getRecord(parentId)?.status, "stopped");
   assert.equal(s.manager.getRecord(childId)?.status, "stopped");
   assert.equal(s.manager.getRecord(siblingId)?.status, "running");
-  // A nested record is also reachable on its own.
   const nested = s.manager.getRecord(siblingId);
   assert.ok(nested);
   const lone = s.manager.stopTreeForUser(nested, noWorkflows);
@@ -196,10 +185,6 @@ test("a parked record stops as user_stop and ownerSessionIds are snapshotted", a
   await stop.settled;
 });
 
-// ---------------------------------------------------------------------------
-// Manager: admission
-// ---------------------------------------------------------------------------
-
 test("spawn is refused with the verbatim message while the latch is closed", async (t) => {
   const s = await setup(t);
   s.latches.set(s.root, { epoch: 3, closed: true });
@@ -209,7 +194,6 @@ test("spawn is refused with the verbatim message while the latch is closed", asy
   );
   assert.equal(s.manager.listAgents().length, 0);
   assert.equal(s.h.runs.length, 0);
-  // Reopening admits again, under the new epoch.
   s.latches.set(s.root, { epoch: 4, closed: false });
   const id = spawn(s, "admitted");
   assert.equal(s.manager.getRecord(id)?.admissionEpoch, 4);
@@ -231,7 +215,6 @@ test("resume is refused while closed, before and after a barrier-released model 
   assert.equal(s.h.resumes.length, 0);
   assert.equal(s.manager.getRecord(id)?.status, "completed", "nothing changed");
 
-  // Open at entry, closed while the model switch awaits: still refused, run never starts.
   s.latches.set(s.root, { epoch: 2, closed: false });
   const sol = s.env.models.sol;
   const gate = Promise.withResolvers<void>();
@@ -272,7 +255,6 @@ test("a queued spawn that reaches its start while closed settles stopped/user_st
   const firstId = spawn(s, "first");
   const queuedId = spawn(s, "queued behind");
   assert.equal(s.manager.getRecord(queuedId)?.status, "queued");
-  // The latch closes without the coordinator stopping the queue (barrier-released start).
   s.latches.set(s.root, { epoch: 1, closed: true });
   const session = await s.env.childSession();
   s.h.runs[0]?.resolve({ responseText: "", session, aborted: false, steered: false });
@@ -294,7 +276,6 @@ test("a spawn whose cwd check is awaited while the latch closes never starts a s
     ...background,
     cwd,
   });
-  // prepareRun is awaiting the directory check; close the latch without stopping the record.
   s.latches.set(s.root, { epoch: 1, closed: true });
   await s.manager.getRecord(id)?.promise;
   assert.equal(s.h.runs.length, 0, "no session was created");
@@ -328,10 +309,6 @@ test("resumeDormant is refused while closed and nothing is reserved", async (t) 
   assert.equal(s.h.runs.length, 0);
   assert.equal(s.manager.canResumeDormant("dorm-1"), true, "still resumable after /resume-work");
 });
-
-// ---------------------------------------------------------------------------
-// Isolated worktree: stopped through the coordinator path keeps the work, no commit
-// ---------------------------------------------------------------------------
 
 test("a worktree run stopped by the user reports its retained path and makes no commit", async (t) => {
   const repo = await realpath(await mkdtemp(join(tmpdir(), "stop-worktree-")));
@@ -378,10 +355,6 @@ test("a worktree run stopped by the user reports its retained path and makes no 
   assert.equal(await git(repo, "branch", "--list"), branchesBefore);
   assert.match(await git(workPath, "status", "--porcelain"), /\?\? partial\.txt/);
 });
-
-// ---------------------------------------------------------------------------
-// Extension: revoke handler and notification gating
-// ---------------------------------------------------------------------------
 
 type RuntimeValue = {} | null | undefined;
 type BusHandler = (data: RuntimeValue) => void;
@@ -557,7 +530,6 @@ test("revoke(all) acknowledges synchronously, settles once, ignores foreign or i
       epoch: 1,
       scope: "all",
     });
-    // Acknowledged synchronously, before any await.
     assert.equal(host.reports.length, 1);
     assert.equal(host.reports[0]?.phase, "acknowledged");
     assert.equal(host.reports[0]?.participant, "subagents");
@@ -565,7 +537,6 @@ test("revoke(all) acknowledges synchronously, settles once, ignores foreign or i
     assert.equal(host.manager.getRecord(id)?.status, "stopped");
     assert.ok(host.lifecycleEvents.includes("subagents:stopped"));
 
-    // A repeated request is idempotent: nothing new is stopped.
     host.bus.emit(STOP_CONTROL_REVOKE_CHANNEL, {
       requestId: "r2",
       rootSessionId: host.root,
@@ -627,7 +598,6 @@ test("a completion from a stopped epoch is delivered but never triggers a turn; 
   try {
     const id = host.spawnAgent();
     assert.equal(host.manager.getRecord(id)?.admissionEpoch, 0);
-    // /stop landed (epoch 1, closed) while the child was mid-run; it still finishes by itself.
     latches.set(host.root, { epoch: 1, closed: true });
     for (const finish of host.pending) finish();
     await host.manager.waitForAll();
@@ -662,7 +632,6 @@ test("a reopened epoch does not relabel old work: an old-epoch completion still 
     await new Promise<void>((resolve) => setTimeout(resolve, NUDGE_HOLD_MS + 50));
     assert.deepEqual(host.deliveries.at(-1), { deliverAs: "steer", triggerTurn: false });
 
-    // Work authorised under the open epoch keeps today's behaviour.
     host.pending.length = 0;
     host.spawnAgent();
     for (const finish of host.pending) finish();
@@ -701,8 +670,6 @@ test("workflow_run is refused while closed and an old-epoch aggregate never trig
     );
     const startedText = started.content[0];
     assert.match(startedText?.type === "text" ? startedText.text : "", /Workflow started/);
-    // The workflow settles by itself (this host cannot run steps); /stop lands before its
-    // aggregate notification leaves the hold, so the old-epoch notice must not start a turn.
     latches.set(host.root, { epoch: 3, closed: true });
     await new Promise<void>((resolve) => setTimeout(resolve, NUDGE_HOLD_MS + 50));
     const aggregate = host.notices.findLast((notice) =>

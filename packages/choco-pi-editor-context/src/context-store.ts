@@ -199,8 +199,6 @@ export function createEditorContextStore(options: ContextStoreOptions = {}): Edi
       }
       return { status: "consumed", document: validation.document };
     } finally {
-      // A claimed file is owner-verified above. Delete it on every completed read so rejected
-      // selection text cannot be replayed or linger indefinitely.
       await unlinkIfPresent(claimedPath);
     }
   }
@@ -251,9 +249,7 @@ export function createEditorContextStore(options: ContextStoreOptions = {}): Edi
       let value: BoundaryValue = undefined;
       try {
         value = JSON.parse(await readFile(path, "utf8"));
-      } catch {
-        // Malformed owner-only leftovers are stale cleanup candidates.
-      }
+      } catch {}
       if (isCurrentOwner || expired(value, now())) {
         await unlinkIfPresent(path);
         removed += 1;

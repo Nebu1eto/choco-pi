@@ -1,4 +1,3 @@
-// A file name git C-quotes (double quote, backslash, tab, non-ASCII), from the real store to the rendered pane.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";

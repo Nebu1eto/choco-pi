@@ -29,7 +29,6 @@ async function withSession(
   settings: Parameters<typeof SettingsManager.inMemory>[0],
   check: (activeTools: string[], registered: string[]) => void,
 ): Promise<void> {
-  // An empty project and agent dir keep discovery to the factory under test.
   const root = await mkdtemp(join(tmpdir(), "choco-pi-session-tool-search-"));
   try {
     const settingsManager = SettingsManager.inMemory(settings);
@@ -69,7 +68,6 @@ async function withSession(
 test("SDK sessions declare choco-pi's tool_search before their first request", async () => {
   await withSession({}, (activeTools) => {
     assert.ok(activeTools.includes("tool_search"));
-    // The default tool set is kept; the activation is additive.
     assert.ok(activeTools.includes("read"));
   });
 });
@@ -104,8 +102,6 @@ test("with the root tool-search extension loaded, an SDK session has one tool_se
 });
 
 test("session bridge and review side chat build their sessions with the shared loader", async () => {
-  // Both production factories must route through createToolSearchResourceLoader;
-  // an SDK session created without it silently loses tool discovery.
   const [bridge, ask] = await Promise.all([
     readFile(new URL("../profile/extensions/session-bridge.ts", import.meta.url), "utf8"),
     readFile(new URL("../profile/extensions/review/core/ask.ts", import.meta.url), "utf8"),

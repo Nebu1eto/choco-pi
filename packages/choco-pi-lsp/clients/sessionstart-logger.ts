@@ -5,7 +5,6 @@ import { createNdjsonLogger } from "./ndjson-logger.ts";
 
 export const SESSIONSTART_LOG_FILE = path.join(getGlobalPiLensDir(), "sessionstart.log");
 
-// All ordinary writers share this queue, preserving their in-process order.
 const writer = createNdjsonLogger({ filePath: SESSIONSTART_LOG_FILE });
 
 export function logSessionStart(message: string): void {

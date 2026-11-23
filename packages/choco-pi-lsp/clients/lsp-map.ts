@@ -1,21 +1,3 @@
-/**
- * `/lens-map` (#679) — a human-facing, self-contained interactive HTML project
- * map rendered from the existing review graph. Zero external dependencies: the
- * force-directed layout is computed here in Node at generation time (a simple
- * deterministic simulation), and the client side is just an embedded JSON
- * payload rendered by vanilla JS into an SVG (pan/zoom/hover/click) — no CDN
- * script, no npm deps, nothing fetched at view time.
- *
- * The review graph is symbol-level; this file aggregates it to FILE-level
- * nodes (the unit humans actually want to see on a map) and file→file edges
- * (deduped, weighted by how many underlying symbol edges they represent).
- * "external" kind nodes (third-party/stdlib import targets) are excluded from
- * the map outright — their count is surfaced in the header instead.
- *
- * Human-only surface: no agent tool, no MCP mirror. See index.ts's `lens-map`
- * command registration.
- */
-
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { FactStore } from "./dispatch/fact-store.ts";
@@ -33,56 +15,34 @@ type DegreesForResultContract = {
 };
 type SeededPositionResultContract = { x: number; y: number };
 
-// ── Aggregation: symbol-level review graph -> file-level map ────────────────
-
 export interface FileMapNode {
-  /** Normalized (forward-slashed) file path — stable identity across nodes/edges. */
   id: string;
-  /** Display path; cwd-relative when generated via `generateLensMap`, else the raw id. */
   path: string;
   language: string;
   symbolCount: number;
-  /** Count of DISTINCT files this file has an outgoing edge to (post-truncation). */
   outDegree: number;
-  /** Count of DISTINCT files that have an outgoing edge to this file (post-truncation). */
   inDegree: number;
-  /** Transitive dependents (files that depend on this one, directly or indirectly),
-   * computed over the (possibly truncated) rendered file graph — "how load-bearing". */
   dependents: number;
 }
 
 export interface FileMapEdge {
   from: string;
   to: string;
-  /** Number of underlying symbol-level edges this file→file edge aggregates. */
   weight: number;
 }
 
 export interface AggregatedFileGraph {
   nodes: FileMapNode[];
   edges: FileMapEdge[];
-  /** Count of "external" kind nodes in the source graph (excluded from the map). */
   externalCount: number;
-  /** Count of distinct test files (per `detectFileRole`) excluded from the map. */
   testFileCount: number;
-  /** Count of compiled twins (`X.js` with an `X.ts`/`X.tsx` sibling, etc.) merged into their source file's node. */
   compiledTwinCount: number;
-  /** Count of files dropped via `excludeIds` (untracked-gitignored) — NOT counting excluded files rescued by the twin merge. */
   ignoredFileCount: number;
-  /** True when the source graph had more files than the node cap and the lowest-degree ones were dropped. */
   truncated: boolean;
 }
 
 export interface AggregateOptions {
-  /** Cap on rendered file nodes; default resolved by the caller (env CHOCO_PI_LSP_MAP_MAX_NODES, else 500). */
   maxNodes?: number;
-  /**
-   * Normalized file ids (per `normalizeMapKey`) to exclude from the map.
-   * The impure caller (`generateLensMap`) computes this as git's own
-   * "untracked AND ignored" set; this pure layer only does membership
-   * checks. A file in this set that would canonicalize onto a SURVIVING
-   * source twin is merged instead of dropped (see the pass-2 comment).
-   */
   excludeIds?: ReadonlySet<string>;
 }
 
@@ -95,11 +55,6 @@ interface MutableFileEntry {
   symbolCount: number;
 }
 
-/**
- * Aggregates a symbol-level {@link ReviewGraph} into file-level nodes/edges.
- * Pure and side-effect-free — no graph build here, no filesystem access — so
- * it's directly unit-testable against a synthetic graph.
- */
 export function aggregateGraphToFiles(
   graph: ReviewGraph,
   options?: AggregateOptions,
@@ -110,25 +65,8 @@ export function aggregateGraphToFiles(
   let externalCount = 0;
   const testFileIds = new Set<string>();
 
-  // A node resolves to the file it belongs to: a "file" kind node IS the
-  // file; a "symbol" kind node belongs to its `filePath`. Anything else
-  // ("external" — third-party/stdlib import targets, or "module" —
-  // unresolved same-project import placeholders with no real file on disk)
-  // has no file identity and is excluded from the map. Only "external" is
-  // counted (per #679's spec); "module" placeholders are silently dropped —
-  // they're not real files and there's nothing useful to show for them.
-  // Test files (per `detectFileRole`) are ALSO excluded (#679 follow-up):
-  // they pollute the file-level map and, left in, would dominate the
-  // truncation ranking on test-heavy repos. Excluding at nodeToFile
-  // construction time means their edges are dropped for free below (an
-  // edge whose endpoint never resolves to a file is skipped) and they can
-  // never influence degree/dependents/truncation ranking, which is
-  // computed entirely from the (post-exclusion) nodeToFile map.
   const nodeToFile = new Map<string, string>();
 
-  // detectFileRole is pure on the path, and a file's many symbol nodes all
-  // share one path — cache per normalized id so the classification runs once
-  // per FILE, not once per node.
   const isTestById = new Map<string, boolean>();
   function isTestFile(id: string, filePath: string): boolean {
     let isTest = isTestById.get(id);
@@ -139,10 +77,6 @@ export function aggregateGraphToFiles(
     return isTest;
   }
 
-  // ── Pass 1: gather file identities (post test-exclusion) ────────────────
-  // Needed BEFORE aggregation because compiled-twin canonicalization (below)
-  // can only decide "does X.js have an X.ts sibling?" once the full set of
-  // file identities is known.
   const allFileIds = new Set<string>();
   for (const node of graph.nodes.values()) {
     if (node.kind === "external") {
@@ -160,30 +94,7 @@ export function aggregateGraphToFiles(
     allFileIds.add(id);
   }
 
-  // ── Pass 2: canonicalize compiled twins ─────────────────────────────────
-  // choco-pi-lsp (and many TS projects) compile in place, so the review graph's
-  // import resolution frequently lands on the compiled `X.js` sibling of an
-  // `X.ts` source. Rendering both as separate map nodes doubles the project
-  // and splits each file's edges across the pair. When BOTH the compiled
-  // form and a source twin exist as file identities, the compiled one is
-  // canonicalized onto the source: its symbols and ALL its edges remap onto
-  // the source node (merge, never drop — the compiled twin carries most
-  // import edges). Deterministic sibling families: .js → .ts (preferred)
-  // then .tsx; .mjs → .mts; .cjs → .cts. A compiled-looking file with no
-  // source twin (vendored deps, pure-JS projects) is untouched.
-  // Keep this pure aggregation layer on the shared source-filter policy. It
-  // cannot call findSourceSibling because synthetic graph fixtures and cached
-  // nodes are not required to exist on disk.
   const compiledExtensions = new Set([".js", ".jsx", ".mjs", ".cjs"]);
-  // Interplay with the untracked-gitignored exclusion (`excludeIds`):
-  // twin canonicalization takes PRECEDENCE over exclusion. An excluded
-  // compiled file whose source twin survives is merged onto that twin
-  // (edges preserved) rather than dropped — dropping it would silently
-  // discard the import edges the compiled twin carries, which is strictly
-  // worse than merging them onto the source node. Only excluded files with
-  // NO surviving canonical target actually vanish. Conversely an excluded
-  // file can never BE a canonical target — merging a survivor onto a node
-  // that's about to disappear would drop both.
   const excludeIds = options?.excludeIds;
   const canonicalOf = new Map<string, string>();
   for (const id of allFileIds) {
@@ -193,10 +104,6 @@ export function aggregateGraphToFiles(
   }
   const compiledTwinCount = canonicalOf.size;
 
-  // Excluded ids that actually drop: in the graph, untracked-gitignored,
-  // and NOT rescued by the twin merge above. Computed before pass 3 so the
-  // aggregation skip (and therefore edge dropping, degree/dependents/
-  // truncation ranking) all see the post-exclusion world.
   const droppedIgnoredIds = new Set<string>();
   if (excludeIds) {
     for (const id of allFileIds) {
@@ -207,18 +114,8 @@ export function aggregateGraphToFiles(
   }
   const ignoredFileCount = droppedIgnoredIds.size;
 
-  // Build logical symbol identities before counting symbols or edges. A compiled
-  // twin can carry the same declaration and edge evidence as its source; those
-  // are one logical observation after canonicalization. Match source declarations
-  // in stable insertion order so overloads with the same name/kind stay distinct.
   const logicalSymbolByNode = new Map<string, string>();
   const sourceSymbolsByFile = new Map<string, Map<string, string[]>>();
-  // A symbol kind is not stable across extractor surfaces: a declaration can
-  // be a `function` in a JS/TS fact and a `variable` in a compiled twin's
-  // syntax extraction. Keep a name-only index for the safe case where there is
-  // exactly one source declaration with that name; this prevents equivalent
-  // twins from inflating the preferred source while preserving overloads and
-  // genuinely ambiguous same-name declarations.
   const sourceSymbolsByName = new Map<string, Map<string, string[]>>();
   for (const node of graph.nodes.values()) {
     if (node.kind !== "symbol" || !node.filePath || !node.symbolName) continue;
@@ -238,11 +135,6 @@ export function aggregateGraphToFiles(
     sourceSymbolsByName.set(canonical, bySymbolName);
     logicalSymbolByNode.set(node.id, node.id);
   }
-  // Assign each twin's declarations by occurrence within THAT twin file, not
-  // through one process-wide "used" set. A source can have several compiled
-  // siblings (`x.ts`, `x.js`, `x.mjs`, ...); every sibling's first `run` must
-  // map to the source's first `run`, while overloads with the same name/kind
-  // remain distinct by occurrence.
   const twinOccurrencesByFile = new Map<string, Map<string, number>>();
   for (const node of graph.nodes.values()) {
     if (node.kind !== "symbol" || !node.filePath || !node.symbolName) continue;
@@ -252,8 +144,6 @@ export function aggregateGraphToFiles(
     const key = `${node.symbolName}\u0000${node.symbolKind ?? ""}`;
     const exactSourceIds = sourceSymbolsByFile.get(canonical)?.get(key) ?? [];
     const nameSourceIds = sourceSymbolsByName.get(canonical)?.get(node.symbolName) ?? [];
-    // Prefer the kind-qualified mapping. Fall back only when the source name
-    // is unique; never guess among overloads or same-name declarations.
     const sourceIds =
       exactSourceIds.length > 0 ? exactSourceIds : nameSourceIds.length === 1 ? nameSourceIds : [];
     const occurrenceKey = exactSourceIds.length > 0 ? key : node.symbolName;
@@ -265,15 +155,13 @@ export function aggregateGraphToFiles(
     if (logical) {
       logicalSymbolByNode.set(node.id, logical);
     } else {
-      // A compiled-only declaration remains real evidence.
       logicalSymbolByNode.set(node.id, node.id);
     }
   }
   const countedLogicalSymbols = new Set<string>();
 
-  // ── Pass 3: aggregate nodes under their canonical file identity ─────────
   for (const node of graph.nodes.values()) {
-    if (node.kind === "external") continue; // counted in pass 1
+    if (node.kind === "external") continue;
     if (node.kind === "file" && node.filePath) {
       const raw = normalizeMapKey(node.filePath);
       if (isTestById.get(raw)) continue;
@@ -282,8 +170,6 @@ export function aggregateGraphToFiles(
       nodeToFile.set(node.id, id);
       const existing = files.get(id);
       if (existing) {
-        // A canonicalized (compiled-twin) node must not overwrite the
-        // source file's language — only fill a still-empty slot.
         if (raw === id) {
           existing.language = node.language || existing.language;
         } else if (!existing.language) {
@@ -318,16 +204,8 @@ export function aggregateGraphToFiles(
       }
       continue;
     }
-    // "module" (or any future kind) — no file identity, drop silently.
   }
 
-  // Aggregate edges to file->file, deduped with a weight (#679: "keep a
-  // count as edge weight"). Same-file edges (a symbol's own `contains`/
-  // `defines` edge back to its file, or an intra-file call) are dropped —
-  // they're not informative at the file-map altitude. Because nodeToFile
-  // already maps compiled twins to their canonical source id, an edge that
-  // becomes self-referential only AFTER canonicalization (e.g. x.js → x.ts)
-  // collapses through the same fromFile === toFile check.
   const edgeWeights = new Map<string, number>();
   const seenLogicalEdges = new Set<string>();
   for (const edge of graph.edges) {
@@ -339,10 +217,6 @@ export function aggregateGraphToFiles(
     const logicalEdgeKey = `${logicalFrom}\u0000${logicalTo}\u0000${edge.kind}`;
     if (seenLogicalEdges.has(logicalEdgeKey)) continue;
     seenLogicalEdges.add(logicalEdgeKey);
-    // NUL separator (same idiom as review-graph/builder.ts): the one byte
-    // that can never appear in a file path, written as an escape sequence so
-    // this source file stays text for grep (a literal NUL makes ripgrep
-    // treat the file as binary).
     const key = `${fromFile}\u0000${toFile}`;
     edgeWeights.set(key, (edgeWeights.get(key) ?? 0) + 1);
   }
@@ -372,9 +246,6 @@ export function aggregateGraphToFiles(
     return { inNeighbors, outNeighbors };
   }
 
-  // Truncation (#679): keep the highest-degree files when the graph exceeds
-  // the cap, ranked over the FULL (pre-truncation) edge set so the ranking
-  // isn't self-referentially biased by an arbitrary earlier cut.
   let keepIds: Set<string> | undefined;
   let truncated = false;
   if (files.size > maxNodes) {
@@ -393,9 +264,6 @@ export function aggregateGraphToFiles(
   const finalEdges = buildEdgeList(keepIds);
   const { inNeighbors, outNeighbors } = degreesFor(finalEdges);
 
-  // Transitive dependents (#679: "node radius scales with transitive
-  // dependents") — BFS over incoming (reverse) edges of the RENDERED file
-  // graph: "who depends on this file, directly or indirectly".
   function transitiveDependents(seed: string): number {
     const visited = new Set<string>([seed]);
     let frontier = [seed];
@@ -438,12 +306,9 @@ export function aggregateGraphToFiles(
   };
 }
 
-// ── Layout: deterministic force-directed simulation ─────────────────────────
-
 export interface LayoutOptions {
   width?: number;
   height?: number;
-  /** Simulation iterations (~100-300 typical; more = more settled, slower to generate). */
   iterations?: number;
 }
 
@@ -460,10 +325,6 @@ const LAYOUT_MARGIN = 40;
 const GRAVITY_STRENGTH = 0.02;
 const ATTRACTION_SCALE = 0.02;
 
-// FNV-1a 32-bit — cheap, deterministic, no external dep. Used purely to seed
-// initial node positions from a hash of the file path (#679: "seed initial
-// positions from a hash of the file path so two runs on the same project give
-// the same map") — never as a source of real randomness.
 function fnv1a(input: string): number {
   let hash = 0x811c9dc5;
   for (let i = 0; i < input.length; i += 1) {
@@ -483,14 +344,6 @@ function seededPosition(id: string, width: number, height: number): SeededPositi
   };
 }
 
-/**
- * Simple deterministic force-directed layout: pairwise repulsion + edge-spring
- * attraction + center gravity, run for a fixed number of iterations with a
- * linear cooling schedule. Not a physically exact Fruchterman-Reingold
- * implementation — good enough for a human-facing project map, computed once
- * at generation time (never re-run client-side). Pure: same nodes/edges/opts
- * always produce identical output (no Math.random, no wall-clock).
- */
 export function computeLayout(
   nodes: readonly { id: string }[],
   edges: readonly { from: string; to: string; weight: number }[],
@@ -529,7 +382,6 @@ export function computeLayout(
       }
     }
 
-    // Pairwise repulsion (Coulomb-like: force ~ k^2 / dist).
     for (let i = 0; i < ids.length; i += 1) {
       const a = pos.get(ids[i]);
       if (!a) continue;
@@ -555,8 +407,6 @@ export function computeLayout(
       }
     }
 
-    // Edge-spring attraction (Hooke-like: force ~ dist^2 / k), scaled up
-    // slightly by edge weight so heavily-aggregated edges pull tighter.
     for (const edge of relevantEdges) {
       const a = pos.get(edge.from);
       const b = pos.get(edge.to);
@@ -574,7 +424,6 @@ export function computeLayout(
       b.dy -= fy;
     }
 
-    // Center gravity — keeps disconnected components from drifting off canvas.
     for (const id of ids) {
       const p = pos.get(id);
       if (!p) continue;
@@ -582,7 +431,6 @@ export function computeLayout(
       p.dy += (center.y - p.y) * GRAVITY_STRENGTH;
     }
 
-    // Cooling schedule: max displacement per step shrinks linearly to ~0.
     const temperature = Math.max(0.5, width * 0.05 * (1 - iter / iterations));
     for (const id of ids) {
       const p = pos.get(id);
@@ -603,8 +451,6 @@ export function computeLayout(
     return { id: n.id, x, y };
   });
 }
-
-// ── Rendering: self-contained HTML (embedded JSON + vanilla JS/SVG) ─────────
 
 export interface LensMapPayloadNode extends FileMapNode {
   x: number;
@@ -628,24 +474,10 @@ export interface LensMapPayload {
   edges: FileMapEdge[];
 }
 
-// Escape the embedded JSON payload so it can never break out of its
-// <script type="application/json"> block — #504-spike XSS-from-repo-content
-// mitigation (repo file names/paths are attacker-influenceable in cloned
-// repos). Replacing every `<` with its unicode escape is a strictly stronger
-// guarantee than just escaping "</script": no "<" survives at all, so no
-// substring of the payload can ever open a tag, script or otherwise.
 function escapeJsonForScriptTag(json: string): string {
   return json.replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
 }
 
-/**
- * Renders the self-contained lens-map HTML page. Pure string building — the
- * ONLY dynamic content that reaches the page is the JSON payload (embedded via
- * `escapeJsonForScriptTag`, read back out and rendered through DOM text APIs
- * client-side). No graph-derived string (file path, project label) is ever
- * concatenated directly into HTML markup — see the client script below, which
- * populates every visible label via `textContent`.
- */
 export function renderMapHtml(payload: LensMapPayload): string {
   const json = escapeJsonForScriptTag(JSON.stringify(payload));
   return `<!doctype html>
@@ -1176,8 +1008,6 @@ export function renderMapHtml(payload: LensMapPayload): string {
 `;
 }
 
-// ── Orchestration ────────────────────────────────────────────────────────────
-
 export interface GenerateLensMapResult {
   filePath: string;
   fileCount: number;
@@ -1196,33 +1026,14 @@ function resolveMaxNodes(): number {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_MAX_MAP_NODES;
 }
 
-// #694: the untracked-AND-ignored id computation (parse + git spawn + the
-// tracked-file semantic) now lives in git-tracked-ignore.ts, shared with the
-// review-graph builder's ignore-gated node creation. Re-exported here so
-// existing imports of `parseUntrackedIgnoredOutput` from this module keep
-// working unchanged.
 export { parseUntrackedIgnoredOutput } from "./git-tracked-ignore.ts";
 
-// Human-facing display path: cwd-relative + forward-slashed when the file
-// sits under the project root, else the absolute (slash-normalized) path.
-// Mirrors module-report.ts's toDisplayPath convention.
 function toDisplayPath(p: string, projectRoot: string): string {
   return toProjectRelativePath(p, projectRoot);
 }
 
-/**
- * Builds (or refreshes) the review graph, aggregates it to a file-level map,
- * lays it out, renders the self-contained HTML page, and writes it to disk
- * under `<project data dir>/reports/lens-map.html`. Unlike module_report's
- * read-only #256 contract, this path DOES build the graph on a cold cache —
- * the user explicitly asked for a map via `/lens-map`, so taking a few seconds
- * to build is an acceptable, expected cost (this is not a hot per-edit path).
- */
 export async function generateLensMap(cwd: string): Promise<GenerateLensMapResult> {
   const facts = new FactStore();
-  // Kick off the git ignored-file listing concurrently with the (much
-  // slower) graph build — both are bounded (10s spawn timeout + the ambient
-  // turn abort signal safeSpawnAsync applies by default).
   const excludeIdsPromise = collectUntrackedIgnoredIds(cwd);
   const graph = await buildOrUpdateGraph(cwd, [], facts);
   const excludeIds = await excludeIdsPromise;

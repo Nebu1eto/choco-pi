@@ -1,8 +1,3 @@
-/**
- * choco-pi-code-mode as its own Pi extension, alone and composed with
- * choco-pi-codex on one Pi runtime (one event bus, one extension runtime, the
- * way Pi loads a profile's packages).
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -28,7 +23,6 @@ const agentDir = await mkdtemp(join(tmpdir(), "choco-pi-code-mode-extension-"));
 process.env["PI_CODING_AGENT_DIR"] = agentDir;
 test.after(() => rm(agentDir, { recursive: true, force: true }));
 
-/** The tools choco-pi-codex registers, in the order the cached prompt prefix depends on. */
 const CODEX_TOOL_ORDER = [
   "exec",
   "wait",
@@ -43,7 +37,6 @@ const SESSION_TOOLS = ["read", "bash", "edit", "write", "web_search", "tool_sear
 
 interface LoadedHost {
   toolsByExtension: string[][];
-  /** Pi's merged registry: the first extension that registers a name wins. */
   registeredTools(): string[];
 }
 

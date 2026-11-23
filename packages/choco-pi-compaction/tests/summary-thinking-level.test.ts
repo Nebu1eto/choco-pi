@@ -3,7 +3,6 @@ import { test } from "node:test";
 
 import { summaryThinkingLevel } from "../src/summarize.ts";
 
-// GLM-5.3 as the Synthetic catalog ships it: only high and max are usable.
 const GLM = {
   reasoning: true,
   thinkingLevelMap: {
@@ -28,7 +27,6 @@ test("a summary asks for the lowest thinking level the model supports", () => {
 });
 
 test("a summary never reasons above the session level", () => {
-  // A model whose only supported levels sit above the session's level keeps the session level.
   assert.equal(summaryThinkingLevel(GLM, "low"), "low");
   assert.equal(summaryThinkingLevel({ reasoning: true }, "low"), "minimal");
 });

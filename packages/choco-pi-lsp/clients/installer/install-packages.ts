@@ -1,6 +1,3 @@
-/**
- * npm, pip, and gem installs.
- */
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -18,10 +15,8 @@ export async function installNpmTool(
   binaryName: string,
 ): Promise<string | undefined> {
   try {
-    // Ensure tools directory exists
     await fs.mkdir(TOOLS_DIR, { recursive: true });
 
-    // Create a minimal package.json if it doesn't exist
     const packageJsonPath = path.join(TOOLS_DIR, "package.json");
     try {
       await fs.access(packageJsonPath);
@@ -33,7 +28,6 @@ export async function installNpmTool(
       );
     }
 
-    // Resolve the package manager for the tools dir and build install args.
     const isWindows = installerPlatform() === "win32";
     const pm = await resolveNodePackageManager(TOOLS_DIR);
     const testNpmScript =
@@ -41,8 +35,6 @@ export async function installNpmTool(
         ? process.env.CHOCO_PI_LSP_TEST_NPM_SCRIPT
         : undefined;
     const pmCommand = testNpmScript ? process.execPath : pmBinary(pm);
-    // Use --ignore-scripts unless the package explicitly needs postinstall
-    // (e.g. biome downloads a platform-specific native binary via postinstall).
     const needsScripts = NEEDS_POSTINSTALL.has(packageName);
     const baseInstallArgs = installArgs(pm, packageName, {
       ignoreScripts: !needsScripts,
@@ -67,7 +59,6 @@ export async function installNpmTool(
       ...baseInstallArgs,
     ]);
 
-    // --legacy-peer-deps is npm-only; retry just npm's ERESOLVE failures.
     const erResolve =
       outcome.ok === false &&
       /npm\s+error\s+ERESOLVE|\bERESOLVE\b|could not resolve/i.test(outcome.stderr);
@@ -87,26 +78,17 @@ export async function installNpmTool(
       throw new Error(`Failed to install ${packageName}: ${outcome.stderr}`);
     }
 
-    // npm creates a command shim on Windows; retain that actual executable path
-    // rather than probing/storing the extensionless POSIX sibling.
     const binBase = path.join(TOOLS_DIR, "node_modules", ".bin", binaryName);
     const binPath = installerPlatform() === "win32" ? `${binBase}.cmd` : binBase;
 
-    // Make executable on Unix
     if (installerPlatform() !== "win32") {
       try {
         await fs.chmod(binPath, 0o750);
-      } catch {
-        /* ignore */
-      }
+      } catch {}
     }
 
-    // Brief delay — lets npm postinstall scripts finish writing bin wrappers
-    // before we stat/exec them (eliminates a race on slow Windows I/O).
     await new Promise((r) => setTimeout(r, 500));
 
-    // Verify the binary actually works, retrying with backoff to handle
-    // postinstall scripts that complete asynchronously after npm exits 0.
     debugLog(`Verifying ${binaryName}...`);
     let isValid = false;
     for (let attempt = 1; attempt <= 3; attempt++) {
@@ -123,7 +105,6 @@ export async function installNpmTool(
       logSessionStart(
         `auto-install ${packageName}: installed but verification failed, cleaning up`,
       );
-      // Clean up the broken installation
       try {
         const packagePath = path.join(TOOLS_DIR, "node_modules", packageName);
         await fs.rm(packagePath, { recursive: true, force: true });
@@ -132,9 +113,7 @@ export async function installNpmTool(
           await fs.rm(`${binBase}.cmd`, { force: true });
           await fs.rm(`${binBase}.ps1`, { force: true });
         }
-      } catch {
-        /* ignore cleanup errors */
-      }
+      } catch {}
       return undefined;
     }
 
@@ -145,9 +124,6 @@ export async function installNpmTool(
     return undefined;
   }
 }
-/**
- * Install a pip package tool
- */
 export async function installPipTool(packageName: string): Promise<string | undefined> {
   try {
     const isWindows = process.platform === "win32";
@@ -189,8 +165,6 @@ export async function installPipTool(packageName: string): Promise<string | unde
       };
 
       if (outcome.ok) {
-        // Ensure user-level scripts directory is available in current process PATH.
-        // This helps tools installed via `pip install --user` become immediately callable.
         const userBaseResult = await new Promise<string>((resolve) => {
           let probe: ReturnType<typeof spawn>;
           try {
@@ -199,8 +173,6 @@ export async function installPipTool(packageName: string): Promise<string | unde
               shell: isWindows,
             });
           } catch {
-            // SYNCHRONOUS spawn throw (Windows `spawn UNKNOWN`/EINVAL, the
-            // pidusage bug class, #533) — best-effort probe, resolve empty.
             resolve("");
             return;
           }
@@ -219,8 +191,6 @@ export async function installPipTool(packageName: string): Promise<string | unde
           ];
 
           if (isWindows) {
-            // Some Python setups report USER_BASE as ...\Roaming\Python,
-            // while scripts live in ...\Roaming\Python\PythonXY\Scripts.
             try {
               const children = await fs.readdir(userBaseResult, {
                 withFileTypes: true,
@@ -230,9 +200,7 @@ export async function installPipTool(packageName: string): Promise<string | unde
                 if (!/^python\d+$/i.test(entry.name)) continue;
                 candidateScriptDirs.push(path.join(userBaseResult, entry.name, "Scripts"));
               }
-            } catch {
-              // ignore
-            }
+            } catch {}
           }
 
           const currentPath = process.env.PATH || process.env.Path || process.env.path || "";

@@ -77,7 +77,6 @@ test("error tool results with media are sent as text only, preserving order and 
       ],
     },
   ]);
-  // The session-owned payload object is not mutated.
   assert.equal(payload.messages[2].content.length, 2);
 });
 

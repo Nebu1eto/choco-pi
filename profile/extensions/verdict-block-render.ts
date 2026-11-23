@@ -1,12 +1,3 @@
-/**
- * Transcript display of structured reviewer and verifier blocks.
- *
- * A Markdown transformer runs at display time only, in the interactive terminal:
- * the stored message, what the model receives and any recorded verdict are
- * unchanged. A block the strict parser accepts is replaced by a readable
- * summary; a rejected block is shown as it is, after one line naming the
- * parser's reason; a block still streaming or with an open fence is left alone.
- */
 import type {
   ExtensionAPI,
   MarkdownMessageType,
@@ -19,10 +10,8 @@ import {
   summaryMarkdown,
 } from "./lib/verdict-summary.ts";
 
-/** Assistant replies and default-rendered custom messages; never user input or thinking. */
 export const VERDICT_RENDER_MESSAGE_TYPES: readonly MarkdownMessageType[] = ["assistant", "custom"];
 
-/** At or under this many lines the original fence stays below its summary; above it, only a note remains. */
 export const RAW_BLOCK_MAX_MESSAGE_LINES = 30;
 
 export function renderVerdictBlocks(markdown: string, context: MarkdownTransformContext): string {

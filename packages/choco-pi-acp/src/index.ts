@@ -6,7 +6,6 @@ import { PiAcpAgent } from "./acp/agent.ts";
 import { type BoundaryValue, errorMessage, isNumber } from "./boundary.ts";
 import { resolvePiLaunch } from "./pi-rpc/command.ts";
 
-/** Maximum bytes in one inbound ACP NDJSON frame, excluding the newline. */
 export const ACP_MAX_INBOUND_FRAME_BYTES = 1_048_576;
 
 type InboundFrameViolation = "frame_too_large" | "malformed_json";
@@ -46,7 +45,6 @@ async function runInteractivePi(cwd: string): Promise<never> {
   process.exit(isNumber(status) ? status : 1);
 }
 
-// Terminal Auth entrypoint. The ACP client launches the agent with `--terminal-login`.
 if (process.argv.includes("--terminal-login")) {
   await runInteractivePi(process.cwd());
 }
@@ -83,7 +81,6 @@ function writeStdout(chunk: Uint8Array): Promise<void> {
         resolve();
       });
     } catch {
-      // Common: ERR_STREAM_DESTROYED ("Cannot call write after a stream was destroyed").
       resolve();
     }
   });
@@ -245,7 +242,6 @@ process.stdin.resume();
 process.on("SIGINT", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
 
-// Avoid crashing if the client closes stdout early.
 process.stdout.on("error", () => {
   void shutdown();
 });

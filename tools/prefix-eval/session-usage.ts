@@ -34,7 +34,6 @@ const SessionRecordSchema = obj(
           role: opt(str()),
           toolName: opt(str()),
           isError: opt(bool()),
-          // Pi system messages can have string content.
           content: opt(union([str(), arr(MessageBlockSchema)])),
           usage: opt(UsagePayloadSchema),
         },

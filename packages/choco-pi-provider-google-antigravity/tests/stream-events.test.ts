@@ -115,7 +115,6 @@ describe("stream normalization", () => {
         ],
       }),
     ].join("");
-    // Cut the byte stream at awkward places: inside JSON, between CR and LF, mid "data:".
     const pieces = [body.slice(0, 7), body.slice(7, 40)];
     for (let index = 40; index < body.length; index += 13)
       pieces.push(body.slice(index, index + 13));

@@ -85,7 +85,6 @@ function createStubPi(): StubPiHarness {
 function createRegisteredStubPi(trustedRoots: string[] = []): StubPiHarness {
   const harness = createStubPi();
   // SAFETY: The stub supplies the `on` registrations and `events.emit` used by this extension;
-  // tests invoke each stored handler with host-shaped fixtures and the required context fields.
   registerAgentsMdAutoload(harness.pi as ExtensionAPI, {
     loadSettings: async () => ({ trustedRoots }),
   });
@@ -224,7 +223,6 @@ test("shell discovery detection checks command positions rather than arbitrary a
 test("injects AGENTS.md for Pi code-mode exec_command traces", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "choco-pi-agents-md-code-mode-"));
   try {
-    // Match a git worktree, where .git is a file rather than a directory.
     fs.writeFileSync(path.join(root, ".git"), "gitdir: /tmp/example-worktree\n");
     const packageDir = path.join(root, ".pi", "packages", "example");
     const target = path.join(packageDir, "src", "types.ts");

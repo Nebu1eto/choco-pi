@@ -36,9 +36,6 @@ import type { CompactionMessage } from "./types.ts";
 import { combineUsage } from "./usage.ts";
 import { readSessionId } from "./shared/session.ts";
 
-// Background compaction host integration lives in ./background-host/; this
-// module stays the package's entry for both the summarizer and the background
-// host API.
 export { ANCHOR_ENTRY_TYPE, CANDIDATE_RECORD_TYPE } from "./background/entry-types.ts";
 export {
   type AdoptionRoute,
@@ -66,23 +63,11 @@ export type { SessionStateReader } from "./session-state.ts";
 
 const CANCELLED: SessionBeforeCompactResult = { cancel: true };
 
-/**
- * Report a compaction failure and cancel instead of throwing.
- *
- * The extension runner catches whatever a handler throws, records an
- * extension error, and continues (`core/extensions/runner.js` `emit`). The
- * host then runs its own default compaction, which is exactly the summarizer
- * that cannot see the retained tail. Throwing would therefore commit a
- * checkpoint built from stale history without the user being told that the
- * reconciled summary failed. Cancelling keeps the session intact and the
- * notification states why.
- */
 function failVisibly(ctx: ExtensionContext, reason: string): SessionBeforeCompactResult {
   ctx.ui.notify(`Compaction failed: ${reason}`, "error");
   return CANCELLED;
 }
 
-/** A warning notice; only a stale context (the session is gone) is contained. */
 function notifyContained(ctx: ExtensionContext, text: string): void {
   try {
     ctx.ui.notify(text, "warning");
@@ -97,7 +82,6 @@ interface SummaryOutcome {
   readonly passes: 1 | 2;
 }
 
-/** Host scalars one compaction snapshots before its first await. */
 interface CompactionRun {
   readonly event: SessionBeforeCompactEvent;
   readonly preparation: SessionBeforeCompactEvent["preparation"];
@@ -116,34 +100,14 @@ interface Summarized {
 }
 
 export interface BeforeCompactHandlerOptions {
-  /**
-   * Whether losing an opaque checkpoint's provider-held history is authorized
-   * for the session (the setting or a consent). Defaults to the process-global
-   * consent slot; fails closed (preserve).
-   */
   readonly lossAuthorized?: (sessionId: string, entryId: string) => boolean;
 }
 
-/** The summarizer must not answer: the latest checkpoint is an unauthorized opaque record. */
 interface OpaqueRefusal {
   readonly kind: "opaque";
   readonly notice: string;
 }
 
-/**
- * Build the `session_before_compact` handler.
- *
- * The host's default summarizer only sees the messages it is about to discard,
- * so completion evidence living in the retained tail never reaches it and the
- * checkpoint can report finished work as still pending. This handler feeds the
- * summarizer the discarded history *and* the retained tail, with the tail
- * marked as the current state.
- *
- * Over an opaque checkpoint (D2) the summarizer would only see its
- * placeholder: unless the loss is authorized, the compaction is cancelled
- * with the exits notice, so neither this summarizer nor the host's default
- * one summarizes a placeholder.
- */
 export function createBeforeCompactHandler(
   readState: SessionStateReader,
   options: BeforeCompactHandlerOptions = {},
@@ -161,7 +125,6 @@ export function createBeforeCompactHandler(
     try {
       summarized = await summarizeRun(run);
     } catch (error) {
-      // Abort and stale-context failures cancel quietly; anything else is reported.
       if (error instanceof CompactionAbortedError) return CANCELLED;
       if (error instanceof Error && isStaleContextError(error)) return CANCELLED;
       return failVisibly(ctx, error instanceof Error ? error.message : String(error));
@@ -171,11 +134,6 @@ export function createBeforeCompactHandler(
   };
 }
 
-/**
- * Snapshot every host-owned scalar before the first await; undefined when not
- * locally owned, an opaque refusal when the latest checkpoint is an opaque
- * record whose loss is not authorized.
- */
 function snapshotRun(
   readState: SessionStateReader,
   event: SessionBeforeCompactEvent,
@@ -215,7 +173,6 @@ function snapshotRun(
   };
 }
 
-/** Summarize in one pass when it fits, else two; undefined when the run went stale. */
 async function summarizeRun(run: CompactionRun): Promise<Summarized | undefined> {
   const { model, customInstructions } = run;
   const input = buildCompactionInput(run.event);
@@ -300,7 +257,6 @@ function buildCompaction(
   };
 }
 
-/** Inputs for the fallback path used when one combined request cannot fit. */
 interface TwoPassRequest {
   readonly modelRegistry: ExtensionContext["modelRegistry"];
   readonly model: NonNullable<ExtensionContext["model"]>;
@@ -317,12 +273,6 @@ interface TwoPassRequest {
   readonly isStaleAfterCall: () => boolean;
 }
 
-/**
- * Summarize the history alone, then reconcile that summary against the tail.
- *
- * Pass 1 compresses the discarded material so pass 2 has room for the retained
- * tail verbatim, which is the evidence that decides each item's real status.
- */
 async function runTwoPass(request: TwoPassRequest): Promise<SummaryOutcome> {
   const historyPrompt = buildHistoryPassPrompt({
     history: request.history,

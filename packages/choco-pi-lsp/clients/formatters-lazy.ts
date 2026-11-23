@@ -1,4 +1,3 @@
-/** Shared lazy formatter catalog seam (#1394). */
 import { createLazyImport } from "./lazy-import.ts";
 
 type FormatterModule = typeof import("./formatters.ts");

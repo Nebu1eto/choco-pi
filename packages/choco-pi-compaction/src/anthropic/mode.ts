@@ -1,13 +1,3 @@
-/**
- * Which compaction an admitted Anthropic model uses, and the session-scoped
- * switch that turns server-side compaction off after the provider rejected it.
- *
- * The mode is the top-level `compactionAnthropic` key of
- * `<agentDir>/settings.json`, the same file the agent preferences keep their
- * top-level keys in. A missing file, missing key or invalid value means the
- * default, `"server-side"`. Reads and writes are asynchronous; the writer
- * replaces the file atomically and keeps every other key.
- */
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -24,13 +14,6 @@ export type AnthropicCompactionMode = Static<typeof AnthropicCompactionModeSchem
 const isAnthropicCompactionMode = compile(AnthropicCompactionModeSchema).check;
 export const DEFAULT_ANTHROPIC_COMPACTION_MODE: AnthropicCompactionMode = "server-side";
 
-/**
- * Top-level `<agentDir>/settings.json` key deciding what happens when the
- * latest checkpoint is an opaque server-side record (xAI, Codex) that the
- * answering lane cannot replay: `preserve` (default) cancels the compaction
- * and refuses placeholder-only requests; `allow-loss` lets the local
- * summarizer run without the opaque history (the loss is still notified).
- */
 export const OPAQUE_HISTORY_KEY = "compactionOpaqueHistory";
 
 const OpaqueHistoryModeSchema = oneOf(["preserve", "allow-loss"]);
@@ -67,17 +50,12 @@ function parseObject(text: string): SettingsObject | undefined {
   return isJsonRecord(parsed) ? parsed : undefined;
 }
 
-/** Validate one raw value; anything else is the default. */
 export function parseAnthropicCompactionMode(
   value: JsonValue | undefined,
 ): AnthropicCompactionMode {
   return isAnthropicCompactionMode(value) ? value : DEFAULT_ANTHROPIC_COMPACTION_MODE;
 }
 
-/**
- * One top-level value of `<agentDir>/settings.json`; undefined when the file
- * is missing, unreadable, not a JSON object, or lacks the key.
- */
 export async function readTopLevelSetting(
   agentDir: string,
   key: string,
@@ -92,7 +70,6 @@ export async function readTopLevelSetting(
   return parseObject(text)?.[key];
 }
 
-/** The configured mode; unreadable, malformed or missing settings yield the default. */
 export async function readAnthropicCompactionMode(
   agentDir: string,
 ): Promise<AnthropicCompactionMode> {
@@ -101,17 +78,14 @@ export async function readAnthropicCompactionMode(
   );
 }
 
-/** Validate one raw opaque-history value; anything else is the default. */
 export function parseOpaqueHistoryMode(value: JsonValue | undefined): OpaqueHistoryMode {
   return isOpaqueHistoryMode(value) ? value : DEFAULT_OPAQUE_HISTORY_MODE;
 }
 
-/** The configured opaque-history mode; unreadable, malformed or missing settings yield `preserve`. */
 export async function readOpaqueHistoryMode(agentDir: string): Promise<OpaqueHistoryMode> {
   return parseOpaqueHistoryMode(await readTopLevelSetting(agentDir, OPAQUE_HISTORY_KEY));
 }
 
-/** Set the opaque-history mode (atomic read-modify-write, every other key kept). */
 export async function writeOpaqueHistoryMode(
   agentDir: string,
   mode: OpaqueHistoryMode,
@@ -122,11 +96,6 @@ export async function writeOpaqueHistoryMode(
   await writeTopLevelSetting(agentDir, OPAQUE_HISTORY_KEY, mode);
 }
 
-/**
- * Set the mode with an atomic read-modify-write that keeps every other key.
- * A settings file that is not a JSON object is left untouched and the write
- * is refused.
- */
 export async function writeAnthropicCompactionMode(
   agentDir: string,
   mode: AnthropicCompactionMode,
@@ -137,11 +106,6 @@ export async function writeAnthropicCompactionMode(
   await writeTopLevelSetting(agentDir, ANTHROPIC_COMPACTION_MODE_KEY, mode);
 }
 
-/**
- * Set one top-level key with an atomic read-modify-write that keeps every
- * other key. A settings file that is not a JSON object is left untouched and
- * the write is refused.
- */
 export async function writeTopLevelSetting(
   agentDir: string,
   key: string,
@@ -169,41 +133,29 @@ export async function writeTopLevelSetting(
   }
 }
 
-/**
- * Session-scoped server-side switch, one entry per bound session. Once the
- * provider rejects a replayed block, server-side compaction stays off for the
- * rest of that session and the local summarizer handles every later
- * compaction. Sessions are independent: binding a subagent child never resets
- * the main session's flags, and releasing one session leaves the others.
- */
 export class AnthropicServerSideSession {
   private readonly sessions = new Map<
     string,
     { disabledReason: string | undefined; fallbackNotified: boolean }
   >();
 
-  /** Bind a session; an already bound session keeps its flags. */
   bind(sessionId: string): void {
     if (this.sessions.has(sessionId)) return;
     this.sessions.set(sessionId, { disabledReason: undefined, fallbackNotified: false });
   }
 
-  /** Forget a session (shutdown); a later bind starts with fresh flags. */
   release(sessionId: string): void {
     this.sessions.delete(sessionId);
   }
 
-  /** Whether `sessionId` is bound (diagnostics and tests). */
   isBound(sessionId: string): boolean {
     return this.sessions.has(sessionId);
   }
 
-  /** Whether `sessionId` is bound and server-side is off for it. */
   isDisabled(sessionId: string): boolean {
     return this.sessions.get(sessionId)?.disabledReason !== undefined;
   }
 
-  /** Turn server-side off for a bound session; true only for the first call. */
   disable(sessionId: string, reason: string): boolean {
     const entry = this.sessions.get(sessionId);
     if (entry === undefined || entry.disabledReason !== undefined) return false;
@@ -211,7 +163,6 @@ export class AnthropicServerSideSession {
     return true;
   }
 
-  /** Claim a bound session's single fallback notice; true only for the first claim. */
   claimFallbackNotice(sessionId: string): boolean {
     const entry = this.sessions.get(sessionId);
     if (entry === undefined || entry.fallbackNotified) return false;

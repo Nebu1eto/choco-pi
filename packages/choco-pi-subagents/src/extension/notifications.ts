@@ -1,6 +1,3 @@
-/**
- * Completion notifications: renderers, the cancellable notification gate, nudges, and lifecycle events.
- */
 import type { NotificationDetails, AgentRecord } from "../types.ts";
 import { renderVerdictNotification } from "../delegation-render.ts";
 import { Text } from "@earendil-works/pi-tui";
@@ -23,25 +20,18 @@ import {
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { SubagentsRuntime } from "./runtime.ts";
 
-/** Registers the notification and agent-message renderers. */
 export function installMessageRenderers(pi: ExtensionAPI) {
-  // ---- Register custom notification renderer ----
-  // Layout lives in ui/notification-render.ts so it stays testable and matches
-  // the zentui transcript conventions the rest of this session renders with.
   pi.registerMessageRenderer<NotificationDetails>(
     "subagent-notification",
     (message, { expanded }, theme) => {
       const details = message.details;
       if (!details) return undefined;
-      // A reviewer's or verifier's reply adds its verdict summary; any other is drawn as before.
       return (
         renderVerdictNotification(details, expanded, theme) ??
         new Text(renderSubagentNotification(details, { expanded }, theme), 0, 0)
       );
     },
   );
-  // agent_message envelopes addressed to the root session (agent-message.ts).
-  // Without this the host prints the raw <agent-message> wrapper.
   pi.registerMessageRenderer("subagent-message", (message, _options, theme) => {
     const content = Array.isArray(message.content) ? extractText(message.content) : message.content;
     const rendered = renderAgentMessageEnvelope(content, theme);
@@ -49,17 +39,11 @@ export function installMessageRenderers(pi: ExtensionAPI) {
   });
 }
 
-/** Builds the notification gate, nudges, group join, and lifecycle event emitters. */
 export function installNotifications(pi: ExtensionAPI, rt: SubagentsRuntime) {
-  // ---- Cancellable pending notifications ----
-  // Holds notifications briefly so get_subagent_result can cancel them
-  // before they reach pi.sendMessage (fire-and-forget).
   const notificationGate = new NotificationGate<AgentRecord>({
     resolve: (key) => {
       const record = rt.core.manager.getRecord(key);
       if (record === undefined) {
-        // A pending notification saved before a restart names a record that
-        // now lives only in the journal; deliver its terminal snapshot.
         const dormant = rt.core.manager.getDormant(key);
         return dormant !== undefined &&
           dormant.parentAgentId === undefined &&
@@ -77,11 +61,8 @@ export function installNotifications(pi: ExtensionAPI, rt: SubagentsRuntime) {
     send: emitNudges,
     onError: (error) => console.error("[choco-pi-subagents] Notification delivery failed", error),
   });
-  // A queued result wait must observe completion before its held notification
-  // can fire, so successful waits can still suppress that redundant nudge.
   const QUEUE_WAIT_POLL_MS = Math.floor(NUDGE_HOLD_MS / 4);
 
-  // Workflow summaries have their own result API and are not terminal records.
   const workflowNudges = new Map<string, ReturnType<typeof setTimeout>>();
   function scheduleNudge(key: string, send: () => void) {
     cancelNudge(key);
@@ -91,9 +72,7 @@ export function installNotifications(pi: ExtensionAPI, rt: SubagentsRuntime) {
         workflowNudges.delete(key);
         try {
           send();
-        } catch {
-          /* Preserve the existing workflow-summary delivery behavior. */
-        }
+        } catch {}
       }, NUDGE_HOLD_MS),
     );
   }
@@ -105,8 +84,6 @@ export function installNotifications(pi: ExtensionAPI, rt: SubagentsRuntime) {
     workflowNudges.delete(key);
   }
 
-  // One send for individual and group-join completions; the gate filters consumed
-  // records at this boundary, not when they originally entered the hold.
   function emitNudges(records: AgentRecord[]) {
     const [first, ...rest] = records;
     if (!first) return;
@@ -137,10 +114,6 @@ export function installNotifications(pi: ExtensionAPI, rt: SubagentsRuntime) {
     rt.state.completionDeliveries += 1;
   }
 
-  /**
-   * A completion may start a turn only while the root's latch is open at the epoch the work
-   * was authorised under; a stopped epoch's notifications are still delivered, never as turns.
-   */
   function completionMayTriggerTurn(records: readonly AgentRecord[]): boolean {
     return records.every((record) =>
       mayTriggerTurn(record.admissionRoot ?? rt.state.activeRootSessionId, record.admissionEpoch),
@@ -155,7 +128,6 @@ export function installNotifications(pi: ExtensionAPI, rt: SubagentsRuntime) {
     rt.views.fleet.update();
   }
 
-  // ---- Group join manager ----
   const groupJoin = new GroupJoinManager((records) => {
     for (const r of records) {
       rt.agentActivity.delete(r.id);
@@ -184,15 +156,10 @@ export function installNotifications(pi: ExtensionAPI, rt: SubagentsRuntime) {
     });
   }
 
-  /** Helper: build event data for lifecycle events from an AgentRecord. */
   function buildEventData(record: AgentRecord) {
     const durationMs = record.completedAt
       ? record.completedAt - record.startedAt
       : Date.now() - record.startedAt;
-    // All three fields are lifetime-accumulated (Σ over every assistant message_end),
-    // so they survive compaction together — input + output ≤ total always.
-    // tokens is omitted when nothing was ever produced (e.g. agent errored before
-    // any message_end fired), preserving prior payload shape.
     const u = record.lifetimeUsage;
     const total = getLifetimeTotal(u);
     const tokens = total > 0 ? { input: u.input, output: u.output, total } : undefined;

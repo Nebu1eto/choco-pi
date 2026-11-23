@@ -8,8 +8,6 @@ import { promisify } from "node:util";
 
 import { createRealPiRpcHarness } from "./component-rpc-harness.ts";
 
-// Opt-in: drives a real Pi process. The repository is a scratch one whose diffs contain
-// every-day credential words and a .env file whose contents must never leave Pi.
 const ENV_MARKER_COMMITTED = "ENV-MARKER-COMMITTED-51a7";
 const ENV_MARKER_UNCOMMITTED = "ENV-MARKER-UNCOMMITTED-83c0";
 const AUTH_WARNING = /Pi requested sensitive authentication or credential input/u;

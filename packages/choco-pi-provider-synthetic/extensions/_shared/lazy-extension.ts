@@ -4,7 +4,6 @@ interface LazyRuntime {
   default(pi: ExtensionAPI): void | Promise<void>;
 }
 
-/** Defer loading an extension runtime until Pi activates it; load once and reuse. */
 export function createLazyExtension(
   load: () => Promise<LazyRuntime>,
 ): (pi: ExtensionAPI) => Promise<void> {

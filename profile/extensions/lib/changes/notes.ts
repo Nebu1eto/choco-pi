@@ -1,21 +1,10 @@
-/**
- * Session-scoped notes to the agent, anchored to a hunk.
- *
- * A note records the hunk id (a content hash that ignores line numbers, so it
- * survives edits elsewhere in the file) and the new-file range at creation.
- * While a hunk with that id exists in the file, the note follows it; when the
- * hunk is gone the note is outdated. Notes live in memory and, when a scratch
- * directory is known, in one small JSON file per session under it.
- */
 import { join } from "node:path";
 import { arr, compile, int, obj, str, type Static } from "@earendil-works/pi-schema";
 import { anchorStatus, type AnchorStatus } from "./annotations.ts";
 import type { DiffHunk } from "./types.ts";
 import type { RuntimeValue } from "../runtime-values.ts";
 
-/** Reads and atomically replaces the notes file; the pane passes its preference file I/O. */
 export type NotesIo = {
-  /** File contents, or undefined when the file does not exist. */
   read(path: string): Promise<string | undefined>;
   write(path: string, contents: string): Promise<void>;
 };
@@ -53,7 +42,6 @@ export function noteStatus(
 
 export class NotesBook {
   notes: DiffNote[] = [];
-  /** Increases on every change, so renderers can key caches on it. */
   version = 0;
   private sequence = 0;
   private readonly io: NotesIo | undefined;
@@ -68,7 +56,6 @@ export class NotesBook {
     this.onChange = options.onChange ?? (() => {});
   }
 
-  /** Reads the session's notes file once; notes added meanwhile are kept. */
   load(): Promise<void> {
     this.loaded ??= this.readFile();
     return this.loaded;
@@ -95,7 +82,6 @@ export class NotesBook {
     const known = new Set(this.notes.map((note) => note.id));
     const restored = parsed.notes.filter((note) => !known.has(note.id));
     if (restored.length === 0) return;
-    // Notes added before the file was read were already written without the restored ones.
     const rewrite = this.notes.length > 0;
     this.notes = [...restored, ...this.notes];
     this.changed(rewrite);
@@ -128,7 +114,6 @@ export class NotesBook {
     return count;
   }
 
-  /** Remove `notes` and leave every other note, such as one added since they were read. */
   remove(notes: readonly DiffNote[]): void {
     const gone = new Set(notes.map((note) => note.id));
     const kept = this.notes.filter((note) => !gone.has(note.id));
@@ -137,7 +122,6 @@ export class NotesBook {
     this.changed(true);
   }
 
-  /** Resolves when every write started so far has finished. */
   flush(): Promise<void> {
     return this.chain;
   }
@@ -153,7 +137,6 @@ export class NotesBook {
     const file = this.file;
     if (!io || !file) return;
     const contents = `${JSON.stringify({ version: 1, notes: this.notes })}\n`;
-    // A failed write keeps the notes in memory; the next change retries.
     this.chain = this.chain.then(() => io.write(file, contents)).catch(() => undefined);
   }
 }

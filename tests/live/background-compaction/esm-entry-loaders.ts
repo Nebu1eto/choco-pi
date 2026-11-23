@@ -13,9 +13,7 @@ interface WorktreeFactory {
 }
 
 export interface WorktreeProfilePlan {
-  /** Natively imported, runtime-validated default factories in profile order. */
   factories: WorktreeFactory[];
-  /** Canonical entries the SDK host loader must load from disk, in profile order. */
   hostExtensionPaths: string[];
 }
 
@@ -24,13 +22,6 @@ interface ProfileEntry {
   key: string;
 }
 
-/**
- * Entries natively imported through a computed file URL, keyed by
- * worktree-relative POSIX path. The specifier is not a literal, so the root
- * typecheck does not pull package sources into its program; each module shape
- * is validated at runtime instead. A profile entry absent from both this set
- * and HOST_LOADED_ENTRIES fails closed before any module is imported.
- */
 const NATIVE_ENTRIES: ReadonlySet<string> = new Set<string>([
   "profile/extensions/anthropic-error-tool-results.ts",
   "profile/extensions/apex-provider.ts",
@@ -92,10 +83,6 @@ const NATIVE_ENTRIES: ReadonlySet<string> = new Set<string>([
 const BUNDLER_RESOLUTION =
   "package uses Bundler-style extensionless relative imports: native ESM cannot resolve them and the root NodeNext typecheck rejects the package sources";
 
-/**
- * Entries that cannot be natively imported with static types without editing
- * their packages; they stay on the SDK host loader path instead.
- */
 const HOST_LOADED_ENTRIES: ReadonlyMap<string, string> = new Map<string, string>([
   ["packages/choco-pi-provider-synthetic/extensions/provider/index.ts", BUNDLER_RESOLUTION],
   ["packages/choco-pi-provider-synthetic/extensions/web-search/index.ts", BUNDLER_RESOLUTION],
@@ -125,10 +112,6 @@ function describeList(items: string[]): string {
   return items.length === 0 ? "none" : items.join(", ");
 }
 
-/**
- * Throws unless the profile keys equal NATIVE_ENTRIES ∪ HOST_LOADED_ENTRIES,
- * the two maps are disjoint, and the profile has no duplicates.
- */
 function assertLoaderCoverage(profileKeys: string[]): void {
   const profileSet = new Set(profileKeys);
   const covered = new Set([...NATIVE_ENTRIES, ...HOST_LOADED_ENTRIES.keys()]);
@@ -162,7 +145,6 @@ function assertPlanMatchesProfile(profile: string[], plan: WorktreeProfilePlan):
   if (!same) throw new Error("Worktree extension plan diverged from the resolved profile");
 }
 
-/** Runtime shape of a native entry module: an object with a `default` export (callability is checked separately: functions are not JSON). */
 const extensionModuleSchema = obj({ default: unknown() }, { open: true });
 
 function isExtensionFactory(value: RuntimeValue): value is ExtensionFactory {
@@ -193,12 +175,6 @@ async function resolveProfileEntries(): Promise<{ profile: string[]; entries: Pr
   return { profile, entries: profile.map((path) => ({ path, key: toKey(root, path) })) };
 }
 
-/**
- * Resolves the full worktree profile and natively imports every typed entry in
- * profile order. Coverage is asserted before any module is imported, so no
- * module outside the resolved profile is loaded; the returned factories and
- * host paths together are exactly the resolved profile.
- */
 export async function loadWorktreeProfilePlan(): Promise<WorktreeProfilePlan> {
   const { profile, entries } = await resolveProfileEntries();
   assertLoaderCoverage(entries.map((entry) => entry.key));

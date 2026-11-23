@@ -139,8 +139,6 @@ test("counts every billed call once across a rewind branch, a fork copy, and a s
   const { root, project } = await makeRoot();
   try {
     const parentFile = path.join(project, "2026-10-20T10-00-00-000Z_parent.jsonl");
-    // Main path: user → assistant(toolCall read) → toolResult → assistant; then a rewind
-    // to the first user message starts an abandoned branch with its own assistant call.
     const parentEntries = [
       header("parent", "/work/app", 0),
       user("u1", null, 1000),
@@ -181,7 +179,6 @@ test("counts every billed call once across a rewind branch, a fork copy, and a s
       assistant("a4", "u1", 8000, { usage: usage(0, 0, 0, 0, 0), stopReason: "error" }),
     ];
     await writeFile(parentFile, lines(parentEntries));
-    // A fork copies the root→a2 path verbatim (same ids and timestamps) and adds a new call.
     const forkFile = path.join(project, "2026-10-20T11-00-00-000Z_fork.jsonl");
     await writeFile(
       forkFile,
@@ -191,7 +188,6 @@ test("counts every billed call once across a rewind branch, a fork copy, and a s
         assistant("a5", "a2", 3_700_000),
       ]),
     );
-    // A subagent child copies nothing and carries the marker.
     const childFile = path.join(project, "2026-10-20T10-30-00-000Z_child.jsonl");
     await writeFile(
       childFile,
@@ -250,7 +246,6 @@ test("counts every billed call once across a rewind branch, a fork copy, and a s
     assert.equal(byId.get("a5")?.cwd, "/work/app");
     assert.ok(all.records.every((record) => record.key.includes("|")));
 
-    // Scope filtering keys off the header cwd, which the fork and child both carry.
     assert.ok(scanned.sessions.every((session) => session.cwd === "/work/app"));
     assert.equal(scanned.sessions.find((s) => s.sessionId === "child")?.isSubagent, true);
     assert.equal(scanned.sessions.find((s) => s.sessionId === "fork")?.parentSession, parentFile);
@@ -337,7 +332,6 @@ test("reuses unchanged files, reads only the appended tail, and rescans a rewrit
     const again = await scanSessions([root], cache);
     assert.equal(again.sessions[0], scan, "an unchanged file keeps its cached scan");
 
-    // Finish the partial line and add one more call: only the tail is read.
     await appendFile(
       file,
       JSON.stringify(assistant("a2", "a1", 3000)).slice(40) +
@@ -351,7 +345,6 @@ test("reuses unchanged files, reads only the appended tail, and rescans a rewrit
       ["a1", "a2", "a3"],
     );
 
-    // A rewrite that shrinks the file starts over.
     await writeFile(
       file,
       lines([header("grow", "/work/app", 0), user("u1", null, 1000), assistant("a9", "u1", 2000)]),
@@ -362,7 +355,6 @@ test("reuses unchanged files, reads only the appended tail, and rescans a rewrit
       ["a9"],
     );
 
-    // A rewrite that grows the file but changes its header is not an append.
     await writeFile(
       file,
       lines([
@@ -536,8 +528,6 @@ test("parses lines longer than a read chunk and multi-byte text split across chu
   const { root, project } = await makeRoot();
   try {
     const file = path.join(project, "2026-10-20T10-00-00-000Z_large.jsonl");
-    // 800,000 three-byte characters span the 1 MiB and 2 MiB read boundaries;
-    // the two boundaries differ mod 3, so at least one splits a character.
     const large = "가".repeat(800_000);
     const tail = JSON.stringify(assistant("a3", "a2", 5000));
     await writeFile(
@@ -583,7 +573,6 @@ test("parses lines longer than a read chunk and multi-byte text split across chu
     );
     assert.deepEqual(scan.records[1]?.nestedCalls, [{ name: "exec_command", size: large.length }]);
 
-    // The unfinished line is read once its newline arrives.
     await appendFile(file, tail.slice(40) + "\n");
     const grown = (await scanSessions([root], cache)).sessions[0];
     assert.equal(grown, scan, "an appended file updates the same scan");

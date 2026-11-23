@@ -10,7 +10,6 @@ interface NativeSteeringRegistry {
   [NATIVE_STEERING_SYMBOL]?: { isNativeSteerPending?: unknown } | null;
 }
 
-/** Optional, duck-typed bridge: this package has no Codex runtime dependency. */
 export function isNativeSteerPending(sessionId: string): boolean {
   try {
     // SAFETY: The registry value is only invoked after checking its callable seam.
@@ -37,7 +36,6 @@ interface NotificationGateOptions<Record extends NotificationRecord> {
   isSteerPending?(sessionId: string): boolean;
 }
 
-/** One session-owned timer and one send-time result lookup for every held key. */
 export class NotificationGate<Record extends NotificationRecord> {
   private readonly options: NotificationGateOptions<Record>;
   private readonly keys = new Map<string, number>();
@@ -75,7 +73,6 @@ export class NotificationGate<Record extends NotificationRecord> {
     if (this.keys.size === 0) this.clearTimer();
   }
 
-  /** Whether a completion notification is still held for delivery. */
   hasPending(): boolean {
     return this.keys.size > 0;
   }
@@ -142,8 +139,6 @@ export class NotificationGate<Record extends NotificationRecord> {
 
   private flush(): void {
     this.clearTimer();
-    // A newly arrived record must still get its cancellation window when an
-    // older batch hits a hard cap. Leave those young keys for the next batch.
     const readyKeys = [...this.keys].filter(([, at]) => Date.now() - at >= NUDGE_HOLD_MS);
     try {
       const records = readyKeys.flatMap(([key]) => {
@@ -152,9 +147,6 @@ export class NotificationGate<Record extends NotificationRecord> {
       });
       if (records.length > 0) this.options.send(records);
     } catch (error) {
-      // Never throw into a timer. A stale host stops scheduling; other failures
-      // remain visible to the caller's error reporter instead of disappearing.
-      // Any message starting with the prefix (newline or space suffix) is stale here.
       if (error instanceof Error && error.message.startsWith(STALE_CONTEXT_ERROR_PREFIX)) {
         this.sessionId = undefined;
         return;

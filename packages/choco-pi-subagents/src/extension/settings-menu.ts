@@ -1,6 +1,3 @@
-/**
- * Settings controller and menu.
- */
 import {
   getDefaultMaxTurns,
   getGraceTurns,
@@ -47,22 +44,10 @@ import {
 import { editSettingsWithDialogs } from "../ui/headless-menus.ts";
 import type { SubagentsRuntime } from "./runtime.ts";
 
-/** The settings controller and settings menu. */
 export function installSettingsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
-  /**
-   * Every settings mutation writes this WHOLE object back to disk, so a field
-   * missing here is erased from the user's subagents.json the next time they
-   * toggle something unrelated. `SubagentsSettings` has every field optional,
-   * so a `: SubagentsSettings` return annotation would let a newly-added setting
-   * be forgotten here and still type-check. `satisfies` instead: it still checks
-   * each value's type and rejects a mistyped key, but leaves the return type
-   * inferred so `_NoMissingSettingsKeys` below can check completeness.
-   */
   function snapshotSettings() {
     return {
       maxConcurrent: rt.core.manager.getMaxConcurrent(),
-      // 0 = unlimited — per SubagentsSettings.defaultMaxTurns docstring and
-      // normalizeMaxTurns() in agent-runner.ts (which maps 0 → undefined).
       defaultMaxTurns: getDefaultMaxTurns() ?? 0,
       graceTurns: getGraceTurns(),
       defaultJoinMode: rt.preferences.getDefaultJoinMode(),
@@ -78,18 +63,10 @@ export function installSettingsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
       outputTranscript: getOutputTranscriptDefault(),
       worktreeIsolation: isWorktreeIsolationEnabled(),
       maxSubagentDepth: getMaxSubagentDepth(),
-      // Deliberately NOT `?? "general-purpose"`: every settings change writes the
-      // whole snapshot, and materializing the implicit default would turn it into
-      // explicit configuration — which then fails loudly if general-purpose later
-      // goes away. undefined is dropped by JSON.stringify.
       fallbackSubagent: getFallbackSubagent(),
     } satisfies SubagentsSettings;
   }
 
-  // Compile-time completeness guard for snapshotSettings(). If a field is added
-  // to SubagentsSettings and not mirrored above, this Exclude is non-empty and
-  // fails to satisfy `never` — turning a silent settings-erasure bug into a
-  // typecheck error. `npm run typecheck` runs in CI.
   type _NoMissingSettingsKeys =
     Exclude<keyof SubagentsSettings, keyof ReturnType<typeof snapshotSettings>> extends never
       ? true
@@ -156,8 +133,6 @@ export function installSettingsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
     }
 
     let list: SettingsList;
-    // Track current selection index directly (SettingsList doesn't expose it).
-    // Updated on arrow keys so Enter knows which field is selected immediately.
     let currentIndex = 0;
 
     const result = await ctx.ui.custom<string | undefined>((_tui, _theme, _kb, done) => {
@@ -182,14 +157,12 @@ export function installSettingsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
         render: (w: number) => container.render(w),
         invalidate: () => container.invalidate(),
         handleInput: (data: string) => {
-          // Track navigation so Enter knows the current field
           if (matchesKey(data, "up")) {
             currentIndex = Math.max(0, currentIndex - 1);
           } else if (matchesKey(data, "down")) {
             currentIndex = Math.min(items.length - 1, currentIndex + 1);
           }
 
-          // Enter on numeric field → close and prompt for typed input
           if (
             matchesKey(data, Key.enter) &&
             SUBAGENT_NUMERIC_SETTING_IDS.has(items[currentIndex].id)
@@ -202,15 +175,12 @@ export function installSettingsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
       };
     });
 
-    // If a numeric field ID was returned, prompt for typed input
     if (result && SUBAGENT_NUMERIC_SETTING_IDS.has(result)) {
       const definition = buildItems().find((item) => item.id === result);
       const current = definition?.values?.[0] ?? "";
       const label =
         getSubagentNumericSettingRange(result)?.inputLabel ?? definition?.label ?? result;
 
-      // Loop until user enters a valid integer or cancels (Esc / null).
-      // Silently trims whitespace; rejects non-numeric input by re-prompting.
       let input: string | undefined = await ctx.ui.input(label, current);
       while (input != null) {
         const trimmed = input.trim();
@@ -220,19 +190,11 @@ export function installSettingsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
           await showSettings(ctx);
           return;
         }
-        // Invalid — re-prompt with the user's last entry so they can edit it
         input = await ctx.ui.input(label, trimmed);
       }
     }
   }
 
-  // Persist the current snapshot, emit `subagents:settings_changed`, and surface
-  // the right toast. Successful saves show info; persistence failures downgrade
-  // to warning so users aren't silently reverted on restart. Event fires regardless
-  // of outcome so listeners see the in-memory change.
-  // The write is asynchronous: the snapshot is taken now (saves are serialized in
-  // call order), and the event and toast go out only while the session that
-  // made the change is still current.
   function notifyApplied(ctx: ExtensionContext, successMsg: string) {
     const generation = rt.state.revivalGeneration;
     const current = () =>

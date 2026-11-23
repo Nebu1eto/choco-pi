@@ -34,7 +34,6 @@ import type { WorkingLineSpinner } from "./config.ts";
  * SOFTWARE.
  */
 
-/** Spinner definitions contain frames only; spinnerIntervalMs remains user-controlled. */
 export const WORKING_LINE_SPINNERS = {
   braille: {
     frames: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],

@@ -68,7 +68,7 @@ export function createSyntheticRefreshModels(
           checkedAt: Date.now(),
         });
       } catch {
-        void 0; // Persistence is best-effort.
+        void 0;
       }
 
       return models;

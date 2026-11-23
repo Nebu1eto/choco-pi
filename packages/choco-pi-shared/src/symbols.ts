@@ -1,9 +1,5 @@
 import type { RuntimeValue } from "./runtime-values.ts";
 
-/**
- * Process-global Symbol.for registry keys and stateless globalThis accessors.
- * Literal protocol strings are frozen cross-extension interfaces — do not rename.
- */
 export const GLOBAL_SYMBOLS = Object.freeze({
   stopControl: Symbol.for("choco-pi:stop-control/v1"),
   subagentsManager: Symbol.for("pi-subagents:manager"),

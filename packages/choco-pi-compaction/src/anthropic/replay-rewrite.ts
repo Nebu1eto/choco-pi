@@ -1,20 +1,3 @@
-/**
- * Replay of a committed Anthropic native checkpoint.
- *
- * The host builds every request from the branch: the latest compaction entry
- * becomes a summary `user` message followed by the kept messages. For an
- * `anthropic-compaction-on-demand-v1` checkpoint a `before_provider_request`
- * handler replaces that summary message with the signed block as its own
- * `assistant` message, leaves every kept/new message untouched and appends the
- * compaction beta.
- *
- * The handler chain is last-writer-wins, so the rewrite is never trusted on
- * its own: it registers a transport check on the current capturing provider
- * call and the capturing fetch verifies the serialized body before it leaves
- * the process. If a later handler removed or altered the block (or the beta),
- * or the rewrite itself could not be applied, the request is refused with a
- * reason code instead of being sent without the block.
- */
 import {
   type BeforeProviderRequestEvent,
   type ExtensionContext,
@@ -72,7 +55,6 @@ const claimsAnthropic = compile(obj({ strategy: lit(ANTHROPIC_STRATEGY) }, { ope
 const isTextBlock = compile(obj({ type: lit("text"), text: str() }, { open: true })).check;
 const isStringArray = compile(arr(str())).check;
 
-/** The latest compaction entry on the branch decides; older native entries are history. */
 function findActiveNativeCheckpoint(branch: readonly SessionEntry[]): CheckpointLookup {
   for (let index = branch.length - 1; index >= 0; index--) {
     const entry = branch[index];
@@ -87,11 +69,6 @@ function findActiveNativeCheckpoint(branch: readonly SessionEntry[]): Checkpoint
   return { kind: "none" };
 }
 
-/**
- * The branch's committed Anthropic native checkpoint: the newest compaction
- * entry when it claims the Anthropic strategy (valid or not, since replay must
- * still refuse an invalid one), else undefined.
- */
 export function findActiveAnthropicCheckpoint(
   branch: readonly SessionEntry[],
 ): { readonly entryId: string } | undefined {
@@ -120,7 +97,6 @@ function hasTaskBudgetRemaining(body: WireBody): boolean {
   return isJsonRecord(budget) && "remaining" in budget;
 }
 
-/** Whether the request tells the API to drop thinking whose bound prefix no longer matches. */
 function dropsMismatchedThinking(body: WireBody): boolean {
   const thinking = body.thinking;
   if (!isJsonRecord(thinking)) return false;
@@ -131,7 +107,6 @@ function dropsMismatchedThinking(body: WireBody): boolean {
 type RewriteOutcome =
   | { readonly ok: true; readonly payload: WireBody; readonly requiresDropBlock: boolean }
   | { readonly ok: false; readonly code: ReplayRefusalCode }
-  /** Replay is unsafe but the host's summary text is a valid request: send that instead. */
   | { readonly ok: "fallback"; readonly code: ReplayRefusalCode };
 
 interface ReplayRewriteOptions {
@@ -142,26 +117,10 @@ export interface ReplayDiagnostic {
   readonly kind: "rewritten" | "refused" | "fallback" | "unverifiable";
   readonly sessionId: string;
   readonly entryId: string;
-  /** Non-secret block identity (digest prefix and length). */
   readonly block?: string;
   readonly code?: ReplayRefusalCode;
 }
 
-/**
- * Pure payload rewrite: block first, kept messages exactly as given, beta
- * appended. `thinking.block_binding` is left exactly as the provider set it.
- * Kept thinking stays bound to the messages the block replaced, so the API
- * rejects it under `prefix_mismatch_behavior: "error"` with a persistent 400
- * (observed live on claude-fable-5-1 with unchanged system and tools); with
- * pi-ai's `drop_block` the stale blocks are dropped server-side instead.
- *
- * `system` and `tools` routinely differ from the capture: the host records
- * prompt and tool changes as mid-conversation system messages, and a
- * compaction entry restarts the request from the merged current system
- * message. With `drop_block` that difference only drops kept thinking, so the
- * block is replayed and the transport must still carry `drop_block`; without
- * it the summary text is sent instead of the block.
- */
 function rewriteReplayPayload<T>(payload: T, checkpoint: ActiveNativeCheckpoint): RewriteOutcome {
   if (!isWireBody(payload)) return { ok: false, code: "payload-unrecognized" };
   const details = checkpoint.details;
@@ -178,7 +137,6 @@ function rewriteReplayPayload<T>(payload: T, checkpoint: ActiveNativeCheckpoint)
   const bindingChanged =
     digests.systemDigest !== details.wire.systemDigest ||
     digests.toolsDigest !== details.wire.toolsDigest;
-  // Kept thinking is only valid while system and non-deferred tools match.
   const requiresDropBlock = bindingChanged && details.wire.keptThinking;
   if (requiresDropBlock && !dropsMismatchedThinking(payload)) {
     return { ok: "fallback", code: "binding-mismatch" };
@@ -196,7 +154,6 @@ function rewriteReplayPayload<T>(payload: T, checkpoint: ActiveNativeCheckpoint)
   return { ok: true, payload: next, requiresDropBlock };
 }
 
-/** Transport-level check: the serialized request must still carry the exact block first. */
 function verifyReplayTransport(
   request: TransportRequest,
   checkpoint: ActiveNativeCheckpoint,
@@ -224,11 +181,6 @@ function verifyReplayTransport(
   return { ok: true };
 }
 
-/**
- * `before_provider_request` handler. Rewrites only inside a capturing provider
- * call, where the transport check can enforce the result; elsewhere it leaves
- * the payload alone and reports `unverifiable`.
- */
 export function createReplayRewriteHandler(options: ReplayRewriteOptions = {}) {
   return (event: BeforeProviderRequestEvent, ctx: ExtensionContext): WireBody | undefined => {
     const lookup = findActiveNativeCheckpoint(ctx.sessionManager.getBranch());

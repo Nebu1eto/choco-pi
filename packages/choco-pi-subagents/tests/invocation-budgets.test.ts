@@ -87,7 +87,6 @@ test("bootstrap estimate counts system prompt and tool schemas at four chars per
     systemPrompt: "x".repeat(4000),
     tools: [{ name: "read", description: "y".repeat(396), parameters: { type: "object" } }],
   });
-  // 4000 + 4 + 396 + JSON '{"type":"object"}' (17) = 4417 chars → 1105 tokens.
   assert.equal(estimate, 1105);
 });
 

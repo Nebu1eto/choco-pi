@@ -13,8 +13,6 @@ import {
   type WorkflowStepRunner,
 } from "../packages/choco-pi-subagents/src/workflow.ts";
 
-// Fixed seed and run count keep the suite deterministic; fast-check prints the
-// seed, path, and shrunk counterexample when a property fails.
 const RUNS = { seed: 0x3f10_c0de, numRuns: 150 };
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -30,7 +28,6 @@ type GeneratedStep = {
 
 type Outcome = "completed" | "error" | "cancelled" | "reject" | "providerError";
 
-/** How a provider re-check settles: reopened, still closed, or rejected. */
 type RefreshResult = "open" | "closed" | "reject";
 
 type Operation =
@@ -45,7 +42,6 @@ type Scenario = {
   order: number[];
   dynamic: boolean;
   maxConcurrent: number;
-  /** Whether the runner can re-check a closed provider (`refreshProvider`). */
   refresh: boolean;
   operations: Operation[];
 };
@@ -108,7 +104,6 @@ const operation: fc.Arbitrary<Operation> = fc.oneof(
 const scenario: fc.Arbitrary<Scenario> = generatedSteps.chain((steps) =>
   fc.record({
     steps: fc.constant(steps),
-    // Shuffled step order: scheduling must follow `needs`, not array order.
     order: fc.shuffledSubarray(
       steps.map((_step, index) => index),
       { minLength: steps.length, maxLength: steps.length },
@@ -164,7 +159,6 @@ type Trace = {
   refreshCalls: number;
 };
 
-/** Drives one workflow against a deferred fake runner and records violations. */
 async function runScenario(input: Scenario): Promise<Trace> {
   const violations: string[] = [];
   const completions: WorkflowResult[] = [];

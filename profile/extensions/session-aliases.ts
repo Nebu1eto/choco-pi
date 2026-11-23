@@ -15,7 +15,6 @@ export default function sessionAliases(pi: ExtensionAPI): void {
   pi.registerCommand("exit", {
     description: "Quit choco-pi (alias for /quit)",
     handler: async (_args, ctx) => {
-      // A host without the TUI sees only the process exit; say it is intended.
       if (ctx.mode !== "tui") ctx.ui.notify("Exiting Pi.", "info");
       ctx.shutdown();
     },
@@ -25,8 +24,6 @@ export default function sessionAliases(pi: ExtensionAPI): void {
     description: "Start a fresh session while preserving current history (alias for /new)",
     handler: async (_args, ctx) => {
       await ctx.waitForIdle();
-      // The TUI shows the fresh session itself; other hosts get a notice from
-      // the replacement context, because session replacement invalidates `ctx`.
       const result = await ctx.newSession(
         ctx.mode === "tui"
           ? undefined

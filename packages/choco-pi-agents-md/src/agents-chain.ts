@@ -2,16 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { isInsideRoot } from "./paths.ts";
 
-/**
- * Walk from `filePath`'s directory up to (and including) `rootDir`, collecting
- * every existing `AGENTS.md` on the way, then return the chain ordered
- * root-first / leaf-last (so leaf-directory guidance appears closest to the
- * touched file when rendered).
- *
- * `cwdAgentsPath` is excluded: the session root's own AGENTS.md is already
- * part of the host's normal system-prompt context, so re-injecting it here
- * would be redundant.
- */
 export function findAgentsFiles(
   filePath: string,
   rootDir: string,

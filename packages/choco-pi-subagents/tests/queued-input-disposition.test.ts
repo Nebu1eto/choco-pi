@@ -17,7 +17,6 @@ import { createNestedSubagentTools, type NestedAgentManager } from "../src/neste
 import type { AgentRecord } from "../src/types.ts";
 import { createSdkFixture } from "./sdk-fixture.ts";
 
-/** An input handler that consumes every message, as Pi 1.0.4 permits. */
 const consumeAllInput: ExtensionFactory = (pi) => {
   pi.on("input", () => ({ action: "handled" }));
 };
@@ -214,9 +213,6 @@ test("the mention clone runs the Agent tool on the main session with the clone c
     const nested = await ctx.executeTool("no-such-tool", {});
     assert.equal(nested.isError, true, "executeTool must reach the clone call's real runner");
 
-    // A background spawn keeps the context after the clone is discarded. The
-    // main-session members must outlive the clone; the clone's own nested-tool
-    // surface must turn stale with it rather than reach a disposed session.
     clone.session.dispose();
     assert.equal(ctx.sessionManager.getSessionId(), mainSession.sessionManager.getSessionId());
     assert.equal(ctx.cwd, mainCtx.cwd);

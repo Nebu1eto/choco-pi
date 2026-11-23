@@ -10,8 +10,6 @@ import {
 } from "../src/tools/exec/bridge-session.ts";
 import { createExecSessionManager } from "../src/tools/exec/session-manager.ts";
 
-// A fake exec_bridge: answers exec, then one read whose first chunk seq jumps
-// from 1 to 4 (chunks 2 and 3 were discarded), then reports the close.
 const FAKE_BRIDGE = `#!/usr/bin/env node
 const b64 = (s) => Buffer.from(s).toString("base64");
 let reads = 0;
@@ -100,13 +98,9 @@ test("a contiguous stream reports no drop", async () => {
 
 test("a stalled host sees the drop at the head of the result even when the tail is truncated", async () => {
   const manager = createExecSessionManager({});
-  // Stall the event loop for 1.5 s once the producer is running; the bridge's
-  // ~8 MiB unread ring overflows and the oldest chunks are discarded.
   const stall = setTimeout(() => {
     const until = Date.now() + 1500;
-    while (Date.now() < until) {
-      /* synchronous stall */
-    }
+    while (Date.now() < until) {}
   }, 400);
   try {
     const result = await manager.exec(

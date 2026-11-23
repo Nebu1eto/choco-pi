@@ -47,19 +47,13 @@ export interface LspMutationContext {
   runtime?: LspMutationRuntime;
   readGuard?: { recordWritten: (filePath: string) => void };
   cacheManager?: LspMutationCacheManager;
-  /** Existing autonomous-write publishers. Agent-owned navigation edits do not set these. */
   publishFilesTouched?: (paths: string[]) => void;
   recordAutofix?: (filePath: string) => void;
   dbg?: (message: string) => void;
-  /** Batch callers can defer the single terminal log until all edits are attempted. */
   emitSummary?: boolean;
-  /** True once at least one bounded mutation summary has been emitted. */
   summaryEmitted?: boolean;
-  /** Number of per-request summaries emitted for this outer mutation (max 100). */
   summaryCount?: number;
-  /** True once the bounded per-request summary limit has been exceeded. */
   summaryOverflowed?: boolean;
-  /** Bounded per-batch dedupe for the existing turn-summary autofix publisher. */
   autofixRecordedPaths?: Set<string>;
 }
 
@@ -172,9 +166,6 @@ function uniqueDetails(
     (filePath) =>
       byPath.get(normalizeMapKey(path.resolve(filePath))) ?? {
         filePath,
-        // Resource operations have no already-computed text range. A small
-        // range is still enough to invalidate the touched-file turn state;
-        // never synchronously re-read the whole file here.
         range: { start: 1, end: 1 },
         importsChanged: true,
       },
@@ -321,8 +312,6 @@ export function recordLspMutation(
           tool: context.tool,
           source: context.source,
           outcome: telemetry.editBatchSummary.terminalStatus,
-          // The outer correlation identifies the soliciting tool call; the
-          // bounded sequence distinguishes multiple applyEdit requests within it.
           summaryIndex: summaryCount,
           editBatchSummary: telemetry.editBatchSummary,
           operationCounts: telemetry.operationCounts,

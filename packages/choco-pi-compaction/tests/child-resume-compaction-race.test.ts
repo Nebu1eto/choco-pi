@@ -1,13 +1,3 @@
-/**
- * Resume never races a compaction already running in the child session.
- *
- * Live cause: after a cancelled child run settles, `model-context-cap`
- * (agent_settled over its compact point) calls `ctx.compact()` on the child;
- * a native foreground compaction can take seconds. A resume arriving in that
- * window called `session.prompt()`, which Pi rejects with "Cannot submit a
- * prompt while compaction is in progress". Real SDK session, scripted
- * provider, no network.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -25,7 +15,6 @@ test("a resume issued during a running manual compaction waits for it, then prom
   const started = new Promise<void>((resolve) => {
     compactionStarted = resolve;
   });
-  // Stands in for any slow `session_before_compact` handler (a native lane request).
   const slowCompaction = (pi: ExtensionAPI): void => {
     pi.on("session_before_compact", async () => {
       compactionStarted();
@@ -42,7 +31,6 @@ test("a resume issued during a running manual compaction waits for it, then prom
     await started;
     assert.equal(host.session.isCompacting, true);
     const resumed = resumeAgent(host.session, "RESUME-PROMPT");
-    // Let the resume reach its prompt while the compaction still runs.
     await new Promise((resolve) => setTimeout(resolve, 20));
     releaseCompaction();
     await compaction;

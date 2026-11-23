@@ -29,7 +29,6 @@ interface Checkpoint {
   readonly details: AnthropicDetails;
 }
 
-/** The pre-checkpoint request whose shape matches the persisted capture, and the first replay. */
 interface ReplayPair {
   readonly checkpoint: Checkpoint;
   readonly source: WireRequest;
@@ -50,7 +49,6 @@ const LaneUsageSchema = obj(
   { open: true },
 );
 
-/** Live: asks for visible reasoning so the kept tail carries signed thinking. */
 function withThinking(host: Host, prompt: string): string {
   if (host.mode === "fake") return prompt;
   return `${prompt}\nBefore each tool call, think briefly about which label comes next.`;
@@ -64,7 +62,6 @@ function thinkingBlocks(messages: readonly WireMessage[]): WireBlock[] {
   return messages.flatMap((message) => wireBlocks(message).filter(isThinking));
 }
 
-/** `cache_control` is a prompt-caching annotation the adapter moves to the last message. */
 function contentOf(message: WireMessage) {
   return {
     role: message.role,
@@ -95,7 +92,6 @@ function findReplayPair(host: Host, sessionId: string): ReplayPair | undefined {
   return { checkpoint, source, post, branchRef: host.snapshot() };
 }
 
-/** "none": no binding on the wire; "absent": binding without a behavior. */
 function bindingBehavior(post: WireRequest): string {
   const thinking = post.body.thinking;
   if (matches(BehaviorSchema, thinking)) return thinking.block_binding.prefix_mismatch_behavior;
@@ -187,7 +183,6 @@ function usageObservations(host: Host, pair: ReplayPair): Observation[] {
   ];
 }
 
-/** Signatures stay in memory only; the leak check scans recorded artifacts for them. */
 function protectedSignatures(pair: ReplayPair): string[] {
   const signed = thinkingBlocks(pair.source.body.messages).flatMap((block) =>
     matches(SignatureSchema, block) ? [block.signature] : [],
@@ -205,7 +200,6 @@ async function promptRecordingError(host: Host, text: string): Promise<void> {
   }
 }
 
-/** Negative: activate one more registered tool; production must refuse the replay. */
 async function toolsMutation(host: Host, sessionId: string): Promise<Observation | undefined> {
   const { pi } = host.parent();
   const active = pi.getActiveTools();
@@ -223,7 +217,6 @@ async function toolsMutation(host: Host, sessionId: string): Promise<Observation
   return observe("Tool-set mutation after adoption is refused at transport", refused, true, [ref]);
 }
 
-/** Requests mid-turn without holding the foreground; captures store only after responses. */
 async function prepareDuringTurn(host: Host, sessionId: string): Promise<boolean> {
   let handle: PreparationHandle | undefined;
   let requested = false;
@@ -232,8 +225,6 @@ async function prepareDuringTurn(host: Host, sessionId: string): Promise<boolean
     requested = true;
     handle = await requestPreparation(host);
   });
-  // Marker mapping is by substring, so the prompt must not start with a seeded prefix marker.
-  // Live: three tool cycles give requests 0-3; preparation is requested at request 2.
   await host.session.prompt(
     withThinking(host, stepsPrompt(host, CAPTURE_REQUEST, 3, "HARNESS-NATIVE-CAPTURE-ACK")),
   );
@@ -243,7 +234,6 @@ async function prepareDuringTurn(host: Host, sessionId: string): Promise<boolean
   return prepared;
 }
 
-/** No replay on a committed native checkpoint: every check fails with the same observation. */
 function missingReplay(host: Host, prepared: boolean): CheckEvidence {
   const result = evidence(host);
   const missing = [
@@ -292,8 +282,6 @@ export const scenario: Scenario = {
     "Anthropic native compaction block replayed byte-exact under strict thinking binding",
   settings: { enabled: true, anthropicNative: true },
   seedBytes: 20_000,
-  // ~5,000 tokens per seeded message: the cut lands in the seeded prefix, so the
-  // kept tail starts at a user message as Anthropic requires.
   keepRecentTokens: 3000,
   checks: [
     "post-adoption-transport",

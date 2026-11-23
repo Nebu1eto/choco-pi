@@ -43,13 +43,11 @@ function reportTraceFailure(error: Error) {
   process.stderr.write(`hardening trace write failed: ${traceFailure.message}\n`);
 }
 
-// Observe rejection immediately; every append chains behind initialization and its predecessor.
 let traceWrites = mkdir(dirname(tracePath), { recursive: true })
   .then(() => writeFile(tracePath, "", { mode: 0o600 }))
   .catch(reportTraceFailure);
 
 function trace(event: string, details: Record<string, TraceValue> = {}) {
-  // Snapshot causal data now, not when the filesystem operation eventually runs.
   const line = `${JSON.stringify({ sequence: ++sequence, at: Date.now(), owner, event, ...details })}\n`;
   traceWrites = traceWrites
     .then(() => {
@@ -59,7 +57,6 @@ function trace(event: string, details: Record<string, TraceValue> = {}) {
 }
 
 async function flushTrace() {
-  // Include writes enqueued during a drain without touching any host-owned object.
   let pending: Promise<void>;
   do {
     pending = traceWrites;

@@ -9,7 +9,6 @@ import {
 import type { PrototypeTransport } from "./protocol.ts";
 import { isWireEvent, isTextFrame, type WireEvent } from "./wire.ts";
 
-/** Uses an existing unexpired credential; never refreshes or writes authentication. */
 export async function connectPrototype(signal: AbortSignal): Promise<PrototypeTransport> {
   signal.throwIfAborted();
   const credential = readStoredCredential("openai-codex");
@@ -66,7 +65,6 @@ export async function connectPrototype(signal: AbortSignal): Promise<PrototypeTr
   });
   socket.addEventListener("close", close);
   signal.addEventListener("abort", close, { once: true });
-  // The reader exists before opening so connection errors cannot become unhandled rejections.
   const reader = events.getReader();
   try {
     await new Promise<void>((resolve, reject) => {

@@ -12,13 +12,11 @@ export type RpcHarness = {
   readRecords(): BoundaryRecord[];
 };
 
-/** Where the stub `pi` executable and its recorded NDJSON transcript live. */
 type FakePiExecutable = {
   executable: string;
   recordsPath: string;
 };
 
-/** Decode the stub executable's NDJSON transcript; a missing file reads as no records. */
 function readRecordedFrames(recordsPath: string): BoundaryRecord[] {
   let contents: string;
   try {
@@ -75,7 +73,6 @@ export function createFakeAcpToPiHarness(cwd: string): RpcHarness {
   };
 }
 
-/** Real-Pi variant for later opt-in integration tests; constructing it does not spawn Pi. */
 export function createRealPiRpcHarness(cwd: string): RpcHarness {
   const client = new FakeAgentSideConnection();
   return {

@@ -18,8 +18,6 @@ if (!parsedGuidance) throw new Error("profile/model-guidance.md must parse");
 const guidance = parsedGuidance;
 const modelBodies = [...new Set(guidance.models.values())];
 
-// Two configured models with different sections, taken from the guidance file
-// itself so the tests follow its routing instead of restating its wording.
 const [first, second] = [...guidance.models.entries()]
   .filter(([, body], index, entries) => entries.findIndex(([, other]) => other === body) === index)
   .map(([key]) => {

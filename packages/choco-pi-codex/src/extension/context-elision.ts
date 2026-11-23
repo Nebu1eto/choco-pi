@@ -7,7 +7,6 @@ export const ELISION_KEEP_TURNS = 2;
 const PREVIEW_LINES = 5;
 const PREVIEW_LINE_CHARS = 512;
 
-/** One ordinal per message; tool results never begin a user turn. */
 export function assignTurnOrdinals(messages: readonly AgentMessage[]): number[] {
   let ordinal = 0;
   return messages.map((message) => {
@@ -16,7 +15,6 @@ export function assignTurnOrdinals(messages: readonly AgentMessage[]): number[] 
   });
 }
 
-/** The cut is an exclusive message index in the filtered, post-compaction context. */
 export function computeCut({
   ordinal,
   priorCut,
@@ -46,7 +44,6 @@ export function computeCut({
 }
 
 function toolResultText(message: AgentMessage): string | undefined {
-  // Error diagnostics and opaque native web replay are deliberately never elided.
   if (
     message.role !== "toolResult" ||
     message.isError ||
@@ -69,8 +66,6 @@ function tombstone(toolName: string, text: string): string {
     .slice(-PREVIEW_LINES)
     .map((line) => line.slice(-PREVIEW_LINE_CHARS))
     .join("\n");
-  // Deliberately not string-equal to the emergency compaction tombstone: retain
-  // identity and diagnostic evidence, including the end of very long lines.
   return `[${toolName}: ${Buffer.byteLength(text, "utf8")} bytes]\n${COMPACTION_TRUNCATED_TOOL_OUTPUT_MESSAGE} (aged tool result; full output retained in session history).\nFirst lines:\n${head}\n[…]\nLast lines:\n${tail}`;
 }
 
@@ -80,7 +75,6 @@ export function eligibleToolResultChars(message: AgentMessage): number {
   return tombstone(message.toolName, text).length < text.length ? text.length : 0;
 }
 
-/** Request-only copies: pairing fields, details and non-text blocks stay untouched. */
 export function elideToolResults(messages: readonly AgentMessage[], cut: number): AgentMessage[] {
   const ordinals = assignTurnOrdinals(messages);
   const oldestKeptTurn = (ordinals.at(-1) ?? 0) - ELISION_KEEP_TURNS + 1;

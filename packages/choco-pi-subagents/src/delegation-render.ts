@@ -81,13 +81,11 @@ export function renderRunningAgentStatus(
   return container;
 }
 
-/** Format an agent's lifetime token total, or "" when zero. */
 function formatLifetimeTokens(o: { lifetimeUsage: LifetimeUsage }): string {
   const t = getLifetimeTotal(o.lifetimeUsage);
   return t > 0 ? formatTokens(t) : "";
 }
 
-/** Build AgentDetails from a base + record-specific fields. */
 export function buildDetails(
   base: Pick<AgentDetails, "displayName" | "description" | "subagentType" | "modelName" | "tags">,
   record: {
@@ -159,14 +157,6 @@ type DelegationRenderers = Required<
 
 export const delegationRenderers: DelegationRenderers = {
   renderCall(args, theme, context) {
-    // A badge closes its own background, which would clear the tool block's row tint
-    // for the rest of the line, so the badge restores it. The tint is opened here too:
-    // the TUI's Box paints it, but HTML export takes it from CSS, and restoring a
-    // background the line never opened is what banded the export before. The line is
-    // deliberately left open — Box.applyBackgroundToLine pads to width and *then*
-    // wraps, so closing here would leave that padding untinted, and HTML export closes
-    // any open span per line anyway. No badge means no tint, so an uncolored agent
-    // renders exactly the line it always did.
     const rowBackground = hasAgentBadge(args.subagent_type ?? "Agent")
       ? theme.getBgAnsi(
           context.isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg",
@@ -188,14 +178,10 @@ export const delegationRenderers: DelegationRenderers = {
   renderResult(result, { expanded, isPartial }, theme, renderContext) {
     const details = isAgentDetails(result.details) ? result.details : undefined;
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-    // Pi reports pre-execution failures (extension block, abort, argument
-    // validation) as `{ content: [reason], details: {} }` with isError set —
-    // no status to render, so show the reason instead of inventing one (#199).
     if (renderContext.isError || !details?.status) {
       return new Text(text, 0, 0);
     }
 
-    // Helper: build "haiku · thinking: high · ↻5≤30 · 3 tool uses · 33.8k tokens" stats string
     const stats = (d: AgentDetails) => {
       const parts: string[] = [];
       if (d.modelName) parts.push(d.modelName);
@@ -210,26 +196,22 @@ export const delegationRenderers: DelegationRenderers = {
         .join(" " + theme.fg("dim", "·") + " ");
     };
 
-    // ---- While running (streaming) ----
     if (isPartial) {
       const frame = SPINNER[details.spinnerFrame ?? 0];
       const s = stats(details);
       return renderRunningAgentStatus(frame, s, details.activity ?? "thinking…", theme);
     }
 
-    // A settled control-tool response can describe a still-active child.
     if (details.status === "running" || details.status === "queued") {
       const s = stats(details);
       const output = expanded ? text : text.split("\n")[0];
       return new Text((s ? s + "\n" : "") + theme.fg("dim", output), 0, 0);
     }
 
-    // ---- Background agent launched ----
     if (details.status === "background") {
       return new Text(theme.fg("dim", `  ⎿  Running in background (ID: ${details.agentId})`), 0, 0);
     }
 
-    // ---- Completed / Steered ----
     if (details.status === "completed" || details.status === "steered") {
       const duration = formatMs(details.durationMs);
       const isSteered = details.status === "steered";
@@ -256,7 +238,6 @@ export const delegationRenderers: DelegationRenderers = {
         const doneText = isSteered ? "Wrapped up (turn limit)" : "Done";
         rest.push(theme.fg("dim", `  ⎿  ${doneText}`));
       }
-      // A reviewer's or verifier's reply: summary when collapsed, raw block when expanded.
       const verdictView = viewReplyVerdict(text);
       if (verdictView !== undefined) {
         return completedVerdictCard(verdictView, line, rest.join("\n"), expanded, theme);
@@ -265,7 +246,6 @@ export const delegationRenderers: DelegationRenderers = {
       return new Text(line, 0, 0);
     }
 
-    // ---- Stopped (user-initiated abort) ----
     if (details.status === "stopped") {
       const s = stats(details);
       let line = theme.fg("dim", "■") + (s ? " " + s : "");
@@ -285,13 +265,10 @@ export const delegationRenderers: DelegationRenderers = {
       return new Text(line, 0, 0);
     }
 
-    // Anything left ("queued", or a status added later) has no rendering of
-    // its own — the turn-limit wording below must not be the catch-all.
     if (details.status !== "error" && details.status !== "aborted") {
       return new Text(text, 0, 0);
     }
 
-    // ---- Error / Aborted (hard max_turns) ----
     const s = stats(details);
     let line = theme.fg("error", "✗") + (s ? " " + s : "");
 
@@ -305,12 +282,6 @@ export const delegationRenderers: DelegationRenderers = {
   },
 };
 
-// ---- Structured verdict blocks (display only) ----
-// A reviewer's or verifier's reply ends with a choco-pi-review or choco-pi-verdict
-// block and, when recorded, a "Verdict record:" line. Cards summarise a block
-// the strict parser accepts and say why when it does not; the result text the
-// parent model receives is never changed.
-
 const CONVERSATION_MARKER = "\n\n--- Agent Conversation ---\n";
 const RECORD_STATUS = /^Verdict record: (parsed|MISSING|INVALID|FAILED)\b/;
 const CARD_MAX_ENTRIES = 10;
@@ -319,19 +290,10 @@ const NOTIFICATION_INDENT = "      ";
 
 export interface ReplyVerdictView {
   analysis: VerdictTextAnalysis;
-  /** The trailing "Verdict record:" line, sanitised, and its status word. */
   record?: { line: string; status: string };
-  /** The reply with each summarised block's fence removed, for one-line previews. */
   withoutBlocks?: string;
 }
 
-/**
- * What a card may show for a child's reply, or undefined when it has neither a
- * structured block nor a verdict-record line (the card stays as it was). The
- * reply is the text before get_subagent_result's verbose conversation, minus a
- * trailing "Verdict record:" line, which the parser would read as prose after
- * the block.
- */
 export function viewReplyVerdict(text: string): ReplyVerdictView | undefined {
   const markerAt = text.indexOf(CONVERSATION_MARKER);
   const lines = (markerAt === -1 ? text : text.slice(0, markerAt)).split("\n");
@@ -365,10 +327,6 @@ export function viewReplyVerdict(text: string): ReplyVerdictView | undefined {
   return view;
 }
 
-/**
- * Plain lines for a reply's verdict, none wider than `width`. With `noticesOnly`
- * (an expanded card, which shows the raw block) only warnings are returned.
- */
 export function replyVerdictLines(
   view: ReplyVerdictView,
   width: number,
@@ -384,9 +342,6 @@ export function replyVerdictLines(
   }
   const { analysis } = view;
   if (analysis.state === "invalid") {
-    // An INVALID record already carries the parser's reason, with line numbers counted in the reply
-    // itself; the card's text starts with its own header lines, so repeating the reason here would
-    // number the same line differently.
     for (const notice of analysis.notices) {
       const reason =
         record?.status === "INVALID"
@@ -439,7 +394,6 @@ function styleLine(line: SummaryLine, theme: Theme): string {
   return line.role === "headline" || line.role === "notice" ? theme.bold(colored) : colored;
 }
 
-/** A component whose lines are laid out again for each width it is drawn at. */
 class WidthLines implements Component {
   private readonly build: (width: number) => readonly string[];
   private cache: { width: number; lines: readonly string[] } | undefined;
@@ -471,10 +425,6 @@ function indentedLines(
   );
 }
 
-/**
- * A completed card for a reply with a verdict block or record line: the summary
- * under "Done" when collapsed; the raw reply, after any warning, when expanded.
- */
 function completedVerdictCard(
   view: ReplyVerdictView,
   head: string,
@@ -494,18 +444,8 @@ function completedVerdictCard(
   return container;
 }
 
-/** Most UTF-8 bytes of a run's reply a notification keeps for its verdict summary. */
 export const NOTIFICATION_REPLY_MAX_BYTES = 64 * 1024;
 
-/**
- * The reply a notification keeps, captured when the notification is created, so
- * its summary always comes from its own run: the stored preview is cut at a few
- * hundred characters, which leaves any real block unterminated, and the agent's
- * record is reused by a resume. Undefined when the preview already holds the
- * whole reply, when the reply has no verdict block or record line, or when it
- * exceeds {@link NOTIFICATION_REPLY_MAX_BYTES} (that notification shows only its
- * preview, as before).
- */
 export function notificationVerdictReply(
   result: string | undefined,
   preview: string,
@@ -515,11 +455,9 @@ export function notificationVerdictReply(
   return viewReplyVerdict(result) === undefined ? undefined : result;
 }
 
-/** Notification details that keep their run's reply; details come back from the stored session. */
 export const KeptReplySchema = obj({ verdictReply: str() }, { open: true });
 const hasKeptReply = compile(KeptReplySchema).check;
 
-/** The reply a notification card reads: its own kept reply when it continues the preview. */
 function notificationReply(item: NotificationDetails): string {
   const preview = item.resultPreview;
   if (!hasKeptReply(item)) return preview;
@@ -528,13 +466,6 @@ function notificationReply(item: NotificationDetails): string {
   return kept.startsWith(stem) ? kept : preview;
 }
 
-/**
- * The completion notification with verdict summaries inside each agent's band,
- * or undefined when no agent's reply has a block or record line (the caller then
- * renders the notification exactly as before).
- * Each agent is read only from its own details (see {@link notificationVerdictReply});
- * nothing is looked up at render time.
- */
 export function renderVerdictNotification(
   details: NotificationDetails,
   expanded: boolean,
@@ -555,7 +486,6 @@ export function renderVerdictNotification(
       const text = renderSubagentNotification(single, { expanded }, theme);
       if (view === undefined) return text;
       const lines = text.split("\n");
-      // The last row is the band's empty closing row: its whole content is the band background.
       const band = lines.pop() ?? "";
       const summary = replyVerdictLines(view, Math.max(1, width - NOTIFICATION_INDENT.length), {
         maxEntries: NOTIFICATION_MAX_ENTRIES,

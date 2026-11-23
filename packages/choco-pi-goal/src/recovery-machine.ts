@@ -135,7 +135,6 @@ export function syncHostOverflowUserResetFromSession(
   state.phase = applyPersistedHostOverflowUserReset(state.phase, needsUserReset);
 }
 
-/** Session-level overflow: require a user-started goal turn even without an active goal. */
 export function requireHostOverflowUserReset(state: GoalRecoveryMachineState): boolean {
   const persistHostOverflowCapReset = !recoveryPhaseNeedsUserStartTurn(state.phase);
   state.phase = applyPersistedHostOverflowUserReset(state.phase, true);
@@ -166,11 +165,6 @@ function incrementOverflowCompactionAttempts(state: GoalRecoveryMachineState): R
   return { type: "noop" };
 }
 
-/**
- * Plans extension recovery only after pi host post-run retry/compaction has finished.
- * Host AgentSession._handlePostAgentRun() owns retry and overflow compaction; this
- * extension tracks persistent failures and pauses with attention when caps are exceeded.
- */
 export function planRecoveryForAssistantError(
   state: GoalRecoveryMachineState,
   message: AssistantErrorMessage,
@@ -183,8 +177,6 @@ export function planRecoveryForAssistantError(
   const signature = failureSignature(message.errorMessage);
   state.counters = countersForFailureSignature(state.counters, signature);
 
-  // A classifier-confirmed provider limit is terminal even when its wording (such as a bare 429)
-  // would otherwise read as a retryable transient failure.
   if (providerLimit || !isRetryableTransientError(message.errorMessage)) {
     return {
       type: "pause",
@@ -208,7 +200,6 @@ export function planRecoveryForSilentContextOverflow(
   return incrementOverflowCompactionAttempts(state);
 }
 
-/** True when another overflow in this recovery cycle would exceed the compaction cap. */
 export function isRepeatOverflowCompactionDue(state: GoalRecoveryMachineState): boolean {
   return state.counters.compactionAttempts >= MAX_CONTEXT_COMPACTION_RETRIES;
 }

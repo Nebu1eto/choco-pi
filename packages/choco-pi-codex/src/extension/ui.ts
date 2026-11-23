@@ -44,7 +44,6 @@ export function registerCodexUi(
     box.render = (width) => render(width).map((line) => truncateToWidth(line, width, ""));
     return box;
   };
-  // Legacy sessions stored display-only compaction records as custom messages.
   pi.registerMessageRenderer<{ kind?: "usage" | undefined }>(
     NATIVE_COMPACTION_DISPLAY_MESSAGE_TYPE,
     (message, _options, theme) => {

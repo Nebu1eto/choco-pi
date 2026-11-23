@@ -16,11 +16,6 @@ function location(comment: ReviewComment): string {
   return `${escapeForAgent(comment.path)}:${comment.line}${range}`;
 }
 
-/**
- * Said after the location of a comment whose line is not current: its text
- * was not found, or work that could move it had not finished. The number is
- * then where it was, never presented as where it is.
- */
 function staleNote(comment: ReviewComment): string {
   const where = comment.startLine === undefined ? "that line is" : "those lines are";
   if (comment.stale === "outdated") {
@@ -32,7 +27,6 @@ function staleNote(comment: ReviewComment): string {
   return "";
 }
 
-/** Multi-line text for the editor or a model: line breaks stay, every other control is escaped. */
 function agentLines(text: string): string {
   return text
     .split("\n")
@@ -41,18 +35,9 @@ function agentLines(text: string): string {
 }
 
 export type ReviewMarkdownOptions = {
-  /**
-   * Sensitive files whose contents are still hidden: their comments are
-   * listed without the quoted source line, so no file content leaves.
-   */
   hiddenPaths?: readonly string[];
 };
 
-/**
- * Render persisted review data without coupling it to a submission service.
- * The result goes into the prompt editor and to a model, so repository text
- * in it (paths, quoted lines) has its control characters escaped.
- */
 export function renderReviewMarkdown(
   record: ReviewRecord,
   options: ReviewMarkdownOptions = {},

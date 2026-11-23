@@ -315,7 +315,6 @@ test("clone uses the parent's effective forced provider prompt", async () => {
   const forceThenObserve: InlineExtension = {
     name: "force-then-observe",
     factory: (pi) => {
-      // Production order: this package loads before the extensions that force prompts.
       registerMentionCloneParentPromptObserver(pi);
       pi.on("before_agent_start", () => ({ systemPrompt: "FORCED" }));
       pi.on("before_agent_start", (_event, ctx) => {
@@ -373,8 +372,6 @@ function userText(message: UserMessage): string {
 }
 
 test("clone keeps the parent conversation across its own turn boundary", async () => {
-  // Pi rebuilds agent.state.messages from the SessionManager at every turn_end,
-  // so the parent history must be canonical session entries, not a pushed array.
   const requestUserTexts: string[][] = [];
   let parentContext: ExtensionContext | undefined;
   const runtime = await ModelRuntime.create({ refreshOnCreate: false, modelsPath: null });

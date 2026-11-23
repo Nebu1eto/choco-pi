@@ -1,5 +1,3 @@
-// coverage.json loading, validation and hash evaluation for the drift check.
-
 import { readdir, readFile } from "node:fs/promises";
 import { extname, join, posix, relative, sep } from "node:path";
 import { arr, compile, lit, obj, oneOf, opt, str, type Static } from "@earendil-works/pi-schema";
@@ -12,7 +10,6 @@ import {
   type ParseOutcome,
 } from "./drift-extract.ts";
 
-/** The recorded hash and commit of an artefact that has never been checked. */
 export const PENDING = "pending";
 
 const CoverEntrySchema = obj({
@@ -50,14 +47,9 @@ export interface EntryResult {
   status: EntryStatus;
   recorded: string;
   current?: string;
-  /** Why an entry is missing: file absent or unreadable, symbol absent or ambiguous, or unparseable source. */
   reason?: string;
 }
 
-/**
- * Normalise a repository-relative path. Returns undefined for absolute paths,
- * backslashes, empty paths and paths that leave the repository.
- */
 export function normaliseRepoPath(path: string): string | undefined {
   if (
     path.length === 0 ||
@@ -79,7 +71,6 @@ export function normaliseRepoPath(path: string): string | undefined {
   return normalised;
 }
 
-/** Convert an OS path relative to the root into the repository-relative POSIX form. */
 export function toRepoRelative(root: string, absolutePath: string): string {
   return relative(root, absolutePath).split(sep).join("/");
 }
@@ -88,10 +79,6 @@ export type ParsedCoverage =
   | { readonly ok: true; readonly coverage: Coverage }
   | { readonly ok: false; readonly error: string };
 
-/**
- * Validate the text of a coverage.json: JSON syntax, the schema, repository-
- * relative paths, symbol syntax and unique entries. Pure.
- */
 export function parseCoverage(text: string): ParsedCoverage {
   let value: unknown;
   try {
@@ -148,12 +135,6 @@ export function parseCoverage(text: string): ParsedCoverage {
   return { ok: true, coverage };
 }
 
-/**
- * Find every coverage.json under `<root>/formal`, as sorted repository-relative
- * paths. Symlinked directories are not followed. An unreadable directory, or a
- * coverage.json that is not a regular file (a symlink, dangling or not), is an
- * error naming the path, so a record is never silently skipped.
- */
 export async function findCoverageFiles(root: string): Promise<string[]> {
   const found: string[] = [];
   const walk = async (directory: string): Promise<void> => {
@@ -190,10 +171,6 @@ async function readText(path: string): Promise<FileRead> {
   }
 }
 
-/**
- * Computes current hashes for cover entries. Files are read once and source
- * files with symbol entries are parsed in one parser session per batch.
- */
 export class HashEvaluator {
   readonly #root: string;
   readonly #reads = new Map<string, Promise<FileRead>>();
@@ -212,7 +189,6 @@ export class HashEvaluator {
     return pending;
   }
 
-  /** Read every file and parse those that need symbol extraction, in one parser session. */
   async prepare(entries: readonly CoverEntry[]): Promise<void> {
     const toParse = new Map<string, { fileName: string; text: string }>();
     for (const entry of entries) {
@@ -226,7 +202,6 @@ export class HashEvaluator {
     for (const [file, outcome] of parsed) this.#parses.set(file, outcome);
   }
 
-  /** Evaluate one entry. `prepare` must have run for it; an unprepared symbol entry is reported missing. */
   async evaluate(entry: CoverEntry): Promise<EntryResult> {
     const result: EntryResult = { file: entry.file, status: "missing", recorded: entry.hash };
     if (entry.symbol !== undefined) result.symbol = entry.symbol;
@@ -257,7 +232,6 @@ export class HashEvaluator {
   }
 }
 
-/** Status of an entry whose current hash is known. */
 export function compareHashes(recorded: string, current: string): EntryStatus {
   if (recorded === PENDING) return "pending";
   return recorded === current ? "fresh" : "stale";

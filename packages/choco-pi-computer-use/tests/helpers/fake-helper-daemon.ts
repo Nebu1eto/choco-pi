@@ -1,76 +1,3 @@
-/**
- * Wire-level fake of the macOS computer-use helper daemon (protocol 7).
- *
- * It speaks the helper's newline-delimited JSON protocol on a Unix socket and
- * never touches Accessibility, screen capture, or input. Tests import
- * `startFakeHelperDaemon`; tier-A E2E runs it as a CLI:
- *
- *   node --experimental-strip-types tests/helpers/fake-helper-daemon.ts \
- *     --socket <path> --script <name> [--log <requests.jsonl>] \
- *     [--executable-path <path>] [--protocol-version <n>]
- *
- * Scripts: s1-ok, s2-foreground-required, s3-didnt, s4-slow-type, s5-stale,
- * s6-grant, s7-ownership (short forms S1..S7 / s1..s7 are accepted).
- * In every script an ungranted click or press on the text field (`field-1`)
- * is a pid-scoped AX focus request that works (`delivery: "ax"`,
- * `grounding: "focus"`), as in the helper.
- *
- * S2 and S6 add a custom view (`custom-1`, AXGroup, description "Custom
- * View", no AXPress, `canFocus: true`). `canFocus` keeps it a ref target in
- * `src/actions.ts` (a node with only incidental actions would fall back to
- * coordinates, which need an image-bearing look the fake never returns).
- * As in the helper, in every script an ungranted click or press on a ref
- * with no AX press action that is not a text input is, under `background`,
- * posted by pid and verified: the custom view shows no change, so it is
- * refused with `foreground_required`, `effectPossible` from earlier work only
- * (`false` for a single act), and `error.evidence: {deliveryUsed:
- * "pid_pointer", pidPointerAttempted: true, observableChange: false,
- * pixelCheck: "compared", pixelChange: false}` (window pixels compared and
- * unchanged). With `pidSettleHoldMs` the attempt waits that long after
- * posting (the helper's settle and capture waits), waking at once on
- * `cancel`; a cancel there answers `cancelled` with `effectPossible: true`
- * and a `partial` result, never the no-change refusal. Under
- * `ax_only` it is refused before any delivery without evidence. The
- * button (`button-1`) is pressed through AX with or without a grant. A
- * granted click on `custom-1` is HID coordinates with activation and
- * answers `unknown` (no AX-visible change); with `params.delivery: "pid"`
- * it answers `didnt` (`evidence.observableChange: false`).
- *
- * The window frame is recorded per look. A `look` carrying
- * `fixtureMutation: "resize"` moves and resizes the window first; an act
- * with a look taken before that refuses with `stale_look` ("Window frame
- * changed since look <id>; observe again", `effectPossible: false`), as the
- * helper does. S5's generation bump (`fixtureMutation:
- * "bump_root_generation"`, or its second look) still invalidates every
- * earlier look id.
- *
- * S4 types the first chunk, then holds the `typeText` act for longer than the
- * TypeScript client's timeout (see `defaultSlowHoldMs`), waking at once on
- * `cancel`; the act then fails `cancelled` with a `partial` result. With
- * `cancelBlockMs` the wake is delayed, modelling a request still inside a
- * blocking call: the cancel then acks the non-terminal `stopping` state
- * (`effectPossible: true`) and the act answers `cancelled` later.
- *
- * As in the helper: a `cancel` for an id not yet seen answers `not_found` and
- * tombstones the id (60 s, at most 256 ids), so an act that later registers
- * under it is refused at its first checkpoint (`rejected_before_delivery`).
- * Admitted owner-gated requests pin ownership until they return: TTL expiry,
- * claims by other sessions, and `release` (`owner_busy`) are refused while
- * any runs, and refusals carry `activeRequests`. Checkpoints refresh the
- * owner lease.
- *
- * Log rows: `act`/`actBatch` rows are written when answered and carry
- * `response` (the envelope without `id`); `cancel` rows carry `ack`; every
- * other request is logged on receipt.
- *
- * The fake app matches the E2E scenario prompts ("CU Fixture Target") and the
- * S6 foreground grant (`com.choco-pi.FocusFixture`).
- *
- * Shutdown: `close()` and SIGTERM/SIGINT/SIGHUP stop listening, destroy every
- * client socket, abort in-flight slow requests, and unlink the socket path;
- * the CLI exits within SHUTDOWN_DEADLINE_MS even if cleanup stalls, and also
- * exits when its parent process disappears.
- */
 import { appendFile, mkdir, unlink } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
@@ -97,37 +24,20 @@ export type FakeScript = (typeof FAKE_SCRIPTS)[number];
 export interface FakeHelperDaemonOptions {
   socketPath: string;
   script: FakeScript | string;
-  /**
-   * NDJSON log: one line per received request. `act`/`actBatch` lines are
-   * written when answered and carry `response`; cancel lines carry `ack`.
-   */
   logPath?: string;
-  /** Reported as `diagnostics.executablePath`; omitted when absent. */
   executablePath?: string;
-  /** Protocol reported until the first `shutdown`; afterwards 7. Default 7. */
   initialProtocolVersion?: number;
-  /**
-   * `diagnostics.startedAt` (epoch seconds) reported until the first
-   * `shutdown`; `null` omits it like a pre-startedAt helper. Default: the
-   * fake's start time. A "relaunched" fake reports its shutdown time.
-   */
   initialStartedAt?: number | null;
-  /** s4-slow-type delay before each chunk after the hold. Default 5000 ms. */
   slowChunkMs?: number;
-  /** s4-slow-type hold after the first chunk. Default `defaultSlowHoldMs(text)`. */
   slowHoldMs?: number;
-  /** Delay before a `cancel` wakes a held request (a blocking call). Default 0. */
   cancelBlockMs?: number;
-  /** Settle wait after a background pid pointer attempt posts. Default 0. */
   pidSettleHoldMs?: number;
-  /** Owner lease without requests in flight. Default 30000 ms (the helper's). */
   ownerTtlMs?: number;
 }
 
 export interface FakeHelperDaemon {
   readonly socketPath: string;
   readonly script: FakeScript;
-  /** Every logged request, in log order (see `logPath`). */
   readonly requests: JsonObject[];
   close(): Promise<void>;
 }
@@ -141,15 +51,9 @@ export const FAKE_APP = {
 export const FAKE_WINDOW_TITLE = "CU Fixture Target";
 export const CUSTOM_VIEW_REF = "custom-1";
 export const CUSTOM_VIEW_NAME = "Custom View";
-/** Upper bound for close() and for the CLI's signal-to-exit path. */
 export const SHUTDOWN_DEADLINE_MS = 250;
-/** Mirrors `COMMAND_TIMEOUT_MS` in src/bridge.ts. */
 const CLIENT_COMMAND_TIMEOUT_MS = 15_000;
 
-/**
- * The S4 hold: 10 s beyond the larger client timeout the bridge applies to a
- * typeText of this length (`act`: len*25+4000, `actBatch`: len*25+6000).
- */
 export function defaultSlowHoldMs(text: string): number {
   return Math.max(CLIENT_COMMAND_TIMEOUT_MS, text.length * 25 + 6_000) + 10_000;
 }
@@ -162,9 +66,7 @@ interface Frame {
   h: number;
 }
 const INITIAL_FRAME: Frame = { x: 0, y: 0, w: 640, h: 480 };
-/** Frame after `fixtureMutation: "resize"` (the tier-B fixture's move and shrink). */
 export const RESIZED_FRAME: Frame = { x: 40, y: 30, w: 560, h: 452 };
-/** Refs the helper would press through AX, and text inputs it focuses through AX. */
 const PRESSABLE_REFS = new Set(["button-1"]);
 const TEXT_REFS = new Set(["field-1"]);
 const NO_AX_ACTION_REASON =
@@ -208,7 +110,6 @@ class FakeFailure extends Error {
   readonly code: string;
   readonly effectPossible?: boolean;
   readonly result?: JsonObject;
-  /** Extra fields merged into the wire `error` object. */
   readonly details?: JsonObject;
 
   constructor(
@@ -279,7 +180,6 @@ class FakeHelperState {
   private readonly pidSettleHoldMs: number;
   private readonly ownerTtlMs: number;
   private owner?: Session & { lastSeen: number };
-  /** Admitted owner-gated requests still running; positive pins the owner. */
   private ownerActive = 0;
   private readonly active = new Map<string, Tracked>();
   private readonly completed: string[] = [];
@@ -340,8 +240,6 @@ class FakeHelperState {
           source: { attribution: "helper-app", pid: process.pid },
         };
       case "shutdown":
-        // The fake keeps running (the harness owns its lifetime); a
-        // "relaunched" helper reports the current protocol and no owner.
         this.protocolVersion = FAKE_PROTOCOL_VERSION;
         this.startedAt = Date.now() / 1000;
         this.owner = undefined;
@@ -439,7 +337,6 @@ class FakeHelperState {
     return this.cancel(target);
   }
 
-  /** Stops every in-flight request at its next checkpoint and wakes sleepers. */
   shutdown(): void {
     for (const tracked of this.active.values()) {
       tracked.cancelled = true;
@@ -451,7 +348,6 @@ class FakeHelperState {
     const output: JsonObject = {
       protocolVersion: this.protocolVersion,
       architectureVersion: 1,
-      // Same set as the native helper; the TS client asserts the shared contract.
       invariants: [
         "state-scoped-observations",
         "bounded-observation-history",
@@ -583,7 +479,6 @@ class FakeHelperState {
         return { acknowledged: true, state: "completed", effectPossible: tracked.effect };
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
-    // Non-terminal: the request may still deliver until its next checkpoint.
     return { acknowledged: true, state: "stopping", effectPossible: true };
   }
 
@@ -608,8 +503,6 @@ class FakeHelperState {
     this.pruneTombstones(Date.now());
     const tombstoned = ids.some((id) => this.tombstones.some((tombstone) => tombstone.id === id));
     const tracked: Tracked = {
-      // A cancel that arrived before registration refuses the request at its
-      // first checkpoint, before any delivery.
       cancelled: tombstoned,
       stopped: false,
       effect: false,
@@ -801,7 +694,6 @@ class FakeHelperState {
     const lookId = stringField(request, "lookId") ?? "";
     if (!this.validLooks.has(lookId))
       throw new FakeFailure("stale_look", `Look id '${lookId}' is no longer available`);
-    // Like the helper: the window frame recorded at look time must still hold.
     const recordedFrame = this.lookFrames.get(lookId);
     if (recordedFrame && framesDiffer(recordedFrame, this.frame))
       throw new FakeFailure(
@@ -817,7 +709,6 @@ class FakeHelperState {
       (request.focusResolution === "ax_focused_element" ? "field-1" : undefined);
     const delivery = granted && params.delivery !== "pid" ? "hid" : "pid";
     const frontmostBefore = this.frontmost.pid;
-    // Only granted HID delivery activates the target app.
     const effect = (activates = delivery === "hid") => {
       tracked.effect = true;
       if (activates) this.frontmost = FAKE_APP;
@@ -846,20 +737,15 @@ class FakeHelperState {
 
     const clicks = action === "click" || action === "press";
     const clicksField = clicks && ref !== undefined && TEXT_REFS.has(ref);
-    // The helper's rule: a click with no AX route is refused before delivery
-    // unless the request carries a foreground grant.
     const noAxAction =
       clicks && ref !== undefined && !PRESSABLE_REFS.has(ref) && !TEXT_REFS.has(ref);
     if (noAxAction && !granted) {
       if (policy !== "background")
         throw new FakeFailure("foreground_required", NO_AX_ACTION_REASON, tracked.effect);
-      // Background: pid pointer attempt, then a settle window that sees no change.
       const effectBefore = tracked.effect;
       this.checkpoint(tracked);
       effect();
       if (this.pidSettleHoldMs > 0) {
-        // Settle/capture wait; a cancel here is `cancelled` with the posted
-        // input reported as a possible effect.
         await this.sleep(tracked, this.pidSettleHoldMs);
         this.checkpoint(tracked);
       }
@@ -898,8 +784,6 @@ class FakeHelperState {
         });
       }
       for (let index = 0; index < text.length; index += TYPE_CHUNK_CHARS) {
-        // A single act reports the chunk index it stopped at; a batch step
-        // keeps the batch index.
         const chunk = index / TYPE_CHUNK_CHARS;
         if (!deferred) tracked.step = chunk;
         this.checkpoint(tracked);
@@ -910,8 +794,6 @@ class FakeHelperState {
         effect();
         this.fieldValue += text.slice(index, index + TYPE_CHUNK_CHARS);
         if (this.script === "s4-slow-type" && chunk === 0) {
-          // The first chunk lands at once; then the act is held past the
-          // client timeout (even for a one-chunk text). Cancel wakes it.
           if (!deferred) tracked.step = 1;
           await this.sleep(tracked, this.slowHoldMs ?? defaultSlowHoldMs(text));
           this.checkpoint(tracked);
@@ -924,7 +806,6 @@ class FakeHelperState {
       });
     }
     if (clicksField && !granted) {
-      // Like the helper: a text-field ref click is a pid-scoped AX focus request.
       this.checkpoint(tracked);
       effect();
       return finish({
@@ -934,7 +815,6 @@ class FakeHelperState {
       });
     }
     if (clicks && noAxAction) {
-      // Granted pointer input on a view without an AX action.
       this.checkpoint(tracked);
       effect();
       if (delivery === "hid")
@@ -949,7 +829,6 @@ class FakeHelperState {
       });
     }
     if (clicks) {
-      // AXPress, granted or not: no activation.
       this.checkpoint(tracked);
       effect(false);
       if (ref === "button-1") this.pressCount += 1;
@@ -963,7 +842,6 @@ class FakeHelperState {
     return finish({ outcome: "unknown", performed: { delivery, grounding: "coordinates" } });
   }
 
-  /** Sleeps up to `ms`; `cancel` and shutdown wake it at once. */
   private async sleep(tracked: Tracked, ms: number): Promise<void> {
     if (tracked.cancelled) return;
     await new Promise<void>((resolve) => {
@@ -1078,7 +956,6 @@ export async function startFakeHelperDaemon(
     const entry: JsonObject = { ...request, receivedAt: Date.now(), script: state.script };
     let response: JsonObject;
     if (request.cmd === "cancel") {
-      // Cancel acks are logged on the request line itself.
       try {
         const ack = await state.cancelAckFor(stringField(request, "target") ?? "");
         entry.ack = ack;
@@ -1088,9 +965,6 @@ export async function startFakeHelperDaemon(
       }
       log(entry);
     } else if (request.cmd === "act" || request.cmd === "actBatch") {
-      // Logged once, when answered, so scoring can attribute the outcome by
-      // requestId. A cancelled act is answered before its cancel ack is
-      // logged, so its line precedes the cancel line.
       try {
         response = { id, ok: true, result: await state.handle(request) };
       } catch (error) {
@@ -1149,13 +1023,11 @@ export async function startFakeHelperDaemon(
     script: state.script,
     requests,
     close() {
-      // Idempotent and bounded: idle or busy client connections never hold it open.
       closing ??= (async () => {
         const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));
         for (const socket of sockets) socket.destroy();
         sockets.clear();
         state.shutdown();
-        // Let woken requests answer and queue their log lines first.
         await new Promise<void>((resolve) => setImmediate(resolve));
         await settleWithin(
           Promise.all([serverClosed, logQueue, unlink(options.socketPath).catch(() => undefined)]),
@@ -1167,7 +1039,6 @@ export async function startFakeHelperDaemon(
   };
 }
 
-/** Resolves when `promise` settles or after `ms`, whichever comes first. */
 function settleWithin(promise: Promise<unknown>, ms: number): Promise<void> {
   return new Promise<void>((resolve) => {
     const timer = setTimeout(resolve, ms);
@@ -1198,19 +1069,14 @@ async function main(args: readonly string[]): Promise<void> {
   const stop = () => {
     if (stopping) return;
     stopping = true;
-    // Hard deadline: exit even if cleanup stalls. process.exit ends every
-    // remaining handle, including connections accepted during shutdown.
     setTimeout(() => process.exit(0), SHUTDOWN_DEADLINE_MS);
     const closed = daemon ? daemon.close() : unlink(socketPath).catch(() => undefined);
     void closed.finally(() => process.exit(0));
   };
-  // Handlers first, so a signal during startup still unlinks and exits.
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
   process.on("SIGHUP", stop);
-  // A closed stdout pipe (harness gone) must not crash before cleanup.
   process.stdout.on("error", () => undefined);
-  // Orphan guard: when the launching process dies we are reparented; exit.
   const parentPid = process.ppid;
   setInterval(() => {
     if (process.ppid !== parentPid) stop();

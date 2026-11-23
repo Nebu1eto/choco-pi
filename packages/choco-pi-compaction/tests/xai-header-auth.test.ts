@@ -1,9 +1,3 @@
-/**
- * Header-only xAI auth (D10): a provider configured with only an
- * `Authorization: Bearer` header classifies like its API key would (an
- * `xai-` key is api-key mode, anything else OAuth), and the foreground and
- * the backend agree, so the native lane runs instead of a credential cancel.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -56,7 +50,6 @@ for (const [token, mode] of [
         assert.equal(lane.sent[0]?.headers.get("authorization"), `Bearer ${token}`);
         const latest = compactionsOf(rig.manager).at(-1);
         assert.ok(latest && isXaiDetails(latest.details), "a native checkpoint, no cancel");
-        // The backend's resolveRequest classified the same mode the foreground admitted.
         assert.equal(latest.details.scope.authMode, mode);
         assert.equal(
           rig.notices.some((notice) => /credentials/u.test(notice)),

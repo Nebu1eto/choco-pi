@@ -1,5 +1,3 @@
-// Every row the changes view returns fits the requested width, including at 0 to 3 columns
-// and with a double-width character at the cut.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Input, visibleWidth } from "@earendil-works/pi-tui";

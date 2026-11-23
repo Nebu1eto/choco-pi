@@ -116,7 +116,7 @@ test("a stopped run rejects resume until settlement, then starts a fresh generat
 
     const stoppedRecord = manager.getRecord(agentId);
     assert.ok(stoppedRecord);
-    stoppedRecord.resultConsumed = true; // stop_subagent suppresses its redundant completion nudge.
+    stoppedRecord.resultConsumed = true;
     assert.equal(manager.abort(agentId), true, "stop_subagent reaches this manager abort boundary");
     const prematureResume = await manager.resume(agentId, "resumed", undefined, {
       isBackground: true,
@@ -255,7 +255,6 @@ test("a usage-limit-parked record refuses resume until stopped, then resumes as 
 
     assert.equal(manager.abort(id), true);
     assert.equal(record?.terminalResultGeneration, 1);
-    // The limit's closure still holds: resume is refused like spawn.
     await assert.rejects(
       manager.resume(id, "again", undefined, { isBackground: true }),
       /Provider anthropic-generation-usage-limit unavailable/,

@@ -1,6 +1,3 @@
-/**
- * Persist flush entry points and persist-worker test hooks.
- */
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { gzipSync } from "node:zlib";
@@ -27,7 +24,6 @@ import {
 } from "./persist-worker-client.ts";
 import { recordPersistFailure } from "./source-files.ts";
 
-/** Test hook: force any pending debounced persist to write immediately. */
 export function flushReviewGraphPersistsForTests(): void {
   for (const key of Array.from(_pendingPersist.keys())) {
     const pending = _pendingPersist.get(key);
@@ -41,8 +37,6 @@ export function flushReviewGraphPersistsForTests(): void {
   settleReviewGraphPersistQueue();
 }
 
-/** Test-only: wait until worker requests (authoritative persist AND offloaded
- * checkpoint) have either landed or degraded. */
 export async function waitForReviewGraphPersistsForTests(): Promise<void> {
   for (
     let attempts = 0;
@@ -53,13 +47,11 @@ export async function waitForReviewGraphPersistsForTests(): Promise<void> {
   }
 }
 
-/** Test-only: exercise the degraded worker-death path. */
 export async function terminateReviewGraphPersistWorkerForTests(): Promise<void> {
   const worker = reviewGraphBuilderState._persistWorker;
   if (worker) await worker.terminate();
 }
 
-/** Test-only: restore worker creation after a deliberate death. */
 export function resetReviewGraphPersistWorkerForTests(): void {
   reviewGraphBuilderState._workerDisabled = false;
   reviewGraphBuilderState._persistWorkerUnavailableReason = undefined;
@@ -71,7 +63,6 @@ export function resetReviewGraphPersistWorkerForTests(): void {
   reviewGraphBuilderState._persistWorker = undefined;
 }
 
-/** Test-only: count of checkpoint writes that took the offloaded worker path. */
 export function getCheckpointOffloadCountForTests(): number {
   return reviewGraphBuilderState._checkpointOffloadCountForTests;
 }
@@ -86,18 +77,9 @@ export interface ReviewGraphPersistFlushResult {
   bytes?: number;
   elements?: number;
   reason?: string;
-  /** Honest total-vs-persisted counts when the cap forced a partial snapshot
-   * (#936 limit 3) — standalone callers must surface this, not just "ok". */
   coverage?: ReviewGraphPersistCoverage;
 }
 
-/**
- * Force and verify one workspace's queued graph snapshot before a standalone
- * process exits. This is the out-of-band counterpart to the teardown hook:
- * it consumes the same persist payload and uses the same atomic writer.
- */
-/** On-disk snapshot path for a workspace — for standalone tools that must
- * distinguish "snapshot already current" from "persist never happened". */
 export function reviewGraphCachePath(cwd: string): string {
   return path.join(getProjectDataDir(cwd), "cache", GRAPH_CACHE_FILENAME);
 }
@@ -116,12 +98,6 @@ function flushReviewGraphPersistNow(
   source: "cli" | "exit_hook",
 ): ReviewGraphPersistFlushResult {
   const key = normalizeMapKey(cwd);
-  // #950 review F2: pick the NEWEST generation across the debounced pending
-  // entry AND every in-flight worker request, and remove ALL of them — the
-  // old first-match scan could force-write a stale generation and then let
-  // a newer in-flight worker result pass the (reset) generation gate after
-  // the flush. Removed requests' late results hit the no-request branch in
-  // handleWorkerResult, which deletes their stage files.
   let pending = _pendingPersist.get(key);
   const removedWorkerRequests: PendingPersist[] = [];
   let selectedWorkerRequest: PendingPersist | undefined;
@@ -155,9 +131,6 @@ function flushReviewGraphPersistNow(
       reason: "no graph snapshot was queued for persistence",
     };
   }
-  // Invalidate every staged worker completion before doing the forced write.
-  // Workers never promote their own stage file, so a late result can only be
-  // discarded by handleWorkerResult and cannot overwrite this snapshot.
   _persistGenerations.set(key, Math.max(_persistGenerations.get(key) ?? 0, pending.generation) + 1);
   _pendingPersist.delete(key);
   const timer = _persistTimers.get(key);

@@ -175,7 +175,6 @@ test("background checkpoint, another account: request refused with the exits tex
   const refusal = setup.records.find((record) => record.event === "refuse");
   assert.equal(refusal?.reason, "scope-mismatch");
   assert.equal(refusal?.checkpointEntryId, entryId);
-  // The compaction path resolves the same mismatch instead of skipping to an older entry.
   const latest = resolveLatestNativeCompactionEntry(setup.manager.getBranch(), {
     provider: model.provider,
     api: model.api,

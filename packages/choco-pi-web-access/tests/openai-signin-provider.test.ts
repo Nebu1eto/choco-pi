@@ -5,10 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-// Regression coverage for Pi's "Sign in with ChatGPT" credential on the stock `openai`
-// provider: the token is a JWT carrying the `https://api.openai.com/auth` claim (without a
-// ChatGPT account id) and must reach api.openai.com, never the chatgpt.com Codex backend.
-
 const openaiUrl = new URL("../openai-search.ts", import.meta.url).href;
 const adaptersUrl = new URL("../search-adapters.ts", import.meta.url).href;
 const legacyRouterUrl = new URL("../gemini-search.ts", import.meta.url).href;
@@ -90,10 +86,6 @@ async function runChild(script: string, config?: WebSearchConfigFixture): Promis
   return { status, stdout, stderr };
 }
 
-/**
- * Registry fixture: built-in catalog entries plus per-provider credential results.
- * `oauthProviders` drives `isUsingOAuth`; `null` omits the method (minimal registry).
- */
 function registryScript(
   credentials: Readonly<Record<string, string | null>>,
   oauthProviders: readonly string[] | null = ["openai", "openai-codex"],
@@ -193,7 +185,6 @@ async function runSearch(
 
 test("ChatGPT sign-in on openai is preferred and sent to api.openai.com as subscription", async () => {
   const output = await runSearch({ openai: SIGN_IN_TOKEN, "openai-codex": CODEX_TOKEN });
-  // openai is first; the legacy openai-codex credential is never touched.
   assert.deepEqual(output.attempted, ["openai"]);
   assert.deepEqual(output.auth, {
     providerId: "openai",
@@ -219,7 +210,6 @@ test("ChatGPT sign-in on openai is preferred and sent to api.openai.com as subsc
     "tool_choice",
     "tools",
   ]);
-  // Fields Sign in with ChatGPT rejects are never sent.
   assert.equal(call.body.max_output_tokens, undefined);
   assert.equal(call.body.temperature, undefined);
   assert.equal(call.body.prompt_cache_key, undefined);
@@ -239,7 +229,6 @@ test("ChatGPT sign-in on openai is preferred and sent to api.openai.com as subsc
 });
 
 test("sign-in JWT auth claim alone does not route openai to the Codex backend", async () => {
-  // Minimal registry without isUsingOAuth: the sign-in token shape is the fallback signal.
   const output = await runSearch(
     { openai: SIGN_IN_TOKEN },
     { openaiSearchProviders: ["openai"] },
@@ -251,7 +240,6 @@ test("sign-in JWT auth claim alone does not route openai to the Codex backend", 
 });
 
 test("non-sk environment or config keys on openai are not reported as subscription", async () => {
-  // Registry reports a non-OAuth credential (env/config API key) that lacks the sk- prefix.
   const output = await runSearch({ openai: "integration-openai-key" }, undefined, []);
   assert.deepEqual(output.attempted, ["openai"]);
   assert.equal(output.auth.transport, "responses-api");

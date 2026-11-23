@@ -80,7 +80,6 @@ test("record, take, and clear usage-limit signals per session", () => {
 test("usage-limit signals are bounded by age on write and ignored when stale on take", () => {
   recordUsageLimitSignal("old", {}, 0);
   recordUsageLimitSignal("new", {}, USAGE_LIMIT_SIGNAL_MAX_AGE_MS + 1);
-  // Pruned on the second write even when read back with an earlier clock.
   assert.equal(takeUsageLimitSignal("old", 0), undefined);
 
   recordUsageLimitSignal("stale", {}, 0);
@@ -200,7 +199,6 @@ test("openai sign-in usage-limit error yields an observedAt-only entry", () => {
     ),
     undefined,
   );
-  // The openai entry never drains or borrows the Codex provider's signal.
   assert.deepEqual(
     takeCodexUsageLimitEntry(
       assistantMessage("openai-codex", "error"),

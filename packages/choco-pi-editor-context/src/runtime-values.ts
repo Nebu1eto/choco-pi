@@ -1,7 +1,5 @@
-// oxlint anti-slop/no-runtime-typeof forbids typeof here, so these guards use identity and a pi-schema string check.
 import { compile, str } from "@earendil-works/pi-schema";
 
-/** In-process runtime value universe; deliberately shallow (never deep-walked). */
 export type BoundaryValue =
   | undefined
   | null
@@ -15,7 +13,6 @@ export type BoundaryValue =
   | BoundaryRecord
   | {};
 
-/** Record entries exclude the bare `{}` member so the dictionary keeps a concrete value contract. */
 export type BoundaryEntry =
   | undefined
   | null

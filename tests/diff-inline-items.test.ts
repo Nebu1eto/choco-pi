@@ -39,7 +39,6 @@ import {
 
 const NOW = Date.parse("2026-01-01T00:00:00.000Z");
 const ISO = new Date(NOW).toISOString();
-/** src/a.ts lines 10-12 as changed: context, an added line, context. */
 const A_HUNK: DiffHunk = hunk("a-h", 10, [" ten", "+eleven", " twelve"]);
 const A_LINES = Array.from({ length: 40 }, (_unused, index) => `line ${index + 1}`);
 
@@ -153,7 +152,6 @@ test("a finding outside every hunk gets the file's lines around it, in line orde
     { path: "src/a.ts", from: 1, to: 5 },
     { path: "src/a.ts", from: 28, to: 32 },
   ]);
-  // Drawn again, the quotes are not read again.
   h.body();
   assert.equal(h.store().contextLoads.length, 2);
 });
@@ -179,7 +177,6 @@ test("Enter toggles the item under the cursor, e toggles all in the file, and th
     new Map(),
   );
   await expandFirst(h);
-  // The cursor lands on item rows: walk down until it is on F1.
   for (let step = 0; step < 12 && h.view().selectedItem === undefined; step += 1) {
     h.tui.input("\u001b[B");
     await flush();
@@ -250,8 +247,6 @@ test("a click on an item puts the cursor on it and opens or closes it", async ()
   assert.equal(h.view().isItemOpen("finding:wt-a/F1"), false);
 });
 
-/* ------------------------------------------------------- /review-assist comments */
-
 const SESSION: ReviewTarget = { kind: "session", sessionId: "session-1" };
 
 function comment(id: string, hunkValue: DiffHunk, line: number, body: string): ReviewComment {
@@ -281,7 +276,6 @@ function record(target: ReviewTarget, comments: ReviewComment[]): ReviewRecord {
   };
 }
 
-/** A review directory holding \`records\`, plus files the store did not write. */
 async function reviewDirectory(records: ReviewRecord[]): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "diff-comments-"));
   const folder = join(directory, repoKey("/repo"));
@@ -405,7 +399,6 @@ test("a placed comment is labelled with the lines it was found at, not the lines
     anchor: buildCommentAnchor(hunk("other", 30, [" x", "+not here", " y"]), "RIGHT", 31, 30),
   };
   const h = await pane();
-  // Ten lines were inserted above: the unchanged hunk (same content id) now starts at line 20.
   const shifted = hunk("a-h", 20, [" ten", "+eleven", " twelve"]);
   h.store().bodies.set("src/a.ts", textBody("src/a.ts", [shifted]));
   h.store().ready(2, [file("src/a.ts"), file(".env")]);

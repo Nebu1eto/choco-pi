@@ -1,4 +1,3 @@
-// Shared fakes for the diff-actions-* and diff-findings-* suites (not a test file itself).
 import assert from "node:assert/strict";
 import type {
   ExtensionAPI,
@@ -151,7 +150,6 @@ export function snapshot(
   };
 }
 
-/** A hunk whose lines are context except the `+`/`-` prefixed ones; new-file numbering from `newStart`. */
 export function hunk(id: string, newStart: number, body: string[]): DiffHunk {
   let oldLine = newStart;
   let newLine = newStart;
@@ -189,14 +187,8 @@ export class FakeStore implements DiffStore {
   sources: DiffSource[] = [];
   loads: string[] = [];
   bodies = new Map<string, FileBody>();
-  /** File contents by path, one entry per line, for `loadContext`; a missing path is unavailable. */
   contents = new Map<string, string[]>();
   contextLoads: Array<{ path: string; from: number; to: number }> = [];
-  /**
-   * While true, loads wait in `held` until released. Like the real store (see the
-   * contract test in changes-store-contract.test.ts), a load answers with the revision
-   * and body current when it began, whenever it is released.
-   */
   holdLoads = false;
   held: Array<{ path: string; revision: number; release(): void }> = [];
   readonly checkpoints: SessionCheckpointProvider | undefined;
@@ -241,7 +233,6 @@ export class FakeStore implements DiffStore {
     if (!lines) return { revision, excerpt: { kind: "unavailable", reason: "no contents" } };
     return { revision, excerpt: { kind: "lines", from, lines: lines.slice(from - 1, to) } };
   }
-  /** Like the real store: the next snapshot carries the new source. */
   setSource(source: DiffSource): void {
     this.sources.push(source);
     const state = this.state;
@@ -264,19 +255,13 @@ export type HarnessOptions = {
   changeTimes?: Map<string, number | null>;
   editorText?: string;
   notesIo?: PrefsIo;
-  /** Defaults to {@link renderPlain}; pass the production renderer to test it. */
   renderFileBody?: FileBodyRenderer;
-  /** The clipboard write fails with this message. */
   clipboardError?: string;
-  /** No clipboard is wired. */
   noClipboard?: boolean;
-  /** Reads /review-assist comments; the context then has a session manager naming `sessionId`. */
   readComments?: CommentReader;
-  /** Defaults to "session-1". */
   sessionId?: string;
 };
 
-/** Plain unified rendering: the hunk header, then one `newLine|text` line per diff line. */
 export function renderPlain(diffFile: { hunks: DiffHunk[] }): string[] {
   return diffFile.hunks.flatMap((entry) => [
     entry.header,
@@ -354,7 +339,6 @@ export function harness(options: HarnessOptions = {}) {
     },
     notesFile: () => "/scratch/diff-notes/session.json",
   };
-  /** What the pane put on the clipboard, oldest first. */
   const copied: string[] = [];
   if (!options.noClipboard) {
     deps.copyText = async (text) => {
@@ -405,7 +389,6 @@ export function harness(options: HarnessOptions = {}) {
   };
 }
 
-/** Let promise callbacks and real file reads run. */
 export async function until(condition: () => boolean, label = "condition"): Promise<void> {
   for (let attempt = 0; attempt < 400; attempt += 1) {
     if (condition()) return;

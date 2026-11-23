@@ -1,4 +1,3 @@
-// Boundary helpers: tool parameters are snake_case; internal request objects keep camelCase.
 import type { Static } from "@earendil-works/pi-schema";
 import type { SearchCapability, canonicalSearchParams } from "../choco-pi-web-search/index.ts";
 
@@ -8,7 +7,6 @@ export function camelToSnake(name: string): string {
   return name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }
 
-/** Every capability the shared router knows, as spelled internally (camelCase). */
 export const SEARCH_CAPABILITIES: readonly SearchCapability[] = [
   "url",
   "lineno",
@@ -32,10 +30,8 @@ const CAPABILITY_BY_SNAKE = new Map<string, SearchCapability>(
   SEARCH_CAPABILITIES.map((capability) => [camelToSnake(capability), capability]),
 );
 
-/** Snake_case capability names accepted by `required_capabilities`. */
 export const SNAKE_CAPABILITY_NAMES: string[] = [...CAPABILITY_BY_SNAKE.keys()];
 
-/** Map one `required_capabilities` tool value to the internal capability name. */
 export function internalCapability(value: string): SearchCapability {
   const capability = CAPABILITY_BY_SNAKE.get(value);
   if (capability === undefined) {
@@ -46,7 +42,6 @@ export function internalCapability(value: string): SearchCapability {
   return capability;
 }
 
-/** The web_search tool parameters as the model sends them. */
 export type SnakeWebSearchParams = Omit<
   CanonicalSearchParams,
   | "imageQuery"
@@ -77,7 +72,6 @@ export type SnakeWebSearchParams = Omit<
   workflow?: "none" | "summary-review" | "auto-summary";
 };
 
-/** Pre-snake_case web_search parameter names; they are rejected, never aliased. */
 export const LEGACY_WEB_SEARCH_PARAMS: readonly string[] = [
   "imageQuery",
   "responseLength",
@@ -93,7 +87,6 @@ export const LEGACY_WEB_SEARCH_PARAMS: readonly string[] = [
   "providerOptions",
 ];
 
-/** Reject pre-snake_case parameter names so they never act as aliases. */
 export function rejectLegacyParamNames(
   suppliedNames: readonly string[],
   legacyNames: readonly string[],
@@ -105,7 +98,6 @@ export function rejectLegacyParamNames(
   }
 }
 
-/** Convert snake_case web_search parameters to the internal canonical request shape. */
 export function toCanonicalSearchParams(
   params: SnakeWebSearchParams,
 ): CanonicalSearchParams & Pick<SnakeWebSearchParams, "workflow"> {

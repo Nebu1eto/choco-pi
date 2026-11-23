@@ -19,7 +19,6 @@ interface FakeMessage {
   content: string;
 }
 
-/** The two members streamToOutputFile reads: `messages` and `subscribe`. */
 interface FakeSession {
   messages: FakeMessage[];
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
@@ -56,11 +55,6 @@ function asAgentSession(session: FakeSession): AgentSession {
   return reinterpretHostValue<AgentSession>(session);
 }
 
-/**
- * A scratch directory owned by the test, created next to this file instead of
- * under os.tmpdir(), and removed afterwards. Transcripts use `<base>/root` as
- * their private root; `<base>/cwd` stands in for the project directory.
- */
 async function testBase(t: TestContext): Promise<{ base: string; root: string; cwd: string }> {
   const base = await mkdtemp(join(import.meta.dirname, ".output-file-"));
   t.after(() => rm(base, { recursive: true, force: true }));
@@ -97,7 +91,6 @@ test("concurrent streams keep each transcript's entries in production order", as
     return streamToOutputFile(asAgentSession(session), paths[index], `agent-${index}`, cwd);
   });
 
-  // Interleave many turns across the three files without awaiting any write.
   for (let turn = 0; turn < 50; turn++) {
     sessions.forEach((session, index) => {
       session.messages.push({ role: "assistant", content: `${index}:${turn}` });
@@ -133,7 +126,6 @@ test("a failed transcript write is reported, not dropped silently", async (t) =>
   const { base } = await testBase(t);
   const warn = t.mock.method(console, "warn", () => undefined);
   const missing = join(base, "outside-any-root", "nested", "agent.output");
-  // Outside every transcript root, so nothing creates its directory.
   ensureOutputFile(missing);
   await flushOutputFile(missing);
   assert.equal(warn.mock.callCount(), 1);
@@ -152,7 +144,6 @@ test("a deleted transcript directory is recreated and the write succeeds", async
   session.emitTurnEnd();
   await flushOutputFile(path);
 
-  // What a reboot does to os.tmpdir(): the whole private root disappears.
   await rm(root, { recursive: true, force: true });
   session.messages.push({ role: "assistant", content: "after" });
   session.emitTurnEnd();
@@ -176,9 +167,6 @@ test("a deleted transcript directory is recreated and the write succeeds", async
 test("a transcript path restored from an earlier process gets its directory back", async (t) => {
   const { root, cwd } = await testBase(t);
   const warn = t.mock.method(console, "warn", () => undefined);
-  // Registers `root` and sets it up once in this process; then the root disappears.
-  // The path below was never built or written in this process, like a resumed
-  // session's stored outputFile whose directory a reboot removed.
   const earlier = transcriptPath(root, cwd);
   ensureOutputFile(earlier);
   await flushOutputFile(earlier);
@@ -205,7 +193,6 @@ test("a persistent write failure warns once per transcript until a write succeed
   writeInitialEntry(other, "other", "first", cwd);
   await Promise.all([flushOutputFile(path), flushOutputFile(other)]);
 
-  // A regular file where the root directory belongs: nothing can be recreated.
   await rm(root, { recursive: true, force: true });
   await writeFile(root, "not a directory", "utf-8");
   for (let index = 0; index < 3; index++) {
@@ -218,7 +205,6 @@ test("a persistent write failure warns once per transcript until a write succeed
   assert.ok(warned.some((message) => message.includes(path)));
   assert.ok(warned.some((message) => message.includes(other)));
 
-  // Once the blocker is gone the next write recovers; a new failure warns again.
   await rm(root, { force: true });
   ensureOutputFile(path);
   await flushOutputFile(path);

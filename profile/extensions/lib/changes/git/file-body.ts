@@ -9,7 +9,6 @@ import { readWorktreeFile, worktreeSize } from "./worktree-files.ts";
 
 export type BodyRead = {
   body: FileBody;
-  /** False for failures that may succeed on retry, such as a git timeout. */
   cacheable: boolean;
 };
 
@@ -18,11 +17,9 @@ export type BodyContext = {
   repoRoot: string;
   base: string;
   limits: DiffLimits;
-  /** Head tree-ish of a "range" source; absent when the head is the working tree. */
   head?: string;
 };
 
-/** Placeholder used while parsing so quoted or newline-bearing names never reach the parser. */
 const PARSE_PATH = "diff-pane-file";
 
 export function diffKind(summary: FileSummary): DiffFile["kind"] {
@@ -41,12 +38,6 @@ export function diffKind(summary: FileSummary): DiffFile["kind"] {
   }
 }
 
-/**
- * Parse hunk lines with `parseGitDiff` under a placeholder path, then recompute
- * each hunk id for the real path. The ids equal what `parseGitDiff` assigns
- * when it parses the same hunks under the real path, so they stay stable with
- * `/review-assist`.
- */
 function hunksFor(path: string, hunkLines: readonly string[]): DiffHunk[] | undefined {
   if (hunkLines.length === 0) return [];
   const synthetic = [
@@ -56,7 +47,6 @@ function hunksFor(path: string, hunkLines: readonly string[]): DiffHunk[] | unde
     ...hunkLines,
   ].join("\n");
   const model = parseGitDiff(synthetic, "", "");
-  // The parser lists a section it cannot read with no hunks and a notice: that is not "no changes".
   if ((model.notices ?? []).length > 0) return undefined;
   const parsed = model.files[0];
   return (parsed?.hunks ?? []).map((hunk) => ({
@@ -65,10 +55,8 @@ function hunksFor(path: string, hunkLines: readonly string[]): DiffHunk[] | unde
   }));
 }
 
-/** Shown for a file whose patch text did not parse. */
 export const UNPARSABLE_PATCH = "the patch git produced for this file could not be parsed";
 
-/** A text body from hunk sections, or an unreadable body when any section does not parse. */
 function sectionsBody(summary: FileSummary, sections: ReadonlyArray<readonly string[]>): BodyRead {
   const hunks: DiffHunk[] = [];
   for (const lines of sections) {
@@ -120,7 +108,6 @@ function splitSections(patch: string): PatchSection[] {
     }
     if (!current) continue;
     if (line.startsWith("@@ ")) inHunks = true;
-    // Keep raw lines inside hunks: parseGitDiff strips the carriage return itself.
     if (inHunks) current.hunkLines.push(rawLine);
     else current.header.push(line);
   }
@@ -152,7 +139,6 @@ async function trackedBody(context: BodyContext, listed: ListedFile): Promise<Bo
 
   let bytes: number | undefined;
   if (context.head !== undefined || summary.status === "deleted") {
-    // A range reads both sides from trees; a deletion has only the base side.
     const revision = summary.status === "deleted" ? context.base : context.head;
     const result = await context.runner("git", ["cat-file", "-s", `${revision}:${summary.path}`], {
       cwd: context.repoRoot,
@@ -169,7 +155,6 @@ async function trackedBody(context: BodyContext, listed: ListedFile): Promise<Bo
     summary.oldPath !== undefined && summary.oldPath !== summary.path
       ? [summary.oldPath, summary.path]
       : [summary.path];
-  // Plumbing: porcelain `git diff` would rewrite the index.
   const patch = await runGit(context.runner, context.repoRoot, [
     ...(context.head === undefined ? ["diff-index"] : ["diff-tree", "-r"]),
     "--patch",
@@ -192,7 +177,6 @@ async function trackedBody(context: BodyContext, listed: ListedFile): Promise<Bo
   const paired = sections.filter(isPairedSection);
   const chosen = summary.oldPath !== undefined && paired.length > 0 ? paired : sections;
   if (chosen.some(isBinarySection)) return { body: { kind: "binary" }, cacheable: true };
-  // A type change arrives as a deletion section followed by an addition section.
   return sectionsBody(
     summary,
     chosen.map((section) => section.hunkLines),
@@ -230,18 +214,12 @@ async function untrackedBody(context: BodyContext, listed: ListedFile): Promise<
   }
   const endsWithNewline = text.endsWith("\n");
   const lines = (endsWithNewline ? text.slice(0, -1) : text).split("\n");
-  // Match `git diff --no-index /dev/null <file>`, which /review-assist uses for untracked files.
   const header = lines.length === 1 ? "@@ -0,0 +1 @@" : `@@ -0,0 +1,${lines.length} @@`;
   const hunkLines = [header, ...lines.map((line) => `+${line}`)];
   if (!endsWithNewline) hunkLines.push("\\ No newline at end of file");
   return sectionsBody(summary, [hunkLines]);
 }
 
-/**
- * A file that is in the base tree and untracked now: compare the base blob
- * with the working file. `diff-index` sees only the index and would call it
- * deleted.
- */
 async function untrackedAgainstBaseBody(
   context: BodyContext,
   listed: ListedFile,
@@ -267,7 +245,6 @@ async function untrackedAgainstBaseBody(
       cacheable: true,
     };
   }
-  // `-` reads the base version from stdin; exit status 1 means "differs".
   const patch = await runGit(
     context.runner,
     context.repoRoot,
@@ -296,7 +273,6 @@ async function untrackedAgainstBaseBody(
   );
 }
 
-/** Load one listed file's body; failures become "unreadable" and are never thrown. */
 export async function readFileBody(context: BodyContext, listed: ListedFile): Promise<BodyRead> {
   try {
     if (listed.untrackedBase !== undefined) {

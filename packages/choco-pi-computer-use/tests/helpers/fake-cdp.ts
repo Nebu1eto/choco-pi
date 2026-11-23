@@ -10,17 +10,12 @@ import {
 } from "../../src/json.ts";
 import { replacePlatformBackendForTest } from "../../src/platform/index.ts";
 
-/** One CDP command the bridge sent, in send order across every connection. */
 export interface FakeCdpCommand {
   id: number;
   method: string;
   params: JsonObject;
 }
 
-/**
- * How the fake answers a command: a result, a protocol error, or closing the
- * connection without a reply. `undefined` from a responder uses the default.
- */
 export type FakeCdpResponse = { result: JsonObject } | { error: string } | "close";
 
 export interface FakeCdpPage {
@@ -31,24 +26,17 @@ export interface FakeCdpPage {
 
 export interface FakeCdpOptions {
   page?: FakeCdpPage;
-  /** Answer the viewport probe with this [width, height]; otherwise it gets the page text. */
   viewport?: [number, number];
-  /** Accessibility.getFullAXTree nodes. */
   axNodes?: JsonObject[];
 }
 
 export interface FakeCdp {
   readonly port: number;
   readonly commands: FakeCdpCommand[];
-  /** Page targets served by /json/list; tests may remove or restore them. */
   pages: FakeCdpPage[];
-  /** When true, /json/list answers with invalid JSON. */
   listBroken: boolean;
-  /** Overrides the default answer for a command. */
   respond: ((command: FakeCdpCommand) => FakeCdpResponse | undefined) | undefined;
-  /** Returns true to keep a reply until the test calls `reply`. */
   hold: ((command: FakeCdpCommand, reply: () => void) => boolean) | undefined;
-  /** Commands with an input-bearing method (keys, mouse, text, focus, page script). */
   inputCommands(from?: number): FakeCdpCommand[];
   close(): Promise<void>;
 }
@@ -60,7 +48,6 @@ const INPUT_METHODS = new Set([
   "Runtime.callFunctionOn",
 ]);
 
-/** Whether a command is the bridge's read-only element-connected probe (not input). */
 export function isConnectedProbe(command: FakeCdpCommand): boolean {
   return (
     command.method === "Runtime.callFunctionOn" &&
@@ -70,7 +57,6 @@ export function isConnectedProbe(command: FakeCdpCommand): boolean {
   );
 }
 
-/** The fake object id of a resolved backend node: `node-<backendNodeId>`. */
 export function nodeObjectId(backendNodeId: number): string {
   return `node-${backendNodeId}`;
 }
@@ -100,7 +86,6 @@ function forbidden(): never {
   throw new Error("Native backend must not be invoked");
 }
 
-/** Replaces the platform backend with one that refuses every native call; returns the restore function. */
 export function replaceWithForbiddenBackend(): () => void {
   return replacePlatformBackendForTest({
     name: "macos",
@@ -146,11 +131,6 @@ export function replaceWithForbiddenBackend(): () => void {
   });
 }
 
-/**
- * A fake CDP endpoint: a local HTTP page listing plus the test-only transport
- * hook, so the production CDP client and protocol handling run unchanged and
- * nothing reaches a real browser. Sets PI_COMPUTER_USE_CDP_PORT until close().
- */
 export async function startFakeCdp(options: FakeCdpOptions = {}): Promise<FakeCdp> {
   const page = options.page ?? { id: "fixture", title: "Fixture", url: "about:blank" };
   let port = 0;

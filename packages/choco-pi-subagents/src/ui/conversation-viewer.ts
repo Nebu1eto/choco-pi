@@ -1,10 +1,3 @@
-/**
- * conversation-viewer.ts — Live conversation overlay for viewing agent sessions.
- *
- * Displays a scrollable, live-updating view of an agent's conversation.
- * Subscribes to session events for real-time streaming updates.
- */
-
 import {
   type AgentSession,
   type AgentSessionEvent,
@@ -57,18 +50,10 @@ import {
 } from "./agent-widget.ts";
 import { createViewerKeys, type ViewerKeybindings, type ViewerKeys } from "./viewer-keys.ts";
 
-/** Base lines consumed by chrome: top border + header + header sep + footer sep + footer + bottom border. */
 const CHROME_LINES_BASE = 6;
 const MIN_VIEWPORT = 3;
-/** Height ceiling shared by the overlay's `maxHeight` and the viewer's internal viewport cap. */
 export const VIEWPORT_HEIGHT_PCT = 70;
 
-/**
- * Frame budget for the streaming tail. pi-tui paints up to ~60 fps; re-parsing
- * the growing tail's markdown on every streamed token is the per-frame cost
- * that stalls the whole TUI, so the tail re-renders at ~10 fps and keeps its
- * cached lines in between. Settling always gets one final full render.
- */
 const TAIL_RENDER_INTERVAL_MS = 100;
 
 type AssistantMessage = Extract<AgentSession["messages"][number], { role: "assistant" }>;
@@ -111,7 +96,6 @@ function parseHostString(value: any): string | undefined {
   return isString(value) ? value : undefined;
 }
 
-/** Match pi-tui TruncatedText: a pending entry is always one terminal row. */
 function firstTerminalLine(text: string): string {
   const newlineIndex = text.indexOf("\n");
   return newlineIndex === -1 ? text : text.slice(0, newlineIndex);
@@ -130,15 +114,6 @@ function composerTheme(theme: Theme): EditorTheme {
   };
 }
 
-/**
- * Keep only the editor's text rows. The overlay's footer rule already sits
- * above the composer and the hint row below it, so the Editor's own top and
- * bottom rules would read as blank margins. The composer has no autocomplete
- * provider, so render() is exactly [top rule, ...text rows, bottom rule].
- * pi-tui sizes an Editor from the whole terminal (at least five text rows), so
- * on a short terminal it can outgrow the overlay; keep the window of text rows
- * that holds the cursor.
- */
 function fitComposerLines(lines: string[], maxRows: number): string[] {
   const body = lines.slice(1, -1);
   const window = Math.max(1, maxRows);
@@ -177,19 +152,12 @@ function parseBashExecution(message: HostBashExecutionTrace): BashExecutionTrace
 }
 
 export type ConversationViewerOptions = {
-  /** Overlay keeps the modal viewport; focus yields its full transcript to Pi's main scroll view. */
   profile?: "overlay" | "focus";
-  /** Enter fullscreen focus while preserving the overlay as the default viewer. */
   onFocus?: () => void;
-  /** Side conversations can start another turn after the prior run settled. */
   allowReplyWhenFinished?: boolean;
-  /** User-facing verb for the composer affordance. */
   replyLabel?: "steer" | "reply";
-  /** Initial tool/bash expansion state, retained by fullscreen focus per agent. */
   toolOutputExpanded?: boolean;
-  /** Initial thinking visibility, owned by this viewer rather than host settings. */
   hideThinkingBlock?: boolean;
-  /** Host-owned transformers (notably Pi's built-in Mermaid renderer). */
   hostMarkdownTransformers?: readonly MarkdownTransformer[];
 };
 
@@ -200,72 +168,40 @@ export class ConversationViewer implements Component {
   private unsubscribe: (() => void) | undefined;
   private lastInnerW = 0;
   private closed = false;
-  /** Two-press confirm guard for the stop key, so a stray key can't kill the agent. */
   private stopArmed = false;
   private keys: ViewerKeys;
-  /** Multiline steering composer — present while the user is typing a message to the agent. */
   private composer: Editor | undefined;
 
-  /**
-   * Transcript message components, keyed by message object identity. Every
-   * message renders through the exact components the main Pi transcript uses
-   * (UserMessageComponent, AssistantMessageComponent, ToolExecutionComponent,
-   * BashExecutionComponent), so a zentui install restyles this overlay the
-   * same way it restyles the main agent.
-   */
   private messageComponents = new Map<object, Component[]>();
-  /** Rendered lines per message + width; dropped when a tool result lands. */
   private messageLineCache = new Map<object, MessageRender>();
   private mouseLayout: Array<MessageLayout & { msg: object }> = [];
   private toolComponents = new Map<string, ToolExecutionComponent>();
   private builtInToolDefinitions = new Map<string, ToolRendererDefinition>();
-  /** Tool, bash and custom rows that follow this viewer's expansion state. */
   private expandableComponents = new Set<
     ToolExecutionComponent | BashExecutionComponent | CustomMessageComponent
   >();
   private toolOutputExpanded: boolean;
   private hideThinkingBlock: boolean;
   private hostMarkdownTransformers: readonly MarkdownTransformer[];
-  /** Tool calls whose result (real or synthesized error) has been applied. */
   private settledTools = new Set<string>();
   private completedToolArgs = new Set<string>();
-  /** toolCallId -> owning assistant message, for line-cache invalidation. */
   private toolOwners = new Map<string, object>();
 
-  /** Wall-clock stamp of the last streaming-tail render, for throttling. */
   private lastTailRenderAt = 0;
-  /**
-   * Messages whose head component was built with the streaming-fast markdown
-   * theme (no syntax highlighting). Rebuilt at full fidelity once they are no
-   * longer the streaming tail.
-   */
   private fastAssistantHeads = new Set<object>();
 
-  /**
-   * Whole-transcript line cache. buildContentLines runs on every TUI frame
-   * (up to ~60 fps during streaming), so between session events the joined
-   * array, block spacing and the empty-state are reused; a session event,
-   * a throttle tick or a width change marks it dirty.
-   */
   private contentCache: { width: number; lines: string[] } | undefined;
   private contentDirty = true;
 
-  /** Last seen running state, so settle transitions invalidate the cache. */
   private wasRunning: boolean;
 
-  // choco-pi fork: parameter properties desugared to explicit fields (see the
-  // note in `group-join.ts`) so this file stays erasable-syntax-only. The
-  // assignments below run before the original constructor body, exactly where
-  // TypeScript would have emitted them.
   private tui: TUI;
   private session: AgentSession;
   private record: AgentRecord;
   private activity: AgentActivity | undefined;
   private theme: Theme;
   private done: (result: undefined) => void;
-  /** Abort the agent shown here. Omitted → no stop affordance (e.g. read-only history). */
   private onStop?: () => void;
-  /** Send a steering message to the agent. Omitted → no compose affordance. */
   private onSteer?: (message: string) => void;
   private profile: "overlay" | "focus";
   private onFocus?: () => void;
@@ -280,7 +216,6 @@ export class ConversationViewer implements Component {
     theme: Theme,
     done: (result: undefined) => void,
     onStop?: () => void,
-    /** User keybindings from `ctx.ui.custom()`. Omitted → hardcoded defaults. */
     keybindings?: ViewerKeybindings,
     onSteer?: (message: string) => void,
     options: ConversationViewerOptions = {},
@@ -309,8 +244,6 @@ export class ConversationViewer implements Component {
   }
 
   handleInput(data: string): void {
-    // While composing, the editor owns all keys: Enter sends, Shift+Enter or
-    // Ctrl+J inserts a newline, and Esc cancels the draft.
     if (this.composer) {
       if (matchesKey(data, "escape") && !this.composer.isShowingAutocomplete()) {
         this.composer = undefined;
@@ -334,17 +267,12 @@ export class ConversationViewer implements Component {
       return;
     }
 
-    // Enter opens the steering composer (only while the agent can still be
-    // steered) — then type + Enter sends, Esc or an empty submit returns. When
-    // not steerable, fall through so the key still disarms a pending stop.
     if (matchesKey(data, "enter") && this.canSteer()) {
       this.stopArmed = false;
       this.openComposer();
       return;
     }
 
-    // Stop/abort the agent (only while it can still be stopped). Two-press:
-    // first "x" arms, second confirms — any other key disarms.
     if (matchesKey(data, "x")) {
       if (this.isStoppable()) {
         if (this.stopArmed) {
@@ -385,17 +313,13 @@ export class ConversationViewer implements Component {
   }
 
   render(width: number): string[] {
-    if (width < 6) return []; // too narrow for any meaningful rendering
+    if (width < 6) return [];
     if (this.profile === "focus") {
-      // Focus takes over Pi's whole conversation area; any chrome of our own
-      // (box, header, footer) would break the illusion that this IS the main
-      // transcript. The focus widget above the editor carries the hints.
       return this.buildContentLines(width);
     }
     return this.renderOverlay(width);
   }
 
-  /** Toggle only this conversation's tool and bash rows. */
   toggleToolOutputExpanded(): void {
     this.setToolOutputExpanded(!this.toolOutputExpanded);
   }
@@ -410,7 +334,6 @@ export class ConversationViewer implements Component {
     return this.toolOutputExpanded;
   }
 
-  /** Toggle only this viewer's assistant heads, including the streaming tail. */
   toggleThinkingVisibility(): void {
     this.hideThinkingBlock = !this.hideThinkingBlock;
     for (const components of this.messageComponents.values()) {
@@ -429,7 +352,6 @@ export class ConversationViewer implements Component {
     this.tui.requestRender();
   }
 
-  /** Focus-mode replacement for Pi's root pending-message sibling. */
   renderPendingMessages(width: number): string[] {
     const steeringMessages = this.session.getSteeringMessages();
     const followUpMessages = this.session.getFollowUpMessages();
@@ -449,7 +371,7 @@ export class ConversationViewer implements Component {
 
   private renderOverlay(width: number): string[] {
     const th = this.theme;
-    const innerW = width - 4; // border + padding
+    const innerW = width - 4;
     this.lastInnerW = innerW;
     const lines: string[] = [];
 
@@ -467,7 +389,6 @@ export class ConversationViewer implements Component {
     const hrBot = th.fg("border", `╰${"─".repeat(width - 2)}╯`);
     const hrMid = row(th.fg("dim", "─".repeat(innerW)));
 
-    // Header
     lines.push(hrTop);
     let statusIcon: string;
     if (this.record.status === "running") statusIcon = th.fg("accent", "●");
@@ -495,14 +416,10 @@ export class ConversationViewer implements Component {
     if (invocationLine) lines.push(row(invocationLine));
     lines.push(hrMid);
 
-    // Content area — rebuild every render (live data, no cache needed)
     const contentLines = this.buildContentLines(innerW);
     const composerLines = this.composer
       ? fitComposerLines(this.composer.render(innerW), this.composerRowBudget())
       : [];
-    // Pi's main transcript already owns clipping, native scrolling and follow-
-    // end behavior. In focus mode give it the whole subagent transcript instead
-    // of imposing the modal's 70% viewport inside that scroll view.
     const viewportHeight = this.viewportHeight(composerLines.length);
     const maxScroll = Math.max(0, contentLines.length - viewportHeight);
 
@@ -517,10 +434,8 @@ export class ConversationViewer implements Component {
       lines.push(row(visible[i] ?? ""));
     }
 
-    // Footer
     lines.push(hrMid);
     if (this.composer) {
-      // Text rows only: the editor's wrapped text and cursor, no rule rows.
       for (const line of composerLines) lines.push(row(line));
       const composeHint = th.fg("dim", "Enter send · Shift+Enter newline · Esc cancel");
       const composeLeft = th.fg("accent", `✎ ${this.replyLabel}`);
@@ -530,9 +445,6 @@ export class ConversationViewer implements Component {
       );
       lines.push(row(composeLeft + " ".repeat(composeGap) + composeHint));
     } else {
-      // Actions on the left, navigation on the right. The scroll hint keeps its
-      // full key list so the less-obvious bindings stay discoverable; it leads
-      // the right group so "Esc close" is the only part that truncates first.
       const sep = th.fg("dim", " · ");
       const actions: string[] = [];
       if (this.canSteer()) actions.push(th.fg("dim", `Enter ${this.replyLabel}`));
@@ -542,8 +454,6 @@ export class ConversationViewer implements Component {
       }
       const footerRight = th.fg("dim", "↑↓ scroll · PgUp/PgDn or Shift+↑↓ · Esc close");
 
-      // Prepend the line-count/scroll-% readout only when there's spare width —
-      // it's the first thing dropped so it never crowds out the hints.
       const scrollPct =
         contentLines.length <= viewportHeight
           ? "100%"
@@ -567,24 +477,17 @@ export class ConversationViewer implements Component {
     return this.record.status === "running" || this.record.status === "queued";
   }
 
-  /** Stoppable only when a stop handler exists and the agent is still active. */
   private isStoppable(): boolean {
     return !!this.onStop && this.isAgentActive();
   }
 
-  /**
-   * Ordinary viewers steer only an active run. A side-conversation viewer may
-   * also accept a reply after settlement; its owner resumes the same session.
-   */
   private canSteer(): boolean {
     return !!this.onSteer && (this.isAgentActive() || this.allowReplyWhenFinished);
   }
 
-  /** Open the inline steering composer and route subsequent input to it. */
   private openComposer(): void {
     const editor = new Editor(this.tui, composerTheme(this.theme));
     editor.focused = true;
-    // pi-tui expands paste markers and trims before calling this.
     editor.onSubmit = (value: string) => {
       const message = value.trim();
       this.composer = undefined;
@@ -610,9 +513,7 @@ export class ConversationViewer implements Component {
     this.mouseLayout = [];
   }
 
-  /** Focus receives document-relative y, already translated by Pi's scroll view. */
   handleMouse(event: TuiMouseEvent) {
-    // The overlay owns separate chrome and scrolling; leave its routing unchanged.
     if (this.closed || this.profile !== "focus" || this.contentCache?.width !== event.width) {
       return undefined;
     }
@@ -641,8 +542,6 @@ export class ConversationViewer implements Component {
       this.unsubscribe = undefined;
     }
   }
-
-  // ---- Private ----
 
   private handleSessionEvent(event: AgentSessionEvent): void {
     if (this.closed) return;
@@ -687,7 +586,6 @@ export class ConversationViewer implements Component {
   private commitLiveAssistant(message: AssistantMessage): void {
     if (this.liveAssistant) this.forgetAssistant(this.liveAssistant);
     this.liveAssistant = undefined;
-    // Even an in-place final message must bypass the streaming frame budget.
     this.forgetAssistant(message);
   }
 
@@ -712,13 +610,6 @@ export class ConversationViewer implements Component {
     return live && !messages.includes(live) ? [...messages, live] : messages;
   }
 
-  /**
-   * A /btw session runs on a fork of the main conversation. The model keeps
-   * that context, but the viewer starts at the side question. Pi rebuilds
-   * `session.messages` on compaction and re-creates summary messages with
-   * their source entry's timestamp, so the fork time is the stable boundary;
-   * an array index or object identity is not.
-   */
   private ownMessages(messages: AgentSession["messages"]): AgentSession["messages"] {
     const start = this.record.transcriptStartAt;
     if (start === undefined) return messages;
@@ -730,19 +621,14 @@ export class ConversationViewer implements Component {
   }
 
   private viewportHeight(composerRows = 0): number {
-    // Cap mirrors the overlay's maxHeight — otherwise the viewer would render
-    // more lines than the overlay shows and clip the footer.
     return Math.max(MIN_VIEWPORT, this.overlayRows() - this.chromeLines() - composerRows);
   }
 
-  /** Rows the composer may use while the transcript keeps its minimum viewport. */
   private composerRowBudget(): number {
     return Math.max(1, this.overlayRows() - this.chromeLines() - MIN_VIEWPORT);
   }
 
   private chromeLines(): number {
-    // While composing, the hint row replaces the footer; the editor rows are
-    // counted separately because their height follows the draft.
     return CHROME_LINES_BASE + (this.invocationLine() ? 1 : 0);
   }
 
@@ -758,8 +644,6 @@ export class ConversationViewer implements Component {
 
     const running = this.record.status === "running";
     if (running !== this.wasRunning) {
-      // Settling flips the tail out of streaming mode and rebuilds it at full
-      // fidelity; that transition alone must refresh the cached lines.
       this.wasRunning = running;
       this.contentDirty = true;
     }
@@ -793,8 +677,6 @@ export class ConversationViewer implements Component {
       const cached = this.messageLineCache.get(msg);
       const reusable = !!cached && cached.width === width;
       if (isTail) {
-        // Inside the frame budget the tail keeps its last lines; a budget tick
-        // or a width change re-renders it. Either way the lines get cached.
         if (renderTail || !reusable) {
           rendered = this.renderMessage(msg, width);
           this.messageLineCache.set(msg, rendered);
@@ -810,8 +692,6 @@ export class ConversationViewer implements Component {
       }
       const block = rendered.lines;
       if (block.length === 0) return;
-      // Pi spaces transcript blocks with a blank row before user messages;
-      // one row between rendered blocks reads the same inside this overlay.
       if (lines.length > 0) lines.push("");
       for (const entry of rendered.layout) {
         this.mouseLayout.push({ ...entry, msg, y: lines.length + entry.y });
@@ -819,25 +699,16 @@ export class ConversationViewer implements Component {
       lines.push(...block);
     });
 
-    // Streaming indicator for running agents
     if (this.record.status === "running" && this.activity) {
       const act = describeActivity(this.activity.activeTools, this.activity.responseText);
       lines.push("");
       lines.push(truncateToWidth(th.fg("accent", "▍ ") + th.fg("dim", act), width));
     }
 
-    // Rows are truncated at paint time; clipping every line here would be
-    // redundant per-frame work on the whole transcript.
     this.contentCache = { width, lines };
     return lines;
   }
 
-  /**
-   * Bring message components level with the session transcript. Idempotent:
-   * an unchanged message keeps its components; only new messages, a streaming
-   * tail and freshly landed tool results do work. Runs before any rendering,
-   * so a result arriving in the same frame as its call still settles first.
-   */
   private syncComponents(renderTail: boolean): void {
     const messages = this.transcriptMessages();
     const streaming = this.record.status === "running";
@@ -885,11 +756,6 @@ export class ConversationViewer implements Component {
         let components = this.messageComponents.get(msg);
         const wantFastTheme = isTail && msg === this.liveAssistant;
         if (!components || this.fastAssistantHeads.has(msg) !== wantFastTheme) {
-          // (Re)build the head. While the message is the streaming tail it
-          // uses a theme without syntax highlighting — re-highlighting every
-          // code block on each tick is the streaming hot path; once the
-          // message stops being the tail it is rebuilt highlighted, exactly
-          // like the main transcript's final render.
           components = [
             new AssistantMessageComponent(
               msg,
@@ -942,8 +808,6 @@ export class ConversationViewer implements Component {
         if (wantFastTheme && renderTail && head instanceof AssistantMessageComponent) {
           head.updateContent(msg, true);
         }
-        // A run that died mid-tool settles the call with its error instead of
-        // spinning forever — the main transcript rows read the same way.
         if (msg.stopReason === "aborted" || msg.stopReason === "error") {
           const errorText =
             msg.stopReason === "error" ? msg.errorMessage || "Error" : "Operation aborted";
@@ -962,7 +826,6 @@ export class ConversationViewer implements Component {
       }
 
       if (msg.role === "toolResult") {
-        // Results render inside their tool component; no standalone block.
         const tool = this.toolComponents.get(msg.toolCallId);
         if (tool && !this.settledTools.has(msg.toolCallId)) {
           tool.updateResult(
@@ -983,8 +846,6 @@ export class ConversationViewer implements Component {
 
       const bash = parseBashExecution(msg);
       if (!bash) continue;
-      // A streaming bash message keeps mutating in place; rebuild it each
-      // budget tick. Settled ones keep their component (and its cache).
       if (!this.messageComponents.has(msg) || (isTail && renderTail)) {
         const previous = this.messageComponents.get(msg)?.[0];
         if (previous instanceof BashExecutionComponent) {
@@ -997,7 +858,6 @@ export class ConversationViewer implements Component {
         );
         if (bash.output) component.appendOutput(bash.output);
         // SAFETY: the wire message carries only the truncated flag, and the
-        // component reads only that flag from this value.
         const truncation = bash.truncated
           ? ({ truncated: true } as Parameters<BashExecutionComponent["setComplete"]>[2])
           : undefined;
@@ -1022,7 +882,6 @@ export class ConversationViewer implements Component {
     return { width, lines, layout };
   }
 
-  /** Registered tool renderers, exactly what the main transcript passes. */
   private toolDefinition(name: string): ToolRendererDefinition {
     const runner = this.session.extensionRunner;
     return runner
@@ -1038,7 +897,6 @@ export class ConversationViewer implements Component {
       definition = undefined;
     }
 
-    // Built-ins belong inside the resolver's base, just like Pi's main transcript.
     const builtIn = this.builtInToolDefinition(name);
     if (!definition) return builtIn;
     if (!builtIn) return definition;
@@ -1090,12 +948,6 @@ export class ConversationViewer implements Component {
     return definition;
   }
 
-  /**
-   * Markdown theme for an assistant component. The streaming variant skips
-   * syntax highlighting: cli-highlight re-runs on every code block for each
-   * streaming tick, dominating the tail's per-frame cost. The settle-time
-   * rebuild restores full highlighting.
-   */
   private markdownThemeFor(streamingTail: boolean): MarkdownTheme {
     const theme = getMarkdownTheme();
     if (!streamingTail) return theme;
@@ -1113,11 +965,9 @@ export class ConversationViewer implements Component {
     }
   }
 
-  /** Extension markdown transformers (e.g. diagrams) registered on the child session. */
   private markdownTransformers(): readonly MarkdownTransformer[] {
     try {
       // SAFETY: extensionRunner exposes this accessor in the pi runtime; the
-      // optional-chain guards sessions that do not carry one.
       const runner = this.session.extensionRunner as
         | { getMarkdownTransformers?: () => MarkdownTransformer[] }
         | undefined;

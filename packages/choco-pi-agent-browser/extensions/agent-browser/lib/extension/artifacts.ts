@@ -47,8 +47,6 @@ export function getArtifactCommandSteps(
       };
     steps.push(parsed.step);
   }
-  // Upstream executes raw argument steps exclusively when any exist, so ignored
-  // stdin must not add artifact/lifecycle steps or fail this preflight.
   if (steps.length > 0) return { batch, steps };
   const parsed = parseUserBatchStdin(stdin);
   return parsed.error

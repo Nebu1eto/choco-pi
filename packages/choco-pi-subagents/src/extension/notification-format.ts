@@ -1,6 +1,3 @@
-/**
- * Completion-notification formatting: the model-facing XML and the renderer details.
- */
 import type { AgentRecord, NotificationDetails } from "../types.ts";
 import { formatTaskNotificationStatus } from "../notification-status.ts";
 import { getLifetimeTotal, getSessionContextPercent } from "../usage.ts";
@@ -12,12 +9,10 @@ import type { AgentActivity } from "../ui/agent-widget.ts";
 import { notificationVerdictReply } from "../delegation-render.ts";
 import type { JournalAgentSnapshot } from "../revival-journal.ts";
 
-/** Escape XML special characters to prevent injection in structured notifications. */
 export function escapeXml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-/** Format a structured task notification matching Claude Code's <task-notification> XML. */
 export function formatTaskNotification(record: AgentRecord, resultMaxLen: number): string {
   const status = formatTaskNotificationStatus(record.status, record.error);
   const durationMs = record.completedAt ? record.completedAt - record.startedAt : 0;
@@ -37,7 +32,6 @@ export function formatTaskNotification(record: AgentRecord, resultMaxLen: number
         "\n...(truncated; after this terminal notification, retrieve the full result exactly once with get_subagent_result)"
       : record.result
     : "No output.";
-  // A truncated preview can cut off the verdict-record line appended to the result; repeat it.
   const verdictRecord = verdictLineMissingFrom(record, resultPreview);
 
   return [
@@ -50,8 +44,6 @@ export function formatTaskNotification(record: AgentRecord, resultMaxLen: number
     record.usageLimit
       ? `<usage-limit>${escapeXml(
           describeUsageLimit(record.usageLimit) +
-            // The contract has no "stopped" usage status; a stopped wait reads as
-            // exhausted, and the notification says why.
             (record.status === "stopped" && record.usageLimit.status === "exhausted"
               ? "; stopped before reset"
               : ""),
@@ -73,7 +65,6 @@ export function formatTaskNotification(record: AgentRecord, resultMaxLen: number
     .join("\n");
 }
 
-/** Build notification details for the custom message renderer. */
 export function buildNotificationDetails(
   record: AgentRecord,
   resultMaxLen: number,
@@ -100,16 +91,10 @@ export function buildNotificationDetails(
     usageLimit: record.usageLimit,
     resultPreview,
   };
-  // Display only (details never reach the model): this run's reply, for its verdict summary.
   const verdictReply = notificationVerdictReply(record.result, resultPreview);
   return verdictReply === undefined ? details : Object.assign(details, { verdictReply });
 }
 
-/**
- * Notification view of a dormant (journal-only) terminal agent, so a pending
- * completion notification saved before a restart can still be delivered.
- * Live-only fields (session, usage, timing) read as empty.
- */
 export function dormantNotificationRecord(snapshot: JournalAgentSnapshot): AgentRecord {
   return {
     id: snapshot.id,

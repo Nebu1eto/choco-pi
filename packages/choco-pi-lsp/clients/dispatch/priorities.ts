@@ -1,9 +1,3 @@
-/**
- * Dispatch runner priority tiers.
- *
- * NOTE: These priorities only govern ordering within dispatch runner execution.
- * They do not represent full write/edit pipeline order.
- */
 export const PRIORITY = {
   LSP_PRIMARY: 4,
   LSP_FALLBACK: 5,

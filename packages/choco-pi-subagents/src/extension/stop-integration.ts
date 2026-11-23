@@ -1,6 +1,3 @@
-/**
- * Stop-control integration.
- */
 import type { StopWorkflowPort, UserStopResult } from "../types.ts";
 import {
   type StopReport,
@@ -11,9 +8,7 @@ import {
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { SubagentsRuntime } from "./runtime.ts";
 
-/** Shared stop-control integration: user stops, revocation, and stop reports. */
 export function installStopIntegration(pi: ExtensionAPI, rt: SubagentsRuntime) {
-  // ---- /stop participant (choco-pi:stop-control/v1) ----
   const stopWorkflowPort: StopWorkflowPort = {
     runningFor: (rootSessionId) =>
       [...rt.workflowRuntime.workflowAdmissions]
@@ -34,11 +29,6 @@ export function installStopIntegration(pi: ExtensionAPI, rt: SubagentsRuntime) {
     pi.events.emit(STOP_CONTROL_REPORT_CHANNEL, report);
   }
 
-  /**
-   * Stop everything a user `/stop` targets. All revocation and the `acknowledged` report happen
-   * synchronously inside the handler; exactly one `settled` or `failed` report follows later,
-   * and only while the session that received the request is still the active one.
-   */
   function applyStop(requestId: string, rootSessionId: string, stop: UserStopResult): void {
     const generation = rt.state.revivalGeneration;
     for (const record of stop.records)
@@ -52,7 +42,6 @@ export function installStopIntegration(pi: ExtensionAPI, rt: SubagentsRuntime) {
       ownerSessionIds: stop.ownerSessionIds,
     });
     const report = (partial: Pick<StopReport, "phase"> & Partial<StopReport>): void => {
-      // A shut-down or replaced session has no coordinator left to hear this.
       if (
         generation !== rt.state.revivalGeneration ||
         rt.state.activeRootSessionId !== rootSessionId
@@ -101,7 +90,6 @@ export function installStopIntegration(pi: ExtensionAPI, rt: SubagentsRuntime) {
         );
         return;
       }
-      // A dormant or evicted agent is known but has nothing running: acknowledge and settle.
       const known =
         ref !== "" &&
         (rt.core.manager.getDormant(ref) !== undefined ||

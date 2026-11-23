@@ -136,10 +136,8 @@ export function staleObservation(
     : new StaleResourceStateError(record.resourceKey, record.epoch, currentEpoch);
 }
 
-/** Helper-request owner: stable per process, new generation after each session shutdown. */
 export const helperRequestSession = { id: randomUUID(), generation: 0 };
 
-/** Release handles and state owned by the current Pi session. */
 export async function shutdownComputerUseSession(): Promise<void> {
   helperRequestSession.generation += 1;
   clearSessionGrants();
@@ -194,7 +192,6 @@ export function deliveryPolicyEnv(): { name: string; value: string } | undefined
   return undefined;
 }
 
-/** Configuration diagnostics surfaced in tool details; never changes delivery. */
 export function deliveryPolicyNotes(): string[] {
   const env = deliveryPolicyEnv();
   if (!env) return [];
@@ -231,8 +228,6 @@ export function executionTrace(
 }
 
 export function settleMsForExecution(execution: ExecutionTrace): number {
-  // Any deltaSource means the helper already awaited UI quiescence; the
-  // bridge must not double-pay with its own settle sleep.
   if (execution.performed?.deltaSource) return 0;
   if (execution.variant === "stealth") {
     switch (execution.strategy) {

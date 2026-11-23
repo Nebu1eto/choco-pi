@@ -1,7 +1,3 @@
-/**
- * Session Summary — generates turn_end and session-end summaries
- */
-
 import type { SessionStats } from "./diagnostic-tracker.ts";
 
 export interface SlopScoreSummary {

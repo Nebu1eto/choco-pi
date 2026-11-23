@@ -9,7 +9,6 @@ const PACKAGE_NAME = "@howaboua/pi-codex-conversion";
 const NPM_REGISTRY_URL = "https://registry.npmjs.org/@howaboua%2Fpi-codex-conversion";
 const PACKAGE_ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
-// package.json and the npm registry document are open JSON objects: unknown members are ignored.
 const packageJsonSchema = obj({ name: opt(str()), version: opt(str()) }, { open: true });
 const packageJsonValidator = compile(packageJsonSchema);
 

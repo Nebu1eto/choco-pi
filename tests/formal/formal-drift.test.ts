@@ -284,7 +284,6 @@ interface HashCase {
   readonly symbol: string;
   readonly before: string;
   readonly after: string;
-  /** true: the edit must change the hash; false: documented out-of-scope edit that must not. */
   readonly changes: boolean;
 }
 
@@ -429,9 +428,6 @@ const HASH_CASES: readonly HashCase[] = [
     after: "function o(a: number): number;\nfunction o(a: unknown) { return a; }",
     changes: true,
   },
-  // Out of scope by design: a member entry covers the member, not its class's
-  // heritage (cover the class itself for that), and export lists separate from
-  // the declaration are not part of its text.
   {
     label: "heritage, member entry",
     symbol: "K.m",
@@ -746,14 +742,12 @@ test("AgentManager.applyResumeModel extracts from its declaration to its closing
   assert.ok(located.text.endsWith("}"));
 });
 
-/** A pattern matching `text` literally. */
 function literal(text: string): RegExp {
   return new RegExp(text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u");
 }
 
 const ROOT_SKIP = process.getuid?.() === 0 ? "running as root, which ignores file modes" : false;
 
-/** Run `body` with `target` at `mode`, restoring `restore` afterwards so cleanup works. */
 async function withMode(
   target: string,
   mode: number,

@@ -17,7 +17,6 @@ import {
 } from "./preflight-protocol.ts";
 import type { ToolExecutionContext } from "./types.ts";
 
-/** Resolves to non-blocking warnings the caller delivers to the agent. */
 export type CodeModeToolPreflightRunner = (
   call: CodeModeToolPreflightCall,
 ) => Promise<readonly string[]>;
@@ -29,7 +28,6 @@ interface BrokerRegistration {
 export function registerCodeModePreflightBroker(pi: ExtensionAPI): BrokerRegistration {
   const preflights = new Set<CodeModeToolPreflight>();
   let active = true;
-  // Warn mode: temporary files outside the session scratch directory are reported, never blocked.
   let grants: Promise<string[]> | undefined;
   const scratchWarner = createScratchWarner({ grants: () => (grants ??= loadScratchGrants()) });
   const broker: PreflightBroker = {

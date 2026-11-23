@@ -1,11 +1,3 @@
-/**
- * worktree-probe.ts — async check that a journaled agent worktree still exists.
- *
- * A revived isolated agent must run in its original worktree. Temp
- * directories are swept and `git worktree prune` forgets missing ones, so the
- * probe verifies both the directory and git's registration before revival.
- */
-
 import { execFile } from "node:child_process";
 import { realpath, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -41,7 +33,6 @@ async function canonical(path: string): Promise<string> {
   }
 }
 
-/** Worktree paths from `git worktree list --porcelain`, or undefined if git failed. */
 async function listedWorktrees(repo: string): Promise<string[] | undefined> {
   try {
     const { stdout } = await execFileAsync("git", ["worktree", "list", "--porcelain"], {
@@ -66,11 +57,6 @@ function recoveryHint(info: { branch: string; repo: string }): string {
   );
 }
 
-/**
- * Present means the directory exists and git in `repo` lists it as a
- * worktree; when git itself fails, a `.git` file in the directory suffices.
- * The missing message names the branch so the user can recover the work.
- */
 export async function probeWorktree(info: {
   path: string;
   branch: string;

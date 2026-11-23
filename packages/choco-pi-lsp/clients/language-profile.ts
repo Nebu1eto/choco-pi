@@ -17,7 +17,6 @@ import { readDirEntriesSafe, shouldRecurseIntoDir } from "./source-walker.ts";
 import { findNearestDirWithAnyBasename } from "./workspace-topology.ts";
 import { BoundedLruCache } from "./bounded-cache.ts";
 
-/** Every registered kind participates in project-language detection (#894). */
 function isRegisteredFileKind(value: string): value is FileKind {
   return Object.hasOwn(KIND_EXTENSIONS, value);
 }
@@ -111,12 +110,6 @@ function hasProjectMarker(projectRoot: string, marker: string): boolean {
   }
 }
 
-// Process-lifetime memo keyed on projectRoot. Only populated when the
-// caller did not pass an explicit `sourceFiles` array — the explicit-array
-// case is used by the warmup pipeline to inject pre-collected files and
-// must not pollute the no-arg cache. The synchronous getSourceFiles() call
-// inside this function does the same expensive ignoreMatcher-driven walk
-// as resolveStartupScanContext, so the same memo strategy applies.
 const languageProfileCache = new BoundedLruCache<string, ProjectLanguageProfile>(32);
 
 export function detectProjectLanguageProfile(
@@ -230,16 +223,6 @@ export function resolveLanguageRootForFile(filePath: string, workspaceRoot: stri
     return path.resolve(workspaceRoot);
   }
 
-  // #807: nearest-marker discovery now shares workspace-topology.ts's single
-  // walk/cache/invalidation seam instead of this file's own per-kind
-  // `existsSync` climb loop. `findNearestDirWithAnyBasename` additionally
-  // rejects a marker at/above `$HOME` (the pre-#807 loop didn't), matching
-  // the AGENTS.md walker invariant — harmless here because the
-  // workspace-relative check right below already discards any candidate
-  // outside `workspaceRoot`, and `workspaceRoot` is never at/above `$HOME`
-  // in practice. This keeps resolveLanguageRootForFile's OWN stricter
-  // workspace-relative policy check unchanged: the topology service only
-  // supplies discovery, not this function's policy.
   const found = findNearestDirWithAnyBasename(startDir, markers);
   if (!found) return path.resolve(workspaceRoot);
 
@@ -252,47 +235,18 @@ export function resolveLanguageRootForFile(filePath: string, workspaceRoot: stri
   return found;
 }
 
-// ---------------------------------------------------------------------------
-// Async, chunked-yield variant for the cold-start warmup pipeline. See
-// startup-scan.ts comments and runtime-session.ts handleSessionStart for the
-// rationale; this is the same idea applied to the language-profile walk.
-//
-// We collect source files in a way that mirrors the sync `getSourceFiles` /
-// `collectSourceFiles` chain but yields to the event loop every N entries.
-// The collected file list is then handed to the existing sync
-// `detectProjectLanguageProfile` (which is fast once it doesn't need to walk
-// the tree itself), and the result is stored in the shared
-// `languageProfileCache` so the subsequent sync caller skips the walk.
-// ---------------------------------------------------------------------------
-
-// Keep the warmup walker lightweight (no source-filter dependency), but derive
-// its extension gate from the same authority as every other project-wide
-// enumeration. Generated-artifact filtering remains intentionally absent here:
-// warmup only needs language presence and never opens file contents.
 export const WARMUP_SOURCE_EXTS: ReadonlySet<string> = new Set(
   SUPPORTED_FILE_KINDS.flatMap((kind) => KIND_EXTENSIONS[kind]),
 );
 
-// Extensions belonging to CODE_KINDS — same derivation, used to give program
-// source priority within the capped warmup budget (#894 review, see below).
 const WARMUP_CODE_EXTS: ReadonlySet<string> = new Set(
   SUPPORTED_FILE_KINDS.filter((kind) => CODE_KINDS.has(kind)).flatMap(
     (kind) => KIND_EXTENSIONS[kind],
   ),
 );
 
-// Language detection needs which languages are PRESENT, not every file — so the
-// warmup walk is hard-capped. Without this, a walk rooted at a too-broad directory
-// (e.g. $HOME, if startup-scan's canWarmCaches guard is bypassed) traverses the
-// entire tree — #250's multi-hour home-dir scans. Generous enough to detect every
-// language present in any real project (mirrors startup-scan's 2000 limit).
 const MAX_WARMUP_SOURCE_FILES = 2000;
 
-// Total matched-file ceiling for the warmup walk, as a multiple of `maxFiles`
-// (#894 review): with per-category budgets the walk no longer stops at the
-// first `maxFiles` matches, so this keeps its total work deterministic —
-// at the default budget it tolerates up to ~20k data/doc files ahead of the
-// code dirs before giving up on finding more code files.
 const MATCHED_FILES_CEILING_FACTOR = 10;
 
 export async function collectSourceFilesForWarmup(
@@ -302,23 +256,8 @@ export async function collectSourceFilesForWarmup(
 ): Promise<string[]> {
   const root = path.resolve(rootDir);
   const ignoreMatcher = getProjectIgnoreMatcher(root);
-  // #703: prime the tracked-files set once before the walk so a tracked file
-  // matching a `.gitignore`/global pattern still counts toward language
-  // detection. Fail-open on no-git/spawn failure.
   await ignoreMatcher.ensureTrackedIndex();
   const stack = [root];
-  // #894 review: `maxFiles` is a PER-CATEGORY budget — code kinds and
-  // data/doc kinds (NON_CODE_KINDS: json/yaml/markdown/…) fill separate
-  // buffers. With a single shared budget, 2000+ locale/fixture JSON files
-  // encountered before the code dirs exhausted the cap and flipped
-  // `present[kind]` to false for the project's real languages. Each buffer
-  // keeps the original #250 cap; the walk stops once the code budget is
-  // full (real languages are then detected; extra non-code presence can't
-  // justify more walking) or after `MATCHED_FILES_CEILING_FACTOR * maxFiles`
-  // matching files total — a deterministic work bound in the same spirit as
-  // #250's cap, generous enough that a locale/fixture pile ahead of the code
-  // dirs can't starve detection, tight enough that a misrooted /
-  // data-dominated tree stays bounded (#250/#758 class).
   const codeOut: string[] = [];
   const nonCodeOut: string[] = [];
   let matchedSeen = 0;
@@ -333,8 +272,6 @@ export async function collectSourceFilesForWarmup(
     for (const entry of entries) {
       const fullPath = path.join(current, entry.name);
       if (entry.isDirectory()) {
-        // Never checked symlinks — always follows them (unlike
-        // source-filter.ts's collectSourceFiles*, refs #191).
         if (!shouldRecurseIntoDir(entry, fullPath, { ignoreMatcher, followSymlinks: true })) {
           continue;
         }
@@ -345,19 +282,12 @@ export async function collectSourceFilesForWarmup(
         if (!WARMUP_SOURCE_EXTS.has(ext)) continue;
         matchedSeen += 1;
         const bucket = WARMUP_CODE_EXTS.has(ext) ? codeOut : nonCodeOut;
-        // Per-category hard cap — language detection only needs
-        // presence (#250), so overflowing files of a full category
-        // are dropped rather than evicting the other category.
         if (bucket.length < maxFiles) bucket.push(fullPath);
         if (codeOut.length >= maxFiles || matchedSeen >= MATCHED_FILES_CEILING_FACTOR * maxFiles) {
           break walk;
         }
       }
-      // Each iteration performs only bounded dirent/ext/ignore checks. Keep the
-      // count cadence: the cost does not scale with the corpus item size, and
-      // this walk's existing matched-file ceiling bounds the total work.
       if (++processedSinceYield % yieldEvery === 0) {
-        // See countSourceFilesWithinLimitAsync for why setImmediate.
         await new Promise<void>((resolve) => setImmediate(resolve));
       }
     }
@@ -371,10 +301,6 @@ export async function detectProjectLanguageProfileAsync(
   const cached = languageProfileCache.get(normalizeMapKey(projectRoot));
   if (cached) return cached;
   const files = await collectSourceFilesForWarmup(projectRoot);
-  // Hand the pre-collected file list to the sync detector so it skips its
-  // own (synchronous) tree walk. The detector still does the file-marker
-  // probe (`existsSync` for package.json / pyproject.toml / etc.) which
-  // is constant-time and cheap.
   const result = detectProjectLanguageProfile(projectRoot, files);
   languageProfileCache.set(normalizeMapKey(projectRoot), result);
   return result;

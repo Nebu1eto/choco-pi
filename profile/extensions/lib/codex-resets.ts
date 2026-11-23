@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { isObject, isString, type RuntimeValue } from "./runtime-values.ts";
 
-// Official wire contract (not a public, versioned REST API):
-// https://github.com/openai/codex/blob/main/codex-rs/backend-client/src/client/rate_limit_resets.rs
 const RESET_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 export class CodexResetError extends Error {}
 
@@ -143,7 +141,6 @@ export async function runCodexResetFlow(options: {
     const key = JSON.stringify([accountId, reset.id]);
     const requestId = pendingRequests.get(key) ?? randomUUID();
     pendingRequests.set(key, requestId);
-    // No automatic POST retries. An explicit retry keeps the same idempotency key.
     let message: string;
     try {
       const code = await client.consume(reset.id, requestId);

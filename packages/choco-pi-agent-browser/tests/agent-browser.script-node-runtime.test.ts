@@ -6,7 +6,6 @@ import test from "node:test";
 
 import { runAgentBrowserScript } from "../extensions/agent-browser/lib/input-modes/script.ts";
 
-/** Simulates Pi under Bun: process.versions.bun set and CHOCO_PI_NODE exported. */
 async function underSimulatedBun<T>(nodePath: string, body: () => Promise<T>): Promise<T> {
   const previous = process.env.CHOCO_PI_NODE;
   Object.defineProperty(process.versions, "bun", {
@@ -24,7 +23,6 @@ async function underSimulatedBun<T>(nodePath: string, body: () => Promise<T>): P
   }
 }
 
-/** A \`node\` wrapper that records its arguments, then runs the real Node. */
 async function recordingNode(directory: string): Promise<{ node: string; log: string }> {
   const bin = path.join(directory, "node-bin");
   await mkdir(bin, { recursive: true });

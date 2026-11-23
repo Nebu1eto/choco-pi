@@ -79,7 +79,6 @@ async function send(sessionId: string, fetch: typeof globalThis.fetch) {
     model,
     normalizeContext({ messages: [{ role: "user", content: "hello", timestamp: 1 }] }),
     { apiKey: tokenFor("fixture-account"), sessionId, transport: "sse", fetch, maxRetries: 0 },
-    // The registration's prepared-payload hook, as register.ts installs it.
     { useResponsesLite: () => false, onPreparedPayload: assertCodexRequestAllowed },
   ).result();
 }
@@ -98,7 +97,6 @@ test("a refused request fails before any transport call; the next request decide
     assert.equal(refused.errorMessage, "compaction cancelled: fixture exits text");
     assert.equal(calls, 0, "no transport call for a refused request");
 
-    // The refusal was consumed; an allowed decision sends normally.
     recordCodexRequestDecision(sessionId, undefined);
     const allowed = await send(sessionId, fetch);
     assert.equal(allowed.stopReason, "stop");
@@ -129,11 +127,6 @@ test("a refusal for one session never blocks another session's request", async (
   }
 });
 
-// ---------------------------------------------------------------------------
-// Opaque Codex checkpoint without native compaction or a sidecar (R3)
-// ---------------------------------------------------------------------------
-
-/** The SDK's generic event dispatch, typed by the runner itself per event. */
 type Emit = ExtensionRunner["emit"];
 
 const SESSION_START_EVENT: SessionStartEvent = { type: "session_start", reason: "resume" };
@@ -174,21 +167,12 @@ const OTHER_PROVIDER_MODEL: Model<"openai-completions"> = {
   maxTokens: 2048,
 };
 
-/**
- * A headless host runner whose notices the rig still observes: the SDK reports a UI only for a
- * non-default UI context, and the rig binds one solely to capture `notify`.
- */
 class HeadlessRunner extends ExtensionRunner {
   override hasUI(): boolean {
     return false;
   }
 }
 
-/**
- * The Codex extension's real event handlers over a resumed session whose
- * newest checkpoint is an opaque Codex record, with `responsesCompaction`
- * off in an isolated agent dir and no background sidecar anywhere.
- */
 async function opaqueSession(run: (rig: Awaited<ReturnType<typeof opaqueRig>>) => Promise<void>) {
   const agentDir = await mkdtemp(join(tmpdir(), "codex-opaque-guard-"));
   await writeFile(
@@ -224,7 +208,6 @@ async function opaqueRig() {
   const notices: string[] = [];
   const sdk = await createSdkFixture();
   const cwd = process.cwd();
-  // The SDK loader builds the real `ExtensionAPI`; the production handlers register through it.
   const factory: ExtensionFactory = (pi) => {
     const runtime = createCodexExtensionRuntime(pi);
     runtime.configureDiagnostics = () => Promise.resolve();
@@ -275,11 +258,9 @@ async function opaqueRig() {
     sdk.ctx.modelRegistry,
   );
   let currentModel: Model<Api> = model;
-  // The fixture session's bound actions, with only entry appends redirected to the rig.
   runner.bindCore(
     {
       ...sdk.pi,
-      // `ExtensionAPI` exposes no tool refresh; the rig registers no tools.
       refreshTools() {},
       appendEntry: (name, data) => {
         if (isLaneRecord(data)) records.push(data);
@@ -306,7 +287,6 @@ async function opaqueRig() {
       notices.push(message);
     },
   });
-  // The runner contains handler failures; the rig fails the test on any of them instead.
   const failures: ExtensionError[] = [];
   runner.onError((error) => {
     failures.push(error);
@@ -315,14 +295,12 @@ async function opaqueRig() {
     const failure = failures.shift();
     if (failure) throw new Error(`${failure.event} handler failed: ${failure.error}`);
   };
-  /** Dispatch one event through the SDK runner, as the host does. */
   const emit: Emit = async (event) => {
     const result = await runner.emit(event);
     settle();
     return result;
   };
   let fetchCalls = 0;
-  /** One prompt's provider call: the host runs `before_provider_request` as the payload hook. */
   const prompt = () =>
     createOpenAICodexProviderStream(
       model,
@@ -379,12 +357,10 @@ test("opaque Codex checkpoint, responsesCompaction off, no sidecar: the prompt i
     assert.equal(refusals[0]?.reason, "opaque-checkpoint");
     assert.equal(refusals[0]?.checkpointEntryId, rig.entryId);
     assert.equal(refusals[0]?.provider, "codex");
-    // A host compaction over the checkpoint is cancelled with the same exits text.
     const cancelled = await rig.emit(manualCompactEvent());
     assert.ok(isCancel(cancelled));
     assert.equal(rig.records.filter((record) => record.event === "cancel").length, 1);
 
-    // Loss authorized for this checkpoint: the prompt is sent and the loss journaled once.
     const unpublish = publishOpaqueConsent(
       (id, entry) => id === rig.sessionId && entry === rig.entryId,
     );
@@ -410,7 +386,6 @@ test("opaque Codex checkpoint on another provider's model: a pending block guard
       entryId: rig.entryId,
       owner: "codex-native",
     });
-    // That provider's guard announces it; Codex shows and records nothing for it.
     assert.deepEqual(rig.notices, []);
     assert.equal(rig.records.filter((record) => record.event === "refuse").length, 0);
     const unpublish = publishOpaqueConsent(
@@ -421,7 +396,6 @@ test("opaque Codex checkpoint on another provider's model: a pending block guard
     } finally {
       unpublish();
     }
-    // Back on the Codex transport the block is withdrawn: the Codex transport refuses itself.
     rig.setModel(model);
     await rig.emit(modelSelectEvent(model));
     assert.equal(pendingOpaqueBlock(rig.sessionId), undefined);

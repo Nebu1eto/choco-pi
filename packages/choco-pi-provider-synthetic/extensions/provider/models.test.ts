@@ -15,7 +15,6 @@ interface Discrepancy {
   api: unknown;
 }
 
-// Models whose advertised low effort is hidden by THINKING_LEVEL_MAP_OVERRIDES.
 const LOW_HIDDEN_MODEL_IDS = new Set(["hf:zai-org/GLM-5.3-Flash", "hf:zai-org/GLM-5.3"]);
 
 async function fetchApiModels(): Promise<SyntheticApiModel[]> {
@@ -234,7 +233,6 @@ describe("Synthetic models", () => {
     expect(model.thinkingLevelMap?.low).toBe("low");
     expect(model.thinkingLevelMap?.high).toBe("high");
     expect(model.thinkingLevelMap?.max).toBe("max");
-    // Kimi-K3 rejects "none" upstream — reasoning cannot be disabled.
     expect(model.thinkingLevelMap?.off).toBeNull();
     expect(model.thinkingLevelMap?.minimal).toBeNull();
     expect(model.thinkingLevelMap?.medium).toBeNull();

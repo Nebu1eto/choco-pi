@@ -1,7 +1,3 @@
-/**
- * Review comments in the view: where each one is now, how the changes view
- * decorates rows and hunks with them, and writing a new one.
- */
 import { propertiesWhen } from "../../lib/runtime-values.ts";
 import { hunkWithExpandedContext } from "../core/expand.ts";
 import { locateComment, type CommentLocation } from "../core/anchor.ts";
@@ -23,17 +19,11 @@ function commentsOn(ctx: ReviewSession, hunkId: string) {
   return ctx.record.comments.filter((comment) => comment.anchor.hunkHash === hunkId);
 }
 
-/** A hunk as the reader sees it, with the context revealed around it. */
 export function shownHunk(ctx: ReviewSession, hunk: DiffHunk): DiffHunk {
   const expansion = ctx.expansions.get(hunk.id);
   return expansion ? hunkWithExpandedContext(hunk, expansion) : hunk;
 }
 
-/**
- * Where a comment is now: `locateComment` (core/anchor.ts), the one
- * decision the pull-request plan also makes, on the model shown and
- * with the context revealed. Nothing here trusts a stored line.
- */
 export function locationOf(ctx: ReviewContext, comment: ReviewComment): CommentLocation {
   return locateComment(comment, ctx.store.model(), { shown: (hunk) => shownHunk(ctx, hunk) });
 }
@@ -43,17 +33,7 @@ export function placementOf(ctx: ReviewContext, comment: ReviewComment) {
   return location.status === "placed" ? location : undefined;
 }
 
-/**
- * The only writer of where the record says comments are. Each comment
- * takes what `locationOf` says now: placed, its current hunk,
- * position and lines; outdated, its last lines, marked `outdated`; a
- * withheld file, unchanged. Comments in `unconfirmed` (work that could
- * move them has not finished) keep their lines and are marked so,
- * never presented as current. Run on open, after each refresh, after
- * a reveal or a context read lands, and before every save.
- */
 export function followComments(ctx: ReviewContext, given: ReadonlySet<string> = new Set()): void {
-  // A failed read leaves its comments uncertain until one succeeds.
   const unconfirmed = new Set(given);
   for (const affects of ctx.failedReads.values()) {
     for (const comment of ctx.record.comments) if (affects(comment)) unconfirmed.add(comment.id);
@@ -118,7 +98,6 @@ export function foldReason(ctx: ReviewContext, hunkId: string): string {
   return `${reason} · ${count} comment${count === 1 ? "" : "s"} inside`;
 }
 
-/** True while a listed file's contents are hidden as sensitive. */
 export function isHidden(ctx: ReviewContext, path: string): boolean {
   const summary = ctx.changes.files().find((file) => file.path === path);
   return summary !== undefined && !ctx.changes.canShowContents(summary);
@@ -136,7 +115,6 @@ export function rowDetails(ctx: ReviewContext, path: string, expanded: boolean):
       color: "dim",
     });
   }
-  // A read limit or error kept the body out; say so on the row, as the body does.
   const notice = ctx.store.model().notices?.find((entry) => entry.path === path)?.message;
   if (notice !== undefined) details.push({ text: notice, color: "warning" });
   if (isHidden(ctx, path)) {
@@ -161,14 +139,11 @@ export function annotations(
   for (const hunk of hunks) {
     for (const comment of ctx.record.comments) {
       if (comment.path !== path) continue;
-      // Placed by its text, in whichever hunk holds it now; a comment
-      // whose text is gone is drawn outdated below.
       const at = placementOf(ctx, comment);
       if (!at || at.hunkId !== hunk.id) continue;
       const lineIndex = commentLineIndex(hunk, { side: comment.side, line: at.line });
       placed.push({
         hunkId: hunk.id,
-        // A line no longer displayed (its context collapsed) falls back to the header.
         place: lineIndex < 0 ? "header" : { afterLine: lineIndex },
         lines: commentBlock(comment, width, ctx.styler),
       });
@@ -177,7 +152,6 @@ export function annotations(
   return placed;
 }
 
-/** Comments whose text is no longer in their listed file (hunk gone, or text not found in it). */
 export function fileTrailer(
   ctx: ReviewContext,
   path: string,
@@ -189,7 +163,6 @@ export function fileTrailer(
     .flatMap((comment) => outdatedCommentLines(comment, false, width, ctx.styler));
 }
 
-/** Comments on files that left the diff, under the pane's heading. */
 export function trailer(ctx: ReviewContext, width: number): string[] {
   const listed = new Set(ctx.changes.files().map((file) => file.path));
   const gone = ctx.record.comments.filter((comment) => !listed.has(comment.path));
@@ -207,7 +180,6 @@ export function stopComment(ctx: ReviewContext): void {
   ctx.tui.requestRender();
 }
 
-/** A hunk as displayed now (revealed context included), from the current model. */
 export function displayHunk(
   ctx: ReviewContext,
   path: string,
@@ -221,9 +193,6 @@ export function displayHunk(
 }
 
 export function submitComment(ctx: ReviewContext, body: string): void {
-  // Recall before the outcome is decided: a comment refused for being
-  // empty is dropped by the history itself, and one that lands is worth
-  // recalling when the next hunk needs the same remark.
   ctx.commentInput.remember(body);
   if (!ctx.commentDraft) return;
   ctx.commentDraft = { ...ctx.commentDraft, body };
@@ -251,7 +220,6 @@ export function submitComment(ctx: ReviewContext, body: string): void {
   ctx.tui.requestRender();
 }
 
-/** Sensitive files whose contents are hidden now. */
 export function hiddenPaths(ctx: ReviewContext): string[] {
   return ctx.changes
     .files()

@@ -1,16 +1,3 @@
-/**
- * Extension loaded into the Pi process under test by `run.ts` (via `-e`).
- *
- * - Registers a scripted faux model provider, so no request leaves the process
- *   and no model credit is spent. The script is chosen from the first user
- *   message of the transcript: the main session spawns one background
- *   subagent; a "sleep" child runs `bash sleep N` and then answers; a "quota"
- *   child fails with a usage-limit marker and answers after being resumed.
- * - Publishes a fake usage-limit policy in the same global registry shape the
- *   subagents manager reads (`usage-limit-seam.ts`), keyed by the session id.
- * - Registers `/e2e-reload`, which calls `ctx.reload()`.
- * - Appends an observation log (JSONL) the runner uses as mechanics evidence.
- */
 import { appendFile } from "node:fs/promises";
 
 import {
@@ -75,7 +62,6 @@ function positiveNumber(raw: string | undefined, fallback: number): number {
 
 const resetMs = positiveNumber(process.env[ENV_RESET_MS], DEFAULT_RESET_MS);
 const sleepSeconds = positiveNumber(process.env[ENV_SLEEP_S], DEFAULT_SLEEP_S);
-/** Line both revival prompt variants share; unset or empty disables revival detection. */
 const revivalMarker = process.env[ENV_REVIVAL_MARKER]?.trim() ?? "";
 
 function messageText(message: Message): string {
@@ -96,17 +82,12 @@ function excerpt(text: string): string {
   return text.length > 300 ? `${text.slice(0, 300)}...` : text;
 }
 
-/** Harness-injected context (turn snapshots) is not task input. */
 function isSubstantiveUser(message: Message): boolean {
   return (
     message.role === "user" && !messageText(message).trimStart().startsWith("<system-reminder>")
   );
 }
 
-/**
- * Decide the scripted reply from the transcript alone, so it survives restarts.
- * "New input" is every substantive user message after the last assistant turn.
- */
 function scriptedReply(messages: readonly Message[]): AssistantMessage {
   const turns = messages.filter((message) => message.role !== "system");
   const userTexts = turns.filter((message) => message.role === "user").map(messageText);
@@ -259,7 +240,6 @@ export default function e2eRevivalExtension(pi: ExtensionAPI): void {
     api: `${FAUX_PROVIDER}-api`,
     models: [{ id: FAUX_MODEL, contextWindow: 200_000, maxTokens: 8_192 }],
   });
-  // One factory per provider call; the transcript, not this queue, carries state.
   faux.setResponses(
     Array.from(
       { length: 2_000 },

@@ -2,11 +2,6 @@ import type { DeclaredWebLink } from "./declared-web-links.ts";
 import type { ExtractedContent, ExtractOptions } from "./extract.ts";
 
 export const WEB_ACCESS_SCOPE_SYMBOL = Symbol.for("choco-pi:web-access/v1");
-/**
- * Structural protocol version of the shared scope. Pi loads extensions through jiti with
- * `moduleCache: false`, so separate copies of this module define distinct `WebAccessScope`
- * classes; the shared slot is therefore recognized structurally, never with `instanceof`.
- */
 export const WEB_ACCESS_SCOPE_VERSION = 1;
 
 export type ContentExtractorStage = "pre-fetch" | "response";
@@ -29,7 +24,6 @@ export interface ContentExtractorContext {
 
 export interface ContentExtractor {
   id: string;
-  /** Lower numbers run first. */
   priority: number;
   stage?: ContentExtractorStage;
   match(ctx: ContentExtractorContext): boolean;
@@ -108,10 +102,6 @@ export class WebAccessScope {
   }
 }
 
-/**
- * What the shared slot may hold: a scope from any module copy or protocol version. Every member
- * is optional and loosely typed until `isWebAccessScopeLike` confirms the version-1 shape.
- */
 export interface WebAccessScopeCandidate {
   readonly scopeVersion?: number;
   readonly extractors?: object;
@@ -127,11 +117,6 @@ interface WebAccessGlobalHost {
   [WEB_ACCESS_SCOPE_SYMBOL]?: WebAccessScopeCandidate;
 }
 
-/**
- * True when `candidate` carries every public member of a version-1 `WebAccessScope`, including
- * one created by another module copy. `WebAccessScope` has no private members, so this
- * structural check matches its TypeScript type.
- */
 export function isWebAccessScopeLike(
   candidate: WebAccessScopeCandidate | undefined,
 ): candidate is WebAccessScope {

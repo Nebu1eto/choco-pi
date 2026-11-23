@@ -21,8 +21,6 @@ async function openFocused(h: ReturnType<typeof harness>) {
   assert.ok(h.tui.paneFocused(), "the pane has focus");
 }
 
-/* --------------------------------------------------------------- sources */
-
 test("s cycles session, uncommitted, latest turn, branch base; the header names the comparison", async () => {
   const h = harness({ turns: TURNS });
   await openFocused(h);
@@ -39,9 +37,7 @@ test("s cycles session, uncommitted, latest turn, branch base; the header names 
     label: "turn 2 (fix the parser please)",
   });
   assert.match(h.header(), /Changes since turn 2 \(fix the parser please\)/);
-  // The store lists a checkpoint file that is untracked now by content, so no caveat is shown.
   assert.equal(h.header().includes("Known limit"), false);
-  // The store's checkpoint provider resolves the id by tree.
   const listed = await h.store().checkpoints?.listTurns();
   assert.ok(listed?.some((entry) => entry.tree === TREE_2));
   h.tui.input("s");
@@ -76,8 +72,6 @@ test("/diff source turn picks a turn or says no checkpoint exists and keeps the 
   assert.deepEqual(empty.store().sources.at(-1), { kind: "branch-base", base: "main" });
   assert.match(empty.header(), /turn source was skipped/);
 });
-
-/* -------------------------------------------------------------------- ask */
 
 test("a on a file inserts its @ mention, keeps typed text, returns focus, sends nothing", async () => {
   const h = harness({ editorText: "Why did this change?" });
@@ -169,7 +163,6 @@ test("sensitive files: every pattern matches and ordinary names do not", () => {
 });
 
 test("sensitive files: ask inserts only the path and the body stays hidden until v", async () => {
-  // Representative names: the classifier test above covers every category.
   for (const path of [".env", "home/.ssh/id_rsa", "config/AWS_Credentials.ini"]) {
     const h = harness();
     await openFocused(h);
@@ -187,7 +180,6 @@ test("sensitive files: ask inserts only the path and the body stays hidden until
     assert.match(h.editor.text, /^@\S+ $/u, `${path}: path only`);
     assert.match(h.header(), /Sensitive file: only its path/);
 
-    // v alone shows the body in the pane, but ask still inserts only the path.
     h.editor.text = "";
     await h.run("focus");
     h.tui.input("v");
@@ -220,14 +212,11 @@ test("v shows a sensitive body for this pane only: a reopened pane hides it agai
   h.store().bodies.set(".env", textBody(".env", [hunk("h", 1, ["+A=1"])]));
   h.store().ready(1, [file(".env")]);
   assert.equal(h.view().revealed.has(".env"), false, "a reopened pane starts hidden");
-  // The pane keeps which files were expanded; open it if it is not.
   if (!h.view().expanded.has(".env")) h.tui.input("\r");
   await flush();
   assert.match(h.body(), /Sensitive file: contents hidden/);
   assert.doesNotMatch(h.body(), /A=1/, "hidden again after reopening");
 });
-
-/* ------------------------------------------------------------------ notes */
 
 function memoryIo(): PrefsIo & { files: Map<string, string> } {
   const files = new Map<string, string>();
@@ -259,7 +248,6 @@ test("notes follow their hunk across a refresh; a asks about them all at once an
   await h.probe.session()?.notes?.flush();
   assert.match(io.files.get("/scratch/diff-notes/session.json") ?? "", /check the bounds/);
 
-  // Lines above were inserted: same hunk id, new position.
   const moved = { ...original, newStart: 10, oldStart: 10, header: "@@ -10,1 +10,2 @@" };
   h.store().bodies.set("src/a.ts", textBody("src/a.ts", [moved]));
   h.store().ready(2, [file("src/a.ts"), file("src/b.ts")]);
@@ -280,13 +268,11 @@ test("notes follow their hunk across a refresh; a asks about them all at once an
   await h.probe.session()?.notes?.flush();
   assert.match(io.files.get("/scratch/diff-notes/session.json") ?? "", /"notes":\[\]/);
 
-  // With no notes left, a asks about the cursor's hunk again.
   h.editor.text = "";
   await h.run("focus");
   h.tui.input("a");
   assert.match(h.editor.text, /^@src\/a\.ts lines 10-11\n```diff\n/u);
 
-  // The hunk's content changed: its id is gone, so the note is outdated.
   await h.run("focus");
   h.tui.input("c");
   h.tui.type("check the bounds");
@@ -337,7 +323,6 @@ test("several notes go as one message; C is no key; a note on a file that left t
   assert.equal(h.editor.text, "", "C does nothing any more");
   assert.equal(h.probe.session()?.notes?.notes.length, 2);
 
-  // Both files leave the list: nothing is selected, and a still has the notes to ask about.
   h.store().ready(2, []);
   await flush();
   h.tui.input("a");
@@ -375,8 +360,6 @@ test("c without a selected hunk explains how; Esc cancels a note", async () => {
   assert.ok(h.tui.paneFocused(), "q and Esc went to the note input, not to unfocus");
 });
 
-/* ------------------------------------------------------- review and help */
-
 test("R and /diff review put the /review instruction for the current source in the editor", async () => {
   const h = harness({ turns: TURNS, editorText: "" });
   await openFocused(h);
@@ -410,8 +393,6 @@ test("? toggles the key list; the focused hint mentions it", async () => {
   assert.ok(h.tui.paneFocused());
   assert.ok(h.probe.session()?.host);
 });
-
-/* ------------------------------------------------------- one turn alone */
 
 const LEFT = "\u001b[D";
 const RIGHT = "\u001b[C";
@@ -470,7 +451,6 @@ test("← and → step through each turn's changes alone, with the whole session
   assert.deepEqual(h.store().sources.at(-1), { kind: "session" });
   assert.match(h.header(), /Session changes/);
 
-  // From any other source ← starts at the newest turn and → returns to the session.
   h.tui.input("s");
   h.tui.input(LEFT);
   assert.equal(h.store().sources.at(-1)?.kind, "since-checkpoint");
@@ -503,7 +483,6 @@ test("a turn shown alone stays on its own changes when later prompts run", async
   await h.fire("tool_execution_end", { toolName: "edit" });
   assert.equal(h.store().sources.length, shown, "nothing changed: the source is kept");
 
-  // The next prompt starts from unchanged files and records no checkpoint.
   turns[1] = { ...TURNS[1]!, through: { turn: 3, prompt: "and the tests" } };
   await h.fire("turn_start", {});
   assert.deepEqual(h.store().sources.at(-1), {
@@ -513,7 +492,6 @@ test("a turn shown alone stays on its own changes when later prompts run", async
     turnOnly: true,
   });
 
-  // The prompt after it does: the turns shown now end at its checkpoint.
   turns.push({ turn: 4, tree: TREE_4, checkpointTurnIndex: 0, prompt: "later work" });
   await h.fire("tool_execution_end", { toolName: "edit" });
   assert.deepEqual(h.store().sources.at(-1), {
@@ -526,7 +504,6 @@ test("a turn shown alone stays on its own changes when later prompts run", async
   h.tui.input(RIGHT);
   assert.match(h.header(), /Changes in turn 4 \(later work\), 3 of 3/);
 
-  // The branch changed under the pane and the turn is gone.
   turns.length = 1;
   h.tui.input("r");
   assert.deepEqual(h.store().sources.at(-1), { kind: "session" });
@@ -591,7 +568,6 @@ test("a poll that lists a new prompt's edits moves the turn shown alone onto its
   h.tui.input(LEFT);
   const newest = h.store().sources.at(-1);
   assert.equal(newest?.kind, "since-checkpoint");
-  // The next prompt recorded its checkpoint; no tool has finished yet.
   turns.push({ turn: 3, tree: TREE_3, checkpointTurnIndex: 0, prompt: "next" });
   h.store().ready(5, [file("src/a.ts"), file("src/new.ts")], newest);
   assert.deepEqual(h.store().sources.at(-1), {
@@ -603,9 +579,6 @@ test("a poll that lists a new prompt's edits moves the turn shown alone onto its
   });
 });
 
-/* ------------------------------------------------------------- Ctrl+C */
-
-/** The copy key as a terminal sends it: Cmd+C (Kitty protocol) on macOS, Ctrl+C elsewhere. */
 const COPY = COPY_KEY.key === "super+c" ? "\u001b[99;9u" : "\u0003";
 
 async function copyHarness(options: Parameters<typeof harness>[0] = {}) {

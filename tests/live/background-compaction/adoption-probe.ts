@@ -14,16 +14,11 @@ export interface SignalNotice {
 
 type AdoptionSignal = ReturnType<typeof getBackgroundAdoptionSignal>;
 
-/** The consumer-relay record fields that identify one adoption. */
 const RelayRecordSchema = obj(
   { adoptionId: str(), candidateId: str(), committedEntryId: str() },
   { open: true },
 );
 
-/**
- * Classify a subscriber by the package frame on its registration stack. The
- * caller captures the stack so this helper adds no frame to it.
- */
 function classifySubscriber(stack: string) {
   const source =
     stack.split("\n").find((line) => /choco-pi-(goal|hooks)\//u.test(line)) ??
@@ -34,7 +29,6 @@ function classifySubscriber(stack: string) {
   return { consumer, source };
 }
 
-/** The relay's adoption ID for a notice, or a notice-derived one when no relay record matches. */
 function relayAdoptionId(recorder: Recorder, notice: BackgroundAdoptionNotice): string {
   const relay = recorder.records.findLast(
     (record) =>
@@ -48,7 +42,6 @@ function relayAdoptionId(recorder: Recorder, notice: BackgroundAdoptionNotice): 
     : `${notice.sessionId}:${notice.committedEntryId}:${notice.candidateId}`;
 }
 
-/** Record one consumer invocation of a public signal notice. */
 function recordConsumerInvocation(
   recorder: Recorder,
   consumers: ConsumerNotice[],
@@ -70,7 +63,6 @@ function recordConsumerInvocation(
   });
 }
 
-/** Put back the signal's own `subscribe` unless someone replaced the probe's wrapper. */
 function restoreSubscribe(
   signal: AdoptionSignal,
   wrapped: AdoptionSignal["subscribe"],
@@ -81,7 +73,6 @@ function restoreSubscribe(
   else Reflect.deleteProperty(signal, "subscribe");
 }
 
-/** Wrap the public signal without scheduling an extra microtask or changing listener returns. */
 export function installAdoptionProbe(recorder: Recorder) {
   const signal = getBackgroundAdoptionSignal();
   const originalSubscribe = signal.subscribe;

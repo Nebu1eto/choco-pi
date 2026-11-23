@@ -1,9 +1,3 @@
-/**
- * Diagnostic Tracker — in-memory tracking for session-level feedback
- *
- * Links diagnostics to resolutions, tracks violation patterns.
- */
-
 export interface TrackerEntry {
   ruleId: string;
   filePath: string;
@@ -37,19 +31,15 @@ export interface Diagnostic {
 }
 
 export interface DiagnosticTracker {
-  // Track that a diagnostic was shown to agent
   trackShown(diagnostics: Diagnostic[]): void;
   trackAutoFixed(count: number): void;
   trackAgentFixed(count: number): void;
 
-  // Get session stats for summary
   getStats(): SessionStats;
 
-  // Reset for new session
   reset(): void;
 }
 
-// Module-level singleton — persists across all writes
 let _tracker: DiagnosticTracker | null = null;
 
 export function getDiagnosticTracker(): DiagnosticTracker {
@@ -76,7 +66,6 @@ export function createDiagnosticTracker(): DiagnosticTracker {
         const k = key(d.filePath, ruleId, line);
         occurrenceCounts.set(k, (occurrenceCounts.get(k) ?? 0) + 1);
 
-        // Don't double-count if already tracked
         if (!shown.has(k)) {
           shown.set(k, {
             ruleId,

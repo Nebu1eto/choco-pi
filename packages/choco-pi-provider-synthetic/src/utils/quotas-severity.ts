@@ -3,7 +3,6 @@ import type { ProjectionHint, QuotasResponse } from "../types/quotas";
 export type RiskSeverity = "none" | "warning" | "high" | "critical";
 
 export interface QuotaWindow {
-  /** Stable quota id used to key projections (e.g. "rollingFiveHourLimit"). */
   id: string;
   label: string;
   usedPercent: number;
@@ -21,8 +20,8 @@ export interface QuotaWindow {
 
 export interface WindowProjection {
   pacePercent: number | null;
-  progress: number | null; // 0..1
-  projectedPercent: number; // 0..+
+  progress: number | null;
+  projectedPercent: number;
   projectionHorizonMs: number | null;
   timeToEmptyMs: number | null;
   usedPercent: number;
@@ -38,8 +37,6 @@ export interface RiskAssessment extends WindowProjection {
 
 const MIN_PACE_PERCENT = 5;
 
-// Threshold interpolation points
-// Early window (0% progress) -> Late window (100% progress)
 const THRESHOLDS = {
   usedFloor: { start: 33, end: 8 },
   warnProjected: { start: 260, end: 120 },
@@ -52,13 +49,11 @@ function interpolate(start: number, end: number, progress: number): number {
   return start + (end - start) * clampedProgress;
 }
 
-/** Safely compute percentage, guarding against division by zero */
 export function safePercent(used: number, limit: number): number {
   if (!Number.isFinite(used) || !Number.isFinite(limit) || limit <= 0) return 0;
   return Math.max(0, Math.min(100, (used / limit) * 100));
 }
 
-/** Parse currency string like "$1,234.56" to number */
 export function parseCurrency(value: string): number {
   const n = Number(value.replace(/[^0-9.-]/g, ""));
   return Number.isFinite(n) ? n : 0;
@@ -80,8 +75,6 @@ export function toWindows(quotas: QuotasResponse): QuotaWindow[] {
       usedValue: limitValue - remainingValue,
       limitValue,
       isCurrency: true,
-      // nextRegenAt is the next daily credit refill, not the start/end of the
-      // weekly window. History-based projections handle weekly pace.
       showPace: false,
       nextAmount: `+${weeklyTokenLimit.nextRegenCredits}`,
       nextLabel: "Next regen",
@@ -156,13 +149,10 @@ export function getProjectedPercent(usedPercent: number, pacePercent: number | n
 }
 
 export function assessWindow(window: QuotaWindow, projection?: ProjectionHint): RiskAssessment {
-  // Respect showPace/paceScale: only compute pace when the window opts in,
-  // then apply any provider-specific normalization.
   const rawPace = window.showPace ? getPacePercent(window) : null;
   const pacePercent = rawPace !== null ? rawPace * (window.paceScale ?? 1) : null;
   const projectedPercent = getProjectedPercent(window.usedPercent, pacePercent);
 
-  // Calculate progress (0 to 1) through the window
   let progress: number | null = null;
   if (pacePercent !== null) {
     progress = pacePercent / 100;
@@ -177,12 +167,6 @@ export function assessWindow(window: QuotaWindow, projection?: ProjectionHint): 
     usedPercent: window.usedPercent,
   };
 
-  // Fallback when pace/progress unavailable: use static thresholds. For the
-  // 5-hour window (and any other window where `resetsAt` is the next tick, not
-  // a full rollover), a refill-aware `projection` adjusts the decision so an
-  // imminent tick does not cause a false threshold bounce, and genuine on-pace
-  // drain is still caught. When no projection is available (e.g. insufficient
-  // history), raw `usedPercent` thresholds apply unchanged.
   if (progress === null) {
     let severity: RiskSeverity = "none";
     let effectiveProjected = projectedPercent;
@@ -193,7 +177,6 @@ export function assessWindow(window: QuotaWindow, projection?: ProjectionHint): 
       severity = "critical";
     } else if (projection) {
       if (projection.kind === "stable") {
-        // Refilling at least as fast as burning: do not interrupt.
         severity = "none";
       } else {
         effectiveProjected = projection.usedPercent;
@@ -224,7 +207,6 @@ export function assessWindow(window: QuotaWindow, projection?: ProjectionHint): 
     };
   }
 
-  // Dynamic thresholds based on window progress
   const usedFloorPercent = interpolate(
     THRESHOLDS.usedFloor.start,
     THRESHOLDS.usedFloor.end,
@@ -246,7 +228,6 @@ export function assessWindow(window: QuotaWindow, projection?: ProjectionHint): 
     progress,
   );
 
-  // Determine severity (hard-limited windows are always critical)
   let severity: RiskSeverity = "none";
   if (window.limited) {
     severity = "critical";

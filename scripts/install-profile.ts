@@ -1,22 +1,3 @@
-/**
- * Installs this checkout as the user's Pi profile.
- *
- * An installed agent directory must always match the profile layout at HEAD.
- * Every profile-owned file under `<agentDir>` is therefore handled here in one
- * of two ways:
- *
- * - Linked: listed in `PROFILE_LINKS`, so the installed path is a symlink to
- *   the tracked source and always has its current shape.
- * - Migrated: user-owned state whose profile-derived keys change with the
- *   layout, listed in `MIGRATED_SIDECARS` and rewritten by a migration step
- *   below that keeps the user's own keys.
- *
- * A new `profile/extensions/*.json` sidecar must join one of the two lists; a test
- * fails until it does.
- *
- * A file an earlier profile installed and HEAD no longer ships is listed in
- * `RETIRED_PROFILE_FILES` and removed on install.
- */
 import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -76,12 +57,6 @@ export type InstallProfileOptions = {
   agentDir?: string;
   backup?: boolean;
   piLauncher?: string;
-  /**
-   * The model scope a first install writes as `enabledModels`; defaults to
-   * {@link DEFAULT_PROFILE_ENABLED_MODELS}. Empty writes no scope: the
-   * standalone setup passes it, because Pi warns at every start about each
-   * pattern whose provider has no credentials yet.
-   */
   defaultEnabledModels?: readonly string[];
 };
 
@@ -103,8 +78,6 @@ export async function installProfile({
     defaultEnabledModels,
     offeredPackageNames,
   );
-  // Reported because a newly bundled package can change behavior on update:
-  // the Google provider, for one, replaces Pi's built-in `google` provider.
   const bundledDir = path.join(root, "packages");
   const addedPackages = project.packages.filter(
     (spec) =>
@@ -112,10 +85,6 @@ export async function installProfile({
       !offeredPackageNames.has(path.basename(spec)) &&
       !(existingSettings.packages ?? []).includes(spec),
   );
-  // MCP configuration is deliberately not linked. Pi reads ~/.pi/agent/mcp.json and a
-  // project .pi/mcp.json as separate sources, so linking a repo-local copy registers every
-  // server twice when Pi runs from this checkout, and the ignored file disappearing leaves
-  // Pi with no servers at all. Keep the real file at ~/.pi/agent/mcp.json.
   const links = [...PROFILE_LINKS];
   if (!backup) {
     for (const [sourceRelative, targetRelative] of links) {
@@ -174,11 +143,6 @@ function parseArgs(args: string[]) {
   return options;
 }
 
-/**
- * True when `entry` (process.argv[1]) names this module. Node runs the real
- * path of the main module, so compare real paths: a symlinked directory in
- * `entry` (macOS /tmp -> /private/tmp) must still count as a direct run.
- */
 async function isMainModule(entry: string | undefined): Promise<boolean> {
   if (!entry) return false;
   const modulePath = fileURLToPath(import.meta.url);

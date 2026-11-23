@@ -546,7 +546,6 @@ test("explicit xai selection routes to the adapter even when earlier families ar
 test("auto and all never route to xai even when it is the only available adapter", async () => {
   const { calls, fetch } = recordingFetch(() => jsonResponse(citedResponse()));
   const { scope } = setup(fetch);
-  // Unregistered families make auto report the router's existing route-miss error.
   const autoError = await expectSearchError(search({ query: "fixture" }, { scope }), "capability");
   assert.deepEqual(
     autoError.attempts?.map(({ adapterId, outcome, reason }) => ({

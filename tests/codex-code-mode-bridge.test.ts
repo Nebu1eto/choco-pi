@@ -108,7 +108,6 @@ test("tool_search is callable inside exec as tools.tool_search", () => {
     host: { getAllTools: () => [], getActiveTools: () => [], setActiveTools: () => {} },
   });
   assert.equal(BRIDGE_EXCLUDED_TOOLS.has("tool_search"), false);
-  // The registered schema, under a test executor.
   const registered = { ...makeTool(search.name, obj({})), parameters: search.parameters };
   const [bridged] = collectBridgedTools(makeRunner([registered]));
   assert.equal(bridged?.name, "tool_search");
@@ -116,7 +115,6 @@ test("tool_search is callable inside exec as tools.tool_search", () => {
 });
 
 test("tool_search's direct-only list matches the bridge's non-native exclusions", () => {
-  // Code mode entry points and the tools it ships natively are callable inside exec.
   const native = new Set([
     "exec",
     "wait",
@@ -188,7 +186,6 @@ test("bridged tools stay discoverable in ALL_TOOLS and callable through the guar
 test("direct-only tools fail with a one-line native-call hint and appear in ALL_TOOLS.direct_only", () => {
   const directOnlyName = [...BRIDGE_EXCLUDED_TOOLS][0];
   assert.ok(directOnlyName, "the bridge excludes at least one tool");
-  // Run only the generated preamble against a stub catalog in an isolated realm.
   const context = createContext({ ALL_TOOLS: [], tools: {} });
   runInContext(scopeAllToolsToDeferredCustom("", [], undefined, [directOnlyName]), context);
   assert.equal(
@@ -197,7 +194,6 @@ test("direct-only tools fail with a one-line native-call hint and appear in ALL_
   );
   const access = `tools[${JSON.stringify(directOnlyName)}]`;
   const escaped = directOnlyName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  // No multiline flag: `$` proves the message is a single line.
   assert.throws(
     () => runInContext(access, context),
     new RegExp(

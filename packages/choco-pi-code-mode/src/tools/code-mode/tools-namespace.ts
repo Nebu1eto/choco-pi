@@ -1,8 +1,3 @@
-/**
- * Guard for `tools.<name>` lookups that name no tool in the cell. Suggestions
- * compare names ignoring case and separators (`SymbolSearch` finds
- * `symbol_search`), then by edit distance, then by containment, nearest first.
- */
 export function unavailableToolsGuardPreamble(
   toolNames: readonly string[],
   outsideToolNames: readonly string[] = [],

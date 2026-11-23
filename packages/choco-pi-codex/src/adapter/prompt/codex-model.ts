@@ -1,6 +1,3 @@
-// Model and context detection lives in @choco-pi/shared so profile extensions
-// and this package share one implementation. ModelContextLike is structurally
-// assignable from Pick<ExtensionContext, "model">.
 export {
   canonicalCodexAliasModelKey,
   isCanonicalCodexAliasModel,

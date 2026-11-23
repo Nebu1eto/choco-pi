@@ -2,9 +2,6 @@ import { arr, bool, compile, num, obj, opt, str } from "@earendil-works/pi-schem
 import type { Static } from "@earendil-works/pi-schema";
 import type { SearchResult } from "../../../choco-pi-web-search/index.ts";
 
-// Shapes follow the aiplatform content.proto descriptors (GroundingMetadata, GroundingChunk.Web,
-// GroundingSupport, Segment) in proto3 JSON. No live search response was captured; see
-// docs/search.md.
 const WebChunkSchema = obj(
   { uri: opt(str()), title: opt(str()), domain: opt(str()), text: opt(str()) },
   { open: true },
@@ -57,9 +54,7 @@ export type GroundingResponse = Static<typeof GroundingResponseSchema>;
 export const groundingResponseValidator = compile(GroundingResponseSchema);
 
 export interface GroundingCitation {
-  /** The answer text the sources support. */
   text: string;
-  /** One-based source numbers, matching the [n] markers and the Sources list. */
   sources: number[];
 }
 
@@ -69,7 +64,6 @@ export interface NormalizedGrounding {
   citations: GroundingCitation[];
   webSearchQueries: string[];
   finishReason: string | undefined;
-  /** True when the candidate carried no grounding metadata at all. */
   ungrounded: boolean;
 }
 
@@ -107,10 +101,6 @@ interface Insertion {
   marker: string;
 }
 
-/**
- * Places [n] markers after each supported segment. Segment offsets are not trusted (their unit,
- * bytes or UTF-16, is unproven for this backend); the segment text is located in the answer.
- */
 function annotate(answer: string, citations: readonly GroundingCitation[]): string {
   const insertions: Insertion[] = [];
   let cursor = 0;
@@ -130,7 +120,6 @@ function annotate(answer: string, citations: readonly GroundingCitation[]): stri
   return annotated;
 }
 
-/** Converts one validated generateContent response into an answer, sources and citations. */
 export function normalizeGrounding(
   value: GroundingResponse,
 ): NormalizedGrounding | GroundingFailure {

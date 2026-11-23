@@ -33,7 +33,6 @@ async function configModule(): Promise<ConfigModule> {
   return reinterpretHostValue<ConfigModule>(await loadZentuiModule("config.js"));
 }
 
-/** The two footer statuses the profile ships a switch for. */
 const footerStatuses = new Map([
   ["mcp", "MCP: connecting to linear..."],
   ["subagents", "3 running agents"],
@@ -45,7 +44,6 @@ type SavedConfig = {
   };
 };
 
-/** The placement overrides as they were written to disk. */
 function placementsOf(file: string): RuntimeValue {
   const parsed: RuntimeValue = JSON.parse(readFileSync(file, "utf8"));
   const saved = reinterpretHostValue<SavedConfig>(parsed);

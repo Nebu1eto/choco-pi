@@ -44,7 +44,6 @@ async function commitAll(root: string, message: string): Promise<string> {
   return git(root, "rev-parse", "HEAD");
 }
 
-/** The working tree against `base`, read as /review-assist reads it. */
 async function workingModel(root: string, base: string) {
   const loaded = await loadDiffModel({
     cwd: root,
@@ -136,7 +135,6 @@ test("real git patches parse text, path, binary, and metadata edge cases", async
   if (copied?.kind === "copied") {
     assert.equal(copied.oldPath, "copy source.txt");
   } else {
-    // Some Git builds do not consider modified copy sources without --find-copies-harder.
     const fixture = [
       "diff --git a/copy source.txt b/copied destination.txt",
       "similarity index 100%",
@@ -206,8 +204,6 @@ test("real git patches with C-quoted file names parse to the decoded paths", asy
 });
 
 test("hunk ids of paths git does not quote are unchanged", () => {
-  // Ids anchor saved review comments. These values were computed by the
-  // parser before it learned git's C-quoting; they must never change.
   const fixture = [
     "diff --git a/src/value.ts b/src/value.ts",
     "--- a/src/value.ts",
@@ -314,7 +310,6 @@ test("branch helpers resolve merge bases, include working changes, and list name
     includesWorkingTree: true,
   });
   assert.ok((await listBranches(root)).includes("review-base"));
-  // The working tree against the merge base now reads through the shared change layer.
   const { model } = await loadDiffModel({
     cwd: root,
     source: { kind: "branch-base", base: "review-base" },
@@ -344,14 +339,6 @@ test("the default exec runner resolves non-zero exits and rejects spawn failures
   );
 });
 
-// `gh api --input -` reads stdin to end-of-file before it sends the request, so
-// a runner that never writes and never closes stdin hangs instead of failing.
-// A review submission blocked this way once left a `gh` process waiting
-// indefinitely with the review kept only in the local store.
-//
-// The child reports what it received at end-of-file, and its guard timer reports
-// the opposite. Without that guard a regression would stall the whole test run
-// rather than fail this test, because the orphaned child keeps the runner alive.
 const READ_STDIN_TO_END = [
   "let text = '';",
   "const done = (out) => process.stdout.write(out, () => process.exit(0));",
@@ -373,7 +360,6 @@ test(
     assert.equal(delivered.code, 0);
     assert.equal(delivered.stdout, `${payload.length}:${payload}`);
 
-    // Without input stdin must still be closed, or the child never exits.
     const empty = await defaultExecRunner(process.execPath, ["-e", READ_STDIN_TO_END]);
     assert.equal(empty.code, 0);
     assert.equal(empty.stdout, "0:");

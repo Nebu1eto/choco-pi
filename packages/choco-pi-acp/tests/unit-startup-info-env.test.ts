@@ -12,7 +12,6 @@ import type {
 } from "../src/pi-rpc/protocol.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 
-/** A session manager that always resolves to one prepared session. */
 class SingleSessionManager implements SessionManagerLike {
   private readonly session: PiAcpSession;
 
@@ -43,7 +42,6 @@ class SingleSessionManager implements SessionManagerLike {
   async shutdownAll(): Promise<void> {}
 }
 
-/** A Pi process fake reporting one configured model. */
 class SingleModelProcess implements PiRpcProcessLike {
   onEvent(_handler: (ev: PiRpcEvent) => void): () => void {
     return () => {};
@@ -62,7 +60,6 @@ class SingleModelProcess implements PiRpcProcessLike {
   }
 }
 
-/** A session that counts how often the adapter handed it startup info. */
 class StartupInfoSession extends PiAcpSession {
   startupInfoCalls = 0;
 
@@ -72,7 +69,6 @@ class StartupInfoSession extends PiAcpSession {
   }
 }
 
-/** Replace `setTimeout` with a recorder so scheduled work never runs during a test. */
 class TimerRecorder {
   readonly callbacks: Array<() => void> = [];
 
@@ -83,7 +79,6 @@ class TimerRecorder {
     const callbacks = this.callbacks;
     const record = (callback: () => void): NodeJS.Timeout => {
       callbacks.push(callback);
-      // Hand back a genuine (already cleared) handle so callers can still unref it.
       const handle = realSetTimeout(() => {}, 0);
       clearTimeout(handle);
       return handle;
@@ -99,7 +94,6 @@ class TimerRecorder {
 test("PiAcpAgent: quietStartup=true disables startup info generation/emission", async () => {
   const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
 
-  // Force quietStartup in pi settings by pointing PI_CODING_AGENT_DIR at a temp dir.
   const { mkdtempSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -122,11 +116,8 @@ test("PiAcpAgent: quietStartup=true disables startup info generation/emission", 
 
   const agent = new PiAcpAgent(asAgentConn(conn), {});
   const sessions: SessionManagerLike = new SingleSessionManager(session);
-  // `sessions` is a private implementation detail of `PiAcpAgent`; `Object.assign`
-  // installs the fake through the same property without weakening any declared type.
   Object.assign(agent, { sessions });
 
-  // Spy on setTimeout calls (agent schedules startup info + available commands)
   const timers = new TimerRecorder();
   timers.install();
 
@@ -135,9 +126,6 @@ test("PiAcpAgent: quietStartup=true disables startup info generation/emission", 
 
     const startupInfo = res._meta.piAcp.startupInfo;
 
-    // When quietStartup=true the full prelude is suppressed. However, an update notice
-    // (if one exists) is still surfaced because it's high-signal and actionable.
-    // The test must tolerate both cases since the live npm check may or may not find an update.
     if (startupInfo) {
       assert.match(startupInfo, /New version available/);
       assert.equal(session.startupInfoCalls > 0, true);
@@ -169,7 +157,6 @@ test("getQuietStartup mirrors Pi 1.0.4 values: true and header suppress, others 
     ];
     for (const [value, expected] of cases) {
       await writeFile(join(dir, "settings.json"), `{"quietStartup": ${value}}`, "utf-8");
-      // The temp dir has no project .pi/settings.json, so only the global value applies.
       assert.equal(getQuietStartup(dir), expected, `quietStartup: ${value}`);
     }
   } finally {

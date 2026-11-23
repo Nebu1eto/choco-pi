@@ -1,14 +1,3 @@
-/**
- * standalone.ts — Code Mode for every provider, without choco-pi-codex.
- *
- * Registers the `exec`/`wait` Code Mode tools over the provider-neutral ports
- * with no provider contributions: Code Mode is active for every model, the
- * nested tools are the core set (apply_patch, exec_command, write_stdin,
- * view_image) plus Pi's bridged session tools, and the top-level tool list is
- * `exec`, `wait` and every non-coding tool that was active. Pi's direct coding
- * tools (read, bash, edit, write) leave the top level but stay callable inside
- * Code Mode through the bridge.
- */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 import { registerCodeMode } from "./adapter/code-mode.ts";
@@ -25,10 +14,8 @@ import type { BoundaryValue } from "./tools/boundary.ts";
 
 const loadBash = memoizedImport(() => import("./shell/bash.ts"));
 
-/** The top-level tools standalone Code Mode exposes, in order. */
 export const STANDALONE_CODE_MODE_TOOL_NAMES: readonly string[] = ["exec", "wait"];
 
-/** Tools Code Mode owns: never kept top-level beside `exec`/`wait`. */
 const CODE_MODE_OWNED_TOOL_NAMES: readonly string[] = [
   ...STANDALONE_CODE_MODE_TOOL_NAMES,
   "notebook",
@@ -38,7 +25,6 @@ const CODE_MODE_OWNED_TOOL_NAMES: readonly string[] = [
   "view_image",
 ];
 
-/** Pi's direct coding tools; Code Mode replaces them at the top level. */
 const REPLACED_DIRECT_TOOL_NAMES: readonly string[] = ["read", "bash", "edit", "write"];
 
 export const DEFAULT_STANDALONE_CODE_MODE_CONFIG: CodeModeToolConfig = {
@@ -50,7 +36,6 @@ export const DEFAULT_STANDALONE_CODE_MODE_CONFIG: CodeModeToolConfig = {
 export interface StandaloneCodeMode {
   host: CodeModeHost;
   registration: CodeModeRegistration;
-  /** Put `exec`/`wait` first in the active tools; the session lifecycle events call it. */
   activate(): void;
 }
 
@@ -71,10 +56,6 @@ function errorMessage(error: BoundaryValue): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * Top-level tools for standalone Code Mode: `exec`, `wait`, then every
- * active tool Code Mode neither owns nor replaces, in its current order.
- */
 export function standaloneCodeModeActiveTools(activeTools: readonly string[]): string[] {
   const preserved = activeTools.filter(
     (name) =>
@@ -104,12 +85,10 @@ export async function registerStandaloneCodeMode(
   };
   const registration = await registerCodeMode(pi, host);
   sessions.onSessionExit((sessionId) => tracker.recordSessionFinished(sessionId));
-  // Each lifecycle event takes a generation; a superseded handler stops after its await.
   let generation = 0;
 
   const activate = (): void => {
     const active = pi.getActiveTools();
-    // The bridge scope is the session's own tool set, captured once before Code Mode hides it.
     host.state.previousToolNames ??= active.filter(
       (name) => !CODE_MODE_OWNED_TOOL_NAMES.includes(name),
     );

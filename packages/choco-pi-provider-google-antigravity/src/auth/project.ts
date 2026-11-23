@@ -9,7 +9,6 @@ import {
   antigravityMalformedResponse,
 } from "../errors.ts";
 
-/** The only client metadata agy 1.5.14 sends to loadCodeAssist and onboardUser. */
 const CLIENT_METADATA = { ideType: "ANTIGRAVITY" } as const;
 
 const CreditSchema = obj(
@@ -71,7 +70,6 @@ const OnboardOperationSchema = obj(
 );
 const onboardValidator = compile(OnboardOperationSchema);
 
-/** Project and tier facts persisted inside the Pi OAuth credential. */
 export interface AntigravityProjectInfo {
   projectId: string;
   tierId?: string | undefined;
@@ -89,7 +87,6 @@ export interface CodeAssistRequestOptions {
 }
 
 export interface DiscoverProjectOptions extends CodeAssistRequestOptions {
-  /** A user-configured Cloud project (config file `project_id`). Never invented. */
   configuredProjectId?: string | undefined;
   onboardPollIntervalMs?: number | undefined;
   onboardMaxAttempts?: number | undefined;
@@ -144,7 +141,6 @@ function reasonName(code: string | number | undefined): string {
   return value;
 }
 
-/** Throws the typed refusal when the backend reports this client or account as ineligible. */
 function assertEligible(response: LoadCodeAssistResponse): void {
   for (const tier of response.ineligibleTiers ?? []) {
     const code = String(tier.reasonCode ?? "");
@@ -246,11 +242,6 @@ async function onboard(
   });
 }
 
-/**
- * Finds the Cloud Code Assist project for this account: loadCodeAssist first, onboardUser (a
- * bounded long-running-operation poll) only when no tier is onboarded yet. A project id is
- * never invented: without one from the backend or the user's config, this throws.
- */
 export async function discoverAntigravityProject(
   options: DiscoverProjectOptions,
 ): Promise<AntigravityProjectInfo> {

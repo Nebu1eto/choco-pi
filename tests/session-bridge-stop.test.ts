@@ -190,7 +190,6 @@ test("a stopped session holds mailbox messages, notifies once, and delivers afte
     assert.deepEqual(notices, [
       "Session bridge: message from sender-1 held while this session is stopped; it will be delivered after /resume-work.",
     ]);
-    // The claim stays on disk, unacknowledged, so a restart recovers it.
     assert.equal((await readdir(mailbox)).filter((file) => file.endsWith(".claimed")).length, 1);
 
     await write(2, "held-two", "held payload two");

@@ -14,7 +14,6 @@ const TransportSchema = oneOf(["exa-api", "exa-mcp", "kagi-api", "openai-respons
 const ScenarioOutputSchema = obj({
   error: opt(
     obj({
-      // Any kind parses so an unexpected one fails only its own test, by exact comparison.
       kind: str({ minLength: 1 }),
       status: opt(int({ minimum: 100, maximum: 599 })),
     }),
@@ -57,8 +56,6 @@ const hardStopCases = [
 
 const cancelTransports = ["openai-responses", "exa-api", "exa-mcp", "kagi-api"] as const;
 
-// One runner child per transport runs all of that transport's scenarios: each child
-// imports the SDK once, and its env carries only that transport's key.
 const failuresByTransport = new Map<TransportCase, FailureMode[]>();
 function addFailure(transport: TransportCase, failure: FailureMode): void {
   const failures = failuresByTransport.get(transport) ?? [];

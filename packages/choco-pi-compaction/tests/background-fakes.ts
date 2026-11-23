@@ -43,14 +43,12 @@ export function deferred<T>(): Deferred<T> {
   });
   return { promise, resolve, reject };
 }
-/** Append through `append` to a real session file, reopen it, and return the entry read back. */
 export async function reopenedEntry(
   append: (manager: SessionManager) => string,
 ): Promise<SessionEntry> {
   const dir = await mkdtemp(join(tmpdir(), "choco-pi-persist-"));
   try {
     const manager = SessionManager.create(dir, dir);
-    // The session file is first written once the branch holds a user or assistant message.
     manager.appendMessage({ role: "user", content: "persist", timestamp: 0 });
     const id = append(manager);
     const file = manager.getSessionFile();
@@ -62,7 +60,6 @@ export async function reopenedEntry(
     await rm(dir, { recursive: true, force: true });
   }
 }
-/** `data` appended as a custom entry, as read back from the reopened session. */
 export async function persistedCustomEntry<T>(data: T): Promise<CustomEntry> {
   const entry = await reopenedEntry((manager) =>
     manager.appendCustomEntry("choco-compaction-candidate", data),
@@ -93,7 +90,6 @@ export function buildCheckpoint(
     reasonCodes: ["prepared"],
   };
 }
-/** Deterministic paired tool fixtures, including parallel batches; no clock/random dependency. */
 export function seededToolPairs(seed = 1, batches = 4): SessionEntry[] {
   let state = seed >>> 0;
   const next = () => {
@@ -232,7 +228,6 @@ export class FakeBackend implements Backend {
     return pending.promise;
   }
 }
-/** Spy deliberately does not deduplicate: duplicate coordinator notifications stay visible. */
 export class FakeConsumer implements AdoptionConsumer {
   readonly id: string;
   readonly adoptions: Adoption[] = [];

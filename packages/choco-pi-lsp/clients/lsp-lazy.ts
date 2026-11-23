@@ -1,4 +1,3 @@
-/** Shared lazy LSP service seam (#1394). */
 import { createLazyImport } from "./lazy-import.ts";
 
 type LspModule = typeof import("./lsp/index.ts");

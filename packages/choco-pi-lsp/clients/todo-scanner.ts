@@ -1,17 +1,6 @@
-/**
- * TODO Scanner for pi-local.
- *
- * Scans codebase for TODO, FIXME, HACK, XXX, and BUG annotations.
- * Helps understand what's already flagged as problematic or incomplete.
- *
- * No dependencies required — uses regex scanning.
- */
-
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { collectSourceFiles } from "./source-filter.ts";
-
-// --- Types ---
 
 export interface TodoItem {
   type: "TODO" | "FIXME" | "HACK" | "XXX" | "BUG";
@@ -27,36 +16,15 @@ export interface TodoScanResult {
   byFile: Map<string, TodoItem[]>;
 }
 
-// --- Scanner ---
-
-/**
- * Per-file size cap (#894 review, defense in depth): broadened enumeration can
- * surface large data files that slip past generated-artifact filtering, and a
- * multi-MB read + regex sweep per file on session start is exactly the stall
- * this scanner must avoid. 512 KiB matches word-index's WORD_INDEX_MAX_BYTES
- * precedent — hand-written source is essentially never larger.
- */
 const MAX_SCAN_FILE_BYTES = 512 * 1024;
 
 const MARKDOWN_FILE_RE = /\.(?:md|mdx|markdown)$/i;
 
 export class TodoScanner {
-  /**
-   * Pattern matches actionable annotations only.
-   * Excludes NOTE and DEPRECATED — these are documentation, not work items.
-   * Case-sensitive to avoid matching "Note:" in prose.
-   */
   private readonly pattern = /\b(TODO|FIXME|HACK|XXX|BUG)\b\s*[(:]?\s*(.+)/g;
 
-  /**
-   * Check if a match position is inside a comment context.
-   * Handles: // line comments, star-slash block comments, * JSDoc lines, # Python comments
-   */
   private isInComment(line: string, matchIndex: number, markdown = false): boolean {
     if (markdown) {
-      // Markdown has no '#'/'//' comments — '# TODO refactor' is a section
-      // heading, not a flagged work item (#894 review: .md files are now
-      // enumerated). Only HTML comments (<!-- TODO: … -->) count.
       const beforeMatch = line.slice(0, matchIndex);
       const open = beforeMatch.lastIndexOf("<!--");
       return open !== -1 && beforeMatch.lastIndexOf("-->") < open;
@@ -64,14 +32,11 @@ export class TodoScanner {
 
     const trimmed = line.trimStart();
 
-    // Line starts with comment markers — entire line is a comment
     if (/^\/\/|^\/\*|^\*|^#/.test(trimmed)) return true;
 
-    // Check if there's a // before the match position (not inside a string)
     const beforeMatch = line.slice(0, matchIndex);
     const lineCommentPos = beforeMatch.lastIndexOf("//");
     if (lineCommentPos !== -1) {
-      // Count quotes before // to see if it's inside a string
       const beforeComment = beforeMatch.slice(0, lineCommentPos);
       const singleQuotes = (beforeComment.match(/'/g) || []).length;
       const doubleQuotes = (beforeComment.match(/"/g) || []).length;
@@ -81,12 +46,10 @@ export class TodoScanner {
       }
     }
 
-    // Check for /* ... */ block comment before match
     const blockOpen = beforeMatch.lastIndexOf("/*");
     const blockClose = beforeMatch.lastIndexOf("*/");
     if (blockOpen !== -1 && blockClose < blockOpen) return true;
 
-    // Check for # comment (Python)
     const hashPos = beforeMatch.lastIndexOf("#");
     if (hashPos !== -1) {
       const beforeHash = beforeMatch.slice(0, hashPos);
@@ -100,15 +63,9 @@ export class TodoScanner {
     return false;
   }
 
-  /**
-   * Scan a single file for TODOs.
-   */
   scanFile(filePath: string): TodoItem[] {
     const absolutePath = path.resolve(filePath);
 
-    // Size gate before the read (#894 review): a lockfile-sized data file
-    // must never pay a full read + per-line regex sweep. statSync doubles as
-    // the existence check.
     try {
       const stat = fs.statSync(absolutePath);
       if (!stat.isFile() || stat.size > MAX_SCAN_FILE_BYTES) return [];
@@ -131,16 +88,15 @@ export class TodoScanner {
       const matches = line.matchAll(this.pattern);
 
       for (const match of matches) {
-        // Skip matches that aren't inside comments
         if (!this.isInComment(line, match.index ?? 0, markdown)) continue;
 
         // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
         const type = match[1] as TodoItem["type"];
-        const message = (match[2] || "").trim().replace(/\s*\*\/\s*$/, ""); // Strip closing comment
+        const message = (match[2] || "").trim().replace(/\s*\*\/\s*$/, "");
 
         items.push({
           type,
-          message: message.slice(0, 200), // Limit message length
+          message: message.slice(0, 200),
           file: path.relative(process.cwd(), absolutePath),
           line: i + 1,
           column: match.index || 0,
@@ -151,17 +107,11 @@ export class TodoScanner {
     return items;
   }
 
-  /**
-   * Scan a list of pre-filtered files (recommended — uses source-filter module).
-   * Callers should use collectSourceFiles() to get deduplicated source files.
-   */
   scanFiles(filePaths: string[]): TodoScanResult {
     const items: TodoItem[] = [];
 
     for (const filePath of filePaths) {
-      // Skip this scanner file — its own type literals and regex cause false positives
       if (filePath.endsWith("todo-scanner.ts") || filePath.endsWith("todo-scanner.js")) continue;
-      // Skip test files — intentional annotations are test fixtures, not work items
       if (/\.(test|spec)\.[jt]sx?$/.test(filePath)) continue;
 
       items.push(...this.scanFile(filePath));
@@ -170,25 +120,12 @@ export class TodoScanner {
     return this.groupResults(items);
   }
 
-  /**
-   * Scan a directory recursively using the source-filter module to exclude build artifacts.
-   * This is the preferred entry point for new callers.
-   */
   scanDirectory(dirPath: string): TodoScanResult {
-    // Use source-filter to collect only source files (no build artifacts).
-    // #760: the walk is bounded by source-filter's default visited-entry
-    // budget (DEFAULT_MAX_SCAN_ENTRIES) — on a pathological mixed tree this
-    // sync call gets a truncated best-effort list instead of blocking its
-    // caller for a full-tree walk; a partial TODO sweep is acceptable here.
     const sourceFiles = collectSourceFiles(dirPath);
     return this.scanFiles(sourceFiles);
   }
 
-  /**
-   * Group scan results by type and file.
-   */
   private groupResults(items: TodoItem[]): TodoScanResult {
-    // Group by type
     const byType = new Map<string, TodoItem[]>();
     for (const item of items) {
       const existing = byType.get(item.type) || [];
@@ -196,7 +133,6 @@ export class TodoScanner {
       byType.set(item.type, existing);
     }
 
-    // Group by file
     const byFile = new Map<string, TodoItem[]>();
     for (const item of items) {
       const existing = byFile.get(item.file) || [];
@@ -207,15 +143,11 @@ export class TodoScanner {
     return { items, byType, byFile };
   }
 
-  /**
-   * Format scan results for LLM consumption.
-   */
   formatResult(result: TodoScanResult, maxItems = 30): string {
     if (result.items.length === 0) return "";
 
     let output = `[TODOs] ${result.items.length} annotation(s) found`;
 
-    // Summary by type
     const typeCounts: string[] = [];
     for (const [type, items] of result.byType) {
       typeCounts.push(`${items.length} ${type}`);
@@ -225,7 +157,6 @@ export class TodoScanner {
     }
     output += ":\n";
 
-    // Show by priority: FIXME/HACK first, then TODO
     const priorityOrder: TodoItem["type"][] = ["FIXME", "HACK", "BUG", "TODO", "XXX"];
     const sorted = [...result.items].sort((a, b) => {
       const aIdx = priorityOrder.indexOf(a.type);

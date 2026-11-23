@@ -11,14 +11,8 @@ import {
 } from "@earendil-works/pi-schema";
 import { finiteNum } from "../finite-number.ts";
 
-/**
- * Host-bridge wire contract (docs/waku-integration.md §6.4). The durable entry
- * and progress-frame schemas are frozen: every object is closed so that an
- * added or renamed field fails validation instead of reaching Waku.
- */
 export const HOST_BRIDGE_SCHEMA_VERSION = 1;
 export const HOST_BRIDGE_STATUS_KEY = "choco-pi.host-bridge";
-/** setStatus key carrying structured `/status` and `/context` reports (report-schema.ts). */
 export const REPORT_STATUS_KEY = "choco-pi.report";
 export const HOST_BRIDGE_ENTRY_PREFIX = "choco-pi:host-bridge/";
 export const SUBAGENT_ENTRY_TYPE = `${HOST_BRIDGE_ENTRY_PREFIX}subagent`;
@@ -161,13 +155,6 @@ export const ProgressFrameSchema = obj({
 });
 export type ProgressFrame = Static<typeof ProgressFrameSchema>;
 
-// ---- Inbound payloads from sibling packages (validated, never trusted) ----
-
-/**
- * C4 flat `subagents:*` lifecycle payload. Only `id` is guaranteed: a payload
- * for a record the manager no longer holds (or `steered`) carries nulls or
- * omits fields, so each one is optional and the live record wins when present.
- */
 export const SubagentLifecyclePayloadSchema = obj(
   {
     id: str(),
@@ -188,12 +175,10 @@ export const SubagentLifecyclePayloadSchema = obj(
 );
 export type SubagentLifecyclePayload = Static<typeof SubagentLifecyclePayloadSchema>;
 
-/** C3 flat `shells:*` payload; extra keys are tolerated and dropped by field-wise picking. */
 export const ShellLifecyclePayloadSchema = obj(shellRecordProperties, {
   open: true,
 });
 
-/** C5 `goal:changed` ThreadGoal (choco-pi-goal/src/types.ts). */
 export const ThreadGoalSchema = obj(
   {
     goalId: str(),
@@ -209,7 +194,6 @@ export const ThreadGoalSchema = obj(
 export const GoalChangedPayloadSchema = nullable(ThreadGoalSchema);
 export type GoalChangedPayload = Static<typeof GoalChangedPayloadSchema>;
 
-/** `subagents:workflow_*` WorkflowResult (choco-pi-subagents/src/workflow.ts). */
 export const WorkflowPayloadSchema = obj(
   {
     workflowId: str(),

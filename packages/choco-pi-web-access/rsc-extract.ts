@@ -1,10 +1,3 @@
-/**
- * RSC Content Extractor
- *
- * Extracts readable content from Next.js React Server Components (RSC) flight payloads.
- * RSC pages embed content as JSON in <script>self.__next_f.push([...])</script> tags.
- */
-
 export interface RSCExtractResult {
   title: string;
   content: string;
@@ -48,7 +41,6 @@ export function extractRSCContent(html: string): RSCExtractResult | null {
     return null;
   }
 
-  // Parse all RSC chunks into a map
   const chunkMap = new Map<string, string>();
   const scriptRegex = /<script>self\.__next_f\.push\(\[1,"([\s\S]*?)"\]\)<\/script>/g;
 
@@ -63,9 +55,6 @@ export function extractRSCContent(html: string): RSCExtractResult | null {
       continue;
     }
 
-    // Parse each line as "id:payload"
-    // Lines are separated by \n, each line is one chunk
-    // Chunk IDs are hex strings, typically 1-4 chars (supports up to 65535 chunks)
     for (const line of content.split("\n")) {
       if (!line.trim()) continue;
 
@@ -87,11 +76,9 @@ export function extractRSCContent(html: string): RSCExtractResult | null {
 
   if (chunkMap.size === 0) return null;
 
-  // Extract title
   const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/);
   const title = titleMatch?.[1]?.split("|")[0]?.trim() || "";
 
-  // Parse and cache parsed chunks
   const parsedCache = new Map<string, RscNode | null>();
 
   function getParsedChunk(id: string): RscNode | null {
@@ -114,7 +101,6 @@ export function extractRSCContent(html: string): RSCExtractResult | null {
     }
   }
 
-  // Extract markdown from nodes, resolving refs on the fly
   const visitedRefs = new Set<string>();
 
   function extractNode(
@@ -124,18 +110,16 @@ export function extractRSCContent(html: string): RSCExtractResult | null {
     if (node === null || node === undefined) return "";
 
     if (isRscString(node)) {
-      // Check if it's a reference like "$L30"
       const refMatch = node.match(/^\$L([0-9a-f]+)$/i);
       if (refMatch) {
         const refId = refMatch[1];
-        if (visitedRefs.has(refId)) return ""; // Prevent cycles
+        if (visitedRefs.has(refId)) return "";
         visitedRefs.add(refId);
         const refNode = getParsedChunk(refId);
         const result = refNode ? extractNode(refNode, ctx) : "";
         visitedRefs.delete(refId);
         return result;
       }
-      // Filter out RSC-specific artifacts, but preserve content inside code blocks
       if (!ctx.inCode && (node === "$undefined" || node === "$" || /^\$[A-Z]/.test(node)))
         return "";
       return node.trim() ? node : "";
@@ -145,12 +129,10 @@ export function extractRSCContent(html: string): RSCExtractResult | null {
     if (isRscBoolean(node)) return "";
     if (!Array.isArray(node)) return "";
 
-    // RSC element: ["$", "tag", key, props]
     if (node[0] === "$" && isRscString(node[1])) {
       const tag = node[1];
       const props = nodeProps(node);
 
-      // Skip non-content
       const skipTags = [
         "script",
         "style",
@@ -168,12 +150,10 @@ export function extractRSCContent(html: string): RSCExtractResult | null {
       ];
       if (skipTags.includes(tag)) return "";
 
-      // Component ref like $L25
       if (tag.startsWith("$L")) {
         const refId = tag.slice(2);
         if (visitedRefs.has(refId)) return "";
 
-        // Check for heading components with baseId
         if (props.baseId && props.children) {
           return `## ${String(props.children)}\n\n`;
         }
@@ -251,7 +231,6 @@ export function extractRSCContent(html: string): RSCExtractResult | null {
       }
     }
 
-    // Array of child nodes
     return node.map((n) => extractNode(n, ctx)).join("");
   }
 
@@ -263,7 +242,6 @@ export function extractRSCContent(html: string): RSCExtractResult | null {
     function walkTable(node: RscNode | undefined, isHeader = false): void {
       if (node === null || node === undefined) return;
 
-      // Handle string refs
       if (isRscString(node)) {
         const refMatch = node.match(/^\$L([0-9a-f]+)$/i);
         if (refMatch && !visitedRefs.has(refMatch[1])) {
@@ -282,7 +260,6 @@ export function extractRSCContent(html: string): RSCExtractResult | null {
         const tag = node[1];
         const elementProps = nodeProps(node);
 
-        // Handle component refs
         if (tag.startsWith("$L")) {
           const refId = tag.slice(2);
           if (!visitedRefs.has(refId)) {
@@ -312,7 +289,6 @@ export function extractRSCContent(html: string): RSCExtractResult | null {
     function walkCells(node: RscNode | undefined, cells: string[]): void {
       if (node === null || node === undefined) return;
 
-      // Handle string refs
       if (isRscString(node)) {
         const refMatch = node.match(/^\$L([0-9a-f]+)$/i);
         if (refMatch && !visitedRefs.has(refMatch[1])) {
@@ -331,11 +307,10 @@ export function extractRSCContent(html: string): RSCExtractResult | null {
         const text = extractNode(cellProps.children, { inTable: true, inCode: false })
           .trim()
           .replace(/\n/g, " ")
-          .replace(/\\/g, "\\\\") // Escape backslashes first
-          .replace(/\|/g, "\\|"); // Then escape pipes
+          .replace(/\\/g, "\\\\")
+          .replace(/\|/g, "\\|");
         cells.push(text);
       } else if (node[0] === "$" && isRscString(node[1]) && node[1].startsWith("$L")) {
-        // Component ref for a cell
         const refId = node[1].slice(2);
         if (!visitedRefs.has(refId)) {
           visitedRefs.add(refId);
@@ -363,7 +338,6 @@ export function extractRSCContent(html: string): RSCExtractResult | null {
     return md;
   }
 
-  // Process main content chunk (usually "23")
   const mainChunk = getParsedChunk("23");
 
   if (mainChunk) {
@@ -374,7 +348,6 @@ export function extractRSCContent(html: string): RSCExtractResult | null {
     }
   }
 
-  // Fallback: try other chunks
   const contentParts: { order: number; text: string }[] = [];
 
   for (const [id] of chunkMap) {

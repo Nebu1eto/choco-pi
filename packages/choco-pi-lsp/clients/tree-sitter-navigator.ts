@@ -1,14 +1,3 @@
-/**
- * Tree-sitter AST Navigator
- *
- * Provides tree traversal utilities for context-aware analysis:
- * - Parent/sibling navigation
- * - Scope detection (test vs production)
- * - Variable shadowing detection
- * - Context-aware filtering
- */
-
-// biome-ignore lint/suspicious/noExplicitAny: AST node type from web-tree-sitter
 export type ASTNode = any;
 
 export interface ScopeContext {
@@ -20,9 +9,6 @@ export interface ScopeContext {
 }
 
 export class TreeSitterNavigator {
-  /**
-   * Find parent node of a specific type
-   */
   findParent(node: ASTNode, type: string | string[]): ASTNode | null {
     let current = node.parent;
     const types = Array.isArray(type) ? type : [type];
@@ -36,16 +22,10 @@ export class TreeSitterNavigator {
     return null;
   }
 
-  /**
-   * Check if node is inside a specific type of parent
-   */
   isInside(node: ASTNode, type: string | string[]): boolean {
     return this.findParent(node, type) !== null;
   }
 
-  /**
-   * Get all ancestors of a node
-   */
   getAncestors(node: ASTNode): ASTNode[] {
     const ancestors: ASTNode[] = [];
     let current = node.parent;
@@ -58,18 +38,12 @@ export class TreeSitterNavigator {
     return ancestors;
   }
 
-  /**
-   * Detect if we're in a test block (it, describe, test, etc.)
-   */
   isInTestBlock(node: ASTNode): boolean {
-    const testPatterns = [
-      "call_expression", // it(), describe(), test()
-    ];
+    const testPatterns = ["call_expression"];
 
     let current = node.parent;
     while (current) {
       if (testPatterns.includes(current.type)) {
-        // Check if the call is a test function
         const callName = this.getCallName(current);
         if (
           callName &&
@@ -83,9 +57,6 @@ export class TreeSitterNavigator {
     return false;
   }
 
-  /**
-   * Get the name of a call expression (e.g., "it" from it("test", ...))
-   */
   getCallName(node: ASTNode): string | null {
     if (node.type !== "call_expression") return null;
 
@@ -97,7 +68,6 @@ export class TreeSitterNavigator {
     }
 
     if (func.type === "member_expression") {
-      // Handle cases like describe.skip, it.only, etc.
       const parts: string[] = [];
       for (const child of func.children) {
         if (child.type === "identifier" || child.type === "property_identifier") {
@@ -110,20 +80,10 @@ export class TreeSitterNavigator {
     return null;
   }
 
-  /**
-   * Detect if we're inside a try/catch block
-   * Use as post_filter: not_in_try_catch to enforce "must be wrapped"
-   */
   isInTryCatch(node: ASTNode): boolean {
-    // try_statement: TypeScript, JavaScript, Python
-    // begin:         Ruby (begin/rescue/ensure)
-    // rescue:        Ruby inline rescue modifier
     return this.isInside(node, ["try_statement", "begin", "rescue"]);
   }
 
-  /**
-   * Detect if we're inside a loop (for, while, forEach)
-   */
   isInLoop(node: ASTNode): boolean {
     return this.isInside(node, [
       "for_statement",
@@ -134,11 +94,7 @@ export class TreeSitterNavigator {
     ]);
   }
 
-  /**
-   * Detect if we're in an async context (async function or contains await)
-   */
   isInAsyncContext(node: ASTNode): boolean {
-    // Check parent function for async keyword
     const functionTypes = [
       "function_declaration",
       "function_expression",
@@ -149,7 +105,6 @@ export class TreeSitterNavigator {
     let current = node.parent;
     while (current) {
       if (functionTypes.includes(current.type)) {
-        // Check for async keyword
         if (current.children?.some((c: ASTNode) => c.text === "async")) {
           return true;
         }
@@ -159,9 +114,6 @@ export class TreeSitterNavigator {
     return false;
   }
 
-  /**
-   * Get scope chain (list of function/block scopes enclosing this node)
-   */
   getScopeChain(node: ASTNode): string[] {
     const chain: string[] = [];
     let current = node.parent;
@@ -190,18 +142,13 @@ export class TreeSitterNavigator {
     return chain;
   }
 
-  /**
-   * Get name of a function/class node
-   */
   getNodeName(node: ASTNode): string | null {
-    // Try to find name identifier
     for (const child of node.children || []) {
       if (child.type === "identifier" && child.isNamed) {
         return child.text;
       }
     }
 
-    // For member definitions, check name field
     if (node.type === "method_definition") {
       const nameNode = node.children?.find((c: ASTNode) => c.type === "property_identifier");
       return nameNode?.text || null;
@@ -210,17 +157,11 @@ export class TreeSitterNavigator {
     return null;
   }
 
-  /**
-   * Check if a variable is shadowed in current scope
-   */
   isShadowed(node: ASTNode, varName: string): boolean {
-    // Navigate up to find if this variable name is redeclared
     let current = node.parent;
 
     while (current) {
-      // Check for variable declarations
       if (["variable_declaration", "lexical_declaration"].includes(current.type)) {
-        // Check if this declaration shadows our variable
         const declarator = current.children?.find((c: ASTNode) => c.type === "variable_declarator");
         if (declarator) {
           const idNode = declarator.children?.find((c: ASTNode) => c.type === "identifier");
@@ -230,7 +171,6 @@ export class TreeSitterNavigator {
         }
       }
 
-      // Check function parameters
       if (
         [
           "function_declaration",
@@ -255,9 +195,6 @@ export class TreeSitterNavigator {
     return false;
   }
 
-  /**
-   * Get comprehensive scope context for a node
-   */
   getScopeContext(node: ASTNode): ScopeContext {
     const ancestors = this.getAncestors(node);
     const functionDepth = ancestors.filter((a) =>
@@ -278,17 +215,11 @@ export class TreeSitterNavigator {
     };
   }
 
-  /**
-   * Find sibling nodes (nodes at the same level)
-   */
   getSiblings(node: ASTNode): ASTNode[] {
     if (!node.parent) return [];
     return node.parent.children?.filter((c: ASTNode) => c !== node) || [];
   }
 
-  /**
-   * Get previous sibling
-   */
   getPreviousSibling(node: ASTNode): ASTNode | null {
     if (!node.parent) return null;
     const siblings = node.parent.children || [];
@@ -299,9 +230,6 @@ export class TreeSitterNavigator {
     return null;
   }
 
-  /**
-   * Get next sibling
-   */
   getNextSibling(node: ASTNode): ASTNode | null {
     if (!node.parent) return null;
     const siblings = node.parent.children || [];

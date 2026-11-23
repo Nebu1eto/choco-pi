@@ -98,7 +98,6 @@ function createRunner(calls: string[][]): ExecRunner {
     if (args.includes("for-each-ref")) {
       return { stdout: "feature\nmain\norigin/main\n", stderr: "", code: 0 };
     }
-    // The shared change layer validates object ids, so these are hexadecimal.
     if (args.includes("merge-base")) return { stdout: `${BASE_ID}\n`, stderr: "", code: 0 };
     if (args.includes("--verify")) return { stdout: "head-sha\n", stderr: "", code: 0 };
     if (args.includes("status")) {
@@ -108,7 +107,6 @@ function createRunner(calls: string[][]): ExecRunner {
         code: 0,
       };
     }
-    // An empty change list: these tests follow targets, not file content.
     if (args.includes("diff-index") || args.includes("diff-tree")) {
       return { stdout: "", stderr: "", code: 0 };
     }
@@ -162,7 +160,6 @@ function checkpointEntries(): any[] {
   ];
 }
 
-/** Three prompts as Pi records them: every checkpoint's own turnIndex is 0. */
 function threeTurnEntries(): any[] {
   return [
     checkpointEntry("checkpoint-a", 0, TREE_2),
@@ -180,7 +177,6 @@ function commandContext(
   select: (title: string, options: string[]) => Promise<string | undefined> = async () => undefined,
   editorText: string[] = [],
   widgets: Array<string | undefined> = [],
-  /** Every entry of the session file; the active branch (`entries`) when omitted. */
   sessionEntries: any[] = entries,
 ): ExtensionCommandContext {
   // SAFETY: The fixture supplies every host member exercised by this test.
@@ -224,9 +220,7 @@ function register(
     ) => void;
     viewResult?: (record: ReviewRecord) => ReviewViewResult | undefined;
     viewError?: Error;
-    /** Sees each view's options: whether it ends at the working tree and can refresh. */
     onOpen?: (view: { includesWorkingTree: boolean | undefined; refreshes: boolean }) => void;
-    /** Sees the session baseline label a session view names in its header. */
     onBaseline?: (label: string | undefined) => void;
   } = {},
 ) {
@@ -263,7 +257,6 @@ function register(
     })),
     now: () => "2026-01-03T00:00:00.000Z",
   } satisfies ReviewExtensionDependencies);
-  // `/review` belongs to the agent review prompt; this extension must not take it.
   assert.deepEqual([...commands.keys()], ["review-assist"]);
   const command = commands.get("review-assist");
   assert.ok(command, "/review-assist must be registered");
@@ -404,7 +397,6 @@ test("invalid review arguments return helpful parse results", async () => {
   for (const input of [
     "session turn",
     "session turn -1",
-    // Turns are numbered from 1, the first checkpointed turn.
     "session turn 0",
     "branch",
     "branch a b c",
@@ -585,7 +577,6 @@ test("session review starts at the session's first checkpoint, the same baseline
   const calls: string[][] = [];
   const labels: Array<string | undefined> = [];
   const { command } = register({ calls, onBaseline: (label) => labels.push(label) });
-  // The active branch starts after /tree navigation; the session file holds an earlier checkpoint.
   const earlier = [checkpointEntry("checkpoint-1", 0, TREE_1), userEntry("user-1", "Earlier")];
   await command.handler(
     "session",
@@ -873,7 +864,6 @@ test("a plain comment submits through the stub runner without asking for confirm
   assert.ok(submissions[0]?.input, "the stubbed submission receives a JSON payload on stdin");
 });
 
-/** ESC colour, OSC 52 ended by BEL, C1 CSI and right-to-left override; one line, as git and gh report names. */
 const CONTROL_NAME = "a\u001b[31mred\u001b]52;c;SGVsbG8=\u0007b\u009be\u202ef";
 
 function controlCount(text: string): number {
@@ -910,7 +900,6 @@ test("completion labels and failure notifications draw branch names and pull req
   const drawn = items.map((item) => `${item.label} ${item.description ?? ""}`).join(" | ");
   assert.equal(controlCount(drawn), 0);
   assert.ok(drawn.includes("a␛[31mred␛]52;c;SGVsbG8=␇b\uFFFDe\uFFFDf"));
-  // The branch completion still inserts the real name.
   assert.equal(items[0]?.value, `branch ${CONTROL_NAME}`);
 
   await command.handler("branch main", commandContext(notifications));
@@ -919,18 +908,10 @@ test("completion labels and failure notifications draw branch names and pull req
   assert.equal(controlCount(failure), 0);
 });
 
-/* ------------- submission decides inline against the head it names */
-
 const movedHead = "c".repeat(40);
-/** The same change two lines lower, as after a force-push that added lines above it. */
 const movedPatch = patch.replace("@@ -1 +1 @@", "@@ -3 +3 @@");
-/** The changed line is different, so the comment's text is gone. */
 const rewrittenPatch = patch.replace("+export const value = 2;", "+export const value = 3;");
 
-/**
- * The pull request runner, with GitHub's head (and the diff a re-read sees)
- * switched to `movedHead` once the review has been shown.
- */
 function movingRunner(calls: PrRunnerCall[], moved: { now: boolean; diff: string }): ExecRunner {
   const base = createPullRequestRunner(calls, []);
   return async (command, args, options) => {

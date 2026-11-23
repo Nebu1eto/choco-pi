@@ -27,7 +27,6 @@ function lowerKeys(variants: ReadonlyMap<string, string>): ReadonlyMap<string, s
   return new Map([...variants].map(([from, to]) => [from.toLowerCase(), to.toLowerCase()]));
 }
 
-/** Same model, or one is the access-program variant of the other (same weights). */
 function isSameOrVariant(
   session: ModelIdentity | undefined,
   model: ModelIdentity,
@@ -40,12 +39,6 @@ function isSameOrVariant(
   return variants.get(a) === b || variants.get(b) === a;
 }
 
-/**
- * Use the configured advisor model, or its access-program variant when the account can use it
- * (Fable -> Mythos; the registry hides Mythos from accounts without access). When that equals
- * the session model or its variant, use the first Flagship primary, again preferring an
- * available variant, that differs from the session and is registered and available.
- */
 export async function selectAdvisorModel<M extends ModelIdentity>(
   selected: M,
   session: ModelIdentity | undefined,
@@ -58,7 +51,6 @@ export async function selectAdvisorModel<M extends ModelIdentity>(
   const usable = (candidate: ModelIdentity): boolean =>
     registry.find(candidate.provider, candidate.id) !== undefined &&
     available.some((entry) => sameIdentity(entry, candidate));
-  /** The available same-provider variant of `model`, else `model`. */
   const prefer = (model: ModelIdentity): ModelIdentity => {
     const target = variants.get(refKey(model));
     if (target === undefined || !target.startsWith(`${model.provider.toLowerCase()}/`)) {

@@ -6,7 +6,6 @@ export interface ToolPair {
   kind: "call" | "result";
   id: string;
 }
-/** Actual serialized Anthropic tool blocks, in wire order (not deduplicated). */
 export function wireToolPairs(payload: ArtifactInput): ToolPair[] {
   const pairs: ToolPair[] = [];
   const callSchema = obj({ type: lit("tool_use"), id: str() }, { open: true });

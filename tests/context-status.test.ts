@@ -29,8 +29,8 @@ test("colorized grid has 100 equal-width cells and paints segments", () => {
   assert.equal(rows.length, GRID_ROWS);
   assert.ok(rows.every((row) => row.length === GRID_ROW_WIDTH));
   assert.equal(cells.length, GRID_ROWS * GRID_COLUMNS);
-  assert.match(grid, MESSAGE_COLOR); // messages category color
-  assert.match(grid, FREE_SPACE_COLOR); // free space dimmed
+  assert.match(grid, MESSAGE_COLOR);
+  assert.match(grid, FREE_SPACE_COLOR);
   assert.ok(cells.includes("⛀"), "a cell marks a segment boundary");
 });
 
@@ -163,7 +163,6 @@ test("measured usage caps message estimates and keeps categories inside the wind
   assert.doesNotMatch(rendered, /\(1\d\d(?:\.\d)?%\)/);
 });
 
-/** The inventory members the context report reads, with the optional settings source. */
 type ReserveInventory = {
   getAllTools: () => typeof TOOLS;
   getActiveTools: () => string[];
@@ -190,7 +189,6 @@ test("the compaction reserve follows the effective settings and per-model overri
     });
   };
 
-  // No settings source: Pi's default reserve (16,384) leaves 2.6k free.
   assert.match(render(), /Free space: 2\.6k tokens/);
   assert.match(render({ reserveTokens: 10_000 }), /Free space: 9\.0k tokens/);
   assert.match(
@@ -200,7 +198,6 @@ test("the compaction reserve follows the effective settings and per-model overri
     }),
     /Free space: 15k tokens/,
   );
-  // An invalid value is Pi's to reject at compaction; the report keeps the default.
   assert.match(render({ reserveTokens: -1 }), /Free space: 2\.6k tokens/);
 });
 

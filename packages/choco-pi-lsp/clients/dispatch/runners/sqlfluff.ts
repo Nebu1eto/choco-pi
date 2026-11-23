@@ -36,21 +36,7 @@ const SqlfluffJsonSchema = arr(
 );
 const isSqlfluffJson = compile(SqlfluffJsonSchema).check;
 
-// sqlfluff's JSON lint output does not carry a per-violation fixable flag —
-// `sqlfluff fix` is a separate command and the lint surface doesn't tell us
-// which violations its `--fix` would resolve. Mirror the stylelint /
-// markdownlint pattern from commit 9c8db1b: maintain a curated set of rule
-// codes whose `fix` is deterministic and safe, sourced from sqlfluff's docs
-// pages that document each rule as "Auto-fix: yes" with a deterministic
-// rewrite. Update when sqlfluff adds or removes fixable rules.
-//
-// Scope: layout / capitalisation / safe-convention / alias-formatting /
-// reference-formatting rules whose fixes don't change query semantics.
-// Excluded: ambiguity rules (AM01..), structural rules whose fix may
-// change query plan (ST05, ST07..), and CV05 (which can flip null
-// comparisons in ways that change result sets).
 const SQLFLUFF_FIXABLE_RULES = new Set<string>([
-  // Layout — pure formatting
   "LT01",
   "LT02",
   "LT03",
@@ -64,32 +50,27 @@ const SQLFLUFF_FIXABLE_RULES = new Set<string>([
   "LT11",
   "LT12",
   "LT13",
-  // Capitalisation — pure formatting
   "CP01",
   "CP02",
   "CP03",
   "CP04",
   "CP05",
-  // Aliasing — safe formatting / unused-alias removal
   "AL01",
   "AL05",
   "AL06",
   "AL07",
   "AL08",
   "AL09",
-  // Convention — safe formatting / equivalent rewrites
   "CV01",
   "CV02",
   "CV06",
   "CV07",
   "CV10",
   "CV11",
-  // References — quoting / qualifier formatting
   "RF02",
   "RF04",
   "RF05",
   "RF06",
-  // Structure — only deterministic-safe simplifications
   "ST01",
   "ST02",
 ]);
@@ -129,7 +110,6 @@ function parseSqlfluffOutput(raw: string, filePath: string): Diagnostic[] {
   }
 }
 
-// Exported for the parser unit tests (#112 sqlfluff slice).
 export { parseSqlfluffOutput };
 
 const sqlfluffRunner: RunnerDefinition = {

@@ -48,7 +48,6 @@ function asExtensionAPI(value: RuntimeValue): ExtensionAPI {
 
 function asExtensionContext(value: RuntimeValue): ExtensionContext {
   // SAFETY: The fixture supplies the session-binding reads; child setup is
-  // deliberately incomplete, so spawned agents settle with an error.
   return value as ExtensionContext;
 }
 

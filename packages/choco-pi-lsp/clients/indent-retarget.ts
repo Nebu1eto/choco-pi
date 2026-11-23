@@ -1,13 +1,3 @@
-/**
- * Retargets the leading-whitespace style of newText to match the indentation
- * correction that was applied to oldText.
- *
- * Builds a mapping from oldText indentation strings to their corrected forms,
- * then extends it to cover deeper nesting levels (n × baseUnit → n × correctedUnit).
- * Returns undefined — leaving newText unchanged — when any non-blank line in
- * newText has indentation that cannot be resolved, to avoid producing
- * mixed-indentation output.
- */
 export function retargetReplacementIndentation(
   newText: string,
   oldText: string,
@@ -36,9 +26,6 @@ export function retargetReplacementIndentation(
   }
   if (indentMap.size === 0) return undefined;
 
-  // Find the shortest non-empty mapped key as the base unit so that nesting
-  // levels in newText that are deeper than anything in oldText can be remapped
-  // as n × baseFrom → n × baseTo.
   let baseFrom = "";
   let baseTo = "";
   for (const [from, to] of indentMap) {
@@ -69,13 +56,11 @@ export function retargetReplacementIndentation(
   for (const line of newLines) {
     const indent = line.match(/^[\t ]*/)?.[0] ?? "";
     if (indent === line) {
-      // Blank / whitespace-only line — preserve as-is.
       retargetedLines.push(line);
       continue;
     }
     const resolved = resolveIndent(indent);
     if (resolved === undefined) {
-      // Indentation can't be resolved — abort to avoid mixed-indentation output.
       return undefined;
     }
     if (resolved !== indent) {

@@ -1,11 +1,3 @@
-/**
- * With background compaction off (a malformed sidecar or the master switch
- * off) the extension behaves exactly like the summarizer
- * alone: same provider requests, same entries, no coordinator. The adoption
- * signal slot exists from registration (so consumers loaded earlier can bind
- * at their session_start) but stays inert: no owner answers and no notice is
- * published.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -28,7 +20,6 @@ import { createHost, reply } from "./host-boundary-fixture.ts";
 
 const RETRY = { enabled: false, maxRetries: 0, baseDelayMs: 0, maxAgentDelayMs: 0 };
 
-/** The extension as it was before background compaction: summarizer only. */
 function summarizerOnly(pi: ExtensionAPI): void {
   let state: CompactionSessionState = {
     generation: 0,
@@ -47,7 +38,6 @@ function summarizerOnly(pi: ExtensionAPI): void {
   );
 }
 
-/** Model-visible request content, without per-run timestamps or temp paths. */
 interface RequestPart {
   readonly role: string;
   readonly parts: readonly string[];
@@ -66,7 +56,6 @@ function partsOf(message: Message): string[] {
 function project(context: TranscriptContext): RequestPart[] {
   return context.messages.map((message) => ({
     role: message.role,
-    // System prompts embed the temporary cwd; their identity is the role and text.
     parts: message.role === "system" ? [] : partsOf(message),
   }));
 }
@@ -103,14 +92,12 @@ async function run(extension: ExtensionFactory): Promise<Trace> {
   }
 }
 
-/** What the background side exposed while one feature-off variant ran. */
 interface OffObservation {
   coordinatorSeen: boolean;
   adoptionClaimed: boolean;
   providerEnabled: boolean | undefined;
 }
 
-/** The full extension with the given sidecar paths, instrumented to record any background activity. */
 function observedExtension(paths: readonly string[], observed: OffObservation): ExtensionFactory {
   const background = { settingsPaths: () => paths };
   return (pi) => {

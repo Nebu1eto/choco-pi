@@ -1,17 +1,6 @@
 import { includePropertiesWhen } from "../clients/optional-properties.ts";
 import type { RuntimeValue } from "./runtime-values.ts";
 import { isRuntimeNumber, isRuntimeString } from "./runtime-values.ts";
-/**
- * module_report + read_symbol tool definitions (#245).
- *
- * Agent-facing surface for the structured read-substitute flow: module_report
- * gives a navigable overview of a module (outline + signatures + who-uses-this +
- * ready-to-use read args); read_symbol returns one symbol's verbatim body;
- * read_enclosing maps a file+line search/diagnostic hit to the smallest enclosing
- * symbol/callback body. The exact-body tools wire the read-guard tie-in — a body
- * they return is recorded as a genuine read of that range (module_report
- * deliberately does not, since an outline is shape, not body).
- */
 
 import * as path from "node:path";
 import { arr, bool, num, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
@@ -116,8 +105,6 @@ export function createModuleReportTool(getProjectRoot: () => string) {
       _onUpdate: RuntimeValue,
       ctx: { cwd?: string },
     ) {
-      // Resolve the file against the agent's cwd (sibling-tool convention); build
-      // the review graph at the project root so cross-file who-uses-this is whole.
       const absFile = resolveFile(params.path, ctx.cwd);
       const cwd = getProjectRoot() || ctx.cwd || ".";
       let report: Awaited<ReturnType<typeof moduleReport>>;
@@ -143,13 +130,6 @@ export function createModuleReportTool(getProjectRoot: () => string) {
           details: { available: false },
         };
       }
-      // view:"compact" renders the report as line-oriented text (roughly a
-      // quarter of the JSON cost for the same info) instead of JSON. Every
-      // other view returns compact (unindented) JSON — omitting indentation
-      // alone saves ~30% on the wire without changing the schema. Tests use
-      // JSON.parse for the JSON views, so they are agnostic to whitespace. The
-      // report object stays camelCase in memory; only the model-visible JSON
-      // uses snake_case keys.
       const text =
         params.view === "compact" ? renderCompactModuleReport(report) : stringifySnakeCase(report);
       return {
@@ -311,10 +291,6 @@ export function createReadSymbolTool(getProjectRoot: () => string, recordSymbolR
           },
         };
       }
-      // Read-substitute tie-in (#245): a readSymbol body IS a real read of that
-      // range, so record it as read-guard coverage for the symbol. Keep the tool
-      // response useful even if the guard hook itself fails; surface that fact in
-      // details so callers know the returned body may not unlock a later edit.
       const readRecorded = recordReadCoverage(recordSymbolRead, result, "read_symbol_guard_error");
       const ambiguityNote = result.ambiguous
         ? ` (${result.ambiguous.count} matches — returned the ${result.kind}; pass \`kind\` to disambiguate: ${result.ambiguous.kinds.join(", ")})`

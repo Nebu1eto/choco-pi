@@ -32,12 +32,8 @@ import {
 
 import { parsePatchActions } from "../packages/choco-pi-code-mode/src/patch/parser.ts";
 
-/* ------------------------------------------------------------------ setup */
-
 const plainConfig: ResolvedReviewConfig = {
   editor: { command: ["true"], mode: "gui" },
-  // Highlighting off keeps rendered lines assertable as plain text; the
-  // highlighter itself is covered by tests/review-render.test.ts.
   highlight: { enabled: false, maxFileBytes: 512_000, maxDiffLines: 20_000 },
   heuristics: { riskPatterns: [], collapsePatterns: [] },
 };
@@ -50,8 +46,6 @@ type SessionPrototype = typeof AgentSession.prototype & {
 const prototype = AgentSession.prototype as SessionPrototype;
 const stockGetToolDefinition = prototype.getToolDefinition;
 
-// Install once so the module's active options point at `plainConfig`, then put
-// the stock prototype back: individual tests patch it themselves.
 installToolDiffRendering({ config: () => plainConfig });
 prototype.getToolDefinition = stockGetToolDefinition;
 delete prototype.__chocoPiToolDiffApplied;
@@ -161,8 +155,6 @@ function renderResult(
   return render(result, { expanded: ctx.expanded === true, isPartial: false }, theming, ctx);
 }
 
-/* ------------------------------------------------------- prototype patching */
-
 test("patches AgentSession.getToolDefinition exactly once and passes other tools through by identity", () => {
   const read = definition("read").tool;
   const write = definition("write").tool;
@@ -213,8 +205,6 @@ test("decorates only write, edit and apply_patch", () => {
   }
 });
 
-/* --------------------------------------------------------- field preservation */
-
 test("preserves every non-render field, including renderShell and execute", () => {
   const extra = {
     renderShell: "self" as const,
@@ -257,8 +247,6 @@ test("preserves every non-render field, including renderShell and execute", () =
     );
   }
 
-  // The original definition is never mutated, and the execution entry point
-  // keeps its identity: decoration touches rendering only.
   assert.deepEqual({ ...tool }, snapshot);
   assert.equal(decorated.execute, tool.execute);
   assert.notEqual(decorated.renderCall, tool.renderCall);
@@ -296,8 +284,6 @@ test("execute still runs the original implementation", async () => {
   assert.equal(executed, 1);
   assert.deepEqual(result.content, [{ type: "text", text: "written" }]);
 });
-
-/* ------------------------------------------------------------ diff models */
 
 test("builds a whole-file added diff for write", () => {
   const file = buildWriteDiffFile("src/a.ts", "one\ntwo\nthree\n");
@@ -465,8 +451,6 @@ test("rejects a malformed apply_patch envelope", () => {
   );
 });
 
-/* --------------------------------------------------------------- rendering */
-
 test("renders write as a review diff once the arguments are complete", () => {
   const { tool, calls } = definition("write");
   const decorated = decorateToolDefinition(tool);
@@ -615,8 +599,6 @@ test("reuses the first resolved apply_patch model after the file has changed", (
   }
 });
 
-/* ---------------------------------------------------------------- fallback */
-
 test("falls back to the stock renderer for unusable arguments", () => {
   const write = definition("write");
   const decoratedWrite = decorateToolDefinition(write.tool);
@@ -704,14 +686,10 @@ test("falls back when the decorated renderer itself throws", () => {
   assert.equal(calls.call.length, 1);
 });
 
-/* ------------------------------------------------- against Pi's real tools */
-
 test("decorating Pi's real edit tool changes rendering and nothing else", async () => {
   const dir = mkdtempSync(join(tmpdir(), "choco-pi-tool-diff-"));
   try {
     const target = join(dir, "sample.ts");
-    // A BOM plus CRLF endings: preservation of both is owned by Pi's edit
-    // implementation and must survive decoration untouched.
     const original = "\uFEFFconst a = 1;\r\nconst b = 2;\r\nconst c = 3;\r\n";
     writeFileSync(target, original, "utf8");
 

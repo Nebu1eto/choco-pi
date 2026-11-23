@@ -1,7 +1,3 @@
-// Persistence for choco-pi-subagents operational settings.
-// - Global:  ~/.pi/agent/subagents.json (via getAgentDir()) — manual defaults, never written here
-// - Project: <cwd>/.pi/subagents.json — written by /agents → Settings; overrides global on load
-
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -12,173 +8,25 @@ import type { AgentMentionMode, JoinMode, WidgetMode } from "./types.ts";
 import { isBoolean, isFiniteNumber, isString } from "./value-guards.ts";
 
 export interface SubagentsSettings {
-  /** Maximum concurrent background agents. 0 = unlimited, with a sanity cap of 1024. */
   maxConcurrent?: number;
-  /**
-   * 0 = unlimited — the extension's single source of truth for that convention:
-   * `normalizeMaxTurns()` in agent-runner.ts treats 0 → `undefined`, and the
-   * `/agents` → Settings input prompt explicitly says "0 = unlimited".
-   */
   defaultMaxTurns?: number;
   graceTurns?: number;
   defaultJoinMode?: JoinMode;
-  /**
-   * Master switch for the schedule subagent feature. Defaults to `true`.
-   * When `false`: the `Agent` tool's `schedule` param + its guideline are
-   * stripped from the tool spec at registration (zero LLM-context cost), the
-   * scheduler doesn't bind to the session, and the `/agents → Scheduled jobs`
-   * menu entry is hidden. Schema-level removal applies at extension load
-   * (next pi session); runtime menu/runtime-fire short-circuit is immediate.
-   */
   schedulingEnabled?: boolean;
-  /**
-   * When true, the effective model of each subagent spawn is validated
-   * against `enabledModels` from pi's settings — both global
-   * (`<agentDir>/settings.json`) and project-local (`<cwd>/.pi/settings.json`),
-   * with project overriding global (mirrors pi's SettingsManager deep-merge).
-   *
-   * scopeModels guards against runtime LLM choices, not user-level config.
-   * Out-of-scope handling reflects this:
-   *   - Caller-supplied via `Agent({ model: "..." })` (only when frontmatter
-   *     has no `model:`, since frontmatter is authoritative): hard error
-   *     returned to the orchestrator, listing the allowed models. The LLM
-   *     made an explicit out-of-scope choice and gets explicit feedback.
-   *   - Frontmatter-pinned: warning toast + the pinned model runs. The
-   *     agent's author/installer chose this; trust it.
-   *   - Parent-inherited (neither caller nor frontmatter sets a model):
-   *     warning toast + parent's model runs. The user chose the parent's
-   *     model when starting the session; trust it.
-   *
-   * No-op when pi's `enabledModels` is empty or absent — nothing to validate
-   * against. Defaults to false: subagents may use any model.
-   */
   scopeModels?: boolean;
-  /**
-   * When true, an unreadable or unparseable agent `.md` aborts extension load
-   * instead of being skipped with a warning — pi exits, naming the file.
-   *
-   * Startup only, by design. Mid-session reloads (one per `Agent` call) keep
-   * warning: a bad edit at 3pm should not kill the session on the next
-   * unrelated spawn, where the failure would look disconnected from its cause.
-   * For a checked-in `.pi/agents/`, failing at startup is the point — the
-   * alternative is running a *different* agent than the file names.
-   * Defaults to false.
-   */
   strictAgentFiles?: boolean;
-  /**
-   * When true, a fresh spawn through the Agent tool (top-level or nested) that
-   * omits `model` or `thinking` is refused with a text result naming the
-   * role's declared model, thinking and definition file. Resume, /btw forks,
-   * cross-extension RPC spawns, schedules and workflow steps are exempt.
-   * False restores silent role-default / parent-model resolution (with a note
-   * when the parent model is inherited). Defaults to true.
-   */
   requireExplicitModel?: boolean;
-  /**
-   * When true, the three built-in default agents (general-purpose, Explore, Plan)
-   * are not registered at startup. User-defined agents from project/global custom
-   * agent dirs are completely unaffected — only the hardcoded DEFAULT_AGENTS are suppressed.
-   * Defaults to false.
-   */
   disableDefaultAgents?: boolean;
-  /**
-   * Agent rows in the above-editor fleet panel (↓/← navigate, ↑↓ switch focus,
-   * f focus); off keeps shell rows only. Defaults to `true` and applies live.
-   */
   fleetView?: boolean;
-  /**
-   * Whether `@handle message` typed at the prompt is routed to that subagent
-   * instead of the main model, and whether `@` offers running agents alongside
-   * pi's file completion. Defaults to `model`. Applied live.
-   *
-   *   - `model`: mentioning an agent that is not running asks the main model to
-   *     spawn it with the `Agent` tool, Claude Code's behaviour. Costs a turn,
-   *     and the model writes the agent's prompt rather than your text being it.
-   *   - `direct`: that agent is started here instead, with the typed message as
-   *     its prompt and no main-model turn spent.
-   *   - `off`: the input hook falls straight through and the stacked
-   *     autocomplete provider delegates everything back to pi's built-in one.
-   *
-   * Messaging a running agent and resuming a finished one are direct in both
-   * `model` and `direct`. The legacy booleans are still accepted: `true` reads
-   * as `model`, `false` as `off`.
-   */
   agentMentions?: AgentMentionMode;
-  /**
-   * Whether subagents persist their pi session by default, so `@handle` can
-   * reopen an agent's conversation long after its in-memory record is gone.
-   * Defaults to `true`. Per-agent `persist_session:` frontmatter overrides it
-   * in both directions. Turning it off restores the previous behaviour, where
-   * a handle stops resolving roughly ten minutes after the agent finishes and
-   * mentioning it starts a fresh run instead. Persisted sessions also appear
-   * nested under the spawning session in pi's `/resume`.
-   */
   rememberAgents?: boolean;
-  /**
-   * Agent row detail in the fleet panel: all = detail for every running agent;
-   * background = detail only for background agents; off = compact rows.
-   * Defaults to `background`. Pure-UI and applied live.
-   */
   widgetMode?: WidgetMode;
-  /**
-   * Project/global default for writing each subagent's `.output` transcript
-   * (a JSON-lines copy of the run, stored under the OS temp dir).
-   * Defaults to `true`. Set `false` to make transcripts opt-in for the whole
-   * project (e.g. a repo that shouldn't leave run transcripts on disk for backup
-   * or DLP tooling to ingest). A custom agent's `output_transcript` frontmatter
-   * overrides this per agent. This governs only the transcript — it does NOT
-   * affect the persisted pi session (`persist_session`), worktree commits
-   * (`isolation: worktree`), or memory files.
-   */
   outputTranscript?: boolean;
-  /**
-   * Whether `isolation: "worktree"` may create a worktree at all. Defaults to
-   * `true`. Set `false` on a repo where worktrees are too slow or too large to
-   * be worth it (#184): a requested worktree is then dropped and the agent runs
-   * in the main checkout.
-   *
-   * The drop is deliberately silent — there is no per-result note, because the
-   * setting exists for projects whose model asks for a worktree on every call,
-   * where a note would be noise on every result. What keeps the orchestrator
-   * from claiming a `pi-agent-*` branch anyway is that it is never told the
-   * capability exists: `isolationParam` (invocation-config.ts) drops the field
-   * from both tool schemas, and `isolationGuideline` (index.ts) drops the
-   * matching prose from the full and compact descriptions — a custom one opts
-   * in via the `{{isolationGuideline}}` placeholder. Anything that
-   * reintroduces the prose has to reintroduce a note with it.
-   *
-   * Deliberately a downgrade rather than an error. The fail-loud rule covers
-   * worktrees that *cannot* be created; this is the user declining one, and
-   * throwing would reject exactly the calls that the `isolation: "off"` value
-   * exists to tolerate. Enforced below the tool boundary, so it also covers the
-   * scheduler and the unvalidated cross-extension RPC path.
-   */
   worktreeIsolation?: boolean;
-  /**
-   * Hard ceiling on nested subagent delegation, counted from the main session:
-   * main = 0, its subagents = 1, their children = 2. Defaults to `2`; `0` or `1`
-   * disables nesting project-wide. Read when a subagent session is built, so a
-   * change applies to agents started after it.
-   */
   maxSubagentDepth?: number;
-  /**
-   * Agent type substituted when a caller-supplied `subagent_type` doesn't
-   * resolve to exactly one enabled agent (unknown, disabled, or ambiguous by
-   * case). Omitted keeps the historical `general-purpose` fallback; a type name
-   * routes those calls to that agent instead; `"none"` disables the fallback so
-   * dispatch fails closed with an error naming the available types.
-   *
-   * The boolean `false` is accepted as a spelling of `"none"`, because a boolean
-   * would otherwise be dropped as the wrong type and silently leave the
-   * PERMISSIVE default in place while the author believes strict dispatch is on
-   * — the wrong direction to fail for this setting. Every other value is an
-   * agent name, so a mistaken `"off"` fails loudly at dispatch rather than
-   * meaning one thing here and another in the resolver.
-   */
   fallbackSubagent?: string;
 }
 
-/** Setter hooks used by applySettings to wire persisted values into in-memory state. */
 export interface SettingsAppliers {
   setMaxConcurrent: (n: number) => void;
   setDefaultMaxTurns: (n: number) => void;
@@ -199,17 +47,12 @@ export interface SettingsAppliers {
   setFallbackSubagent: (v: string | undefined) => void;
 }
 
-/** Payloads emitted when settings are loaded or changed. */
 export type SettingsEventPayload =
   | { settings: SubagentsSettings }
   | { settings: SubagentsSettings; persisted: boolean };
 
-/** Emit callback — a subset of `pi.events.emit` to keep helpers testable. */
 export type SettingsEmit = (event: string, payload: SettingsEventPayload) => void;
 
-// Sanity ceilings — prevent hand-edited configs from asking for values that
-// make no operational sense (e.g. 1e6 concurrent subagents). Permissive enough
-// that any realistic power-user setting passes through.
 export const MAX_TURNS_CEILING = 10_000;
 export const GRACE_TURNS_CEILING = 1_000;
 
@@ -258,7 +101,6 @@ function parseAgentMentionMode(value: JsonValue | undefined): AgentMentionMode |
   return value === "model" || value === "direct" || value === "off" ? value : undefined;
 }
 
-/** Drop fields that don't match the expected shape. Silent — garbage becomes absent. */
 export function sanitizeSettings(raw: JsonValue): SubagentsSettings {
   if (!isJsonObject(raw)) return {};
   const out: SubagentsSettings = {};
@@ -296,11 +138,6 @@ export function sanitizeSettings(raw: JsonValue): SubagentsSettings {
   if (worktreeIsolation !== undefined) out.worktreeIsolation = worktreeIsolation;
   const fallbackSubagent = asString(raw.fallbackSubagent);
   if (raw.fallbackSubagent === false) {
-    // The only non-string spelling worth accepting: a boolean would otherwise be
-    // dropped, silently leaving the PERMISSIVE default in place. Every string is
-    // an agent name except the `none` sentinel, which the resolver recognizes —
-    // so a mistaken "off" fails loudly at dispatch instead of meaning something
-    // different here than it does there.
     out.fallbackSubagent = NO_FALLBACK;
   } else if (fallbackSubagent?.trim()) {
     out.fallbackSubagent = fallbackSubagent.trim();
@@ -316,11 +153,6 @@ function projectPath(cwd: string): string {
   return join(cwd, ".pi", "subagents.json");
 }
 
-/**
- * Read a settings file. Missing file is silent (returns `{}`). A file that
- * exists but can't be read or parsed emits a warning to stderr so users aren't
- * silently reverted to defaults — and still returns `{}` so startup proceeds.
- */
 async function readSettingsFile(path: string): Promise<SubagentsSettings> {
   let text: string | undefined;
   try {
@@ -340,7 +172,6 @@ async function readSettingsFile(path: string): Promise<SubagentsSettings> {
   }
 }
 
-/** Load merged settings: global provides defaults, project overrides. Both files are read concurrently. */
 export async function loadSettings(cwd: string = process.cwd()): Promise<SubagentsSettings> {
   const [global, project] = await Promise.all([
     readSettingsFile(globalPath()),
@@ -349,20 +180,8 @@ export async function loadSettings(cwd: string = process.cwd()): Promise<Subagen
   return { ...global, ...project };
 }
 
-/**
- * Per-path write chain. Two quick settings changes must land in call order:
- * concurrent `writeFile`s to one path may complete out of order and leave the
- * older snapshot on disk.
- */
 const saveChains = new Map<string, Promise<boolean>>();
 
-/**
- * Write project-local settings. Global is never touched from code.
- * Resolves `true` on success, `false` if the write (or mkdir) failed so the
- * caller can surface a warning — persistence isn't fatal but isn't silent.
- * Saves to one path are serialized in call order; the serialized text is
- * captured at call time.
- */
 export function saveSettings(s: SubagentsSettings, cwd: string = process.cwd()): Promise<boolean> {
   const path = projectPath(cwd);
   const text = JSON.stringify(s, null, 2);
@@ -384,7 +203,6 @@ export function saveSettings(s: SubagentsSettings, cwd: string = process.cwd()):
   return next;
 }
 
-/** Apply persisted settings to the in-memory state via caller-supplied setters. */
 export function applySettings(s: SubagentsSettings, appliers: SettingsAppliers): void {
   if (s.maxConcurrent !== undefined) appliers.setMaxConcurrent(s.maxConcurrent);
   if (s.defaultMaxTurns !== undefined) appliers.setDefaultMaxTurns(s.defaultMaxTurns);
@@ -407,11 +225,6 @@ export function applySettings(s: SubagentsSettings, appliers: SettingsAppliers):
   if (s.worktreeIsolation !== undefined) appliers.setWorktreeIsolation(s.worktreeIsolation);
 }
 
-/**
- * Format the user-facing toast for a settings mutation. Pure function —
- * routes the success/failure of `saveSettings` into the right message + level
- * so the UI layer (index.ts) stays a thin wire between input and notification.
- */
 export function persistToastFor(
   successMsg: string,
   persisted: boolean,
@@ -421,13 +234,6 @@ export function persistToastFor(
     : { message: `${successMsg} (session only; failed to persist)`, level: "warning" };
 }
 
-/**
- * Apply already-loaded settings to in-memory state and emit the
- * `subagents:settings_loaded` lifecycle event. The caller loads once (see
- * `loadSettings`) and passes the result, so the synchronous appliers never
- * wait on the filesystem. Returns the settings so callers can log/inspect.
- * Extension init wires this once.
- */
 export function applyAndEmitLoaded(
   settings: SubagentsSettings,
   appliers: SettingsAppliers,
@@ -438,12 +244,6 @@ export function applyAndEmitLoaded(
   return settings;
 }
 
-/**
- * Persist a settings snapshot, emit the `subagents:settings_changed` event
- * (regardless of persist outcome so listeners see the in-memory change), and
- * resolve the toast the UI should display. Event payload carries the `persisted`
- * flag so listeners can react to write failures.
- */
 export async function saveAndEmitChanged(
   snapshot: SubagentsSettings,
   successMsg: string,

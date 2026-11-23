@@ -13,13 +13,8 @@ const DEFAULT_COMPLETED_RECORD_CAP = 64;
 
 export type ShellState = "running" | "exited" | "stopped" | "failed";
 
-/** Cancels a scheduled callback; calling it after the callback ran is a no-op. */
 export type CancelScheduledTimer = () => void;
 
-/**
- * Schedules stop escalation and output-drain callbacks. The default uses an unref'd
- * `setTimeout`; tests inject a scheduler to drive each stage explicitly.
- */
 export type ShellTimerScheduler = (callback: () => void, delayMs: number) => CancelScheduledTimer;
 
 export interface ShellManagerOptions {
@@ -38,9 +33,7 @@ export interface StartShellInput {
   command: string;
   cwd: string;
   name?: string;
-  /** Originating tool call; kept off ShellResult so tool output and persisted entries stay unchanged. */
   toolCallId?: string;
-  /** Extra variables for this process, layered over `process.env`. */
   env?: Readonly<Record<string, string>>;
 }
 
@@ -209,7 +202,6 @@ export class ShellManager {
     return [...(this.pendingByOwner.get(ownerId)?.values() ?? [])].map((shell) => ({ ...shell }));
   }
 
-  /** Whether `ownerId` owns a shell that has not reached a terminal state. */
   hasRunning(ownerId: string): boolean {
     for (const record of this.records.values()) {
       if (record.ownerId === ownerId && record.state === "running") return true;
@@ -346,7 +338,6 @@ export class ShellManager {
     return { shells };
   }
 
-  /** Tool call that started a still-retained shell, or null when unknown or evicted. */
   toolCallIdOf(shellId: string): string | null {
     return this.records.get(shellId)?.toolCallId ?? null;
   }
@@ -421,7 +412,6 @@ export class ShellManager {
     this.flushDecoder(record.stdout);
     this.flushDecoder(record.stderr);
     record.endedAt = Date.now();
-    // Stop-related signaling failures remain diagnostic, not child execution failures.
     if (record.error || (!record.stopRequested && record.signalError)) record.state = "failed";
     else if (record.stopRequested) record.state = "stopped";
     else record.state = "exited";
@@ -491,7 +481,6 @@ export class ShellManager {
 
   private signalRecord(record: ShellRecord, signal: NodeJS.Signals): void {
     const pid = record.pid;
-    // A pending spawn failure has no owned process to signal.
     if (pid === undefined) return;
     try {
       if (process.platform === "win32") record.child?.kill(signal);
@@ -513,9 +502,7 @@ export class ShellManager {
     for (const listener of listeners) {
       try {
         listener(event);
-      } catch {
-        // Listener failures must not interrupt shell lifecycle management.
-      }
+      } catch {}
     }
   }
 }

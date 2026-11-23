@@ -26,7 +26,6 @@ interface StatusPresentation {
   title: string;
 }
 
-// Open object: extra event fields are ignored, as before.
 const SubagentMessageNotificationSchema = obj(
   {
     from: str(),
@@ -41,14 +40,12 @@ const isSubagentMessageNotification = compile(SubagentMessageNotificationSchema)
 export type SubagentMessageNotification = Static<typeof SubagentMessageNotificationSchema>;
 type SubagentEventPayload = Parameters<Parameters<ExtensionAPI["events"]["on"]>[1]>[0];
 
-/** Parse the cross-extension event payload before it reaches UI code. */
 export function parseSubagentMessageNotification(
   payload: SubagentEventPayload,
 ): SubagentMessageNotification | undefined {
   return isSubagentMessageNotification(payload) ? payload : undefined;
 }
 
-/** Compact notification for agent_message traffic (never steer events). */
 export function renderAgentMessageNotification(
   message: SubagentMessageNotification,
   theme: Theme,
@@ -58,13 +55,6 @@ export function renderAgentMessageNotification(
   return `${theme.fg("accent", "✉")} ${theme.fg("toolTitle", route)} ${theme.fg("dim", `[${message.type}]${queued}`)}`;
 }
 
-/**
- * Transcript rendering for an agent-authored envelope delivered to the root
- * session. Mirrors the child conversation viewer: an accent `✉ from [TYPE]`
- * head and the bare body indented two cells. Returns undefined when the
- * content is not a complete envelope so the host's default label rendering
- * still shows whatever arrived.
- */
 export function renderAgentMessageEnvelope(content: string, theme: Theme): string | undefined {
   const envelope = parseAgentMessage(content.trim());
   if (!envelope) return undefined;
@@ -150,18 +140,13 @@ function normalizeResultLine(line: string): string {
   if (!trimmed || trimmed.startsWith("```") || /^#{1,6}(?:\s+|$)/.test(trimmed)) return "";
   if (/^[-*_]{3,}$/.test(trimmed)) return "";
 
-  return (
-    trimmed
-      .replace(/^>\s*/, "")
-      .replace(/^(?:[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+)/, "")
-      // Inline emphasis survives the block-level strip above and still reads as
-      // raw markup in a one-line summary; backticks stay, since an identifier
-      // like `subagent_type` reads better quoted.
-      .replace(/\*\*(.+?)\*\*/g, "$1")
-      .replace(/__(.+?)__/g, "$1")
-      .replace(/(^|\s)[*_](\S(?:.*?\S)?)[*_](?=\s|$)/g, "$1$2")
-      .trim()
-  );
+  return trimmed
+    .replace(/^>\s*/, "")
+    .replace(/^(?:[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+)/, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/(^|\s)[*_](\S(?:.*?\S)?)[*_](?=\s|$)/g, "$1$2")
+    .trim();
 }
 
 function resultLines(details: NotificationDetails, expanded: boolean): string[] {
@@ -180,7 +165,6 @@ function resultLines(details: NotificationDetails, expanded: boolean): string[] 
 
 function notificationBackground(status: string, theme: Theme): string {
   const color = status === "completed" || status === "steered" ? "toolSuccessBg" : "toolErrorBg";
-  // Lightweight host themes may provide only foreground styling.
   return theme.getBgAnsi?.(color) ?? "";
 }
 
@@ -237,12 +221,9 @@ function renderOne(details: NotificationDetails, expanded: boolean, theme: Theme
       )}`,
     );
   }
-  // Match settled tool cells with one empty band row above and below the content.
-  // Leave each row open so the host Text component pads it to its render width.
   return ["", ...lines, ""].map((line) => background + line).join("\n");
 }
 
-/** Render one notification and any grouped completions without host or TUI side effects. */
 export function renderSubagentNotification(
   details: NotificationDetails,
   options: { expanded: boolean },

@@ -1,7 +1,3 @@
-/**
- * admission-queue.ts — Internal AgentManager module extracted from agent-manager.ts.
- */
-
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { normalizeMaxConcurrent, schedulingMaxConcurrent } from "../limits.ts";
@@ -32,10 +28,8 @@ import { getDormant } from "./revival-journal.ts";
 import { startResume, canResumeDormant } from "./resume-execution.ts";
 import { startRevivedContinuation } from "./suspend-revival.ts";
 
-/** Update the max concurrent background agents limit. */
 export function setMaxConcurrent(mgr: ManagerState, n: number) {
   mgr.maxConcurrent = normalizeMaxConcurrent(n);
-  // Start queued agents if the new limit allows
   drainQueue(mgr);
 }
 
@@ -43,16 +37,10 @@ export function getMaxConcurrent(mgr: ManagerState): number {
   return mgr.maxConcurrent;
 }
 
-/** Concrete scheduler bound; configured 0 remains displayable as unlimited. */
 export function getSchedulingMaxConcurrent(mgr: ManagerState): number {
   return schedulingMaxConcurrent(mgr.maxConcurrent);
 }
 
-/**
- * A queued item reached its start while the root's latch is closed: settle it `stopped`
- * with cause `user_stop` instead of starting it. A post-reset continuation settles through
- * its finalizer so the parked task's promise and final notification are still owed once.
- */
 export function refuseClosedStart(
   mgr: ManagerState,
   record: AgentRecord,
@@ -68,11 +56,6 @@ export function refuseClosedStart(
   publishStoppedQueued(mgr, record);
 }
 
-/**
- * Terminal state for a queued record that will never start. The caller
- * publishes: a post-reset continuation through its finalizer, any other
- * record through `publishStoppedQueued`.
- */
 export function stopQueuedRecord(
   mgr: ManagerState,
   record: AgentRecord,
@@ -84,33 +67,19 @@ export function stopQueuedRecord(
   record.completedAt = Date.now();
 }
 
-/**
- * Publish a stopped queued record that has no finalizer: at once, or for a
- * verdict-role run after its verdict record. A record published at once is
- * reported settled by the stop (stop_subagent: "stopped and settled") and,
- * like any ordinary queued Agent call, gets no completion nudge; workflow
- * controllers still need it for their aggregate/UI bookkeeping. A record
- * published later was reported pending ("until the terminal completion
- * notification arrives"), so it notifies once, after publication.
- */
 export function publishStoppedQueued(mgr: ManagerState, record: AgentRecord): void {
   let deferred = false;
   finishDeferredWorktreeThen(mgr, record, () => {
     publishTerminal(mgr, record);
-    // Ownership ended while publication was deferred: waiters settle, the host is not touched.
     if (mgr.disposed) return;
     if (record.workflowId === undefined && !deferred) return;
     try {
       mgr.onComplete?.(record);
-    } catch {
-      /* ignore completion side-effect errors */
-    }
+    } catch {}
   });
-  // Set before an asynchronous publish runs, never before a synchronous one.
   deferred = true;
 }
 
-/** Validate and apply a caller-selected model to an idle child session. */
 export async function applyResumeModel(
   mgr: ManagerState,
   record: AgentRecord,
@@ -131,10 +100,6 @@ export async function applyResumeModel(
   }
 }
 
-/**
- * Synchronous validation of a resume's `provider/id`: format, registry,
- * authentication, the parent's scope, and owner-scoped availability.
- */
 export function resolveResumeModel(
   mgr: ManagerState,
   record: AgentRecord,
@@ -149,7 +114,6 @@ export function resolveResumeModel(
   });
 }
 
-/** `resolveResumeModel` for a dormant agent, against the current root context. */
 export function resolveDormantModel(
   mgr: ManagerState,
   snapshot: JournalAgentSnapshot,
@@ -164,10 +128,6 @@ export function resolveDormantModel(
   });
 }
 
-/**
- * Shared caller-model validation for live and dormant resumes: provider/id
- * format, registry availability, model scope (strict), provider closure.
- */
 export function validateResumeModel(
   mgr: ManagerState,
   input: string,
@@ -227,7 +187,6 @@ export function validateResumeModel(
   return model;
 }
 
-/** A live or unsettled run owns the record; resume() refuses it silently. */
 export function resumeBlockedByRun(mgr: ManagerState, id: string, record: AgentRecord): boolean {
   return (
     record.status === "running" ||
@@ -238,7 +197,6 @@ export function resumeBlockedByRun(mgr: ManagerState, id: string, record: AgentR
   );
 }
 
-/** Throw the owner-scoped availability refusal for the record's current provider. */
 export function assertResumeProviderOpen(
   mgr: ManagerState,
   id: string,
@@ -254,13 +212,6 @@ export function assertResumeProviderOpen(
   }
 }
 
-/**
- * Side-effect-free pre-check for callers that prepare a resume (output file,
- * notification ids) before calling `resume()`. Returns false where `resume()`
- * would return undefined without starting (unknown, no session, live run,
- * pending model switch); throws the same `ResumeModelError` it would throw
- * for an invalid model or a closed provider. `resume()` re-checks everything.
- */
 export function assertResumable(
   mgr: ManagerState,
   id: string,
@@ -268,10 +219,6 @@ export function assertResumable(
   options?: { dormant?: boolean; ctx?: ExtensionContext },
 ): boolean {
   const record = mgr.agents.get(id);
-  // Opt-in: a dormant or interrupted agent resumes through `resumeDormant`,
-  // which re-validates everything when it reopens the file. A caller model
-  // is checked here against the current root context (`ctx`), exactly as a
-  // live resume checks it, and throws the same ResumeModelError.
   if (record === undefined && options?.dormant === true) {
     if (!canResumeDormant(mgr, id)) return false;
     const snapshot = getDormant(mgr, id);
@@ -286,7 +233,6 @@ export function assertResumable(
   return true;
 }
 
-/** Start (or queue) a detached resume generation; shared by resume() and wake-ups. */
 export function queueBackgroundResume(
   mgr: ManagerState,
   id: string,
@@ -303,7 +249,6 @@ export function queueBackgroundResume(
 ): void {
   record.isBackground = true;
   beginResultGeneration(record);
-  // A new generation is a new request: an earlier explicit stop no longer applies.
   record.stoppedByUser = undefined;
   record.result = undefined;
   record.error = undefined;
@@ -312,7 +257,6 @@ export function queueBackgroundResume(
   transition(mgr, record, "queued");
 
   const start = () => {
-    // Final admission boundary before a session is created or a run restarts.
     if (!isAdmissionOpen(recordRoot(mgr, record))) {
       refuseClosedStart(mgr, record, hooks.finalize);
       return;
@@ -322,8 +266,6 @@ export function queueBackgroundResume(
     if (revival === undefined) {
       startResume(mgr, id, record, prompt, signal, options);
     } else {
-      // A re-armed record has no session yet: reopen its file (claimed at
-      // re-arm) through the spawn path, as a wake continuation.
       startRevivedContinuation(mgr, id, record, revival, prompt, hooks.finalize);
     }
     if (record.promise !== undefined && (revival === undefined || record.promise !== before)) {
@@ -331,7 +273,6 @@ export function queueBackgroundResume(
     }
   };
   if (occupiesPoolSlot(record) && mgr.runningBackground >= getSchedulingMaxConcurrent(mgr)) {
-    // At the concurrency limit — queue it, drains when a slot frees.
     mgr.queue.push({
       id,
       providerKey: (
@@ -350,22 +291,17 @@ export function queueBackgroundResume(
   }
 }
 
-/** Start queued agents up to the concurrency limit. */
 export function drainQueue(mgr: ManagerState) {
   while (mgr.queue.length > 0 && mgr.runningBackground < getSchedulingMaxConcurrent(mgr)) {
     const next = mgr.queue.shift()!;
     const record = mgr.agents.get(next.id);
     if (!record || record.status !== "queued") continue;
     const owner = mgr.usageScopes.get(next.id)?.owner;
-    // Final admission boundary for queued spawns, resumes and post-reset continuations.
     if (!isAdmissionOpen(recordRoot(mgr, record))) {
       refuseClosedStart(mgr, record, next.finalize);
       continue;
     }
     const block = providerBlock(mgr, next.providerKey, owner, next.modelId);
-    // A post-reset continuation whose account was closed again by a usage
-    // limit waits for the new reset instead of dispatching or dropping; a
-    // transient closure from another run must not hold or drop the task.
     if (block?.usage === true && next.repark !== undefined) {
       next.repark();
       continue;
@@ -384,17 +320,13 @@ export function drainQueue(mgr: ManagerState) {
         if (mgr.disposed) return;
         try {
           mgr.onComplete?.(record);
-        } catch {
-          /* ignore completion side-effect errors */
-        }
+        } catch {}
       });
       continue;
     }
     try {
       next.start();
     } catch (err) {
-      // Late failure (e.g. strict worktree-isolation) — surface on the record
-      // so the user/agent can see it via /agents, then keep draining.
       transition(mgr, record, "error");
       record.error = err instanceof Error ? err.message : String(err);
       record.completedAt = Date.now();
@@ -404,9 +336,7 @@ export function drainQueue(mgr: ManagerState) {
           if (mgr.disposed) return;
           try {
             mgr.onComplete?.(record);
-          } catch {
-            /* ignore completion side-effect errors */
-          }
+          } catch {}
         });
       } else next.finalize(true);
     }

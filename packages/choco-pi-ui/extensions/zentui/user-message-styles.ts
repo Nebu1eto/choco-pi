@@ -220,8 +220,6 @@ function renderSelectedUserMessageStyle(input: UserMessageStyleRenderInput): str
 }
 
 export function renderUserMessageStyle(input: UserMessageStyleRenderInput): string[] {
-  // Raw user input is a terminal trust boundary. Strip every source control,
-  // including OSC 8; Markdown may add its own validated links afterward.
   return renderSelectedUserMessageStyle({
     ...input,
     text: sanitizeUserMessageSourceText(input.text),

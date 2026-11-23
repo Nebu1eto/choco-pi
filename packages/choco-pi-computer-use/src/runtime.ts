@@ -23,7 +23,6 @@ export class StaleResourceStateError extends Error {
   }
 }
 
-/** Bounded insertion-ordered store for immutable agent-facing observations. */
 export class StateStore<T> {
   private readonly records = new Map<string, StoredState<T>>();
   private readonly limit: number;
@@ -66,10 +65,6 @@ interface ResourceRecord {
   tail: Promise<void>;
 }
 
-/**
- * Orders live operations per physical resource while allowing unrelated
- * resources to overlap. Cached state queries bypass this scheduler entirely.
- */
 export class ResourceScheduler {
   private readonly resources = new Map<string, ResourceRecord>();
   private closed = false;
@@ -114,8 +109,6 @@ export class ResourceScheduler {
       if (record.epoch !== baseEpoch)
         throw new StaleResourceStateError(resourceKey, baseEpoch, record.epoch);
       const nextEpoch = record.epoch + 1;
-      // Invalidate the base state before dispatch. If native execution becomes
-      // uncertain or throws after a partial effect, later writes still fail safe.
       record.epoch = nextEpoch;
       return { value: await work(nextEpoch), epoch: nextEpoch };
     });

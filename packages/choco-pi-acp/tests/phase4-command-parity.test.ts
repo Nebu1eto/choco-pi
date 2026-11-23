@@ -59,10 +59,6 @@ function commandName(message: string): string {
 
 class MatrixPiProcess implements PiRpcProcessLike {
   readonly prompts: Array<{ message: string; attachments: PiPromptImage[] }> = [];
-  /**
-   * Whether each prompt went through the session's full Pi turn. Only PiAcpSession.prompt
-   * passes response-frame hooks; the extension-command path calls prompt without them.
-   */
   readonly fullTurn: boolean[] = [];
   readonly extensionUiResponses: PiExtensionUiResponse[] = [];
   private handlers: Array<(event: PiRpcEvent) => void> = [];
@@ -70,7 +66,6 @@ class MatrixPiProcess implements PiRpcProcessLike {
 
   readonly commands: CommandInfo[] = COMMAND_MATRIX.map(({ command }) => {
     const name = command.slice(1);
-    // `/review` is the reviewer prompt template; `/review-assist` is the interactive extension.
     const source =
       name === "check" || name === "review"
         ? "prompt"
@@ -129,7 +124,6 @@ class MatrixPiProcess implements PiRpcProcessLike {
       });
     }
 
-    // Pi's response frame precedes the run's agent_settled on stdout.
     hooks.onResponseFrame?.();
     queueMicrotask(() => this.emit({ type: "agent_settled" }));
     return "started";
@@ -167,7 +161,6 @@ test(
       conn: asAgentConn(client),
     });
     const agent = new PiAcpAgent(asAgentConn(client));
-    // The real SessionManager binds this fixture's prebuilt session to the agent.
     Object.assign(agent, { sessions } satisfies { sessions: SessionManagerLike });
     await agent.refreshAvailableCommands("phase4-parity");
 
@@ -232,8 +225,6 @@ test(
   },
 );
 
-// component-rpc-lifecycle.test.ts owns command discovery and source-routing assertions.
-// This opt-in case adds only a bounded no-hang check against a real Pi subprocess.
 test(
   "Phase 4 representative commands settle through real Pi",
   { skip: process.env.PI_ACP_REAL_PI !== "1", timeout: 45_000 },

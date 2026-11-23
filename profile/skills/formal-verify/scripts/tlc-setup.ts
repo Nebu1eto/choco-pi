@@ -1,12 +1,4 @@
 #!/usr/bin/env node
-// Explicit setup for the formal-verify skill: downloads the pinned tla2tools.jar,
-// verifies its SHA-256, and reports the Java version. The checker never downloads
-// anything itself.
-//
-//   node tlc-setup.ts [--dir <dir>]
-//
-// Prints one JSON document. Exit 0 when the jar is verified and Java is usable,
-// 1 when the jar is present but Java is missing or too old, 2 on any other failure.
 
 import { randomBytes } from "node:crypto";
 import { mkdir, open, rename, rm, stat } from "node:fs/promises";

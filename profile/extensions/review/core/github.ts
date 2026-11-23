@@ -6,28 +6,6 @@ import {
   runtimeTypeOf,
   type RuntimeValue,
 } from "../../lib/runtime-values.ts";
-/**
- * Atomic GitHub pull request review submission.
- *
- * Three rules shape this file:
- *
- * 1. One request, not one per comment. GitHub's "Create a review for a pull
- *    request" endpoint takes the body and the whole `comments` array together
- *    (`POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews`), which is what
- *    makes a review land as a single unit the way the web UI does. Omitting
- *    `event` leaves the review `PENDING` so a human can inspect it on GitHub
- *    before submitting.
- * 2. Deciding is separate from doing. `planReviewSubmission` is pure and
- *    produces everything a confirmation dialog needs; `submitReviewPlan` is the
- *    only function that talks to the network, and it refuses a plan that
- *    requires confirmation until the caller states that it was confirmed.
- * 3. The payload never touches a command line. Comment bodies are arbitrary
- *    user text, so the JSON travels on stdin through `gh api --input -`.
- *
- * Error paths carry no tokens, no raw provider response bodies, and no comment
- * text. They do carry GitHub's structured validation errors, because a bare
- * status code cannot tell a reviewer which comment GitHub refused.
- */
 
 import { locateComment, revealedContextFits, type LocateCommentOptions } from "./anchor.ts";
 import { hunkWithExpandedContext, type HunkExpansion } from "./expand.ts";
@@ -42,28 +20,10 @@ import type {
   ReviewRecord,
 } from "./types.ts";
 
-/* ------------------------------------------------------------------ seams */
-
-/**
- * Child process seam for `gh`.
- *
- * An alias of `ExecRunner` rather than a parallel type. The two were once
- * separate, and because a runner that ignores `input` is still structurally
- * assignable to one that accepts it, the extension could inject a git runner
- * here and silently drop the review payload. One type and one default runner
- * remove that possibility.
- */
 export type GhRunner = ExecRunner;
 
-/* ------------------------------------------------------------------ types */
-
-/** Review actions accepted by the `event` field of the create-review endpoint. */
 export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
 
-/**
- * What the submission should do. `DRAFT` omits `event` from the payload, which
- * leaves the review in the `PENDING` state on GitHub.
- */
 export type SubmissionEvent = ReviewEvent | "DRAFT";
 
 export type PullRequestRef = {
@@ -72,26 +32,19 @@ export type PullRequestRef = {
   number: number;
 };
 
-/** One entry of the `comments` array, in the endpoint's own field names. */
 export type GithubReviewCommentPayload = {
   path: string;
   body: string;
-  /** Last line of the range, in the file numbering of `side`. */
   line: number;
   side: DiffSide;
-  /** First line of a multi-line range; absent for a single-line comment. */
   start_line?: number;
-  /** Required by GitHub whenever `start_line` is present. */
   start_side?: DiffSide;
 };
 
-/** The exact JSON body sent to the create-review endpoint. */
 export type GithubReviewPayload = {
   commit_id: string;
   body?: string;
-  /** Absent for a pending draft review. */
   event?: ReviewEvent;
-  /** Left out when no comment goes inline (the field is optional in GitHub's API). */
   comments?: GithubReviewCommentPayload[];
 };
 
@@ -101,12 +54,9 @@ export type PlannedComment = {
   side: DiffSide;
   line: number;
   startLine?: number;
-  /** Where the comment was written, before any relocation. */
   origin: { side: DiffSide; line: number; startLine?: number };
   relocated: boolean;
-  /** Present when the comment's lines moved: found again by its exact text. */
   relocationMethod?: "exact";
-  /** Always false: a comment keeps its range's length or is not placed. */
   rangeAdjusted: boolean;
 };
 
@@ -114,33 +64,23 @@ export type DemotedComment = {
   commentId: string;
   path: string;
   side: DiffSide;
-  /** Original position, preserved so the note can state where it came from. */
   line: number;
   startLine?: number;
-  /**
-   * `outside-diff`: the line (or one end of the range) is not inside one hunk
-   * of the pull request's diff on its side, so GitHub would refuse the whole
-   * review; the others: the head moved and the anchor could not follow.
-   */
   reason: "invalid-anchor" | "not-found" | "ambiguous" | "outside-diff";
   message: string;
   body: string;
-  /** Source text the record holds for the comment; absent for a sensitive file. */
   snippet?: string;
 };
 
 export type ReviewSubmissionPlan = {
   pullRequest: PullRequestRef;
   event: SubmissionEvent;
-  /** Head the comments were written against. */
   recordHeadSha: string;
-  /** Head the review will be attached to, sent as `commit_id`. */
   submitHeadSha: string;
   headMoved: boolean;
   payload: GithubReviewPayload;
   placedComments: PlannedComment[];
   demotedComments: DemotedComment[];
-  /** Number of inline comments in the payload. */
   commentCount: number;
   relocatedCount: number;
   demotedCount: number;
@@ -152,7 +92,6 @@ export type SubmittedReview = {
   id?: number;
   state?: string;
   htmlUrl?: string;
-  /** True when the review was created as a pending draft. */
   draft: boolean;
 };
 
@@ -172,14 +111,6 @@ export type ReviewSubmissionErrorKind =
   | "gh-failed"
   | "gh-response";
 
-/**
- * One entry of a GitHub `422 Validation Failed` `errors` array, reduced to the
- * documented diagnostic fields.
- *
- * `detail` is GitHub's per-error `message`, which the REST troubleshooting
- * documentation names as the way to diagnose `code: "custom"` — the code used
- * for review comment positions that are not part of the diff.
- */
 export type GithubFieldError = {
   resource?: string;
   field?: string;
@@ -189,9 +120,7 @@ export type GithubFieldError = {
 
 export class ReviewSubmissionError extends Error {
   readonly kind: ReviewSubmissionErrorKind;
-  /** HTTP status, when the failure came from an API response. */
   readonly status?: number;
-  /** Structured validation errors, so a caller can render them itself. */
   readonly apiErrors: readonly GithubFieldError[];
 
   constructor(
@@ -206,8 +135,6 @@ export class ReviewSubmissionError extends Error {
     this.apiErrors = details.apiErrors ?? [];
   }
 }
-
-/* ------------------------------------------------------------- gh command */
 
 const API_HEADERS = [
   "-H",
@@ -227,12 +154,6 @@ function isMissingBinary(error: RuntimeValue): boolean {
   return code === "ENOENT" || code === "EACCES";
 }
 
-/**
- * Reduce `gh` stderr to a status code.
- *
- * Provider error bodies can echo request content and account details, so only
- * the HTTP status is carried into user-visible messages.
- */
 function httpStatus(stderr: string): number | undefined {
   const match = /\bHTTP\s+(\d{3})\b/.exec(stderr);
   return match ? Number(match[1]) : undefined;
@@ -241,16 +162,8 @@ function httpStatus(stderr: string): number | undefined {
 const MAX_DETAIL_LENGTH = 200;
 const MAX_REPORTED_ERRORS = 5;
 const TOKEN_PATTERN = /\b(gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,})\b/g;
-/** Fields that identify where a review comment was refused. */
 const POSITION_FIELDS = new Set(["line", "start_line", "side", "start_side", "path", "position"]);
 
-/**
- * Strip credentials and any echoed review text from a provider string.
- *
- * GitHub's validation messages are templates rather than content echoes, but
- * the caller knows exactly which text must never be logged, so redact it here
- * instead of trusting the provider.
- */
 function sanitize(text: string, secrets: readonly string[]): string {
   let safe = text.replaceAll(TOKEN_PATTERN, "[redacted]");
   for (const secret of secrets) {
@@ -266,12 +179,6 @@ function pickString(source: Record<string, RuntimeValue>, key: string): string |
   return isString(value) && value.trim() ? value : undefined;
 }
 
-/**
- * Parse a GitHub error response into its documented fields only.
- *
- * Unknown properties are dropped rather than forwarded, so a change in the
- * response shape cannot turn into an accidental body dump.
- */
 function parseApiErrorBody(
   text: string,
   secrets: readonly string[],
@@ -352,7 +259,6 @@ function rejectionMessage(
 }
 
 function isUnauthenticated(code: number, stderr: string): boolean {
-  // `gh help exit-codes`: exit status 4 means authentication is required.
   if (code === 4) return true;
   const status = httpStatus(stderr);
   if (status === 401) return true;
@@ -365,7 +271,6 @@ async function runGh(
     cwd?: string;
     input?: string;
     runner?: GhRunner;
-    /** Text that must never appear in an error message, such as comment bodies. */
     secrets?: readonly string[];
   },
 ): Promise<string> {
@@ -389,9 +294,6 @@ async function runGh(
   if (isUnauthenticated(result.code, result.stderr)) {
     throw new ReviewSubmissionError("gh-unauthenticated", GH_UNAUTHENTICATED_MESSAGE);
   }
-  // `gh api` copies the JSON error body to stdout and prints only
-  // `gh: <message> (HTTP <status>)` to stderr, so the structured errors are on
-  // stdout. stderr is checked too, in case only it carries a JSON body.
   const secrets = options.secrets ?? [];
   const status = httpStatus(result.stderr) ?? httpStatus(result.stdout);
   const parsed =
@@ -402,7 +304,6 @@ async function runGh(
   });
 }
 
-/** Read the current head of a pull request, to detect a mid-review force push. */
 export async function readPullRequestHead(
   pullRequest: PullRequestRef,
   options: { cwd?: string; runner?: GhRunner } = {},
@@ -441,14 +342,6 @@ export async function readPullRequestHead(
   };
 }
 
-/* --------------------------------------------------------------- planning */
-
-/**
- * Every accepted submission event, as data.
- *
- * `SubmissionEvent` disappears at run time, so the same set is kept here for
- * the checks that guard callers TypeScript never sees.
- */
 const SUBMISSION_EVENTS: readonly SubmissionEvent[] = [
   "APPROVE",
   "REQUEST_CHANGES",
@@ -456,7 +349,6 @@ const SUBMISSION_EVENTS: readonly SubmissionEvent[] = [
   "DRAFT",
 ];
 
-/** Name a rejected value without echoing an arbitrary object into a message. */
 function describeEventValue(value: RuntimeValue): string {
   if (isString(value)) return JSON.stringify(value);
   if (value === null) return "null";
@@ -465,14 +357,6 @@ function describeEventValue(value: RuntimeValue): string {
   return `${runtimeTypeOf(value)} ${String(value)}`;
 }
 
-/**
- * Fail closed on an event this module does not recognize.
- *
- * The event decides whether a human is asked before the review reaches the
- * author, so an unknown value must be refused rather than resolved to the
- * pre-approved `COMMENT` path. `core/` is built to ship without choco-pi, which
- * means callers outside TypeScript's checking are expected.
- */
 function isSubmissionEvent(value: RuntimeValue): value is SubmissionEvent {
   return SUBMISSION_EVENTS.some((event) => event === value);
 }
@@ -492,15 +376,6 @@ export function eventForVerdict(verdict: ReviewRecord["verdict"]): SubmissionEve
   return "DRAFT";
 }
 
-/**
- * Only a plain `COMMENT` submission is pre-approved.
- *
- * Approving, requesting changes, and leaving a pending draft all change how the
- * review appears to the author, so the caller must confirm them explicitly.
- *
- * An unrecognized event is rejected instead of returning `undefined`, which a
- * caller would read as "no confirmation needed".
- */
 export function confirmationReasonFor(event: SubmissionEvent): string | undefined {
   const known = assertSubmissionEvent(event);
   if (known === "APPROVE") return "Approving the pull request on your behalf.";
@@ -519,12 +394,6 @@ type CommentPlacement =
   | { kind: "placed"; comment: PlannedComment }
   | { kind: "demoted"; comment: DemotedComment };
 
-/**
- * Where a comment goes, decided by `locateComment` (core/anchor.ts) on the
- * diff the review will be attached to: the same decision the view draws.
- * `shown` is the context the reader revealed, which applies only while that
- * diff is the one reviewed.
- */
 function placementFor(
   comment: ReviewComment,
   diff: DiffModel,
@@ -580,16 +449,6 @@ function placementFor(
   };
 }
 
-/**
- * Whether GitHub takes `comment` inline on `diff`. GitHub's REST docs say
- * `line` and `start_line` are lines "in the pull request diff" and `side`
- * is the side of the last line; this module sends `start_side` equal to
- * `side`. Assumed beyond the docs (no GitHub page found offline or online
- * states it): both ends of a range must be in the same hunk, with start
- * before end, as the web UI only lets a selection stay inside one hunk.
- * Within a hunk the lines of one side are numbered consecutively, so both
- * ends in one hunk means every line between them is too.
- */
 function insideOneHunk(
   comment: { path: string; side: DiffSide; line: number; startLine?: number },
   diff: DiffModel,
@@ -625,7 +484,6 @@ function outsideDiff(comment: ReviewComment, placed: PlannedComment): DemotedCom
   };
 }
 
-/** A code block that no backtick run inside `text` can close early. */
 function fenced(text: string): string[] {
   const longest = Math.max(2, ...[...text.matchAll(/`+/g)].map((match) => match[0].length));
   const fence = "`".repeat(longest + 1);
@@ -639,7 +497,6 @@ function quote(text: string): string[] {
     .map((line) => (line ? `> ${line}` : ">"));
 }
 
-/** Render demoted comments as file-level notes appended to the review body. */
 function demotionNotes(
   demoted: readonly DemotedComment[],
   recordHeadSha: string,
@@ -688,7 +545,6 @@ function payloadComment(comment: PlannedComment, body: string): GithubReviewComm
     body,
     line: comment.line,
     side: comment.side,
-    // A one-line range is a single-line comment: GitHub wants start_line before line.
     ...propertiesWhen(
       !(comment.startLine === undefined || comment.startLine === comment.line),
       () => ({
@@ -702,35 +558,12 @@ function payloadComment(comment: PlannedComment, body: string): GithubReviewComm
 export type PlanReviewSubmissionInput = {
   record: ReviewRecord;
   pullRequest: PullRequestRef;
-  /** Explicit, so no submission action is ever chosen implicitly. */
   event: SubmissionEvent;
-  /** Head observed on GitHub immediately before planning. */
   currentHeadSha: string;
-  /**
-   * The pull request's diff at `currentHeadSha`. Required: only lines inside
-   * one of its hunks go inline, and when its base or head differs from the
-   * record's, comments are re-anchored on it by their text.
-   */
   currentDiff?: DiffModel;
-  /**
-   * Context the reader revealed around hunks (by hunk id), so comments written
-   * on it are found. Used only while `currentDiff` is the diff that was
-   * reviewed (same base and head); otherwise those comments are outdated.
-   */
   expandedContext?: ReadonlyMap<string, HunkExpansion>;
 };
 
-/**
- * Turn a review record into one submission plan, without performing any I/O.
- *
- * Every comment is located on the current diff by `locateComment`, the one
- * decision the view also draws, whether or not the head moved; no stored line
- * is trusted. A comment goes inline only when it is placed and its line (both
- * ends of a range) is inside one hunk of that diff on its side; every other
- * one (written on expanded context, outdated) goes into the review body with
- * its file, lines and source, never dropped and never sent inline, because
- * GitHub refuses the whole review for one such line.
- */
 export function planReviewSubmission(input: PlanReviewSubmissionInput): ReviewSubmissionPlan {
   const { record, pullRequest, currentHeadSha } = input;
   const event = assertSubmissionEvent(input.event);
@@ -748,8 +581,6 @@ export function planReviewSubmission(input: PlanReviewSubmissionInput): ReviewSu
       "The pull request's diff is needed to tell which comments GitHub can take inline. Nothing was submitted.",
     );
   }
-  // Revealed context is read from the base revision: it holds while the base is
-  // the reviewed one and the context still sits against its hunk, head moved or not.
   const expansions = diff.baseSha === record.baseSha ? input.expandedContext : undefined;
   const shown = expansions
     ? (hunk: DiffHunk) => {
@@ -766,7 +597,6 @@ export function planReviewSubmission(input: PlanReviewSubmissionInput): ReviewSu
     if (placement.kind === "placed" && insideOneHunk(placement.comment, diff)) return placement;
     const demoted =
       placement.kind === "placed" ? outsideDiff(comment, placement.comment) : placement.comment;
-    // The body quotes the source the record holds, except for a file the view hides.
     const hidden = hiddenPaths.has(comment.path) || isSensitivePath(comment.path);
     if (hidden || comment.anchor.snippet.length === 0) return { kind: "demoted", comment: demoted };
     return { kind: "demoted", comment: { ...demoted, snippet: comment.anchor.snippet } };
@@ -826,12 +656,6 @@ const EVENT_LABELS = {
   DRAFT: "Pending draft (not submitted)",
 } satisfies Record<SubmissionEvent, string>;
 
-/**
- * Describe a plan for a human confirmation dialog.
- *
- * Rendering stays out of the transport path so the dialog can be replaced
- * without touching submission behaviour.
- */
 export function describeSubmissionPlan(plan: ReviewSubmissionPlan): string {
   const { owner, repo, number } = plan.pullRequest;
   const lines = [
@@ -854,31 +678,16 @@ export function describeSubmissionPlan(plan: ReviewSubmissionPlan): string {
   return lines.join("\n");
 }
 
-/* ------------------------------------------------------------- submission */
-
 export type SubmitReviewOptions = {
-  /**
-   * Must be `true` for any plan with `requiresConfirmation`. Required rather
-   * than optional so a caller cannot submit an unconfirmed approval by
-   * forgetting a field.
-   */
   confirmed: boolean;
   cwd?: string;
   runner?: GhRunner;
 };
 
-/**
- * Send one plan as a single create-review request.
- *
- * The JSON body is written to the child's stdin (`gh api --input -`), so
- * comment text is never interpolated into a command line.
- */
 export async function submitReviewPlan(
   plan: ReviewSubmissionPlan,
   options: SubmitReviewOptions,
 ): Promise<SubmittedReview> {
-  // The plan may arrive from outside TypeScript, so the confirmation decision
-  // is re-derived from the event rather than trusted as a carried flag.
   const event = assertSubmissionEvent(plan.event);
   const confirmationReason = plan.confirmationReason ?? confirmationReasonFor(event);
   if (
@@ -918,7 +727,6 @@ export async function submitReviewPlan(
     // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     parsed = JSON.parse(stdout) as { id?: number; state?: string; html_url?: string };
   } catch {
-    // The review was created; only the confirmation payload was unreadable.
     return { draft };
   }
   return {
@@ -932,32 +740,15 @@ export async function submitReviewPlan(
 export type PrepareReviewSubmissionDeps = {
   cwd?: string;
   runner?: GhRunner;
-  /**
-   * Diff of the pull request at the given head: always read, since only lines
-   * inside its hunks go inline. Without it nothing is planned or sent.
-   * Injected so this module stays independent of how the diff is fetched.
-   */
   loadHeadDiff?: (headSha: string) => Promise<DiffModel>;
-  /**
-   * The diff the review was shown, used instead of `loadHeadDiff` while the
-   * head is still its head: reading it again would resolve the pull request a
-   * second time while the review still holds its worktree.
-   */
   reviewedDiff?: DiffModel;
 };
 
-/**
- * Verify the pull request head, then plan the submission against it.
- *
- * Nothing is sent here: the caller confirms the returned plan and then calls
- * `submitReviewPlan`.
- */
 export async function prepareReviewSubmission(
   input: {
     record: ReviewRecord;
     pullRequest: PullRequestRef;
     event: SubmissionEvent;
-    /** The context the reader revealed, as the view returned it. */
     expandedContext?: ReadonlyMap<string, HunkExpansion>;
   },
   deps: PrepareReviewSubmissionDeps = {},
@@ -973,7 +764,6 @@ export async function prepareReviewSubmission(
       `The pull request head moved from ${input.record.headSha} to ${head.headSha}. Refresh the review before submitting.`,
     );
   }
-  // Read even when the head did not move: it decides which comments go inline.
   assertSubmissionEvent(input.event);
   const currentDiff =
     deps.reviewedDiff && deps.reviewedDiff.headSha === head.headSha

@@ -13,7 +13,6 @@ type NativeItemValue =
   | (() => NativeItemValue)
   | null;
 
-// Identity against the wrapper rejects already-boxed values and never calls user code.
 function isPrimitiveBigInt<Value>(value: Value): boolean {
   const boxed = Object(value);
   return boxed !== value && boxed instanceof BigInt;
@@ -38,7 +37,6 @@ function isNativeItemValue<Value>(value: Value): value is Value & NativeItemValu
   );
 }
 
-// Pi content blocks and tool details are open objects: unknown members are ignored.
 const imageGenerationBlockValidator = compile(
   obj(
     {
@@ -79,7 +77,6 @@ const webSearchCallValidator = compile(
   ),
 );
 
-// Members below may sit on the prototype of live objects, so these are shallow object guards.
 interface EncryptedOutputLike {
   encrypted_output?: unknown;
 }

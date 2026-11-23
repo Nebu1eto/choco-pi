@@ -227,7 +227,6 @@ test("goal recovery reader scopes ownership to the requested owner", () => {
     providerLimitResumeScheduled: false,
   };
   const calls: RuntimeValue[][] = [];
-  // A goal package that accepts the owner argument answers only for its own session.
   const scoped = {
     recoveryOwnership: (...args: RuntimeValue[]) => {
       calls.push(args);
@@ -245,7 +244,6 @@ test("goal recovery reader scopes ownership to the requested owner", () => {
   });
   assert.deepEqual(calls, [["root-a"], ["root-b"], []]);
 
-  // An entry that ignores the argument but names another owner is rejected.
   withSlot(
     GOAL_RECOVERY_SYMBOL,
     { recoveryOwnership: () => ({ ...goal, owner: "root-a" }) },
@@ -257,7 +255,6 @@ test("goal recovery reader scopes ownership to the requested owner", () => {
       });
     },
   );
-  // A result without an owner comes from a goal package that predates it and is accepted.
   withSlot(GOAL_RECOVERY_SYMBOL, { recoveryOwnership: () => goal }, () => {
     assert.deepEqual(readGoalRecoveryOwnership("root-b"), goal);
   });
@@ -266,7 +263,6 @@ test("goal recovery reader scopes ownership to the requested owner", () => {
   });
 });
 
-/** Whether `value` matches `schema`, narrowing like the compiled validator's check. */
 function checkSchema<S extends JsonSchema>(schema: S, value: RuntimeValue): value is Static<S> {
   return compile(schema).check(value);
 }

@@ -1,6 +1,3 @@
-/**
- * Tool path resolution: managed installs, platform packages, GitHub binaries, npm globals, and pip user installs.
- */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
@@ -20,11 +17,6 @@ import { TOOLS_DIR, _installerRequire } from "./install-lock.ts";
 import { GITHUB_BIN_DIR, installerPlatform } from "./installer-env.ts";
 import { TOOLS, type ToolDefinition } from "./tool-catalog.ts";
 
-/**
- * Resolve an installed archive TREE BUNDLE (an `archive` tool with no launcher)
- * to its extract dir, confirmed via the tree marker. Returns undefined when the
- * tool isn't a tree bundle or isn't extracted yet.
- */
 export async function getArchiveTreeBundlePath(tool: ToolDefinition): Promise<string | undefined> {
   if (tool.installStrategy !== "archive" || tool.archive?.launcher) {
     return undefined;
@@ -41,18 +33,6 @@ export async function getArchiveTreeBundlePath(tool: ToolDefinition): Promise<st
   }
 }
 
-/**
- * Get the path to a tool (global or local)
- */
-/**
- * Resolve a tool's native binary from its per-platform optional-dependency
- * package (e.g. `@ast-grep/cli-linux-x64-gnu`), following pnpm/bun symlinks via
- * the MAIN package's resolver. This is the reliable path for npm/pnpm/bun
- * installs: the JS launcher in the main package frequently can't locate the
- * binary under a symlink/isolated store (or after a skipped postinstall), but
- * the binary is installed — find it directly. Returns undefined if the tool
- * has no platformPackage spec, the platform is unsupported, or it isn't found.
- */
 export function resolvePlatformPackageBinary(tool: ToolDefinition): string | undefined {
   const spec = tool.platformPackage;
   if (!spec || !tool.packageName) return undefined;
@@ -60,8 +40,6 @@ export function resolvePlatformPackageBinary(tool: ToolDefinition): string | und
   if (!suffix) return undefined;
   const platformPkg = `${spec.base ?? tool.packageName}-${suffix}`;
   try {
-    // Resolve the platform package FROM the main package, which owns it as an
-    // optional dependency (pnpm exposes it there, not to arbitrary roots).
     const mainPkgJson = _installerRequire.resolve(`${tool.packageName}/package.json`);
     const fromMain = createRequire(mainPkgJson);
     let pkgDir: string;
@@ -77,30 +55,12 @@ export function resolvePlatformPackageBinary(tool: ToolDefinition): string | und
         if (existsSync(candidate)) return candidate;
       }
     }
-  } catch {
-    // not installed / not resolvable for this layout
-  }
+  } catch {}
   return undefined;
 }
 
-/**
- * Whether the most recent {@link getToolPath} resolution for a tool saw a
- * transient probe failure on some candidate before landing on its answer
- * (#1569). A side channel, in the same shape as `lastManagedInstallVersion`
- * above: `getToolPath` keeps its `string | undefined` return so its many
- * callers are untouched, and `ensureToolResolved` reads this immediately
- * after awaiting it to decide how long the persisted probe-cache entry may
- * be trusted for.
- */
 export const lastResolveTransient = new Map<string, boolean>();
 
-/**
- * True when the tool path `getToolPath` most recently returned for `toolId`
- * was selected after a candidate tier failed transiently — a stalled or
- * unspawnable probe, never a clean "not found". Such a selection may be a
- * degraded fallback masking a preferred tier that is actually fine, so a
- * caller persisting it must not trust it for the full 24h TTL (#1569).
- */
 export function wasLastResolveTransient(toolId: string): boolean {
   return lastResolveTransient.get(toolId) ?? false;
 }
@@ -122,19 +82,10 @@ async function getToolPathResolved(
   const tool = TOOLS.find((t) => t.id === toolId);
   if (!tool) return undefined;
 
-  // Tree-bundle archives (no launcher) are "installed" ONLY when extracted — the
-  // extract dir is authoritative. No PATH/global/npm fallback: the runtime that
-  // drives the bundle (e.g. pwsh) may be on PATH while the bundle itself is
-  // absent, which must NOT read as installed (else the bundle never downloads).
   if (tool.installStrategy === "archive" && !tool.archive?.launcher) {
     return getArchiveTreeBundlePath(tool);
   }
 
-  // Version-pin drift detection (#589) is scoped to npm-strategy tools with an
-  // explicit `@version` pin — everything else (unpinned npm entries, pip/gem,
-  // github/maven/archive) has no drift signal to piggyback on here. Clear any
-  // stale entry up front so a miss on the checks below never leaves a prior
-  // call's version lingering for ensureTool() to misread.
   const pinnedVersion =
     tool.installStrategy === "npm" && tool.packageName
       ? parsePinnedVersion(tool.packageName)
@@ -147,12 +98,8 @@ async function getToolPathResolved(
       }
     : undefined;
 
-  // Fast path: check local npm install first (where auto-install places tools).
-  // This avoids the ~2-5s overhead of spawning npm global probes and PATH
-  // searches for tools we already manage locally.
   const localBase = path.join(TOOLS_DIR, "node_modules", ".bin", tool.binaryName || tool.id);
   if (installerPlatform() === "win32") {
-    // Prefer .cmd over extensionless — Node.js can't execute POSIX shell scripts on Windows
     const cmdPath = `${localBase}.cmd`;
     try {
       await fs.access(cmdPath);
@@ -160,11 +107,7 @@ async function getToolPathResolved(
         return cmdPath;
       }
       logSessionStart(`auto-install verify: ${cmdPath} exists but is broken, will reinstall`);
-    } catch {
-      // fall through to .exe
-    }
-    // Also check .exe — some postinstall scripts (e.g. @ast-grep/cli) place a
-    // .exe directly without a .cmd wrapper
+    } catch {}
     const exePath = `${localBase}.exe`;
     try {
       await fs.access(exePath);
@@ -172,9 +115,7 @@ async function getToolPathResolved(
         return exePath;
       }
       logSessionStart(`auto-install verify: ${exePath} exists but is broken, will reinstall`);
-    } catch {
-      // fall through to extensionless
-    }
+    } catch {}
   }
   if (installerPlatform() !== "win32") {
     try {
@@ -183,15 +124,9 @@ async function getToolPathResolved(
         return localBase;
       }
       logSessionStart(`auto-install verify: ${localBase} exists but is broken, will reinstall`);
-    } catch {
-      // fall through to global checks
-    }
+    } catch {}
   }
 
-  // npm/pnpm/bun: prefer the native per-platform binary directly. The main
-  // package's launcher often can't find it under a symlink store / after a
-  // skipped postinstall, but the binary IS installed — resolve + verify it
-  // before falling back to PATH or a (re)install.
   if (tool.platformPackage) {
     const platformBin = resolvePlatformPackageBinary(tool);
     if (platformBin && (await verifyToolBinary(platformBin, undefined, onTransient))) {
@@ -203,10 +138,6 @@ async function getToolPathResolved(
     );
   }
 
-  // For github/maven tools, prefer the managed install (~/.choco-pi-lsp/bin/) over
-  // PATH. Managed installs are known-good binaries/launchers choco-pi-lsp downloaded
-  // as a fallback when a PATH-resolved tool was broken or missing. Checking
-  // before PATH ensures force-reinstall flows find the newly downloaded binary.
   if (
     tool.installStrategy === "github" ||
     tool.installStrategy === "maven" ||
@@ -216,7 +147,6 @@ async function getToolPathResolved(
     if (githubPath) return githubPath;
   }
 
-  // Check if global
   if (await isCommandAvailable(tool.checkCommand, tool.checkArgs)) {
     return tool.checkCommand;
   }
@@ -228,7 +158,6 @@ async function getToolPathResolved(
     }
   }
 
-  // For pip tools, also probe user-level script locations
   if (tool.installStrategy === "pip") {
     const pipPath = await findPipUserToolPath(tool.binaryName || tool.id, onTransient);
     if (pipPath) {
@@ -254,9 +183,7 @@ export async function findGitHubToolPath(binaryName: string): Promise<string | u
     try {
       await fs.access(candidate);
       return candidate;
-    } catch {
-      // continue
-    }
+    } catch {}
   }
   return undefined;
 }
@@ -312,9 +239,7 @@ export async function findNpmGlobalToolPath(
         if (await verifyToolBinary(candidate, undefined, onTransient)) {
           return candidate;
         }
-      } catch {
-        // continue
-      }
+      } catch {}
     }
   }
 
@@ -340,11 +265,6 @@ async function getNpmGlobalBinCandidates(onTransient?: () => void): Promise<stri
     add(path.join(os.homedir(), ".npm-global", "bin"));
   }
 
-  // Global bin dirs for every installed manager (npm/pnpm/yarn/bun) — a tool
-  // may have been installed globally via any of them. `onTransient` surfaces
-  // a manager whose availability probe stalled rather than genuinely failed,
-  // so its bin dir may be missing from `dirs` for a reason other than "not
-  // installed" (#1585).
   for (const dir of await allAvailableGlobalBinDirs(onTransient)) {
     add(dir);
   }
@@ -370,9 +290,7 @@ export async function findPipUserToolPath(
           if (!/^python\d+$/i.test(entry.name)) continue;
           scriptDirs.push(path.join(userBase, entry.name, "Scripts"));
         }
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
 
     for (const dir of scriptDirs) {
@@ -390,9 +308,7 @@ export async function findPipUserToolPath(
           if (await verifyToolBinary(candidate, undefined, onTransient)) {
             return candidate;
           }
-        } catch {
-          // continue
-        }
+        } catch {}
       }
     }
   }
@@ -431,7 +347,6 @@ async function getPythonUserBaseCandidates(): Promise<string[]> {
   for (const probe of probes) {
     const userBase = await new Promise<string>((resolve) => {
       const isWin = process.platform === "win32";
-      // Bake args into command string when shell:true on Windows to avoid DEP0190.
       const spawnCmd = isWin ? [probe.command, ...probe.args].join(" ") : probe.command;
       let proc: ReturnType<typeof spawn>;
       try {
@@ -440,8 +355,6 @@ async function getPythonUserBaseCandidates(): Promise<string[]> {
           shell: isWin,
         });
       } catch {
-        // SYNCHRONOUS spawn throw (Windows `spawn UNKNOWN`/EINVAL, the
-        // pidusage bug class, #533) — best-effort probe, resolve empty.
         resolve("");
         return;
       }

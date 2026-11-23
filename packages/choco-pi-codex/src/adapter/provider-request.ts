@@ -123,12 +123,6 @@ function hasCanonicalAliasEndpoint(ctx: ExtensionContext, state: AdapterState): 
   return endpoint?.modelKey === canonicalCodexAliasModelKey(model) && endpoint.trusted;
 }
 
-/**
- * Whether a normal request for the current model reaches the native replay
- * (`rewriteCodexCompactedProviderRequest`): the same gates as
- * {@link rewriteCodexProviderRequest} up to it. When false, an opaque Codex
- * checkpoint would go out as its placeholder summary, so the caller guards it.
- */
 export function codexNativeReplayApplies(ctx: ExtensionContext, state: AdapterState): boolean {
   if (state.config.voiceFeaturesOnly || ctx.model === undefined) return false;
   const plan = resolveCodexRuntimePlanForState(ctx, state);
@@ -164,11 +158,6 @@ export function captureActiveProviderSystemPrompt(
   if (instructions !== undefined) state.activeProviderSystemPrompt = instructions;
 }
 
-/**
- * This hook boundary never authorizes Daybreak: stock Responses providers must not send
- * access_programs, and the custom Codex provider re-applies its frozen decision after hooks.
- * Every return path, including early non-rewrite paths, therefore drops a stale field.
- */
 function withoutAccessPrograms(
   original: BoundaryValue,
   rewritten: BoundaryValue | undefined,
@@ -178,12 +167,6 @@ function withoutAccessPrograms(
   return withoutCodexAccessPrograms(payload);
 }
 
-/**
- * api.openai.com subscription sign-in accepts `service_tier` but does not honor it
- * (a requested "priority" is echoed back as "default"), so Fast mode is reported
- * as unavailable there and the field is never sent. API-key `openai` requests and
- * every other provider keep their service tier untouched.
- */
 function withoutSubscriptionSignInServiceTier(
   original: BoundaryValue,
   rewritten: BoundaryValue | undefined,
@@ -194,18 +177,12 @@ function withoutSubscriptionSignInServiceTier(
   return rest;
 }
 
-/**
- * Rewrite one outgoing request. Throws `CodexRequestRefusedError` when the
- * latest native checkpoint cannot be replayed for it (see
- * `rewriteCodexCompactedProviderRequest`); `pi` journals that refusal.
- */
 export async function rewriteCodexProviderRequest(
   payload: BoundaryValue,
   ctx: ExtensionContext,
   state: AdapterState,
   pi?: Pick<ExtensionAPI, "appendEntry">,
 ): Promise<BoundaryValue | undefined> {
-  // Snapshot before the first await: the request belongs to the model selected now.
   const subscriptionSignIn = isOpenAISubscriptionSignInModel(ctx.model, ctx.modelRegistry);
   const rewritten = withoutAccessPrograms(
     payload,
@@ -240,10 +217,6 @@ async function rewriteCodexProviderRequestBody(
     applyCodexRuntimePayload(rewrittenPayload, responsesLite),
     fastModeDecision,
   );
-  // Stock Responses providers and configured Code Mode overlays have no
-  // post-serialization callback. Keep native replay on the instructions that
-  // reached this final hook boundary; the custom Codex provider captures again
-  // after its transport-specific transforms.
   if (state.pendingActiveProviderPromptCapture)
     captureActiveProviderSystemPrompt(finalPayload, state);
   return finalPayload;

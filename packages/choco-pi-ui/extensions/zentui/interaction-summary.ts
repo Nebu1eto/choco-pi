@@ -424,7 +424,6 @@ function validateEvent(
   };
 }
 
-/** Owns provider-usage snapshots and thought-time partitioning for one settled interaction. */
 export class InteractionMetricsTracker {
   private interaction?: InteractionState;
 

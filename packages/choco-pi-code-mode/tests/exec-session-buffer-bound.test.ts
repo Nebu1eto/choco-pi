@@ -16,11 +16,6 @@ const isProbeReport = compile(
   }),
 ).check;
 
-// A fast producer must not grow the host heap with its output volume. With the
-// former 256 MiB pipe buffer a 64 MiB producer kept the whole output reachable;
-// a 1 GB producer took a 4 GB host down. The probe measures live (post-GC) heap:
-// a sampled peak also counts uncollected garbage, so it tracked GC pacing and
-// failed under suite load (260 MB) while the live set stayed near 20 MB.
 test("a large pipe producer leaves the host heap bounded and the count intact", async () => {
   const megabytes = 64;
   const probe = fileURLToPath(new URL("./exec-heap-probe.ts", import.meta.url));

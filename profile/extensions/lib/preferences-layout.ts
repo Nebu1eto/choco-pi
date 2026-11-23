@@ -17,30 +17,17 @@ import {
   TOOLS_SECTION_ID,
 } from "./native-settings.ts";
 
-/** Tab that holds the footer, segments, git, working line, and status rows. */
 export const STATUSLINE_SECTION_ID = "statusline";
 export const ADVANCED_SECTION_ID = "advanced";
 
-/** Row id the background compaction package builds. */
 const BACKGROUND_COMPACTION_ROW = "backgroundCompaction.enabled";
-/** Row id of the Anthropic compaction mode row the compaction package builds. */
 const ANTHROPIC_COMPACTION_ROW = "compactionAnthropic";
-/** Row id of the xAI compaction mode row the compaction package builds. */
 const XAI_COMPACTION_ROW = "compactionXai";
 
-/** Every row of one source section, in the order that source builds them. */
 function section(id: string): string {
   return `section:${id}`;
 }
 
-/**
- * The tabs of `/preferences`, by topic rather than by the package that stores
- * each value. Rows are placed by id; the dialog renders each group under a dim
- * heading. A row listed nowhere and not hidden still shows, on the tab its
- * own source would have had, so a setting a later Pi or package adds is never
- * dropped. `tests/preferences-layout.test.ts` holds every current provider row
- * to exactly one place here or to {@link PREFERENCES_HIDDEN_ROWS}.
- */
 export const PREFERENCES_LAYOUT: readonly PreferencesLayoutTab[] = [
   {
     id: "agent",
@@ -231,21 +218,6 @@ export const PREFERENCES_LAYOUT: readonly PreferencesLayoutTab[] = [
   },
 ];
 
-/**
- * Rows the dialog never shows, not even in search.
- *
- * - `tui-mode` and `fullscreen-exit-output`: profile-owned layout keys;
- *   `/check` flags a non-fullscreen `tuiMode`.
- * - `install-telemetry`, `collapse-changelog`: Pi update chrome, not harness
- *   behavior.
- * - `transport`, `http-idle-timeout`, `cache-warming-mode`: provider transport
- *   tuning the Codex adapter and the profile own.
- * - `customRustBinariesHelp`, `customRustBinariesPath`: prose rows that point
- *   at the Codex config file; Tools › Config › Edit config opens it.
- * - `executionMode`: Codex `normal` mode registers no `exec` tool, and the
- *   profile disables Pi's built-in codemode (`-builtin:codemode`), so `normal`
- *   would leave the session without any code-mode bridge.
- */
 export const PREFERENCES_HIDDEN_ROWS: readonly string[] = [
   "tui-mode",
   "fullscreen-exit-output",

@@ -32,9 +32,7 @@ export async function resolveAgentBrowserExecutable(options: {
           modifiedAtMs: metadata.mtimeMs,
           platform,
         };
-      } catch {
-        // Continue through PATH. Probe failures are not cached as compatibility results.
-      }
+      } catch {}
     }
   }
   return undefined;

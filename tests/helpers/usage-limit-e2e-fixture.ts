@@ -1,9 +1,3 @@
-/**
- * Real pi-coding-agent host for the "On usage limit" end-to-end tests: a parent
- * `AgentSession` with scripted fake providers registered under the real
- * provider ids (`openai-codex`, `anthropic`), an isolated agent dir, project
- * dir and session dir, and a network guard that records and refuses `fetch`.
- */
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -58,9 +52,7 @@ function fakeModel(provider: string, id: string): Model<Api> {
 
 export const CODEX_MODEL = fakeModel("openai-codex", "e2e-codex");
 export const CLAUDE_MODEL = fakeModel("anthropic", "e2e-claude");
-/** An Anthropic model the Fable weekly limit covers (the Fable series). */
 export const FABLE_MODEL = fakeModel("anthropic", "claude-fable-5-2");
-/** Registered and authenticated, but excluded from `enabledModels` when scope is on. */
 export const OUTSIDE_MODEL = fakeModel("e2e-outside", "e2e-outside");
 const FAKE_MODELS = [CODEX_MODEL, CLAUDE_MODEL, FABLE_MODEL, OUTSIDE_MODEL];
 
@@ -70,11 +62,6 @@ export const ANTHROPIC_LIMIT_TEXT =
 
 export const E2E_AGENT_TYPE = "e2e-worker";
 
-/**
- * Fresh Agent spawns must name model and thinking (`requireExplicitModel`
- * defaults on). These echo the e2e role's own declaration, so the spawn still
- * runs the role's model and scope policy sees no caller override.
- */
 export const E2E_SPAWN_MODEL = { model: modelKey(CODEX_MODEL), thinking: "medium" } as const;
 
 export type ScriptedReply = { kind: "text"; text: string } | { kind: "error"; message: string };
@@ -82,10 +69,6 @@ export type ScriptedReply = { kind: "text"; text: string } | { kind: "error"; me
 export type ProviderRequest = {
   provider: string;
   modelId: string;
-  /**
-   * Text of the last non-assistant message in the request context, skipping the
-   * `<system-reminder>` status message the subagents runner appends to child turns.
-   */
   lastText: string;
 };
 
@@ -134,7 +117,6 @@ function replyStream(model: Model<Api>, reply: ScriptedReply) {
   return stream;
 }
 
-/** Scripted per-model replies; an empty script answers `ok`. */
 export class ScriptedProviders {
   readonly requests: ProviderRequest[] = [];
   private readonly scripts = new Map<string, ScriptedReply[]>();
@@ -189,7 +171,6 @@ type ManagerRegistry = {
   getRecord(id: string): AgentRecord | undefined;
 };
 
-/** The subagents manager registry entry published under `pi-subagents:manager`. */
 export function managerRegistry(): ManagerRegistry {
   const slots = reinterpretHostValue<Record<PropertyKey, RuntimeValue>>(globalThis);
   const entry = slots[Symbol.for("pi-subagents:manager")];
@@ -199,7 +180,6 @@ export function managerRegistry(): ManagerRegistry {
   return reinterpretHostValue<ManagerRegistry>(entry);
 }
 
-/** Keys of the process-global usage-limit policy map, or undefined when absent. */
 export function usageLimitPolicyOwners(): string[] | undefined {
   const slots = reinterpretHostValue<Record<PropertyKey, RuntimeValue>>(globalThis);
   const map = slots[Symbol.for("choco-pi.usage-limit-policy")];
@@ -210,21 +190,14 @@ export function usageLimitPolicyOwners(): string[] | undefined {
 export type UsageLimitE2eOptions = {
   preference: OnUsageLimit;
   parentModel: Model<Api>;
-  /** Parent-session extensions loaded before the capture extension. */
   factories: readonly ExtensionFactory[];
-  /** Parent-session retry settings (defaults to retries disabled). */
   retry?: { enabled: boolean; maxRetries?: number; baseDelayMs?: number };
-  /** `<cwd>/.pi/subagents.json` contents. */
   subagentsSettings?: Record<string, RuntimeValue>;
-  /** `<cwd>/.pi/settings.json` contents (child sessions and scope checks). */
   projectSettings?: Record<string, RuntimeValue>;
-  /** Extra files under `<cwd>/.pi/extensions/`, keyed by file name. */
   projectExtensions?: Record<string, string>;
-  /** Fake providers neither registered nor given credentials. */
   omitProviders?: readonly string[];
 };
 
-/** Real provider credentials in the caller's shell would authenticate built-in providers. */
 const SCRUBBED_ENV = [
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_OAUTH_TOKEN",
@@ -239,9 +212,7 @@ export type UsageLimitE2e = {
   session: AgentSession;
   pi: ExtensionAPI;
   providers: ScriptedProviders;
-  /** Payloads of `subagents:usage_limit` events on the parent event bus. */
   usageEvents: RuntimeValue[];
-  /** URLs passed to the guarded `fetch`; every call is refused. */
   fetchCalls: string[];
   close(): Promise<void>;
 };
@@ -266,11 +237,6 @@ output_transcript: false
 Answer the task in one line.
 `;
 
-/**
- * Builds the host. Changes the process cwd (the subagents extension reads its
- * agents and settings from `process.cwd()`), `PI_CODING_AGENT_DIR`,
- * `PI_CODING_AGENT_SESSION_DIR` and `globalThis.fetch`; `close()` restores all.
- */
 export async function createUsageLimitE2e(options: UsageLimitE2eOptions): Promise<UsageLimitE2e> {
   const root = await mkdtemp(join(tmpdir(), "choco-usage-limit-e2e-"));
   const agentDir = join(root, "agent");
@@ -401,7 +367,6 @@ export async function createUsageLimitE2e(options: UsageLimitE2eOptions): Promis
   }
 }
 
-/** Polls `predicate` every 5 ms until it holds or `timeoutMs` passes. */
 export async function waitFor(
   predicate: () => boolean,
   timeoutMs = 3_000,
@@ -426,7 +391,6 @@ export function resultText(result: ToolResult): string {
 
 let toolCallCounter = 0;
 
-/** Executes a registered extension tool on the parent session. */
 export async function runTool(
   session: AgentSession,
   name: string,
@@ -446,7 +410,6 @@ export async function runTool(
   );
 }
 
-/** Custom message entries of `customType` on the parent session. */
 export function customEntries(session: AgentSession, customType: string): RuntimeValue[] {
   return session.sessionManager
     .getEntries()

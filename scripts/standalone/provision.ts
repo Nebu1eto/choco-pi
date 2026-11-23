@@ -1,11 +1,3 @@
-/**
- * Checksum-verified downloads for the standalone installer.
- *
- * Only Node built-ins are imported: stage 1 runs this before the app's
- * dependencies are installed. An archive is always verified in full before
- * `tar` sees it, so a mismatched download never reaches the file system as
- * extracted content.
- */
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants, createReadStream } from "node:fs";
@@ -32,14 +24,9 @@ const runFile = promisify(execFile);
 export const NODE_PLATFORMS = ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"] as const;
 export type NodePlatform = (typeof NODE_PLATFORMS)[number];
 
-/**
- * pnpm 12 native binary platforms (`@pnpm/exe.<platform>` on npm; glibc on
- * Linux). The names match the Node.js ones.
- */
 export const PNPM_PLATFORMS = NODE_PLATFORMS;
 export type PnpmPlatform = NodePlatform;
 
-/** Bun release asset platforms (`bun-<platform>.zip`; glibc builds on Linux). */
 export const BUN_PLATFORMS = [
   "darwin-aarch64",
   "darwin-x64",
@@ -49,12 +36,10 @@ export const BUN_PLATFORMS = [
 export type BunPlatform = (typeof BUN_PLATFORMS)[number];
 
 export type RuntimePins = {
-  /** The stage 0 -> stage 1 handoff the app expects (runtime-pins.txt explains it). */
   installerProtocol: number;
   nodeVersion: string;
   nodeSha256: ReadonlyMap<NodePlatform, string>;
   pnpmVersion: string;
-  /** dist.integrity of `@pnpm/exe.<platform>@<pnpmVersion>`, per platform. */
   pnpmIntegrity: ReadonlyMap<PnpmPlatform, string>;
   bunVersion: string;
   bunMinimumVersion: string;
@@ -88,20 +73,8 @@ function isBunPlatform(value: string): value is BunPlatform {
 
 const EXACT_VERSION = /^\d+\.\d+\.\d+$/;
 
-/**
- * The handoff this revision implements (runtime-pins.txt declares it as
- * installer_protocol): stage 0 moves the checkout and runs bootstrap.ts, stage 1
- * reads the creation journal (provenance.ts), and `self update` hands off to
- * the target revision's install.sh, which needs a target at this protocol or later.
- */
 export const INSTALLER_PROTOCOL = 3;
 
-/**
- * The value of `key` in a pins text of any revision, read the way install.sh
- * reads it (first word is the key, second the value), or null. Unlike
- * parseRuntimePins it validates nothing else, so it can read pins whose format
- * this revision does not know.
- */
 export function readPin(text: string, key: string): string | null {
   for (const line of text.split("\n")) {
     const [name, value] = line.trim().split(/\s+/);
@@ -125,7 +98,6 @@ export function parseRuntimePins(text: string): RuntimePins {
     if (value === undefined) throw new Error(`missing runtime pin: ${key}`);
     return value;
   };
-  // Absent means protocol 1, the shape before the key existed.
   const protocolText = values.get("installer_protocol") ?? "1";
   if (!/^[1-9]\d{0,8}$/.test(protocolText))
     throw new Error(`installer_protocol is not a positive integer: ${protocolText}`);
@@ -196,7 +168,6 @@ export async function readRuntimePins(file = PINS_FILE): Promise<RuntimePins> {
   return parseRuntimePins(await readFile(file, "utf8"));
 }
 
-/** Parses an npm `dist.integrity` value; only sha512 is accepted. */
 export function parseIntegrity(integrity: string): ExpectedDigest {
   const match = /^sha512-([A-Za-z0-9+/]+={0,2})$/.exec(integrity);
   if (match === null) throw new Error(`unsupported integrity value: ${integrity}`);
@@ -221,17 +192,8 @@ export async function verifyArchive(archive: string, expected: ExpectedDigest): 
   if (!actual.equals(expected.digest)) throw new ChecksumMismatchError(archive, expected, actual);
 }
 
-export type ArchiveFormat =
-  | { kind: "tar.gz" }
-  /** `unzip` is an absolute path: the caller located it before downloading. */
-  | { kind: "zip"; unzip: string };
+export type ArchiveFormat = { kind: "tar.gz" } | { kind: "zip"; unzip: string };
 
-/**
- * Verifies `archive`, then extracts its single top-level directory to
- * `destination` (replacing it). Extraction happens in a sibling staging
- * directory so a failed extraction leaves the previous destination intact.
- * The extractor never runs before the digest matched.
- */
 export async function extractVerifiedArchive(
   archive: string,
   expected: ExpectedDigest,
@@ -260,7 +222,6 @@ export async function extractVerifiedArchive(
   }
 }
 
-/** Downloads `url` (https: or file:) to `destination`. */
 export async function download(url: string, destination: string): Promise<void> {
   const parsed = new URL(url);
   await mkdir(path.dirname(destination), { recursive: true });
@@ -273,16 +234,13 @@ export async function download(url: string, destination: string): Promise<void> 
   if (!response.ok || response.body === null) {
     throw new Error(`download failed: ${url} (HTTP ${response.status})`);
   }
-  // Registry tarballs are a few MB; buffering avoids web/Node stream type friction.
   await writeFile(destination, Buffer.from(await response.arrayBuffer()), { flag: "wx" });
 }
 
-/** pnpm qualifies only at the exact pinned version, so pnpm never self-manages its version. */
 export function pnpmVersionQualifies(versionOutput: string, pinned: string): boolean {
   return versionOutput.trim() === pinned;
 }
 
-/** A pnpm executable, run directly: a PATH pnpm or the private native binary. */
 export type PnpmCommand = {
   command: string;
   source: "system" | "private";
@@ -297,13 +255,6 @@ async function isExecutable(file: string): Promise<boolean> {
   }
 }
 
-/**
- * Environment for probing a foreign pnpm: never let corepack or pnpm download
- * another version into the user's home while answering `--version`. A
- * `packageManager` field above the probe directory would otherwise make pnpm
- * 11 and 12 switch to (and download) that version: `pm-on-fail` is the
- * setting both honor; `manage-package-manager-versions` is the older one.
- */
 export function probeEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return {
     ...environment,
@@ -315,7 +266,6 @@ export function probeEnvironment(environment: NodeJS.ProcessEnv): NodeJS.Process
   };
 }
 
-/** What `binary --version` prints (trimmed), run from `probeDirectory`; null when it does not run. */
 export async function probePnpmVersion(
   binary: string,
   probeDirectory: string,
@@ -333,7 +283,6 @@ export async function probePnpmVersion(
   }
 }
 
-/** Returns the first `pnpm` on `searchPath` that reports exactly `pinned`. */
 export async function findSystemPnpm(
   searchPath: string,
   pinned: string,
@@ -351,15 +300,8 @@ export async function findSystemPnpm(
   return null;
 }
 
-/** The private pnpm: `<runtime>/pnpm/pnpm`, the native binary and nothing else. */
 export const PRIVATE_PNPM_BINARY = "pnpm";
 
-/**
- * True when `pnpmDirectory` holds exactly the native binary layout this
- * installer writes: one regular file named `pnpm`. Earlier layouts (the pnpm
- * 11 npm package with bin/pnpm.mjs, the pnpm 12 npm wrapper whose fallback
- * downloads a binary) fail this before anything in them runs.
- */
 async function isNativePnpmLayout(pnpmDirectory: string): Promise<boolean> {
   try {
     const entries = await readdir(pnpmDirectory);
@@ -372,7 +314,6 @@ async function isNativePnpmLayout(pnpmDirectory: string): Promise<boolean> {
 
 export const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org";
 
-/** Numeric x.y.z comparison; anything after "-" or "+" is ignored, like bin/choco-pi. */
 export function compareVersions(left: string, right: string): number {
   const parts = (value: string) =>
     (value.trim().split(/[-+]/)[0] ?? "").split(".").map((part) => Number.parseInt(part, 10));
@@ -387,7 +328,6 @@ export function compareVersions(left: string, right: string): number {
   return 0;
 }
 
-/** True when `version` (from `bun --version`) is at least `minimum`. */
 export function bunVersionQualifies(version: string, minimum: string): boolean {
   return /^\d+\.\d+\.\d+/.test(version.trim()) && compareVersions(version, minimum) >= 0;
 }
@@ -400,7 +340,6 @@ async function isMuslLinux(): Promise<boolean> {
   }
 }
 
-/** The pinned Bun asset for this machine; null when none is pinned (musl, Windows, ...). */
 export async function currentBunPlatform(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
@@ -414,7 +353,6 @@ export async function currentBunPlatform(
 
 export type BunCommand = { path: string; version: string };
 
-/** The pinned pnpm build for this machine; null when none is pinned (musl, Windows, ...). */
 export async function currentPnpmPlatform(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
@@ -425,24 +363,10 @@ export async function currentPnpmPlatform(
   return null;
 }
 
-/**
- * A provisioned tool: its entry point and the directories this call wrote
- * (empty when an installed copy was reused). Install ownership comes only from
- * these reports, never from a directory merely existing.
- */
 export type Provisioned = { path: string; created: readonly string[] };
 
-/**
- * Called with a directory the moment provisioning has put it in place, before
- * any later check can fail, so the caller can journal its ownership.
- */
 export type OnCreated = (directory: string) => Promise<void>;
 
-/**
- * Runs `candidate` as Bun from `probeDirectory` (no project bunfig or .env)
- * and returns its real binary (a version-manager shim resolves to the
- * binary it runs) and version; null when it does not run.
- */
 export async function probeBun(
   candidate: string,
   probeDirectory: string,
@@ -457,7 +381,6 @@ export async function probeBun(
       ],
       { cwd: probeDirectory, timeout: 15_000, maxBuffer: 64 * 1024 },
     );
-    // A path with a newline is not a usable binary path anyway.
     const lines = stdout.split("\n");
     if (lines.length !== 2) return null;
     const [version = "", executable = ""] = lines;
@@ -468,7 +391,6 @@ export async function probeBun(
   }
 }
 
-/** The first `bun` on `searchPath` at least `minimum`, as its real binary. */
 export async function findSystemBun(
   searchPath: string,
   minimum: string,
@@ -486,7 +408,6 @@ export async function findSystemBun(
   return null;
 }
 
-/** An executable named `command` on `searchPath`, or null. */
 export async function findOnPath(command: string, searchPath: string): Promise<string | null> {
   for (const directory of searchPath.split(path.delimiter)) {
     if (directory === "" || !path.isAbsolute(directory)) continue;
@@ -503,21 +424,12 @@ export const UNZIP_GUIDANCE =
   "unzip is required to unpack Bun but was not found on PATH. Install it with your system's package manager (for example apt-get install unzip, dnf install unzip), then retry; choco-pi does not elevate privileges.";
 
 export type BunProvisionOptions = {
-  /** Base URL holding `bun-v<version>/bun-<platform>.zip` (https: or file:). */
   mirror: string;
-  /** PATH used to find `unzip`. */
   searchPath: string;
-  /** Overrides the detected platform (tests). */
   platform?: BunPlatform | null;
-  /** Told about `<runtimeDir>/bun` as soon as a download replaced it. */
   onCreated?: OnCreated;
 };
 
-/**
- * Ensures `<runtimeDir>/bun/bin/bun` is the pinned Bun: downloads the release
- * zip, verifies the pinned sha256 before `unzip` sees it, and installs the
- * binary. Returns the binary path and, when it downloaded, `<runtimeDir>/bun`.
- */
 export async function provisionPrivateBun(
   runtimeDirectory: string,
   pins: RuntimePins,
@@ -574,30 +486,16 @@ export async function provisionPrivateBun(
 }
 
 export type PnpmProvisionOptions = {
-  /** npm registry base URL (https: or file:). */
   registry: string;
-  /** Overrides the detected platform (tests). */
   platform?: PnpmPlatform | null;
-  /** Told about `<runtimeDir>/pnpm` as soon as a download replaced it. */
   onCreated?: OnCreated;
 };
 
-/** The registry tarball of `@pnpm/exe.<platform>@<version>`. */
 export function pnpmTarballUrl(registry: string, platform: PnpmPlatform, version: string): string {
   const name = `exe.${platform}`;
   return `${registry.replace(/\/+$/, "")}/@pnpm/${name}/-/${name}-${version}.tgz`;
 }
 
-/**
- * Ensures `<runtimeDir>/pnpm/pnpm` is the pinned pnpm 12 native binary:
- * downloads `@pnpm/exe.<platform>`, verifies its pinned sha512 integrity
- * before `tar` sees it, extracts only `package/pnpm`, and checks that the
- * staged binary reports the pinned version before it replaces
- * `<runtimeDir>/pnpm`, so a bad download never displaces a working pnpm.
- * Returns the binary and, when it downloaded, `<runtimeDir>/pnpm`.
- * Nothing runs pnpm through Node or the npm `pnpm` wrapper, whose fallback
- * downloads a binary on its own.
- */
 export async function provisionPrivatePnpm(
   runtimeDirectory: string,
   pins: RuntimePins,

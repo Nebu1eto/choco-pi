@@ -1,7 +1,3 @@
-// Tests for profile/skills/formal-verify/scripts/check-all.ts: it runs every
-// formal/tla/*/check.json model and its mutations through tlc.ts and exits 0
-// only when every expectation holds. Runs that need TLC skip, visibly, when
-// the pinned jar or Java is missing.
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { access, chmod, copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
@@ -76,7 +72,6 @@ after(async () => {
   await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
 });
 
-/** A check.json as these tests write it; `expect` is loose so a bad value can be tested. */
 type Mutation = { name: string; spec: string; config: string; expectViolated: string[] };
 type Manifest = {
   schema: number;
@@ -108,7 +103,6 @@ function manifest(overrides: Partial<Manifest> = {}): Manifest {
   };
 }
 
-/** A temporary root holding formal/tla/counter with the fixture and this check.json text. */
 async function rootWithText(text: string): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), "formal-check-all-"));
   roots.push(root);
@@ -207,7 +201,6 @@ describe("check-all.ts manifest handling", () => {
     assert.match(summary.error ?? "", /no formal\/ directory/);
   });
 
-  /** A git repository whose formal/ holds the given files and no TLA+ manifest. */
   async function repoWithFormal(files: Record<string, string>): Promise<string> {
     const root = await mkdtemp(path.join(tmpdir(), "formal-check-all-nomodel-"));
     roots.push(root);
@@ -284,7 +277,6 @@ describe("check-all.ts manifest handling", () => {
     await promisify(execFile)("git", ["init", "--quiet"], { cwd: root });
     const sub = path.join(root, "src", "deep");
     await mkdir(sub, { recursive: true });
-    // --only with an unknown name stops after discovery, so no TLC run is needed.
     const { code, summary } = await run(["--only", "no-such-model"], sub);
     assert.equal(code, 2);
     assert.match(summary.error ?? "", /no model named no-such-model/);
@@ -304,7 +296,6 @@ describe("check-all.ts discovery failures are errors, never an empty model set",
   const asRoot = process.getuid?.() === 0;
   const rootSkip = asRoot ? "running as root, which ignores file modes" : false;
 
-  /** Run with `target` at `mode`, restoring 0o755 afterwards so cleanup works. */
   async function withMode(target: string, mode: number, body: () => Promise<void>): Promise<void> {
     await chmod(target, mode);
     try {

@@ -128,10 +128,6 @@ async function serveRequest(
     source: "warm-attach-incumbent",
   });
   const servedAt = Date.now();
-  // #1470: the coverage gap is read through the shared helper, never re-derived
-  // from `confirmation === "partial"`. The two fields are set together today, so
-  // either test passes — which is exactly the coincidence `touchCoverageGap`'s
-  // own doc comment warns against. One reader, one rule.
   const coverageGap = touchCoverageGap(touched);
   if (servedAt <= req.deadlineAt && touched !== undefined && !touched.inconclusive) {
     state.servedDiagnosticHashes.set(normalizeFilePath(req.file), req.contentHash);
@@ -166,17 +162,10 @@ function startServer(cwd: string): void {
   if (process.platform !== "win32") {
     try {
       fs.unlinkSync(endpoint);
-    } catch {
-      // No stale socket.
-    }
+    } catch {}
   }
   const server = net.createServer((socket) => {
     socket.setEncoding("utf8");
-    // One-shot per connection (#1219 family): the same defect shape as the
-    // MCP warm socket — clients write exactly one request and read one
-    // reply, so a handler that kept re-reading the same buffered line
-    // re-dispatched the request on stray bytes. The shared reader consumes
-    // the line and ignores anything after it.
     socket.on(
       "data",
       createWarmIpcLineReader((line) => {
@@ -265,8 +254,6 @@ export async function tryWarmAttachedCodeActions(
   if (result.available) {
     record("code-actions-served", file, undefined, state.incumbentPid);
   } else {
-    // Quickfixes are optional enrichment. Diagnostics already succeeded, so a
-    // code-action failure is deliberately softer and must not trigger takeover.
     record("code-actions-skipped", file, result.reason, state.incumbentPid);
   }
   return result;
@@ -299,11 +286,4 @@ export function _setWarmAttachForTests(cwd: string, incumbentPid: number): void 
   state.local = false;
 }
 
-/**
- * The incumbent-side request handler, exposed for tests. The socket wiring
- * around it (`startServer`) can only be exercised by a test that actually
- * binds a unix socket, which is not available in every sandbox — this seam
- * lets the DTO-composition half (notably the #1253 `confirmation` field, whose
- * absence is what a consumer reads as unconfirmed) be pinned directly.
- */
 export const _serveWarmRequestForTests = serveRequest;

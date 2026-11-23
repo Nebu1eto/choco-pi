@@ -1,25 +1,9 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { formatTokens } from "../session-usage.ts";
 
-/**
- * A step line chart in box-drawing characters, after asciichart: one column
- * per sample, horizontal runs in ─, vertical moves in │ with ╭ ╮ ╰ ╯ corners.
- * Each series has its own colour. Where series overlap, the series with the
- * higher value at that sample owns the cell, then the earlier series. An
- * aggregate series may be drawn heavy; it is never below its parts, so it wins
- * every overlap and the hidden part is exactly where the aggregate runs.
- */
-
 export type ChartSeries = {
-  /**
-   * Series values, one per sample (day or hour); zeros plot at the baseline.
-   * An undefined value leaves a gap: nothing is drawn there and the line
-   * resumes, unconnected, at the next defined sample.
-   */
   values: readonly (number | undefined)[];
-  /** Applies the series colour to a run of glyphs. */
   paint: (text: string) => string;
-  /** Heavy box-drawing (━ ┃ ┏ ┓ ┗ ┛) for an aggregate line; light by default. */
   weight?: "light" | "heavy";
 };
 
@@ -32,7 +16,6 @@ const HEAVY = new Map([
   ["╯", "┛"],
 ]);
 
-/** The crossing glyph for a vertical of one weight over a horizontal of another. */
 function crossing(verticalHeavy: boolean, horizontalHeavy: boolean): string {
   if (verticalHeavy && horizontalHeavy) return "╋";
   if (verticalHeavy) return "╂";
@@ -41,30 +24,22 @@ function crossing(verticalHeavy: boolean, horizontalHeavy: boolean): string {
 }
 
 export type ChartOptions = {
-  /** Plot rows, excluding the tick row. */
   rows: number;
-  /** Total width of every returned line, axis labels included. */
   width: number;
-  /** Width reserved for the y-axis labels, separator included. */
   gutter: number;
-  /** Tick labels for the x-axis, one per sample; empty strings draw no tick. */
   ticks: readonly string[];
-  /** Dims axis text. */
   dim: (text: string) => string;
 };
 
-/** Levels (0 = baseline) that carry a y-axis label for `rows` plot rows: 0, the top, and evenly spaced levels between. */
 export function axisLevels(rows: number): number[] {
   if (rows <= 1) return [0];
   const top = rows - 1;
-  // Every other level when the height allows it (odd row counts), else every level.
   const step = top % 2 === 0 && top >= 4 ? 2 : 1;
   const out: number[] = [];
   for (let level = top; level >= 0; level -= step) out.push(level);
   return out;
 }
 
-/** Cells per sample so that `samples` columns fill `plotWidth`; the last samples absorb the remainder. */
 export function columnWidths(samples: number, plotWidth: number): number[] {
   const base = Math.max(1, Math.floor(plotWidth / samples));
   const spare = Math.max(0, plotWidth - base * samples);
@@ -73,10 +48,6 @@ export function columnWidths(samples: number, plotWidth: number): number[] {
 
 type Cell = { glyph: string; series: number; value: number; vertical: boolean; heavy: boolean };
 
-/**
- * Render the chart. Returns `rows + 1` lines (plot rows top first, then the
- * tick row); every line is at most `width` columns.
- */
 export function lineChart(series: readonly ChartSeries[], options: ChartOptions): string[] {
   const { rows, width, gutter, dim } = options;
   const samples = Math.max(...series.map((s) => s.values.length), options.ticks.length, 1);
@@ -112,13 +83,7 @@ export function lineChart(series: readonly ChartSeries[], options: ChartOptions)
     if (!line) return;
     const current = line[column];
     if (current !== undefined && current.series !== s) {
-      // A horizontal never displaces a connector. A connector crossing another
-      // series' horizontal becomes a crossing glyph in the connector's colour, so
-      // both lines read through the cell; two connectors cannot meet (columns
-      // are staggered).
       if (current.vertical && !vertical) return;
-      // A light corner meeting the aggregate's horizontal merges into it: the
-      // part is coincident with the whole there, and the heavy line stays whole.
       if (!current.vertical && current.heavy && vertical && !heavy && glyph !== "│") return;
       if (!current.vertical && vertical && glyph === "│") {
         line[column] = { glyph: crossing(heavy, current.heavy), series: s, value, vertical, heavy };
@@ -129,11 +94,6 @@ export function lineChart(series: readonly ChartSeries[], options: ChartOptions)
     line[column] = { glyph, series: s, value, vertical, heavy };
   };
 
-  // Each series puts its vertical at a different column inside the day (its
-  // rank, clamped to the day's width), so connectors never share a cell.
-  // Verticals outrank horizontals in a cell; among equals the higher value
-  // wins, then the earlier series. A horizontal that reaches another series'
-  // vertical is cut there, so every line stays connected.
   series.forEach((entry, s) => {
     const values = entry.values;
     const heavy = entry.weight === "heavy";
@@ -154,7 +114,6 @@ export function lineChart(series: readonly ChartSeries[], options: ChartOptions)
         const up = level > previousLevel;
         const previous = values[index - 1] ?? 0;
         const weight = Math.max(previous, value);
-        // The old level continues to the step column, the new level from it.
         for (let c = start; c < stepAt; c += 1) put(fromRow, c, "─", s, previous, false, heavy);
         put(fromRow, stepAt, up ? "╯" : "╮", s, weight, true, heavy);
         put(row, stepAt, up ? "╭" : "╰", s, weight, true, heavy);
@@ -206,9 +165,6 @@ export function lineChart(series: readonly ChartSeries[], options: ChartOptions)
     lines.push(axis + body);
   }
 
-  // Tick row: the last label is right-aligned to the plot edge and reserved
-  // first; the others are placed left to right and skipped unless two spaces
-  // separate them from the previous label and from the last one.
   let ticks = "";
   const lastLabel = options.ticks[samples - 1] ?? "";
   const reserved = lastLabel.length > 0 ? plotWidth - visibleWidth(lastLabel) - 2 : plotWidth;

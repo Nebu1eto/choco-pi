@@ -57,21 +57,18 @@ const TOOL_NAMES = new Map([
 function claudeToolName(name: string): string {
   return TOOL_NAMES.get(name) ?? name;
 }
-/** Claude Code's SessionStart `source`: Pi's `new` is `/clear`; a reload restarts. */
 function sourceForStart(reason: string): string {
   if (reason === "fork") return "fork";
   if (reason === "resume") return "resume";
   if (reason === "new") return "clear";
   return "startup";
 }
-/** Claude Code's SessionEnd `reason` for a Pi shutdown. */
 function endReason(reason: string, mode: string): string {
   if (reason === "resume") return "resume";
   if (reason === "new") return "clear";
   if (reason === "quit" && mode === "tui") return "prompt_input_exit";
   return "other";
 }
-/** Events whose exit-2 stderr Claude Code shows to the user only. */
 const USER_STDERR_EVENTS = new Set<HookEventName>([
   "SessionStart",
   "SessionEnd",
@@ -87,10 +84,6 @@ function textContent(content: string | ReadonlyArray<{ type: string; text?: stri
   return content.flatMap((item) => (isStringValue(item.text) ? [item.text] : [])).join("\n");
 }
 
-/**
- * SessionStart's resume-cost fields: how long the transcript has been idle,
- * what its first request re-sends, and whether the prompt cache has likely expired.
- */
 function resumeCost(ctx: ExtensionContext): JsonObject {
   const entries = ctx.sessionManager.getEntries();
   const lastIndex = entries.findLastIndex(
@@ -127,16 +120,6 @@ function stopFailureType(message: string): string {
   return "unknown";
 }
 
-/**
- * Background-compaction adoption signal published by `choco-pi-compaction`.
- *
- * Background adoption does not run external PreCompact/PostCompact hooks.
- * A boundary adoption emits no host compaction event at all; the idle and
- * threshold routes emit a real session_before_compact/session_compact pair,
- * which the signal identifies by owner token and candidate ID so they are
- * skipped here. Host and manual compactions keep running each hook once. An
- * absent or foreign slot leaves hook behavior unchanged.
- */
 const BACKGROUND_ADOPTION_SIGNAL = Symbol.for("choco-pi:compaction-background-adoption");
 interface AdoptionSignal {
   willAdopt(sessionId: string, event: SessionBeforeCompactEvent): Promise<boolean>;
@@ -159,7 +142,6 @@ function adoptionSignal(): AdoptionSignal | undefined {
   )?.value;
   return isAdoptionSignal(found) ? found : undefined;
 }
-/** Whether this compaction request is answered by a background adoption. */
 async function isBackgroundAdoptionRequest(
   ctx: ExtensionContext,
   event: SessionBeforeCompactEvent,
@@ -170,7 +152,6 @@ async function isBackgroundAdoptionRequest(
   try {
     return (await signal.willAdopt(sessionId, event)) === true;
   } catch {
-    // A failed decision cannot adopt; the hook runs as for any host compaction.
     return false;
   }
 }
@@ -180,7 +161,6 @@ function isBackgroundAdoptionEntry(ctx: ExtensionContext, entry: CompactionEntry
   return signal.isAdoption(ctx.sessionManager.getSessionId(), entry) === true;
 }
 
-/** One read-only `/hooks` row per configured handler. */
 function configuredHookRows(sources: HookSource[]): string[] {
   return sources.flatMap(sourceHookRows);
 }
@@ -197,10 +177,6 @@ function sourceHookRows(source: HookSource): string[] {
 function warnBlockedReason(ctx: ExtensionContext, reason: string | undefined): void {
   if (reason && ctx.hasUI) ctx.ui.notify(reason, "warning");
 }
-/**
- * Run WorktreeCreate for an `Agent` call that asks for worktree isolation.
- * Returns a block result when a configured hook fails to supply a path.
- */
 async function createHookWorktree(
   dispatch: HookDispatch,
   ctx: ExtensionContext,
@@ -229,7 +205,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   });
   let engine = new HookEngine([]);
   let sessionId: string = crypto.randomUUID();
-  /** Set for a subagent session; such a session runs only the hooks Claude Code fires for subagents. */
   let identity: SubagentIdentity | undefined;
   let unregisterRoot: (() => void) | undefined;
   let projectDir = "";
@@ -245,12 +220,9 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   let lastCwd = "";
   let lifecycleGeneration = 0;
   let unregisterResourceCleanup: (() => void) | undefined;
-  /** PreToolUse context and start times, delivered with each call's result. */
   const preToolContext = new Map<string, string[]>();
   const toolStarts = new Map<string, number>();
-  /** SubagentStart context already in this subagent's conversation. */
   const injectedSubagentContext = new Set<string>();
-  // Warn mode: write destinations under /tmp outside the session scratch directory are reported, never blocked.
   let scratchGrants: Promise<string[]> | undefined;
   const scratchWarner = createScratchWarner({
     grants: () => (scratchGrants ??= loadScratchGrants()),
@@ -271,7 +243,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     transcriptPath = ctx.sessionManager.getSessionFile() ?? "";
   }
   function input(event: HookEventName, ctx: ExtensionContext, extra: JsonObject = {}): HookInput {
-    // A subagent's hooks fire in its top-level session, as in Claude Code.
     const root = identity ? rootSession(identity.rootSessionId) : undefined;
     const subagent: JsonObject = identity
       ? {
@@ -335,7 +306,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     if (lastCwd === ctx.cwd) return;
     const oldCwd = lastCwd;
     lastCwd = ctx.cwd;
-    // CwdChanged belongs to the main conversation.
     if (identity) return;
     const result = await dispatch("CwdChanged", ctx, { old_cwd: oldCwd, new_cwd: ctx.cwd });
     notify(ctx, result.systemMessages);
@@ -365,8 +335,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
         return;
       }
       const mode = ctx.mode;
-      // The add is complete; the hooks run in the background and their
-      // systemMessage reaches Claude as context on the next turn.
       void dispatch("DirectoryAdded", ctx, { directory, source: "slash_command" })
         .then((result) => {
           if (!result.systemMessages.length) return;
@@ -380,7 +348,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
           );
         })
         .catch(rethrowUnlessStaleContext);
-      // Hosts without the TUI otherwise get no confirmation at all.
       if (mode !== "tui") ctx.ui.notify(`Started DirectoryAdded hooks for ${directory}.`, "info");
     },
   });
@@ -503,7 +470,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     });
     lastCwd = ctx.cwd;
     supplemental.setContext(ctx);
-    // Claude Code fires no session-level events for a subagent; its SubagentStart runs per run.
     if (identity) return;
     const generationToken = supplemental.captureGeneration();
     let setupTrigger: "maintenance" | "init" | undefined;
@@ -534,11 +500,9 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     applySessionStart(result, source, interactive);
     if (pi.getFlag("init-only")) ctx.shutdown();
   });
-  /** Apply SessionStart output: title, first message, and context for Claude. */
   function applySessionStart(result: MergedHookResult, source: string, interactive: boolean): void {
     if (result.sessionTitle && ["startup", "resume", "fork"].includes(source))
       pi.setSessionName(result.sessionTitle);
-    // `initialUserMessage` is the first turn of a non-interactive run only.
     if (result.initialUserMessage && !interactive)
       pi.sendUserMessage(result.initialUserMessage, { deliverAs: "followUp" });
     if (result.additionalContext.length)
@@ -556,7 +520,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     }
     supplemental.setContext(ctx);
     await ensureCwd(ctx);
-    // A subagent's task is not a user prompt; Claude Code fires no prompt events for it.
     if (event.source === "extension" || identity) return { action: "continue" };
     promptId = crypto.randomUUID();
     const expansion = event.text.match(/^\/([^\s]+)(?:\s+(.*))?$/s);
@@ -599,7 +562,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     return { action: "continue" } as const;
   });
   pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
-    // Consecutive stop-hook continuations are counted between tool calls.
     stopHookBlocks = 0;
     toolStarts.set(event.toolCallId, Date.now());
     await ensureCwd(ctx);
@@ -662,7 +624,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     }
     const result = await dispatch(name, ctx, extra);
     notify(ctx, result.systemMessages);
-    // `continue: false` stops Claude after the tool result, with the reason shown to the user.
     if (!result.continue) {
       warnBlockedReason(ctx, result.reason);
       ctx.abort();
@@ -671,7 +632,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     pendingScratchWarnings.delete(event.toolCallId);
     const beforeContext = preToolContext.get(event.toolCallId) ?? [];
     preToolContext.delete(event.toolCallId);
-    // A block reason and exit-2 stderr are shown to Claude next to the result; the tool already ran.
     const feedback = [
       ...(result.blocked && result.reason && result.continue ? [result.reason] : []),
       ...result.exitTwoStderr,
@@ -709,7 +669,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     if (result.blocked || !result.continue) return { cancel: true };
   });
   pi.on("session_compact", async (event, ctx) => {
-    // Compaction drops injected SubagentStart context, so the next run injects it again.
     injectedSubagentContext.clear();
     const interactive = ctx.mode === "tui" || ctx.mode === "rpc";
     const generation = lifecycleGeneration;
@@ -719,7 +678,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
         compact_summary: event.compactionEntry.summary,
       });
     if (identity || generation !== lifecycleGeneration) return;
-    // SessionStart runs again after compaction so hooks can restore their context.
     const result = await dispatch("SessionStart", ctx, {
       source: "compact",
       model: ctx.model?.id,
@@ -730,7 +688,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   });
   pi.on("before_agent_start", async (event, ctx) => {
     if (identity) {
-      // SubagentStart fires each time the subagent starts work, including a resume.
       const result = await dispatch("SubagentStart", ctx);
       const fresh = result.additionalContext.filter((text) => !injectedSubagentContext.has(text));
       for (const text of fresh) injectedSubagentContext.add(text);
@@ -740,8 +697,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
       };
     }
     if (event.messageType !== "custom") return;
-    // Claude Code runs UserPromptSubmit on turns it starts on its own, such as
-    // a background subagent reporting back to the session that started it.
     promptId = crypto.randomUUID();
     const result = await dispatch("UserPromptSubmit", ctx, {
       prompt: textContent(event.message.content),
@@ -764,7 +719,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     };
   });
   pi.on("model_select", async (event, ctx) => {
-    // A subagent's model is not the session's, and the first selection is no switch.
     if (identity || !event.previousModel) return;
     const last = ctx.sessionManager
       .getEntries()
@@ -804,10 +758,8 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   pi.on("agent_end", async (event, ctx) => {
     const generation = lifecycleGeneration;
     const taskGeneration = stopTaskGeneration;
-    // A subagent follows its root session's stop state; a root session uses its own id.
     const stopRoot = identity?.rootSessionId ?? sessionId;
     const stopEvent = identity ? "SubagentStop" : "Stop";
-    // Reset the continuation state and tell the user once per stop epoch.
     const skipStopContinuation = (): void => {
       stopHookActive = false;
       stopHookBlocks = 0;
@@ -820,7 +772,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     const last = event.messages.findLast((message) => message.role === "assistant");
     if (last?.role === "assistant" && last.stopReason === "error") {
       stopHookActive = false;
-      // StopFailure belongs to the main conversation's turn.
       if (identity) return;
       const errorText = last.errorMessage ?? textOf(last);
       await dispatch("StopFailure", ctx, {
@@ -832,7 +783,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
       stopHookActive = false;
       return;
     }
-    // Claude Code does not run Stop hooks for a user interrupt; an Esc-aborted run is never auto-continued.
     if (last?.role === "assistant" && last.stopReason === "aborted") {
       stopHookActive = false;
       stopHookBlocks = 0;
@@ -859,7 +809,6 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
       skipStopContinuation();
       return;
     }
-    // `continue: false` ends the turn even when a hook also blocked.
     if (!result.continue) {
       warnBlockedReason(ctx, result.reason);
       stopHookActive = false;
@@ -884,10 +833,7 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   pi.on("session_shutdown", async (event, ctx) => {
     disposeExternalProducers();
     const mode = ctx.mode;
-    // Background hooks deliver results only while their session runs: end
-    // those still running, then give SessionEnd's own a bounded wait.
     engine.cancelBackground();
-    // One SessionEnd budget covers its synchronous and background hooks alike.
     const handlers = currentSources.flatMap((source) =>
       (source.hooks.SessionEnd ?? []).flatMap((group) => group.hooks),
     );

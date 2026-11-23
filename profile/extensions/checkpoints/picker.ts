@@ -8,14 +8,7 @@ import {
 import type { ChangeSummary } from "./git-snapshot.ts";
 import type { TurnTimelineItem } from "./turns.ts";
 
-/** What the picker can do with the focused turn. */
-export type TurnAction =
-  /** Move the conversation branch back to this turn; files are untouched. */
-  | "rewind"
-  /** Move the conversation back and restore files and the index to this turn. */
-  | "rollback"
-  /** Branch a new session from this turn; conversation and files are untouched. */
-  | "fork";
+export type TurnAction = "rewind" | "rollback" | "fork";
 
 export type PickerKey =
   | { kind: "move"; delta: number }
@@ -30,18 +23,12 @@ export const TURN_ACTION_LABELS = {
   fork: "Fork",
 } satisfies Record<TurnAction, string>;
 
-/**
- * Which command opened the picker. `checkpoint` offers every action and asks
- * which one to run; `fork` and `rewind` run their single action on Enter.
- */
 export type PickerMode = "checkpoint" | "fork" | "rewind";
 
-/** The one action a single-purpose picker runs, or none for `checkpoint`. */
 export function pickerModeAction(mode: PickerMode): TurnAction | undefined {
   return mode === "checkpoint" ? undefined : mode;
 }
 
-/** Rewinding to where the session already is changes nothing, so only fork shows it. */
 export function pickerShowsCurrentState(mode: PickerMode): boolean {
   return mode !== "rewind";
 }
@@ -111,14 +98,9 @@ export function changeSummaryText(changes: ChangeSummary | undefined, theme: The
 export type PickerView = {
   mode: PickerMode;
   items: readonly TurnTimelineItem[];
-  /**
-   * Focused row. When the mode shows it, `items.length` focuses the trailing
-   * current-state row, which forks the whole session as it is now.
-   */
   selectedIndex: number;
   width: number;
   theme: Theme;
-  /** Inline feedback, such as why rollback is unavailable for this turn. */
   notice?: string;
 };
 
@@ -129,7 +111,6 @@ export const CURRENT_STATE_LABEL = "Current state";
 export function renderCheckpointPicker(view: PickerView): string[] {
   const { mode, items, selectedIndex, width, theme } = view;
   const innerWidth = Math.max(20, width - 4);
-  // The current-state row follows the newest turn and scrolls like one.
   const rowCount = items.length + (pickerShowsCurrentState(mode) ? 1 : 0);
   const start = Math.max(
     0,

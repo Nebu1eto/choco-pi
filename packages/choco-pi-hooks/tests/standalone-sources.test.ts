@@ -7,10 +7,6 @@ import test, { mock } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createHookWatchers, loadHookSources } from "../src/index.ts";
 
-// AC11: under the choco-pi launcher the shared cross-agent settings (~/.claude,
-// ~/.agents) still feed hooks such as Rex's SessionStart, the agent settings
-// come from $CHOCO_PI_HOME/agent, and nothing under ~/.pi is read or watched.
-
 const ENV_KEYS = ["HOME", "PI_CODING_AGENT_DIR", "CHOCO_PI_STANDALONE", "CHOCO_PI_HOME"] as const;
 
 type Scratch = { home: string; chocoHome: string; cwd: string };
@@ -73,7 +69,6 @@ test("standalone hook sources keep ~/.claude and ~/.agents and use CHOCO_PI_HOME
 test("standalone hook watchers watch ~/.claude, ~/.agents and CHOCO_PI_HOME/agent, never ~/.pi", async () => {
   await withStandaloneScratch(async ({ home, chocoHome, cwd }) => {
     const watched: string[] = [];
-    // Record each root, but watch only the scratch cwd so no real user tree is watched.
     const realWatch = fs.watch.bind(fs);
     const watch = mock.method(fs, "watch", (target: fs.PathLike) => {
       watched.push(String(target));

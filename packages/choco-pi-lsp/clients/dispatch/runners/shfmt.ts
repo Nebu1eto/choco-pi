@@ -7,10 +7,6 @@ import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/ru
 
 const shfmt = createAvailabilityChecker("shfmt", ".exe");
 
-// shfmt's only config source is .editorconfig. We treat its presence as the
-// opt-in for the (non-error) format-diff warning, so out of the box shfmt only
-// reports genuine parse errors instead of nagging every unformatted shell file
-// against shfmt's built-in defaults (#211).
 function hasEditorConfig(cwd: string): boolean {
   let current = path.resolve(cwd);
   while (true) {
@@ -22,11 +18,6 @@ function hasEditorConfig(cwd: string): boolean {
   return false;
 }
 
-/**
- * shfmt runner — checks shell script formatting.
- * Reports files that differ from shfmt's canonical output as a single warning.
- * Does NOT auto-apply formatting (that's the formatter's job).
- */
 const shfmtRunner: RunnerDefinition = {
   id: "shfmt",
   appliesTo: ["shell"],
@@ -50,19 +41,16 @@ const shfmtRunner: RunnerDefinition = {
 
     if (!cmd) return { status: "skipped", diagnostics: [], semantic: "none" };
 
-    // --diff exits 1 and prints a unified diff if the file needs formatting
     const result = await safeSpawnAsync(cmd, ["--diff", ctx.filePath], {
       timeout: 10000,
       cwd,
     });
 
-    // exit 0 = already formatted, exit 1 = needs formatting, exit >1 = parse error
     if (result.status === 0) {
       return { status: "succeeded", diagnostics: [], semantic: "none" };
     }
 
     if ((result.status ?? 2) > 1) {
-      // Parse error — report on line 1
       const errMsg = (result.stderr ?? "").split("\n")[0].trim();
       const diagnostics: Diagnostic[] = [
         {
@@ -80,14 +68,10 @@ const shfmtRunner: RunnerDefinition = {
       return { status: "failed", diagnostics, semantic: "blocking" };
     }
 
-    // Needs formatting (exit 1). Only warn if the project opted into shfmt via
-    // .editorconfig — otherwise this nags on every shell write against shfmt's
-    // defaults (#211). Parse errors (above) are always reported.
     if (!hasEditorConfig(cwd)) {
       return { status: "succeeded", diagnostics: [], semantic: "none" };
     }
 
-    // Extract first changed line from diff if possible
     const diffOutput = result.stdout ?? result.stderr ?? "";
     let line = 1;
     const lineMatch = diffOutput.match(/^@@\s+-(\d+)/m);

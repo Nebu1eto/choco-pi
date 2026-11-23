@@ -408,7 +408,6 @@ test("reload installs compatible committed replay; account/model change reports 
   await controller.refresh(setup.binding.ctx);
   assert.equal(setup.state.pendingPiCompactionNativeWindow, undefined);
   assert.match(setup.diagnostics.at(-1) ?? "", /incompatible.*account/);
-  // Only the model ID changed (same account again): the foreground path replays it instead.
   await setup.credentials.modify(model.provider, async () => ({
     type: "oauth",
     access: tokenFor(account),
@@ -478,7 +477,6 @@ test("an incompatible checkpoint refuses requests until loss is authorized; only
   await controller.refresh(ctx);
   const sessionId = setup.binding.sessionId;
   const entryId = setup.adoption.committedEntryId;
-  // The guard, not a silent loss: the request is refused with the exits text.
   assert.equal(controller.requestRefusal(ctx, sessionId), OPAQUE_GUARD_NOTICE("codex", entryId));
   const bypass = controller.requestState(state, sessionId);
   assert.notEqual(bypass, state);
@@ -486,7 +484,6 @@ test("an incompatible checkpoint refuses requests until loss is authorized; only
   assert.equal(state.config.compaction.responsesCompaction, true);
   assert.equal(bypass.pendingPiCompactionNativeWindow, undefined);
   assert.equal(state.pendingPiCompactionNativeWindow, undefined);
-  // Only with the loss authorized for this checkpoint does the bypass send without the item.
   const unpublish = publishOpaqueConsent((id, entry) => id === sessionId && entry === entryId);
   try {
     assert.equal(controller.requestRefusal(ctx, sessionId), undefined);
@@ -719,7 +716,6 @@ test("a malformed settings diagnostic is shown once per session, not on every re
   controller.begin(setup.binding.ctx);
   await controller.refresh(setup.binding.ctx);
   await controller.refresh(setup.binding.ctx);
-  // model_select and session_tree restart the generation for the same session.
   controller.begin(setup.binding.ctx);
   await controller.refresh(setup.binding.ctx);
   assert.deepEqual(setup.diagnostics, ["fixture settings rejected"]);
@@ -745,7 +741,6 @@ test("an incompatible checkpoint warns once per session and again for a newly bo
   assert.equal(controller.fence(setup.manager.getSessionId()).engaged, true);
   assert.equal(await controller.refresh(setup.binding.ctx), undefined);
   assert.equal(controller.fence(setup.manager.getSessionId()).engaged, true);
-  // model_select and session_tree restart the generation for the same session.
   controller.begin(setup.binding.ctx);
   assert.equal(await controller.refresh(setup.binding.ctx), undefined);
   assert.equal(controller.fence(setup.manager.getSessionId()).engaged, true);
@@ -763,10 +758,6 @@ test("an incompatible checkpoint warns once per session and again for a newly bo
   assert.equal(warnings().length, 2);
   controller.stop();
 });
-
-// ---------------------------------------------------------------------------
-// Incompatible checkpoint policy (E1)
-// ---------------------------------------------------------------------------
 
 async function setCredential(
   setup: Awaited<ReturnType<typeof fixture>>,
@@ -846,7 +837,6 @@ test("transient account identity failure: no incompatibility, no notice, one yie
   assert.equal(yields.length, 1);
   assert.equal(yields[0]?.event, "yield");
   assert.equal(yields[0]?.provider, "codex");
-  // Credentials recover: the lane binds again on the next refresh.
   await setCredential(setup, tokenFor(account));
   assert.ok(await setup.controller.refresh(ctx));
   setup.controller.stop();
@@ -900,7 +890,6 @@ test("account change: requests and compactions are refused with the exits text u
   assert.equal(refusals[0]?.checkpointEntryId, entryId);
   assert.equal(setup.records.filter((record) => record.event === "cancel").length, 1);
 
-  // Loss authorized: no refusal, the placeholder path sends, and the loss is journaled once.
   const unpublish = publishOpaqueConsent((id, entry) => id === sessionId && entry === entryId);
   try {
     assert.equal(setup.controller.requestRefusal(ctx, sessionId), undefined);

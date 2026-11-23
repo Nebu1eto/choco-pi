@@ -1,31 +1,21 @@
-/**
- * Diagnostic Logger — append-only JSONL log for cross-session analytics
- *
- * Log file: ~/.choco-pi-lsp/logs/{date}.jsonl
- */
-
 import * as path from "node:path";
 import { isTestMode } from "./env-utils.ts";
 import { getGlobalPiLensDir } from "./file-utils.ts";
 import { createNdjsonLogger } from "./ndjson-logger.ts";
 
 export interface DiagnosticEntry {
-  // When
   timestamp: string;
 
-  // What was caught
   tool: string;
   ruleId: string;
   severity: string;
   language: string;
 
-  // Where
   filePath: string;
   line: number;
   column: number;
   message: string;
 
-  // What happened
   caughtByPipeline: boolean;
   shownInline: boolean;
   autoFixed: boolean;
@@ -33,7 +23,6 @@ export interface DiagnosticEntry {
   agentFixed: boolean;
   unresolved: boolean;
 
-  // Context
   model: string;
   sessionId: string;
   turnIndex: number;
@@ -74,7 +63,6 @@ function getLogFile(): string {
   return path.join(getLogDir(), `${date}.jsonl`);
 }
 
-// Module-level singleton — persists across all writes
 let _logger: DiagnosticLogger | null = null;
 
 export function getDiagnosticLogger(): DiagnosticLogger {
@@ -85,8 +73,6 @@ export function getDiagnosticLogger(): DiagnosticLogger {
 }
 
 export function createDiagnosticLogger(): DiagnosticLogger {
-  // Lazy filePath: the log file is keyed on the current date, resolved per
-  // drain so a long-lived logger rolls over at midnight.
   const writer = createNdjsonLogger({ filePath: () => getLogFile() });
 
   return {
@@ -94,7 +80,7 @@ export function createDiagnosticLogger(): DiagnosticLogger {
       if (isTestMode()) {
         return;
       }
-      writer.log(entry); // async, non-blocking
+      writer.log(entry);
     },
 
     logCaught(d: Diagnostic, context: LogContext, shownInline = false) {

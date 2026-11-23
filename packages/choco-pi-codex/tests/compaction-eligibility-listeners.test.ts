@@ -13,7 +13,6 @@ import {
 
 type EligibilityState = Pick<AdapterState, "config" | "canonicalAliasEndpoint">;
 
-/** A listener that re-subscribes itself stops doing so past this many calls (bounds a regression). */
 const RESUBSCRIBE_LIMIT = 3;
 
 function configWith(responsesCompaction: boolean): CodexConversionConfig {
@@ -22,7 +21,6 @@ function configWith(responsesCompaction: boolean): CodexConversionConfig {
   return config;
 }
 
-/** Run `body` against a fresh process slot; the previous slot (if any) is restored after. */
 async function withFreshSlot(body: () => void | Promise<void>): Promise<void> {
   const previous = Object.getOwnPropertyDescriptor(globalThis, CODEX_ELIGIBILITY_SLOT);
   Reflect.deleteProperty(globalThis, CODEX_ELIGIBILITY_SLOT);

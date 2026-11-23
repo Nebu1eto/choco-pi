@@ -10,23 +10,6 @@ import {
   type AdvisoryProvenance,
 } from "../../advisory-provenance.ts";
 
-/**
- * #628 item 4: the test-runner-findings cache (written at turn_end, see
- * `runtime-turn.ts`) is a cache-only source here — this NEVER launches a test
- * run itself (running a whole suite is explicitly out of scope, see the
- * issue's non-goal). It just reads whatever the per-edit test-fire already
- * produced, the same way the jscpd/knip/madge extractors read their caches.
- *
- * (File deliberately NOT named `test-runner*.ts` — that pattern is
- * gitignored for ad-hoc scratch scripts, same reason `high-fan-out`'s
- * `framework-call-noise.ts` sibling avoided it.)
- *
- * The cache's `content` field is a pre-formatted string for the next-turn
- * context injection; `results` (added alongside it) carries the structured
- * per-file `TestResult`s this adapter needs to emit per-file diagnostics.
- * Older caches written before `results` existed won't have it — treated as
- * "nothing to adapt", not an error.
- */
 export interface TestRunnerFindingsCache {
   content: string;
   stale?: boolean;
@@ -43,17 +26,6 @@ function failureMessage(failure: TestFailure): string {
   return firstLine ? `${failure.name}: ${firstLine}` : failure.name;
 }
 
-/**
- * `TestFailure.location` (`test-runner-client.ts`) is a free-form string that
- * varies by parser: the vitest/jest JSON parser emits a real `"relPath:line"`
- * (line only — its own `test.location.column` is dropped before it reaches
- * this string, so column is never available from that source either), while
- * the pytest text parser abuses the same field for `"file:testName"` (no
- * digits) and the mix/ExUnit parser puts a bare module name in it (no colon
- * at all). Only pull a `line`/`column` out when the trailing segment(s) are
- * actually numeric, so pytest/mix locations are left alone (no line, same as
- * before this change) instead of misparsing part of a name as a line number.
- */
 const LOCATION_LINE_COL_RE = /:(\d+)(?::(\d+))?$/;
 
 function parseLocation(location: string | undefined) {
@@ -66,20 +38,6 @@ function parseLocation(location: string | undefined) {
   };
 }
 
-/**
- * One diagnostic per test failure, attributed to the test file that reported
- * it (not the source file the agent edited — that's `sourceFile` on
- * `TestResult`, but the failure itself lives in the test file). A result with
- * no individual failures listed (a parser that couldn't extract them, or a
- * runner error) still gets one diagnostic so the file isn't silently blank.
- *
- * `stale` (from the cache's own `stale` flag, set at turn_end when the turn
- * advanced before the test run finished — `runtime-turn.ts`) is surfaced as a
- * message prefix, mirroring the one-shot turn-context-injection message's own
- * stale wording (`consumeTestFindings`'s cached `content`) — a mode=full
- * caller deserves the same "this may already be superseded" honesty the
- * per-edit path already gives.
- */
 export function testResultToProjectDiagnostics(
   result: TestResult,
   stale = false,

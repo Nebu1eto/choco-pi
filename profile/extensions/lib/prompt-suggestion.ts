@@ -40,7 +40,6 @@ export const PROMPT_SUGGESTION_SYSTEM_PROMPT =
   "unless the user already asked for them. " +
   "If no next message is clearly needed and predictable, return exactly NONE.";
 
-/** The suggestion request's system prompt, carrying the agent's preferred language when one is set. */
 export function promptSuggestionSystemPrompt(language: string | undefined): string {
   if (!language) return PROMPT_SUGGESTION_SYSTEM_PROMPT;
   return (
@@ -51,7 +50,6 @@ export function promptSuggestionSystemPrompt(language: string | undefined): stri
   );
 }
 
-/** Shared between the suggestion controller and the decorated editor that shows it. */
 export interface PromptSuggestionSlot {
   text: string | undefined;
   requestRender: (() => void) | undefined;
@@ -85,11 +83,6 @@ function clipMiddle(text: string, max: number): string {
   return text.slice(0, head) + "\n…\n" + text.slice(text.length - (max - head));
 }
 
-/**
- * Writing systems told apart for the language guard. Latin is always allowed
- * because code, paths, and identifiers use it in every language; letters of
- * any script not listed here share the "Other" bucket.
- */
 const SCRIPT_PATTERNS: readonly (readonly [string, RegExp])[] = [
   ["Latin", /\p{Script=Latin}/u],
   ["Hangul", /\p{Script=Hangul}/u],
@@ -104,7 +97,6 @@ const SCRIPT_PATTERNS: readonly (readonly [string, RegExp])[] = [
 ];
 const SCRIPT_LETTER = /[\p{L}--[\p{Script=Common}\p{Script=Inherited}]]/gv;
 
-/** Language names whose script a preference spelled in Latin letters implies. */
 const LANGUAGE_SCRIPTS = new Map([
   ["korean", ["Hangul"]],
   ["japanese", ["Kana", "Han"]],
@@ -135,17 +127,12 @@ function letterScript(letter: string): string {
   return SCRIPT_PATTERNS.find(([, pattern]) => pattern.test(letter))?.[0] ?? "Other";
 }
 
-/** The writing systems whose letters appear in `text`, ignoring shared punctuation and marks. */
 export function scriptsIn(text: string): Set<string> {
   const scripts = new Set<string>();
   for (const [letter] of text.matchAll(SCRIPT_LETTER)) scripts.add(letterScript(letter));
   return scripts;
 }
 
-/**
- * Scripts a suggestion may use: Latin, every script in the user's own
- * messages on this branch, and the script of the preferred language.
- */
 export function allowedSuggestionScripts(
   entries: readonly SessionEntry[],
   language: string | undefined,
@@ -164,16 +151,11 @@ export function allowedSuggestionScripts(
   return allowed;
 }
 
-/** True when every letter of `text` belongs to an allowed script. */
 export function usesAllowedScripts(text: string, allowed: ReadonlySet<string>): boolean {
   for (const script of scriptsIn(text)) if (!allowed.has(script)) return false;
   return true;
 }
 
-/**
- * Recent user and assistant prose from the active branch, oldest first.
- * Returns undefined unless the branch ends in a completed assistant reply.
- */
 export function suggestionTranscript(entries: readonly SessionEntry[]): string | undefined {
   const blocks: string[] = [];
   let total = 0;
@@ -198,7 +180,6 @@ export function suggestionTranscript(entries: readonly SessionEntry[]): string |
   return blocks.join("\n\n");
 }
 
-/** Normalizes model output into one suggestion line, or undefined when unusable. */
 export function sanitizePromptSuggestion(raw: string): string | undefined {
   const firstLine =
     raw
@@ -212,7 +193,6 @@ export function sanitizePromptSuggestion(raw: string): string | undefined {
     .replace(/\s+/gu, " ")
     .trim();
   if (!text || /^none[.!]?$/iu.test(text)) return undefined;
-  // An offer phrased in the agent's voice is a role mix-up, not a user prompt.
   if (AGENT_VOICE.test(text)) return undefined;
   if (text.length > MAX_SUGGESTION_CHARS) return undefined;
   return text;
@@ -222,11 +202,6 @@ const CURSOR_CELL = renderFakeCursor(" ");
 const GHOST_START = "\x1b[2m";
 const GHOST_END = "\x1b[22m";
 
-/**
- * Draws the suggestion as dim text after the end-of-line cursor cell by
- * replacing the padding that follows it, so line widths never change. When
- * no focused cursor cell with room follows, the lines are returned unchanged.
- */
 export function renderGhostSuggestion(lines: readonly string[], suggestion: string): string[] {
   const needle = CURSOR_MARKER + CURSOR_CELL;
   const result = [...lines];
@@ -257,7 +232,6 @@ export interface PromptSuggestionRequest {
   ctx: ExtensionContext;
   modelName: string;
   transcript: string;
-  /** The agent's preferred response language, when one is configured. */
   language: string | undefined;
   signal: AbortSignal;
 }
@@ -289,7 +263,6 @@ function completionText(message: AssistantMessage): string {
     .trim();
 }
 
-/** Resolves undefined for a NONE answer; throws when the model cannot answer. */
 export const generatePromptSuggestion: PromptSuggestionGenerator = async ({
   ctx,
   modelName,
@@ -345,17 +318,9 @@ export interface PromptSuggestionPreferences {
 
 export interface PromptSuggestionController {
   readonly slot: PromptSuggestionSlot;
-  /** Binds suggestions to the interactive session that just started. */
   start(sessionId: string): void;
-  /** Drops the visible suggestion and abandons any pending request. */
   invalidate(): void;
-  /** Ends ownership; later results are discarded. */
   stop(): void;
-  /**
-   * Reads the session synchronously, then requests a suggestion in the
-   * background. The promise never rejects, so callers must not await it from
-   * `agent_settled`: Pi defers new prompts until settled handlers finish.
-   */
   settled(ctx: ExtensionContext): Promise<void>;
 }
 
@@ -373,11 +338,6 @@ async function readSuggestionPreferences(): Promise<PromptSuggestionPreferences>
 
 const isActiveGoal = compile(obj({ status: lit("active") }, { open: true })).check;
 
-/**
- * True when the agent will resume without the user typing anything: a queued
- * message, a running sub-agent or background shell whose completion triggers
- * a turn, or an active goal that schedules its own continuation.
- */
 export function agentContinuesUnprompted(ctx: ExtensionContext, sessionId: string): boolean {
   if (ctx.hasPendingMessages()) return true;
   if (hasRunningSubagents()) return true;
@@ -396,7 +356,6 @@ interface SuggestionAttempt {
   ctx: ExtensionContext;
   sessionId: string;
   transcript: string;
-  /** Branch read at settle time, kept until the preference read supplies the language. */
   branch: readonly SessionEntry[];
   controller: AbortController;
   isCurrent: () => boolean;
@@ -444,8 +403,6 @@ export function createPromptSuggestionController(
     render();
   };
 
-  // Everything read here happens before the first await, so it reflects the
-  // session exactly as it settled.
   const begin = (ctx: ExtensionContext): SuggestionAttempt | undefined => {
     invalidate();
     const attempt = generation;
@@ -500,8 +457,6 @@ export function createPromptSuggestionController(
         continue;
       }
       if (!isCurrent() || text === undefined) return;
-      // A suggestion in a script neither the user nor the preference uses is a
-      // model slip; showing nothing beats a prompt the user cannot read.
       if (!usesAllowedScripts(text, allowedScripts)) return;
       if (agentContinuesUnprompted(ctx, sessionId)) return;
       slot.text = text;

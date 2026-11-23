@@ -17,13 +17,6 @@ import type { RuntimeInfo } from "./runtime.ts";
 import { renderStyleForSource } from "./style.ts";
 import { type BoundaryValue, isCallable, isNumber, isObjectValue } from "./runtime-values.ts";
 
-/**
- * Starship `git_commit` style — render a short hash, optionally with an
- * exact-match tag. See https://starship.rs/config/#git-commit
- *
- * Visibility is decided by the caller; this helper only formats the data.
- * `hashLength` is clamped to [4, 40] upstream.
- */
 export function formatGitCommitSegment(
   theme: Pick<Theme, "fg">,
   commit: GitCommitInfo | undefined,
@@ -32,7 +25,6 @@ export function formatGitCommitSegment(
   style: ColorSpec,
 ): string {
   if (!commit?.oid) return "";
-  // Starship's only_detached hides the whole module when attached.
   if (config.onlyDetached && !commit.detached) return "";
   const hash = commit.oid.slice(0, config.hashLength);
   const tag = config.showTag && commit.tag ? commit.tag : "";
@@ -41,13 +33,6 @@ export function formatGitCommitSegment(
   return renderStyleForSource(theme, colorSource, style, label);
 }
 
-/**
- * Starship `git_metrics` style — render `+added −deleted` line counts.
- * See https://starship.rs/config/#git-metrics
- *
- * When `onlyNonzero` is true, each zero component is omitted independently
- * and the whole segment hides at 0/0.
- */
 export function formatGitMetricsSegment(
   theme: Pick<Theme, "fg">,
   metrics: GitMetricsInfo | null | undefined,
@@ -124,7 +109,6 @@ export function formatCount(value: number): string {
   return `${Math.round(value / 1_000_000)}M`;
 }
 
-/** Human-readable whole-second duration used by settled and minimalist turn UI. */
 export function formatElapsedDuration(durationMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
   const hours = Math.floor(totalSeconds / 3600);
@@ -245,12 +229,10 @@ export function invalidateUsageTotalsCache(): void {
   usageTotalsCache = undefined;
 }
 
-/** Test helper: counts aggregation passes only; every cache lookup still fingerprints all entries. */
 export function __usageTotalsAggregationPassCount(): number {
   return usageTotalsAggregationPassCount;
 }
 
-/** Test helper: reset the aggregation-pass counter and cached totals. */
 export function __resetUsageTotalsCacheForTests(): void {
   usageTotalsCache = undefined;
   usageTotalsAggregationPassCount = 0;
@@ -378,16 +360,6 @@ export function formatRuntimeSegment(
   return `${renderStyleForSource(theme, colorSource, prefixStyle, "via")} ${renderStyleForSource(theme, colorSource, runtime.style, label)}`;
 }
 
-/**
- * Render the package-version segment in Starship `is <glyph> <version>` shape.
- *
- * Distinct from the runtime segment: this surfaces the project's own
- * manifest version (e.g. `package.json#version`), not the installed
- * toolchain version. Glyph comes from the Starship Nerd Font preset
- * (https://starship.rs/presets/nerd-font); default color `208` matches
- * the Starship `package` module default
- * (https://starship.rs/config/#package-version).
- */
 export function formatPackageVersionSegment(
   theme: Pick<Theme, "fg">,
   pkg: PackageVersionResult | undefined,
@@ -404,7 +376,6 @@ export function formatPackageVersionSegment(
 
 export type FormatCwdOptions = {
   mode?: PathDisplayMode;
-  /** Trailing directory components to keep in full mode. 0 = unlimited. */
   depth?: number;
   home?: string;
 };
@@ -425,7 +396,6 @@ function toHomePath(path: string, home: string): string {
   return path;
 }
 
-/** Starship-style: keep last `depth` components; prefix with `…/` when parents were dropped. */
 function applyPathDepth(path: string, depth: number): string {
   if (!Number.isFinite(depth) || depth <= 0) return path;
   const limit = Math.floor(depth);

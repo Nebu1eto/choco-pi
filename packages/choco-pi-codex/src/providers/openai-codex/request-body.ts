@@ -29,7 +29,6 @@ function isModelCompat<Value>(value: Value): value is Value & ModelCompat {
   return isJsonObject(value);
 }
 
-// Model metadata is a live registry object; keep these guards shallow as the former casts were.
 function isThinkingLevelMap<Value>(
   value: Value,
 ): value is Value & Record<string, string | null | undefined> {
@@ -108,11 +107,6 @@ export function buildRequestBody<TApi extends Api>(
   if (options?.sessionId) {
     body.client_metadata = { session_id: options.sessionId, thread_id: options.sessionId };
   }
-
-  // The Codex ChatGPT-backed endpoint rejects output-token cap fields with
-  // `Unsupported parameter: max_output_tokens`. Pi's branch summarizer passes
-  // `maxTokens`, so forwarding it breaks `/tree` summaries and extensions that
-  // use `ctx.navigateTree(..., { summarize: true })`.
 
   if (options?.temperature !== undefined) {
     body.temperature = options.temperature;

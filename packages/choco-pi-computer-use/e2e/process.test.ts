@@ -6,7 +6,6 @@ import { join } from "node:path";
 import test from "node:test";
 import { closeSink, drainOutput, exitOf, sink, stopProcess, within } from "./process.ts";
 
-/** Read the first stdout line without destroying the stream (drainOutput must observe it). */
 async function firstLine(child: ChildProcess): Promise<string> {
   const stdout = child.stdout;
   assert.ok(stdout);
@@ -57,9 +56,7 @@ test("closeSink resolves after stderr EOF already finished a piped sink (tier-A 
     child.stderr.pipe(piped.stream);
     child.stderr.on("data", (chunk: Buffer) => written.stream.write(chunk));
     await exitOf(child);
-    // `close` may already have fired alongside `exit`; drainOutput observes the ended state.
     assert.equal(await drainOutput(child, "child", 1000), undefined);
-    // pipe() has already ended the sink; the old `once(sink, "finish")` never resolved here.
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(await closeSink(piped, "piped", 1000), []);
     assert.deepEqual(await closeSink(written, "written", 1000), []);

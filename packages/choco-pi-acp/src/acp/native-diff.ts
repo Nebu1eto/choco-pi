@@ -9,20 +9,13 @@ import {
   parseJsonLine,
 } from "../boundary.ts";
 
-/**
- * Environment marker set on every Pi child. It tells choco-pi's `/diff`
- * extension that this RPC client renders a versioned diff notification as
- * native ACP diff content instead of text.
- */
 export const NATIVE_DIFF_ENV = "CHOCO_PI_ACP_NATIVE_DIFF";
-/** A notify message starting with this line carries a native diff payload. */
 export const NATIVE_DIFF_NOTIFY_PREFIX = "choco-pi-native-diff/v1\n";
 export const NATIVE_DIFF_MAX_FILES = 30;
 export const NATIVE_DIFF_MAX_TEXT_BYTES = 1024 * 1024;
 const MAX_SKIPPED = 200;
 const MAX_LABEL_LENGTH = 1_000;
 
-/** Change kinds the extension reports; anything else makes the payload malformed. */
 const FILE_STATUSES = [
   "modified",
   "added",
@@ -37,19 +30,11 @@ export type NativeDiffFileStatus = (typeof FILE_STATUSES)[number];
 
 export type NativeDiffFile = {
   path: string;
-  /**
-   * On the wire, the extension's repository-relative name for `path`, used
-   * only to shorten it (see `shortName`). After decoding, the adapter's own
-   * bounded name for `path`; it is never tested as a path.
-   */
   displayPath: string;
-  /** The previous absolute path of a rename or copy; validated like `path`. */
   oldPath?: string;
-  /** After decoding: the adapter's bounded name for `oldPath`. */
   oldDisplayPath?: string;
   oldText: string | null;
   newText: string;
-  /** Optional: an older extension sends none of these. */
   status?: NativeDiffFileStatus;
   additions?: number | null;
   deletions?: number | null;
@@ -79,10 +64,6 @@ const SENSITIVE_NAMES: readonly RegExp[] = [
   /^\.netrc$/u,
 ];
 
-/**
- * Second line of defence behind the extension's own filter: a sensitive name
- * never reaches the client with contents, whatever the payload claims.
- */
 export function isSensitiveDiffPath(path: string): boolean {
   const lower = path.toLowerCase().replaceAll("\\", "/");
   if (lower.includes("secret") || lower.includes("credential")) return true;
@@ -98,7 +79,6 @@ function isFileStatus(value: string): value is NativeDiffFileStatus {
   return FILE_STATUSES.some((status) => status === value);
 }
 
-/** A decoded optional line count: absent, null (not counted), a count, or malformed. */
 type LineCountField =
   | { kind: "absent" }
   | { kind: "present"; count: number | null }
@@ -125,7 +105,6 @@ function decodeFile(value: BoundaryValue): NativeDiffFile | undefined {
     file.status = status;
   }
   if (oldPath !== undefined) {
-    // Only a rename or copy has a previous path, and it must be absolute like `path`.
     const moved = file.status === "renamed" || file.status === "copied";
     if (!moved || !isString(oldPath) || !isAbsolute(oldPath)) return undefined;
     file.oldPath = oldPath;
@@ -138,17 +117,10 @@ function decodeFile(value: BoundaryValue): NativeDiffFile | undefined {
   return file;
 }
 
-/** A path's shown name, and the directory prefix the name was cut from (empty when not cut). */
 type ShortName = { name: string; root: string };
 
-/** The adapter's own names for one file: `label` is used where both sides share one line. */
 type FileNames = { name: string; oldName?: string; label: string };
 
-/**
- * A short name for an absolute path: the extension's relative name when it is
- * literally the end of that path, else the path itself. The hint can only
- * shorten the name of the path it belongs to; it is never trusted as a path.
- */
 function shortName(absolute: string, hint: string): ShortName {
   const tail = hint.startsWith("/") ? "" : hint;
   if (tail !== "" && absolute.endsWith(`/${tail}`)) {
@@ -157,7 +129,6 @@ function shortName(absolute: string, hint: string): ShortName {
   return { name: absolute, root: "" };
 }
 
-/** The adapter's own names for a file, built from its validated paths. */
 function namesOf(file: NativeDiffFile): FileNames {
   const { name, root } = shortName(file.path, file.displayPath);
   if (file.oldPath === undefined || file.oldPath === file.path) {
@@ -168,12 +139,6 @@ function namesOf(file: NativeDiffFile): FileNames {
   return { name: label(name), oldName: label(oldName), label: label(`${oldName} -> ${name}`) };
 }
 
-/**
- * Why a file's contents may not be forwarded, judged only from validated
- * paths and the change kind: either side sensitive, or a side unknown (a
- * rename or copy without its previous path, or no change kind at all with old
- * text that could be another file's). Undefined when they may be forwarded.
- */
 function withheldReason(file: NativeDiffFile): string | undefined {
   const sensitive =
     isSensitiveDiffPath(file.path) ||
@@ -195,11 +160,6 @@ function decodeSkip(value: BoundaryValue): NativeDiffSkip | undefined {
     : undefined;
 }
 
-/**
- * Decode a native diff notification and enforce the caps again: at most 30
- * files and 1 MiB of old plus new text, no sensitive contents. Returns
- * undefined for a malformed payload.
- */
 export function decodeNativeDiff(message: string): NativeDiffPresentation | undefined {
   if (!message.startsWith(NATIVE_DIFF_NOTIFY_PREFIX)) return undefined;
   const value = parseJsonLine(message.slice(NATIVE_DIFF_NOTIFY_PREFIX.length));
@@ -265,13 +225,6 @@ function isBidiControl(code: number): boolean {
   );
 }
 
-/**
- * One line of visible text, the adapter's counterpart of choco-pi's
- * `sanitizeTerminalText`: C0 controls (newline and tab included) become their
- * Control Picture, DEL becomes `␡`, C1 and bidirectional controls become
- * `\uFFFD`. A file name can then neither break a line, carry an escape
- * sequence, nor reorder the text around it.
- */
 export function visibleText(text: string): string {
   let result = "";
   for (const character of text) {
@@ -284,12 +237,6 @@ export function visibleText(text: string): string {
   return result;
 }
 
-/**
- * Markdown inline text that renders as `text` itself: every ASCII punctuation
- * character is backslash-escaped, so nothing in it forms a heading, list,
- * link, autolink, emphasis, code span, or HTML, and leading spaces cannot
- * start an indented code block. `text` must already be one visible line.
- */
 export function markdownText(text: string): string {
   const escaped = text.replace(/[!-/:-@[-`{-~]/gu, (character) => `\\${character}`);
   return escaped.replace(/^ +/u, (spaces) => "&#32;".repeat(spaces.length));
@@ -305,21 +252,12 @@ function longestRun(text: string, character: string): number {
   return longest;
 }
 
-/**
- * An untrusted file name as a Markdown code span: sanitised once with
- * {@link visibleText}, delimited by one more backtick than its longest
- * backtick run, and padded so a leading or trailing backtick stays inside.
- */
 export function markdownName(name: string): string {
   const visible = visibleText(name);
   const delimiter = "`".repeat(longestRun(visible, "`") + 1);
   return `${delimiter} ${visible} ${delimiter}`;
 }
 
-/**
- * "modified, +3 -1" from the optional facts; empty when the extension sent
- * none. Built only from a validated status and integers, so it needs no escaping.
- */
 function fileFacts(file: NativeDiffFile): string {
   const facts: string[] = [];
   if (file.status !== undefined) facts.push(file.status);
@@ -344,14 +282,6 @@ function fileLine(file: NativeDiffFile): string {
   return facts === "" ? name : `${name} — ${facts}`;
 }
 
-/**
- * Markdown shown above the diffs: the files in the order of the diff blocks
- * below, what was not shown and why, and the display-only notice. Zed draws a
- * diff block without its file name, so this list is where the names are.
- * `sanitize` is the adapter's text sanitiser, applied to the title as it is
- * to the tool call's title; names and reasons are sanitised by
- * {@link visibleText} and nothing is sanitised twice.
- */
 export function nativeDiffSummary(
   presentation: NativeDiffPresentation,
   sanitize: (text: string) => string,
@@ -386,16 +316,11 @@ export function nativeDiffSummary(
   return blocks.join("\n\n");
 }
 
-/** Content and locations of the display-only `/diff` tool call. */
 export type NativeDiffToolCallBody = {
   content: ToolCallContent[];
   locations: ToolCallLocation[];
 };
 
-/**
- * The ACP tool call content: the summary, then for each shown file a name line
- * followed by its diff, whose text is unchanged.
- */
 export function nativeDiffContent(
   presentation: NativeDiffPresentation,
   sanitize: (text: string) => string,

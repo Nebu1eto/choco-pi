@@ -442,14 +442,6 @@ function getManagedBrowserFileAccessValidationError(options: {
   return undefined;
 }
 
-// Deliberately unions raw argv steps AND parseable stdin steps even though
-// upstream executes argv steps exclusively when any exist: this pre-spawn
-// validator must stay a superset of anything upstream could run, so it fails
-// closed on unsafe content in either source. Stdin parse failures are fatal
-// only when upstream would actually read stdin (no argv steps); ignored
-// unparseable stdin cannot execute and must not reject a valid raw-argv call.
-// The upstream-exact selection lives in getUpstreamEffectiveBatchSteps
-// (batch-stdin.ts) for guard/folding paths.
 interface BatchCommandStepsResult {
   error?: string;
   steps: BatchCommandStep[];

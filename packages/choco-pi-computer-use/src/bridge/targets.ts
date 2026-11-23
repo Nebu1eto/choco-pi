@@ -528,7 +528,6 @@ export function sortWindowDetails(
   );
 }
 
-// Side effect: stores stable @r refs for discovered windows in runtimeState.
 export async function collectWindowDetails(
   apps: HelperApp[],
   config: ReturnType<typeof getComputerUseConfig>,

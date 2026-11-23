@@ -35,7 +35,6 @@ function asExtensionAPI(value: RuntimeValue): ExtensionAPI {
 }
 
 async function fixture(t: TestContext, initialMaxConcurrent = 1) {
-  // The profile's roles install as global agents, as scripts/install-profile.ts links them.
   const agentDir = await mkdtemp(join(tmpdir(), "stop-result-delivery-agent-"));
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -107,8 +106,6 @@ async function fixture(t: TestContext, initialMaxConcurrent = 1) {
       throw new Error("unexpected resume");
     },
   };
-  // Capture the internally constructed real manager at its existing spawn
-  // boundary and replace only its runner seam, without copying tool logic.
   const spawn = AgentManager.prototype.spawn;
   const actualManagerRef: ActualManagerRef = {};
   t.mock.method(
@@ -331,7 +328,6 @@ test(
       const parentId = host.spawn();
       const parent = host.manager.getRecord(parentId);
       assert.ok(parent);
-      // Keep the real parent runner active while nested runs settle independently.
       const deliveries: Array<Parameters<AgentSession["sendCustomMessage"]>> = [];
       parent.session = partialFixture<AgentSession>({
         async sendCustomMessage(...args: Parameters<AgentSession["sendCustomMessage"]>) {
@@ -521,10 +517,6 @@ test("a user-stopped epoch delivers the stopped notice by steer without triggeri
 });
 
 test("after a root stop, late verdict-role completions reach the context like any other, never as a turn", async (t) => {
-  // A queued reviewer and verifier publish after their verdict record is
-  // written, so they settle after the running filler. All three completions
-  // must still be sent as context messages (steer, no turn) while the latch is
-  // closed; none may be display-only and none may start a turn.
   const host = await fixture(t);
   const registryKey = Symbol.for("choco-pi:stop-control/v1");
   let latchClosed = false;

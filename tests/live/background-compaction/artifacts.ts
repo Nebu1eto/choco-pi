@@ -6,7 +6,6 @@ import type { Schema } from "@earendil-works/pi-schema";
 import type { RuntimeValue } from "../../../profile/extensions/lib/runtime-values.ts";
 import { isArray, isBoolean, isNumber, isRecord, isString, matches } from "./schema-check.ts";
 
-/** Decoded-JSON values: what an artifact file can hold. */
 export type ArtifactValue =
   | null
   | boolean
@@ -14,7 +13,6 @@ export type ArtifactValue =
   | string
   | ArtifactValue[]
   | { [key: string]: ArtifactValue };
-/** Recorder input: JSON plus `undefined` (dropped on serialisation). */
 export type ArtifactInput =
   | undefined
   | null
@@ -24,8 +22,6 @@ export type ArtifactInput =
   | ArtifactInput[]
   | { [key: string]: ArtifactInput };
 
-// Raw $defs/$ref schemas: pi-schema builders cannot express recursion. Numbers are bounded to
-// reject NaN/Infinity as the previous schema library's number check did.
 const finiteNumber = { type: "number", minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE };
 const JSON_DEF = {
   Json: {
@@ -40,10 +36,6 @@ const JSON_DEF = {
   },
 };
 export const JsonSchema: Schema<ArtifactValue> = { $ref: "#/$defs/Json", $defs: JSON_DEF };
-/**
- * JSON-only recursion for embedding in object schemas. `undefined` is not JSON, so it is only
- * accepted by `isArtifactInput`; this schema is used on payloads decoded from JSON text.
- */
 const INPUT_DEF = {
   Input: {
     anyOf: [
@@ -58,17 +50,10 @@ const INPUT_DEF = {
 };
 export const InputSchema: Schema<ArtifactInput> = { $ref: "#/$defs/Input", $defs: INPUT_DEF };
 
-/**
- * Hoists the recursive `$defs` of `JsonSchema`/`InputSchema` onto a schema that embeds them.
- * pi-schema resolves `#/$defs/...` against the compiled root, so an embedded
- * `InputSchema` inside `obj({...})` fails with "Unresolved $ref" unless the
- * root carries the definitions (observed on the live Anthropic transport).
- */
 export function withArtifactDefs<S extends object>(schema: S): S {
   return { ...schema, $defs: { ...JSON_DEF, ...INPUT_DEF } };
 }
 
-/** Whether `value` is `ArtifactInput`: JSON recursion plus `undefined` anywhere. */
 export function isArtifactInput(value: RuntimeValue): value is ArtifactInput {
   if (value === undefined || value === null || isBoolean(value) || isNumber(value)) return true;
   if (isString(value)) return true;
@@ -76,23 +61,17 @@ export function isArtifactInput(value: RuntimeValue): value is ArtifactInput {
   return isArtifactRecord(value);
 }
 
-/** Whether `value` is an object whose every value is `ArtifactInput`. */
 export function isArtifactRecord(value: RuntimeValue): value is { [key: string]: ArtifactInput } {
   return isRecord(value) && Object.values(value).every(isArtifactInput);
 }
 
 const isArtifactJson = compile(JsonSchema).check;
 
-/** Replaces the old `Value.Parse(JsonSchema, v)`: assertion only (no defaults or conversion applied). */
 export function parseArtifactValue(value: RuntimeValue): ArtifactValue {
   if (!isArtifactJson(value)) throw new Error("Non-JSON artifact value");
   return value;
 }
 
-/**
- * Replaces the old `Value.Parse(InputSchema, v)`: assertion only. Its Clean/Convert/Default
- * steps were identities for this open, default-free schema.
- */
 export function parseArtifactInput(value: RuntimeValue): ArtifactInput {
   if (!isArtifactInput(value)) throw new Error("Non-serializable artifact input");
   return value;
@@ -112,7 +91,6 @@ export function digest(text: string) {
     bytes: Buffer.byteLength(text),
   };
 }
-/** Redact BEFORE values enter the recorder; protected session storage is never copied verbatim. */
 export function redact(
   value: ArtifactInput,
   protectedStrings: readonly string[] = [],
@@ -195,7 +173,6 @@ export class Recorder {
   }
 }
 
-/** A coordinator status as recorder input: readonly failure rows become plain JSON rows. */
 export function statusArtifact(status: {
   readonly recentFailures?: readonly {
     readonly candidateId: string;

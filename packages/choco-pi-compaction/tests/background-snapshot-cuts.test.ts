@@ -1,11 +1,3 @@
-/**
- * Frozen-prefix snapshot legality.
- *
- * Expectations are computed independently of the implementation: tool call/result
- * positions are scanned from the raw branch, and replay is checked by
- * appending a real compaction entry and projecting with the host's own
- * `buildSessionProjection`.
- */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -49,14 +41,12 @@ function usage(): Usage {
 
 type Message = SessionMessageEntry["message"];
 
-/** Tree position of the next appended entry. */
 interface EntryPosition {
   readonly id: string;
   readonly parentId: string | null;
   readonly timestamp: string;
 }
 
-/** Linear branch builder with deterministic IDs. */
 class Branch {
   readonly entries: SessionEntry[] = [];
   private nextId(): EntryPosition {
@@ -161,7 +151,6 @@ function toolCallIds(message: AssistantMessage): string[] {
   return message.content.flatMap((block) => (block.type === "toolCall" ? [block.id] : []));
 }
 
-/** Independent check: raw positions of each call and its results. */
 function expectNoSplitToolGroup(entries: readonly SessionEntry[], cutIndex: number): void {
   const callAt = new Map<string, number>();
   for (const [index, entry] of entries.entries()) {
@@ -184,7 +173,6 @@ function expectNoSplitToolGroup(entries: readonly SessionEntry[], cutIndex: numb
   }
 }
 
-/** Every call/result of the retained range appears exactly once after replay. */
 function assertExactReplay(entries: readonly SessionEntry[], snapshot: PrefixSnapshot): void {
   const leaf = entries.at(-1);
   assert.ok(leaf);
@@ -230,8 +218,6 @@ function assertExactReplay(entries: readonly SessionEntry[], snapshot: PrefixSna
   }
   for (const [id, count] of calls) {
     assert.equal(count, 1, `call ${id} replayed ${count} times`);
-    // A batch still running at the leaf legitimately has fewer results; it
-    // must have exactly as many after replay as before.
     assert.equal(results.get(id) ?? 0, originalResults.get(id) ?? 0, `call ${id} results`);
     assert.ok((results.get(id) ?? 0) <= 1, `call ${id} has duplicate results`);
   }
@@ -245,7 +231,6 @@ function lcg(seed: number): () => number {
   };
 }
 
-/** Random transcript: user turns of parallel tool batches, reasoning bundles, state entries. */
 function randomBranch(seed: number): Branch {
   const next = lcg(seed);
   const branch = new Branch();
@@ -266,7 +251,6 @@ function randomBranch(seed: number): Branch {
   return branch;
 }
 
-/** Representative random transcript with both split-turn and whole-turn cuts across KEEP_WINDOWS. */
 const REPRESENTATIVE_SEED = 4;
 const KEEP_WINDOWS = [20, 60, 100, 140, 180, 220, 260];
 
@@ -291,11 +275,6 @@ test("representative transcript: every chosen cut is legal, exact on replay, and
   assert.equal(splitTurns.size, 2, "both split-turn and whole-turn cuts exercised");
 });
 
-/**
- * Random transcript shaped like a real session: a context-invisible state
- * entry after every message (timing, journals) and a run of them at each turn
- * end, so most cuts are followed by metadata rather than a cut-point message.
- */
 function metadataDenseBranch(seed: number): Branch {
   const next = lcg(seed);
   const branch = new Branch();
@@ -485,7 +464,6 @@ function steeringUser(branch: Branch): SessionEntry {
   };
 }
 
-/** The representative branch with a hidden custom message inserted inside its first tool batch. */
 function branchWithInterleavedSteer(): SessionEntry[] {
   const branch = randomBranch(REPRESENTATIVE_SEED);
   const insertAt = branch.entries.findIndex(
@@ -548,7 +526,6 @@ test("a late result for a summarized call invalidates the snapshot", () => {
 });
 
 test("a call ID recycled after the cut owns its result and keeps the snapshot valid", () => {
-  // Some providers number tool calls by a counter that restarts after a checkpoint.
   const branch = new Branch();
   branch.user("go");
   branch.calls(["exec:1"]);
@@ -568,7 +545,6 @@ test("a call ID recycled after the cut owns its result and keeps the snapshot va
   assert.equal(findPrefixInvalidation(snapshot, branch.entries), null);
   assert.equal(revalidateIdentity(snapshot, current), undefined);
 
-  // A result with no re-issued call after the cut still answers the summarized call.
   branch.result("exec:1", "orphan after the re-issued call was answered");
   assert.equal(findPrefixInvalidation(snapshot, branch.entries), null);
   const orphan = new Branch();

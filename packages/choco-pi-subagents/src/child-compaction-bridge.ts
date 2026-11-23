@@ -1,21 +1,3 @@
-/**
- * Background-compaction attachment for runner-created child sessions.
- *
- * `runAgent` appends one hidden, tool-free inline extension to the child's
- * loader. It registers no tool, command, flag, or prompt change; it only
- * observes the child's own lifecycle boundaries and forwards them to a
- * per-child coordinator that the compaction extension supplies through the
- * provider slot below. The coordinator is registered in the shared
- * background-compaction registry under the child's own owner key (its
- * distinct session ID, never inherited entry IDs). A canceled or timed-out
- * run quiesces the attachment (registry slot released, coordinator disposed,
- * session subscription kept); a later resume reattaches a fresh coordinator,
- * which recovers persisted candidates. Session disposal detaches permanently.
- *
- * Feature switch: without a published, enabled provider at spawn time the
- * factory is absent and the child is byte-for-byte the pre-existing runner
- * path.
- */
 import type {
   AgentSession,
   AgentSessionEvent,
@@ -66,7 +48,6 @@ export {
 export const CHILD_COMPACTION_EXTENSION_NAME = "subagent-background-compaction";
 export const CHILD_OWNER_KEY_PREFIX = "subagent-child:";
 
-/** Same shape as the runner's `onCompaction` callback. */
 interface ChildAdoptionInfo {
   readonly reason: "manual" | "threshold" | "overflow";
   readonly tokensBefore: number;
@@ -77,7 +58,6 @@ interface ChildCompactionBridgeOptions {
   readonly mainSessionFork: boolean;
   readonly readOnly: boolean;
   readonly isolated: boolean;
-  /** Surfaces contained coordinator failures; must not throw. */
   readonly onError?: (message: string) => void;
 }
 
@@ -87,30 +67,14 @@ interface ChildCompactionBridge {
     readonly hidden: true;
     readonly factory: (pi: ExtensionAPI) => void;
   };
-  /** Bind the runner-held child session before `bindExtensions` fires `session_start`. */
   bindSession(session: AgentSession): void;
-  /** Adoption notifications for commits that produce no host `compaction_end`. */
   onAdoption(listener: (info: ChildAdoptionInfo) => void): () => void;
-  /**
-   * Whether the attached coordinator's candidate is queued, preparing, or
-   * adopting. The coordinator publishes no status events, so callers poll this.
-   */
   isPreparing(): boolean;
-  /** End of one prompt invocation; never throws and never awaits. */
   settle(outcome: { readonly canceled: boolean; readonly timedOut: boolean }): void;
-  /**
-   * Attach a fresh coordinator after a cancel/timeout quiesce, before a
-   * resumed prompt. A no-op while attached, attaching, or disposed, and before
-   * the first `session_start`. Never rejects.
-   */
   reattach(): Promise<void>;
-  /** The runner gave up the session; detach permanently. Never throws. */
   dispose(reason?: ReasonCode): void;
 }
 
-// Foreign slots are host objects (class instances, accessors), so they are
-// probed with property reads rather than pi-schema, which sees only enumerable
-// own properties. Callables are checked structurally; signatures are not.
 interface AttachmentCandidate {
   coordinator?: CoordinatorCandidate | HostValue;
   observeBoundary?: HostValue;
@@ -125,22 +89,14 @@ interface AdoptionSignalCandidate {
   registerOwner?: HostValue;
 }
 
-/** Decoded session-entry details (plain JSON), so a pi-schema object is exact. */
 const isCommittedDetails = compile(
   obj({ candidateId: str({ minLength: 1 }), ownerKey: opt(str()) }, { open: true }),
 ).check;
 
-/**
- * Process-global adoption signal published by `choco-pi-compaction`. The
- * bridge registers the child as an owner so every extension that consults it
- * (the compaction summarizer, hooks, Codex native compaction) sees the same
- * memoized host-route decision this bridge later answers with.
- */
 const BACKGROUND_ADOPTION_SIGNAL = Symbol.for("choco-pi:compaction-background-adoption");
 interface ChildAdoptionOwner {
   willAdopt(event: SessionBeforeCompactEvent): Promise<boolean>;
   isAdoption(entry: CompactionEntry): boolean;
-  /** Children have no idle route. */
   adoptReady(): boolean;
 }
 
@@ -154,12 +110,10 @@ function isAdoptionSignalSlot<T extends HostValue>(value: T): value is T & Adopt
   return slot.version === 1 && slot.registerOwner instanceof Function;
 }
 
-/** The slot is foreign code: confirm its unregister callback before keeping it. */
 function isUnregister<T>(value: T): value is T & (() => void) {
   return value instanceof Function;
 }
 
-/** Register a child owner; an absent or foreign slot leaves the child unregistered. */
 function registerAdoptionOwner(sessionId: string, owner: ChildAdoptionOwner): () => void {
   const slot: unknown = Object.getOwnPropertyDescriptor(
     globalThis,
@@ -187,7 +141,6 @@ function isAttachment<T extends HostValue>(value: T): value is T & ChildCoordina
 
 const bridges = new WeakMap<AgentSession, ChildCompactionBridge>();
 
-/** The attachment `runAgent` bound to this session, for `resumeAgent`. */
 export function getChildCompactionBridge(session: AgentSession): ChildCompactionBridge | undefined {
   return bridges.get(session);
 }
@@ -205,14 +158,12 @@ interface PendingAdoption {
   readonly tokensBefore: number;
 }
 
-/** A host-route adoption decided once per session_before_compact event. */
 interface HostRouteDecision {
   readonly owner: ActiveAttachment;
   readonly epoch: number;
   readonly compaction: CompactionResult;
 }
 
-/** Everything one bridge tracks; every lifecycle step below takes it explicitly. */
 interface BridgeState {
   readonly options: ChildCompactionBridgeOptions;
   readonly createChildCoordinator: CreateChildCoordinator;
@@ -222,32 +173,18 @@ interface BridgeState {
   active: ActiveAttachment | undefined;
   creating: AbortController | undefined;
   disposed: boolean;
-  /** Incremented on every detach; handlers compare it after each await. */
   epoch: number;
   generation: number;
   readonly pending: Map<string, PendingAdoption>;
-  /** Candidates this bridge proposed for the current attachment. */
   readonly proposed: Set<string>;
   readonly decisions: WeakMap<SessionBeforeCompactEvent, Promise<HostRouteDecision | undefined>>;
   readonly listeners: Set<(info: ChildAdoptionInfo) => void>;
-  /** The child's extension API, captured by the factory; reattach reuses it. */
   pi: ExtensionAPI | undefined;
-  /** The context of the child's `session_start`; reattach reuses it. */
   startCtx: ExtensionContext | undefined;
-  /** Why the attachment was last quiesced; cleared by a successful reattach. */
   quiesced: "canceled" | "timed-out" | undefined;
-  /**
-   * A normal settle found a host-route proposal still awaiting its commit and
-   * deferred the coordinator cancel to that compaction's end event.
-   */
   deferredCancel: boolean;
 }
 
-/**
- * Build the per-child bridge, or `undefined` when the feature is off (no
- * provider, or the provider reports disabled). Called synchronously by
- * `runAgent` before the loader is constructed.
- */
 export function createChildCompactionBridge(
   options: ChildCompactionBridgeOptions,
   provider: ChildCompactionProvider | undefined = resolveChildCompactionProvider(),
@@ -312,9 +249,7 @@ function createBridgeState(
 function report(state: BridgeState, message: string): void {
   try {
     state.options.onError?.(`background-compaction: ${message}`);
-  } catch {
-    // Error reporting must never disturb the child's lifecycle.
-  }
+  } catch {}
 }
 
 function disposeCoordinator(
@@ -334,7 +269,6 @@ function disposeCoordinator(
   }
 }
 
-/** Synchronously invalidate, release the registry slot, then cancel and dispose. */
 function detach(state: BridgeState, reason: ReasonCode): void {
   state.epoch++;
   state.creating?.abort();
@@ -396,11 +330,6 @@ function addAdoptionListener(
 
 const PREPARING_STATES: ReadonlySet<CandidateState> = new Set(["queued", "preparing", "adopting"]);
 
-/**
- * Whether a coordinator's candidate is queued, preparing, or adopting. `ready`
- * is excluded: an unadoptable ready candidate can persist for a whole run.
- * An absent coordinator or a failing foreign status reads as idle.
- */
 export function isCoordinatorPreparing(
   coordinator: Pick<CoordinatorApi, "status"> | undefined,
 ): boolean {
@@ -412,19 +341,12 @@ export function isCoordinatorPreparing(
   }
 }
 
-/** Poll the live coordinator; a detached bridge reads as idle. */
 function isBridgePreparing(state: BridgeState): boolean {
   const current = state.active;
   if (state.disposed || !current) return false;
   return isCoordinatorPreparing(current.attachment.coordinator);
 }
 
-/**
- * Acknowledge every proposal that is already committed on the child's branch.
- * A settle can run after the host appended a proposed checkpoint but before
- * its commit event reached this bridge (another extension's `session_compact`
- * handler runs first); clearing the proposals then would drop the commit.
- */
 function acknowledgeCommittedProposals(state: BridgeState): void {
   if (state.pending.size === 0 || state.active === undefined) return;
   const session = state.boundSession;
@@ -447,26 +369,13 @@ function settleBridge(
   outcome: { readonly canceled: boolean; readonly timedOut: boolean },
 ): void {
   if (state.disposed) return;
-  // Before anything clears the proposals or disposes the coordinator.
   acknowledgeCommittedProposals(state);
   if (outcome.canceled || outcome.timedOut) {
     quiesceBridge(state, outcome.timedOut ? "timed-out" : "canceled");
     return;
   }
-  // Settled, not disposed: the session may be resumed, so the attachment
-  // stays registered, but no preparation outlives the invocation.
   dropProposals(state, "boundary");
   if (!state.active) return;
-  // A host compaction answered with our candidate may still be between
-  // `session_before_compact` and its append (a manual /compact racing the
-  // run's end). Its proposal and candidate must survive until that
-  // compaction's own end event, or the commit is never acknowledged and the
-  // canceled candidate fails closed. Keeping the pending entry (rather than
-  // acknowledging any entry whose candidate ID this epoch ever proposed)
-  // keeps acknowledgment single-shot (`acknowledge` deletes the entry) and
-  // owner-scoped, and it is bounded: the host serializes compactions, so the
-  // next `session_compact`/`session_compact_failed` ends it, and any detach
-  // clears it.
   if (hasProposal(state, "host")) {
     state.deferredCancel = true;
     return;
@@ -495,13 +404,6 @@ function dropProposals(state: BridgeState, route: PendingAdoption["route"]): voi
   }
 }
 
-/**
- * One host compaction ended (`committed` is its appended entry, if any).
- * Host-route proposals belong to the compaction in flight, so whatever this
- * event did not acknowledge is over. A cancel deferred by settle runs only if
- * our candidate was not committed: after a commit the provider reconciles the
- * adopting candidate asynchronously, and canceling it would discard it.
- */
 function endHostRoute(state: BridgeState, committed: CompactionEntry | undefined): void {
   const acknowledged = committed !== undefined && acknowledge(state, committed);
   dropProposals(state, "host");
@@ -510,16 +412,9 @@ function endHostRoute(state: BridgeState, committed: CompactionEntry | undefined
   if (!acknowledged) cancelCandidate(state);
 }
 
-/**
- * Cancel/timeout: invalidate synchronously, release the registry slot, then
- * cancel and dispose the coordinator. Unlike disposal the bridge stays bound
- * (session subscription and WeakMap entry kept) so a resume can reattach.
- * Repeating it is a no-op beyond the epoch bump.
- */
 function quiesceBridge(state: BridgeState, kind: "canceled" | "timed-out"): void {
   if (state.disposed) return;
   state.quiesced = kind;
-  // The contract has no timeout reason code; the kind is kept on the bridge.
   detach(state, "canceled");
 }
 
@@ -535,12 +430,9 @@ async function reattachBridge(state: BridgeState): Promise<void> {
     report(state, `reattach${after} failed: ${String(error)}`);
     return;
   }
-  // attach bumps the epoch only when it had to detach; any later detach wins.
   const owner = state.active;
   if (owner === undefined || state.disposed || state.epoch !== reattachEpoch) return;
   state.quiesced = undefined;
-  // After attach, so a recovered candidate and the replayed provider-native
-  // checkpoint (Codex/Anthropic/xAI) both exist before the resumed prompt.
   await refreshNativeState(state, {
     owner,
     epoch: reattachEpoch,
@@ -549,7 +441,6 @@ async function reattachBridge(state: BridgeState): Promise<void> {
   });
 }
 
-/** One native-state refresh, fixed before its await. */
 interface NativeRefreshAttempt {
   readonly owner: ActiveAttachment;
   readonly epoch: number;
@@ -557,7 +448,6 @@ interface NativeRefreshAttempt {
   readonly ctx: ExtensionContext;
 }
 
-/** Re-run the session's native-state refreshers; never rejects. */
 async function refreshNativeState(
   state: BridgeState,
   attempt: NativeRefreshAttempt,
@@ -573,7 +463,6 @@ async function refreshNativeState(
   }
 }
 
-/** Identity of one attachment attempt, fixed before its first await. */
 interface AttachAttempt {
   readonly ownerKey: string;
   readonly ownerGeneration: number;
@@ -591,7 +480,6 @@ function isAttemptCurrent(state: BridgeState, attempt: AttachAttempt): boolean {
 async function attach(state: BridgeState, ctx: ExtensionContext, pi: ExtensionAPI): Promise<void> {
   if (state.disposed) return;
   const childSessionId = ctx.sessionManager.getSessionId();
-  // Ownership is the runner-bound session, not a manager whose entries look alike.
   if (state.boundSessionId === undefined || childSessionId !== state.boundSessionId) return;
   if (state.active || state.creating) detach(state, "owner-changed");
   const ownerKey = `${CHILD_OWNER_KEY_PREFIX}${childSessionId}`;
@@ -607,13 +495,11 @@ async function attach(state: BridgeState, ctx: ExtensionContext, pi: ExtensionAP
     controller: new AbortController(),
   };
   state.creating = attempt.controller;
-  // Called unbound, exactly like the provider member it was read from.
   const createChildCoordinator = state.createChildCoordinator;
   let result: ChildCoordinatorAttachment | undefined;
   try {
     result = await createChildCoordinator(coordinatorContext(state, attempt, ctx, pi));
   } catch (error) {
-    // A rejected creation ends this attempt only; a newer attempt owns `creating`.
     if (state.creating === attempt.controller) {
       attempt.controller.abort();
       state.creating = undefined;
@@ -662,7 +548,6 @@ function coordinatorContext(
   };
 }
 
-/** Validate the provider's answer; a missing or invalid one ends this attempt's creation. */
 function acceptedAttachment(
   state: BridgeState,
   attempt: AttachAttempt,
@@ -687,7 +572,6 @@ function registerAttachment(
   }
   try {
     if (!setCoordinator(ownerKey, coordinator)) {
-      // The compaction registry slot is in conflict: run without a coordinator.
       disposeCoordinator(state, coordinator, "disposed");
       report(state, `owner ${ownerKey} not attached: compaction registry unavailable`);
       return;
@@ -700,7 +584,6 @@ function registerAttachment(
   state.active = { ownerKey, ownerGeneration, attachment, controller, unregisterOwner };
 }
 
-/** Attachment failures surface through the runner's extension-error channel. */
 async function attachReporting(
   state: BridgeState,
   ctx: ExtensionContext,
@@ -713,7 +596,6 @@ async function attachReporting(
   }
 }
 
-/** A proposal is legal only if its retained entry is on the child's current branch. */
 function retainedOnBranch(
   draft: CompactionEntryDraft,
   branch: readonly SessionEntry[],
@@ -723,7 +605,6 @@ function retainedOnBranch(
   );
 }
 
-/** Whether `owner` is still the live attachment of the epoch an await started in. */
 function isStillAttached(state: BridgeState, owner: ActiveAttachment, epoch: number): boolean {
   return !state.disposed && state.epoch === epoch && state.active === owner;
 }
@@ -759,7 +640,6 @@ async function boundary(
   return result;
 }
 
-/** Arbitrate one host-routed compaction; recorded as a proposal only when it adopts. */
 async function arbitrateHostRoute(
   state: BridgeState,
   event: SessionBeforeCompactEvent,
@@ -786,13 +666,11 @@ async function arbitrateHostRoute(
     tokensBefore: event.preparation.tokensBefore,
     details: result.draft.details,
   };
-  // Under exactOptionalPropertyTypes an absent usage stays absent.
   const usage = result.draft.usage;
   if (usage) compaction.usage = usage;
   return { owner: current, epoch: arbitrationEpoch, compaction };
 }
 
-/** Memoized per event: earlier handlers asking the signal and this bridge share one arbitration. */
 function decideHostRoute(
   state: BridgeState,
   event: SessionBeforeCompactEvent,
@@ -818,7 +696,6 @@ async function willAdoptHostRoute(
   try {
     return (await decideHostRoute(state, event)) !== undefined;
   } catch {
-    // A failed arbitration cannot adopt; the bridge's own handler surfaces it.
     return false;
   }
 }
@@ -831,11 +708,6 @@ function adoptionOwner(state: BridgeState, ownerKey: string): ChildAdoptionOwner
   };
 }
 
-/**
- * Acknowledge a committed checkpoint this bridge proposed. Boundary drafts
- * surface through the SDK `entry_appended` event; host-routed results are
- * appended without it and surface through the real `session_compact`.
- */
 function acknowledge(state: BridgeState, entry: CompactionEntry): boolean {
   const current = state.active;
   if (!current) return false;
@@ -844,14 +716,12 @@ function acknowledge(state: BridgeState, entry: CompactionEntry): boolean {
   if (details.ownerKey !== undefined && details.ownerKey !== current.ownerKey) return false;
   const proposal = state.pending.get(details.candidateId);
   if (!proposal) return false;
-  // Deleting the proposal makes every later commit event for it a no-op.
   state.pending.delete(details.candidateId);
   try {
     current.attachment.acknowledgeCommit?.(entry);
   } catch (error) {
     report(state, `commit acknowledgment failed: ${String(error)}`);
   }
-  // Host-routed adoptions already reach onCompaction through compaction_end.
   if (proposal.route !== "boundary") return true;
   notifyAdoptionListeners(state, { reason: "threshold", tokensBefore: proposal.tokensBefore });
   return true;
@@ -887,8 +757,6 @@ async function answerHostRoute(
 function registerBridgeHandlers(state: BridgeState, pi: ExtensionAPI): void {
   if (state.disposed) return;
   state.pi = pi;
-  // Never delay the child's start on coordinator creation; boundaries before
-  // attachment are inert and a late attachment is checked against the epoch.
   pi.on("session_start", (_event, ctx) => {
     if (!state.disposed) state.startCtx = ctx;
     void attachReporting(state, ctx, pi);

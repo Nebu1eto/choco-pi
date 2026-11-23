@@ -20,8 +20,6 @@ import {
 
 type EditorFactory = NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>;
 
-// Per-model thinking defaults are user settings now; the checkout ships no
-// settings.json, so only the tracked model overrides are checked here.
 test("OpenAI model overrides set only context windows without overriding stock authentication", async () => {
   const models: unknown = JSON.parse(await readFile("profile/models.json", "utf8"));
   assert.ok(isJsonRecord(models));
@@ -49,7 +47,6 @@ function fastModeSession(id: string, enabled?: boolean, oauth = false) {
     mode: "rpc",
     model: model("openai"),
     sessionManager: { getBranch: () => entries, getSessionId: () => id },
-    // Pi's synchronous auth-type query: true models "Sign in with ChatGPT" on openai.
     modelRegistry: { isUsingOAuth: () => oauth },
     ui: { notify: (message: string) => notices.push(message), setStatus: () => {} },
   };
@@ -109,7 +106,6 @@ test("openai sign-in sends no service_tier and /fast names the reason; codex kee
   const session = fastModeSession("fast-sign-in", true, true);
   session.start();
   try {
-    // The inbound field is stripped too: the tier is accepted but not honored.
     assert.deepEqual(session.request(), { model: "test" });
     assert.deepEqual(session.request("openai-codex"), { model: "test", service_tier: "priority" });
     await session.toggle("status");
@@ -371,7 +367,6 @@ test("legacy process-global Codex state cannot seed a new session", async () => 
     await fastHandler?.("status", ctx);
     await fastHandler?.("off", ctx);
     await fastHandler?.("status", ctx);
-    // RPC confirms the toggle as well as both status reads.
     assert.deepEqual(notifications, ["Fast mode: off", "Fast mode: off", "Fast mode: off"]);
     handlers.get("session_shutdown")?.({}, ctx);
   } finally {
@@ -476,14 +471,12 @@ test("fast toggles rerender without appending a scrollback status row", async ()
     },
   };
   handlers.get("session_start")?.({}, ctx);
-  // The TUI editor badge is the confirmation; no scrollback row is appended.
   await fastHandler?.("on", { ...ctx, mode: "tui" });
 
   assert.equal(entries, 1);
   assert.deepEqual(notifications, []);
   assert.equal(renders, 1);
 
-  // RPC hosts have no badge, so the toggle confirms with a notice.
   await fastHandler?.("off", ctx);
   assert.equal(entries, 2);
   assert.deepEqual(notifications, ["Fast mode: off"]);

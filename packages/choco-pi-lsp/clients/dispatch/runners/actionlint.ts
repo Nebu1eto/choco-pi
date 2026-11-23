@@ -79,7 +79,6 @@ export function parseActionlintJson(raw: string, filePath: string): Diagnostic[]
     const issues = Array.isArray(parsed) ? parsed : [parsed];
     return issues.map((issue) => toDiagnostic(issue, filePath));
   } catch {
-    // Some actionlint versions or wrappers may emit one JSON object per line.
     const diagnostics: Diagnostic[] = [];
     for (const line of trimmed.split(/\r?\n/)) {
       if (!line.trim()) continue;
@@ -88,10 +87,7 @@ export function parseActionlintJson(raw: string, filePath: string): Diagnostic[]
         if (isActionlintIssue(parsed)) {
           diagnostics.push(toDiagnostic(parsed, filePath));
         }
-      } catch {
-        // Ignore non-JSON chatter; the caller will synthesize a generic diagnostic
-        // if actionlint failed and no structured diagnostics were parsed.
-      }
+      } catch {}
     }
     return diagnostics;
   }

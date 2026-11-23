@@ -17,7 +17,6 @@ import type {
 } from "../src/pi-rpc/protocol.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 
-/** A session index that always resolves the single stored session under test. */
 class FixedSessionStore implements SessionStoreLike {
   get(_sessionId: string): StoredSession {
     return {
@@ -33,7 +32,6 @@ class FixedSessionStore implements SessionStoreLike {
   delete(): void {}
 }
 
-/** A Pi process fake for a restored session with an empty transcript. */
 class RestoredProcess implements PiRpcProcessLike {
   onEvent(_handler: (ev: PiRpcEvent) => void): () => void {
     return () => {};
@@ -56,7 +54,6 @@ class RestoredProcess implements PiRpcProcessLike {
   }
 }
 
-/** Replace `setTimeout` with a recorder so scheduled work never runs during a test. */
 class TimerRecorder {
   readonly callbacks: Array<() => void> = [];
 
@@ -67,7 +64,6 @@ class TimerRecorder {
     const callbacks = this.callbacks;
     const record = (callback: () => void): NodeJS.Timeout => {
       callbacks.push(callback);
-      // Hand back a genuine (already cleared) handle so callers can still unref it.
       const handle = realSetTimeout(() => {}, 0);
       clearTimeout(handle);
       return handle;
@@ -80,7 +76,6 @@ class TimerRecorder {
   }
 }
 
-/** Decode `_meta.piAcp.startupInfo` from an ACP response's undecoded metadata. */
 function startupInfoFromMeta(meta: BoundaryValue): BoundaryValue {
   if (!isBoundaryRecord(meta)) return undefined;
   const piAcp = meta.piAcp;
@@ -89,24 +84,18 @@ function startupInfoFromMeta(meta: BoundaryValue): BoundaryValue {
 }
 
 test("PiAcpAgent: does not emit startup info on loadSession", async () => {
-  // spy on timers (commands update is scheduled)
   const timers = new TimerRecorder();
   timers.install();
 
   const originalSpawn = PiRpcProcess.spawn;
   const spawnRestoredProcess = async (): Promise<PiRpcProcessLike> => new RestoredProcess();
-  // `PiRpcProcess.spawn` is the only seam that starts a real pi child; `Object.assign`
-  // swaps it for the duration of this test and the `finally` block restores it.
   Object.assign(PiRpcProcess, { spawn: spawnRestoredProcess });
 
   try {
     const conn = new FakeAgentSideConnection();
     const agent = new PiAcpAgent(asAgentConn(conn));
 
-    // Inject store so loadSession resolves without depending on actual filesystem.
     const store: SessionStoreLike = new FixedSessionStore();
-    // `store` is a private implementation detail of `PiAcpAgent`; `Object.assign`
-    // installs the fake through the same property without weakening any declared type.
     Object.assign(agent, { store });
 
     const res = await agent.loadSession({
@@ -117,7 +106,6 @@ test("PiAcpAgent: does not emit startup info on loadSession", async () => {
 
     assert.equal(startupInfoFromMeta(res._meta ?? undefined), null);
 
-    // Session load schedules available_commands_update plus the managed idle-reap timer.
     assert.equal(timers.callbacks.length, 2);
   } finally {
     timers.restore();

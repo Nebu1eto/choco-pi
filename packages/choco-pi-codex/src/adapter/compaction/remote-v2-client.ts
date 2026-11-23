@@ -54,7 +54,6 @@ interface TerminalCompactionResponse {
   };
 }
 
-/** A completed-response stream event carrying object items and token usage; extra keys allowed. */
 function isTerminalCompactionResponse<T>(event: T): event is T & TerminalCompactionResponse {
   if (!isJsonObject(event) || event["type"] !== "response.completed") return false;
   const response = event["response"];
@@ -79,11 +78,6 @@ type V2Stream = (
   options?: SimpleStreamOptions,
 ) => AsyncIterable<AssistantMessageEvent>;
 
-/**
- * What happened to `/compact <focus>`: forwarded in the request, or dropped
- * after the server rejected the focus item (one retry without it). Absent when
- * the caller passed no focus.
- */
 export type RemoteCompactionV2Focus = "forwarded" | "ignored";
 
 export type RemoteCompactionV2Result =
@@ -132,26 +126,17 @@ export type ExecuteRemoteCompactionV2Options = {
   retryDelayMs?: number | undefined;
   promptInputSource?: "canonical" | "reconstructed" | undefined;
   compactionDiagnostic?: CodexCompactionDiagnostic | undefined;
-  /** Detached canonical settings: never look up a foreground lane after an await. */
   frozenRequestBody?: ResponsesBody | undefined;
   maxRetries?: number | undefined;
   maxOutputTokens?: number | undefined;
   maxResultBytes?: number | undefined;
   fetch?: typeof globalThis.fetch | undefined;
-  /**
-   * `/compact <focus>`. When non-blank it is sent as one developer message
-   * ("Compaction focus from the user: ...") right before the
-   * `compaction_trigger` item; it is part of this request only, never of the
-   * prompt input the retained window is built from.
-   */
   customInstructions?: string | undefined;
 };
 
-/** Largest focus forwarded, in code points (the Anthropic `instructions` cap). */
 export const COMPACTION_FOCUS_MAX_CODE_POINTS = 16_384;
 const COMPACTION_FOCUS_PREFIX = "Compaction focus from the user: ";
 
-/** The developer message that carries `/compact <focus>`; undefined for a blank focus. */
 export function compactionFocusItem(
   customInstructions: string | undefined,
 ): ResponsesInputItem | undefined {
@@ -166,8 +151,6 @@ export function compactionFocusItem(
 
 function resolveStream(options: ExecuteRemoteCompactionV2Options): V2Stream | undefined {
   if (options.runtime.codexTransport) {
-    // The Codex API implementation is registered once under the stock
-    // provider. The runtime model and credentials retain the alias scope.
     const registration = options.modelRegistry.getRegisteredProviderConfig("openai-codex");
     return registration?.api === "openai-codex-responses" && registration.streamSimple
       ? registration.streamSimple
@@ -243,8 +226,6 @@ function withCurrentCompactionControls(
   requestOptions: NativeCompactionRequestOptions,
 ): ResponsesBody {
   const {
-    // Stored canonical history never carries Daybreak authority; the provider finalizer
-    // writes the current request's frozen decision after this payload hook.
     access_programs: _canonicalAccessPrograms,
     client_metadata: _canonicalMetadata,
     reasoning: canonicalReasoning,
@@ -282,11 +263,9 @@ type AttemptResponse = Parameters<NonNullable<SimpleStreamOptions["onResponse"]>
 type AssistantErrorEvent = Extract<AssistantMessageEvent, { type: "error" }>;
 type ProviderPayload = Parameters<NonNullable<SimpleStreamOptions["onPayload"]>>[0];
 
-/** Base delay for the exponential backoff between non-Codex attempts. */
 const DEFAULT_RETRY_DELAY_MS = 500;
 const MS_PER_SECOND = 1000;
 
-/** What the stream callbacks observed during one attempt. */
 interface AttemptObservations {
   readonly outputItems: BoundaryValue[];
   outputBytes: number;
@@ -299,7 +278,6 @@ interface AttemptObservations {
   terminalCompaction: JsonObject | undefined;
   expectedBackgroundPayload: ReturnType<typeof cloneCodexCompactionJson>;
   payloadUnsupported: boolean;
-  /** The reduced attempt could not shrink the input, so nothing was sent. */
   irreducible: boolean;
 }
 function createAttemptObservations(): AttemptObservations {
@@ -319,21 +297,11 @@ function createAttemptObservations(): AttemptObservations {
   };
 }
 
-/**
- * How hard an attempt shrinks its input. The first attempt shrinks only when the
- * host's estimate exceeds the window budget; after the provider reports a context
- * overflow the single retry shrinks by the local estimate to a smaller budget.
- * One record is shared by every attempt of a single compaction, so the reduced
- * retry can tell whether it would only resend the input already rejected.
- */
 interface AttemptShrink {
   reduced: boolean;
-  /** Serialized input of the last attempt that reached the provider. */
   sentInput: string | undefined;
-  /** Input index of the focus item in the last prepared request, when one was appended. */
   focusIndex: number | undefined;
 }
-/** Share of the window budget the reduced retry targets. */
 const REDUCED_BUDGET_PERCENT = 75;
 
 function attemptBudget(options: ExecuteRemoteCompactionV2Options): number | undefined {
@@ -344,14 +312,12 @@ function attemptBudget(options: ExecuteRemoteCompactionV2Options): number | unde
   });
 }
 
-/** Provider rejections of an input larger than the model's context window. */
 export function isContextOverflowMessage(message: string): boolean {
   return /context_length_exceeded|exceeds? the context window|maximum context length/i.test(
     message,
   );
 }
 
-/** Canonical continuation history, when this attempt may use it instead of reconstruction. */
 interface CanonicalAttemptSource {
   readonly input: readonly BoundaryValue[] | undefined;
   readonly body: ResponsesBody | undefined;
@@ -391,7 +357,6 @@ function recordOutputItem(
   observed.outputItems.push(item);
 }
 
-/** Retry-After as delta seconds or an HTTP date; undefined when unparseable. */
 function parseRetryAfterMs(retryAfter: string): number | undefined {
   const seconds = Number(retryAfter);
   const delay = Number.isFinite(seconds)
@@ -448,7 +413,6 @@ async function prepareAttemptPayload(
     ((request.rewrittenOutputs === 0 && request.droppedItems === 0) ||
       sentInput === shrink.sentInput)
   ) {
-    // Resending the identical input would fail the same way.
     observed.irreducible = true;
     throw new Error("Responses compaction v2 input cannot be reduced below the context window");
   }
@@ -472,7 +436,6 @@ async function prepareAttemptPayload(
   return preparedBody;
 }
 
-/** The provider-finalized body must equal the frozen hook's payload, or the lane sends nothing. */
 function matchesFrozenPayload(
   signal: AbortSignal | undefined,
   observed: AttemptObservations,
@@ -625,7 +588,6 @@ async function consumeAttemptStream(
   return { completed, completedNormally };
 }
 
-/** Frozen-body lanes also require the terminal response to echo exactly the streamed item. */
 function matchesFrozenTerminal(
   observed: AttemptObservations,
   completed: AssistantMessage,
@@ -700,7 +662,6 @@ async function runAttempt(
   return finalizeAttempt(options, observed, diagnostic, completion);
 }
 
-/** Failures another attempt cannot fix. */
 function isFinalFailure(result: RemoteCompactionV2Failure): boolean {
   return (
     result.reason === "aborted" ||
@@ -712,7 +673,6 @@ function isFinalFailure(result: RemoteCompactionV2Failure): boolean {
     !shouldRetry(result)
   );
 }
-/** False when the caller aborted during the backoff. */
 async function backoff(delayMs: number, signal: AbortSignal | undefined): Promise<boolean> {
   try {
     await sleep(delayMs, signal);
@@ -746,12 +706,6 @@ async function runAttemptsWithRetry(
   );
 }
 
-/**
- * After a context overflow, one more attempt with the input shrunk by the local
- * estimate to a smaller budget; it sends nothing when the input cannot shrink
- * past what was already rejected. The retry counts against the caller's retry
- * budget, so a caller that disabled retries (the background lane) gets none.
- */
 async function retryReducedAfterOverflow(
   options: ExecuteRemoteCompactionV2Options,
   streamSimple: V2Stream,
@@ -787,17 +741,12 @@ const isProviderErrorBody = compile(
   ),
 ).check;
 
-/** The fields of a provider JSON error body the focus-rejection check reads. */
 interface ProviderErrorFields {
   readonly param: string | undefined;
   readonly message: string | undefined;
   readonly code: string | undefined;
 }
 
-/**
- * `error.param`, `error.message` and `error.code` of the JSON error body
- * embedded in the failure text; undefined when there is no parseable body.
- */
 function providerErrorFields(failureText: string): ProviderErrorFields | undefined {
   const start = failureText.indexOf("{");
   if (start < 0) return undefined;
@@ -812,19 +761,9 @@ function providerErrorFields(failureText: string): ProviderErrorFields | undefin
   return { param: param ?? undefined, message, code: code ?? undefined };
 }
 
-/** `error.param` pointing at an input item: `input[N]`, optionally followed by a sub-path. */
 const INPUT_PARAM_PATTERN = /^input\[(\d+)\](?:$|[.[])/;
-/** `developer` or `compaction_trigger` as a whole token, not part of a longer identifier. */
 const FOCUS_TOKEN_PATTERN = /(?<![A-Za-z0-9_-])(?:developer|compaction_trigger)(?![A-Za-z0-9_-])/i;
 
-/**
- * Whether the server rejected the request because of the appended focus item:
- * an HTTP 400 or 422 carrying a parseable JSON error body whose `error.param`
- * is `input[N]` (or a path below it) with N the item's index, or whose
- * `error.message` or `error.code` names `developer` or `compaction_trigger`
- * as a whole token. Anything else (another status, no status, no JSON body)
- * is an ordinary failure, never retried without the focus.
- */
 export function rejectsCompactionFocus(
   result: RemoteCompactionV2Failure,
   focusIndex: number | undefined,
@@ -847,7 +786,6 @@ async function runCompactionRequest(
   initialTransport: Transport,
   shrink: AttemptShrink,
 ): Promise<RemoteCompactionV2Result> {
-  // Codex transports own their retries inside the provider stream.
   const first = options.runtime.codexTransport
     ? await runAttempt({ ...options, transport: initialTransport }, streamSimple, shrink)
     : await runAttemptsWithRetry(options, streamSimple, initialTransport, shrink);
@@ -883,8 +821,6 @@ export async function executeRemoteCompactionV2(
   const result = await runCompactionRequest(options, streamSimple, initialTransport, shrink);
   if (compactionFocusItem(options.customInstructions) === undefined) return result;
   if (result.ok) return { ...result, focus: "forwarded" };
-  // The background lane keeps its frozen request: a rejected focus is a real
-  // failure there, and its coordinator falls back to a lane that honors it.
   if (
     options.frozenRequestBody !== undefined ||
     options.signal?.aborted === true ||

@@ -1,22 +1,3 @@
-/**
- * choco-pi's `tool_search`, lean active-tool surface, and provider prefix lock.
- *
- * Discovery is choco-pi's own `tool_search` (lib/tool-search-tool.ts), which
- * replaces Pi's built-in by registering the same name and also finds the
- * `direct` tools this surface withholds and the tools callable inside Code
- * Mode's `exec`. The profile disables `builtin:tool-search` so Pi does not
- * report the replacement at startup. A subagent child gets its scoped copy from
- * choco-pi-subagents instead, so this extension registers nothing while a child
- * session loads.
- *
- * The extension decides which tools are declared without a search, activates
- * `tool_search` with them, and locks the surface once the first request of a
- * session is built so the cached provider prefix stays stable. After the lock,
- * only `tool_search` changes the surface: outside Code Mode its loads are
- * additive, so Pi anchors them in the transcript on providers that support
- * mid-conversation tool additions instead of rewriting the request prefix; in
- * Code Mode it only looks tools up.
- */
 import { isPrefixLocked, lockPrefix, publishPrefixLock, unlockPrefix } from "./lib/prefix-lock.ts";
 import { createToolSearchToolDefinition, DISABLED_TOOL_NAMES } from "./lib/tool-search-tool.ts";
 import { readChildSessionProbe } from "./lib/usage-limit-contract.ts";
@@ -48,12 +29,6 @@ const LEGACY_SEARCH_TOOL_NAMES = new Set<string>([
   "agent_browser_web_search",
 ]);
 
-/**
- * Whether this extension is loading for a subagent child. choco-pi-subagents
- * loads a child's extensions inside its child-session context and registers a
- * `tool_search` scoped to the child; a second registration here would shadow
- * it. A probe that throws counts as a child, which only skips a duplicate.
- */
 function loadingForChildSession(): boolean {
   try {
     return readChildSessionProbe()?.isChildSessionContext() === true;
@@ -85,12 +60,6 @@ export default function toolSearch(pi: ExtensionAPI): void {
     );
   }
 
-  /**
-   * The always-active tools, then tools already active that must stay, then
-   * `tool_search`. Before the first commit of a session only tools a search
-   * loaded carry over; afterwards every declarable active tool does, so a
-   * recommit never removes what another extension activated.
-   */
   const computeLeanSurface = (): string[] => {
     const exposures = new Map<string, ToolExposure | undefined>(
       pi.getAllTools().map((tool) => [tool.name, tool.exposure]),
@@ -145,10 +114,6 @@ export default function toolSearch(pi: ExtensionAPI): void {
     });
   };
 
-  // Recorded tools that are not registered yet, such as MCP tools of a server still
-  // connecting. Pi activates such tools when they register, but any narrowing of the
-  // active set, including the lean commit, clears that list. They are activated here
-  // instead, and like Pi's they expire at the next request.
   let awaited: AwaitedTools = NOTHING_AWAITED;
 
   const awaitUnregistered = (
@@ -174,7 +139,6 @@ export default function toolSearch(pi: ExtensionAPI): void {
   pi.on("session_start", (_event, ctx) => {
     unlockPrefix();
     leanSurfaceInitialized = false;
-    // A resumed session's searched tools carry over, as the first lean commit keeps them.
     const record = readBranchToolRecord(ctx.sessionManager.getBranch());
     awaited = record
       ? awaitUnregistered(withoutCliRemovals(record.current), isSearchLoadedExposure)
@@ -195,10 +159,6 @@ export default function toolSearch(pi: ExtensionAPI): void {
     scheduleLeanSurface();
   });
 
-  // Pi 1.4.0 restores a branch's recorded tools on `/tree` and also activates every
-  // registered tool the branch never mentions, re-declaring tools this lean surface left
-  // inactive and changing the request prefix. Drop exactly those additions: tools that
-  // were inactive before the navigation and that the target branch never mentions.
   let activeBeforeTree: ReadonlySet<string> | undefined;
   pi.on("session_before_tree", () => {
     activeBeforeTree = new Set(pi.getActiveTools());
@@ -208,7 +168,6 @@ export default function toolSearch(pi: ExtensionAPI): void {
     activeBeforeTree = undefined;
     awaited = NOTHING_AWAITED;
     const record = before && readBranchToolRecord(ctx.sessionManager.getBranch());
-    // Without a recorded loadout Pi keeps the current tools.
     if (!before || !record) return;
     const active = pi.getActiveTools();
     const kept = active.filter((name) => before.has(name) || record.mentioned.has(name));
@@ -220,20 +179,16 @@ export default function toolSearch(pi: ExtensionAPI): void {
 
 interface AwaitedTools {
   names: ReadonlySet<string>;
-  /** Whether a tool with this exposure may carry over once registered. */
   accepts(exposure: ToolExposure | undefined): boolean;
 }
 
 const NOTHING_AWAITED: AwaitedTools = { names: new Set(), accepts: () => false };
 
 interface BranchToolRecord {
-  /** Every tool the branch ever added or removed. */
   mentioned: ReadonlySet<string>;
-  /** The branch's current recorded loadout. */
   current: ReadonlySet<string>;
 }
 
-/** The branch's recorded tool state, or undefined when it has none yet. */
 function readBranchToolRecord(branch: readonly SessionEntry[]): BranchToolRecord | undefined {
   const mentioned = new Set<string>();
   const current = new Set<string>();
@@ -253,12 +208,6 @@ function readBranchToolRecord(branch: readonly SessionEntry[]): BranchToolRecord
   return recorded ? { mentioned, current } : undefined;
 }
 
-/**
- * `names` without the tools the launching command's `--tools -name` modifiers remove, which
- * Pi leaves out of a restored loadout. Modifiers apply in order, so a later `+name` lifts an
- * earlier removal; it never adds a tool here. Only the CLI's own arguments are visible, so an
- * SDK session's `tools` option is not, and a parent's removals also hold in its sessions.
- */
 function withoutCliRemovals(names: ReadonlySet<string>): Set<string> {
   const modifiers = (parseArgs(process.argv.slice(2)).tools ?? []).filter(
     (entry) => entry.startsWith("+") || entry.startsWith("-"),

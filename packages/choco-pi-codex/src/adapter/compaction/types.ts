@@ -50,7 +50,6 @@ export type NativeCompactionIdentity = {
   baseUrl: string;
 };
 
-/** Closed objects: unknown keys are rejected, as with the former `additionalProperties: false`. */
 export const BackgroundNativeMetadataSchema = obj({
   sessionId: str({ minLength: 1 }),
   ownerKey: str({ minLength: 1 }),

@@ -69,11 +69,6 @@ import type { AdapterState } from "../adapter/activation/state.ts";
 import { extractAccountId } from "../providers/openai-codex/headers.ts";
 import { withLiveCtx } from "./live-context.ts";
 
-/**
- * Owner key a session's binding is published under: the main session's
- * `main-session:<id>`, or a subagent child's `subagent-child:<id>`, so the
- * child coordinator the runner bridge registers finds its child's binding.
- */
 export const codexBackgroundOwnerKey = ownerKeyFor;
 
 function isAdoptionSignal<T>(source: T): source is T & {
@@ -81,7 +76,6 @@ function isAdoptionSignal<T>(source: T): source is T & {
 } {
   return isJsonObject(source) && source["version"] === 1 && source["willAdopt"] instanceof Function;
 }
-/** Avoid importing the host extension's provider implementations into the Codex package. */
 export async function willAdoptCodexBackgroundCheckpoint(
   sessionId: string,
   event: SessionBeforeCompactEvent,
@@ -111,7 +105,6 @@ export function codexBackgroundAuthToken(
   return undefined;
 }
 
-/** Image block setting of a decoded settings file; "invalid" when its shape is wrong. */
 function readBlockImagesSetting<T>(settings: T): boolean | undefined | "invalid" {
   if (!isJsonObject(settings)) return "invalid";
   const images = settings["images"];
@@ -122,22 +115,13 @@ function readBlockImagesSetting<T>(settings: T): boolean | undefined | "invalid"
   return isBoolean(blockImages) ? blockImages : "invalid";
 }
 
-/** Where and with which vendor rows the Codex lane's background settings are read. */
 export interface CodexBackgroundSettingsInput {
   readonly cwd: string;
   readonly trusted: boolean;
-  /** OpenAI row: the Codex `compaction.responsesCompaction` switch, read before the first await. */
   readonly openaiServerSide: boolean;
-  /** Defaults to Pi's agent directory. */
   readonly agentDir?: string | undefined;
 }
 
-/**
- * Resolve background settings through the host seam (the sidecar, or with
- * none anywhere the lanes derived from the vendor rows, exactly as the host
- * resolves them); snapshot image policy with async I/O. A rejected sidecar
- * only disables the lane here: the host reports it, once.
- */
 export async function resolveCodexBackgroundSettings(
   input: CodexBackgroundSettingsInput,
 ): Promise<CodexBackgroundSettings> {
@@ -216,42 +200,22 @@ export interface CodexBackgroundBinding {
   readonly isCurrent: () => boolean;
   readonly onInstalled: (sessionId: string, epoch: string) => void;
   readonly fetch?: typeof globalThis.fetch;
-  /** Token budget of retained user messages (`v2UserMessageRetention` * 1000); absent: the default. */
   readonly userMessageRetentionTokens?: (() => number) | undefined;
 }
 
-// ---------------------------------------------------------------------------
-// Request refusals (incompatible checkpoint policy)
-// ---------------------------------------------------------------------------
-
-/**
- * Refusals decided in `before_provider_request`, by session ID. The host sends
- * the payload whatever a `before_provider_request` handler throws, so the
- * refusal is enforced by the Codex transport: its prepared-payload hook
- * ({@link assertCodexRequestAllowed}) runs after the handlers and before any
- * network call. Every request's handler records its decision (refusal or
- * none), so a refusal never outlives the request it was decided for.
- */
 const requestRefusals = new Map<string, string>();
 
-/** Record this request's decision for `sessionId`: the refusal text, or undefined to allow it. */
 export function recordCodexRequestDecision(sessionId: string, refusal: string | undefined): void {
   if (refusal === undefined) requestRefusals.delete(sessionId);
   else requestRefusals.set(sessionId, refusal);
 }
 
-/** The Pi session a prepared Codex payload belongs to (`client_metadata.session_id`). */
 function payloadSessionId(payload: {
   readonly client_metadata?: Readonly<Record<string, string>> | undefined;
 }): string | undefined {
   return payload.client_metadata?.["session_id"];
 }
 
-/**
- * Transport guard: throw the recorded refusal for the payload's session before
- * anything is sent (the error becomes the turn's provider error). The refusal
- * is consumed, so the next request decides afresh.
- */
 export function assertCodexRequestAllowed(payload: {
   readonly client_metadata?: Readonly<Record<string, string>> | undefined;
 }): void {
@@ -263,23 +227,15 @@ export function assertCodexRequestAllowed(payload: {
   throw new Error(refusal);
 }
 
-/** One published binding and the generation of the refresh that published it. */
 interface PublishedBinding {
   readonly binding: CodexBackgroundBinding;
   readonly generation: number;
 }
 interface BindingTable {
   readonly bindings: Map<string, PublishedBinding>;
-  /** Process-wide generation counter: later session starts always compare greater. */
   readonly counter: { value: number };
 }
 
-/**
- * Bindings by owner key, process-global like the backend registry: the
- * factory is registered once (first wins) and must see bindings published by
- * every Codex registration, including a child session's, whichever module
- * instance loaded it.
- */
 const BINDING_TABLE_SYMBOL = Symbol.for("choco-pi:codex-background-bindings");
 function isBindingTable<T>(value: T): value is T & BindingTable {
   if (!isJsonObject(value)) return false;
@@ -304,14 +260,9 @@ function nextGeneration(): number {
   counter.value += 1;
   return counter.value;
 }
-/** The current binding published under an owner key, if any. */
 export function publishedCodexBinding(ownerKey: string): CodexBackgroundBinding | undefined {
   return bindingTable().bindings.get(ownerKey)?.binding;
 }
-/**
- * Publish unless a newer, still-current binding holds the key: a stale
- * refresh (older generation) never replaces a newer session start's binding.
- */
 function publishBinding(ownerKey: string, published: PublishedBinding): boolean {
   const bindings = bindingTable().bindings;
   const existing = bindings.get(ownerKey);
@@ -325,18 +276,12 @@ function publishBinding(ownerKey: string, published: PublishedBinding): boolean 
   bindings.set(ownerKey, published);
   return true;
 }
-/** Remove only this exact binding; a newer binding under the same key stays. */
 function withdrawBinding(ownerKey: string, binding: CodexBackgroundBinding | undefined): void {
   if (binding === undefined) return;
   const bindings = bindingTable().bindings;
   if (bindings.get(ownerKey)?.binding === binding) bindings.delete(ownerKey);
 }
 
-/**
- * Register once per ID, yielding to any host-owned factory already registered.
- * A conflicting registry slot registers nothing; the host then keeps the
- * background feature off for this process.
- */
 export function registerCodexBackgroundFactory(enabled: boolean): boolean {
   if (!enabled) return false;
   const availability = registryAvailability();
@@ -349,7 +294,6 @@ export function registerCodexBackgroundFactory(enabled: boolean): boolean {
     let selected: CodexBackgroundBinding | undefined;
     let backend: Backend | undefined;
     const resolve = (): Backend | undefined => {
-      // Looked up on every call: a binding published after this backend was created is used.
       const binding = publishedCodexBinding(context.ownerKey);
       if (binding === undefined || !binding.isCurrent()) return undefined;
       if (binding !== selected) {
@@ -382,7 +326,6 @@ function freezeDetachedCapture<T>(source: T): T {
   return source;
 }
 
-/** The adoption consumer registered with the owner's current coordinator, if any. */
 interface AdoptionConsumerSlot {
   coordinator: CoordinatorApi | undefined;
   removeConsumer: (() => void) | undefined;
@@ -392,7 +335,6 @@ function detachAdoptionConsumer(slot: AdoptionConsumerSlot): void {
   slot.removeConsumer?.();
   slot.adopted.clear();
 }
-/** Follow coordinator replacement; register only with the owner generation this backend serves. */
 function attachAdoptionConsumer(
   slot: AdoptionConsumerSlot,
   context: BackendFactoryContext,
@@ -431,8 +373,6 @@ function createNativeBackend(
   );
 }
 
-/** Serialize the frozen cut and attach the canonical request; null when it cannot be captured. */
-/** The frozen cut with its Codex capture, or the refusal to record on the failure. */
 function captureFrozenCut(
   context: BackendFactoryContext,
   binding: CodexBackgroundBinding,
@@ -464,7 +404,6 @@ function captureFrozenCut(
   };
 }
 
-/** Captures once per frozen cut; prepare never replaces it with newer foreground history. */
 export function createCapturedCodexBackend(
   context: BackendFactoryContext,
   binding: CodexBackgroundBinding,
@@ -511,7 +450,6 @@ export function createCapturedCodexBackend(
   };
 }
 
-/** Verify the committed branch entry before touching any transport state. */
 export function consumeCodexBackgroundAdoption(
   binding: CodexBackgroundBinding,
   context: BackendFactoryContext,
@@ -519,7 +457,6 @@ export function consumeCodexBackgroundAdoption(
   adopted: Set<string>,
 ): void {
   if (adopted.has(adoption.adoptionId) || !binding.isCurrent()) return;
-  // A text-lane checkpoint on a Codex model is an expected fallback; nothing native to install.
   if (adoption.backendId !== CODEX_BACKGROUND_BACKEND_ID) return;
   const entry = binding.ctx.sessionManager
     .getBranch()
@@ -563,65 +500,44 @@ interface CodexBackgroundIntegrationOptions {
   readonly resolveSettings?: (cwd: string, trusted: boolean) => Promise<CodexBackgroundSettings>;
   readonly state: Pick<AdapterState, "pendingPiCompactionNativeWindow">;
   readonly onInstalled: (sessionId: string, epoch: string) => void;
-  /** OpenAI row for the derived default lanes: Codex `compaction.responsesCompaction`. */
   readonly openaiServerSide?: (() => boolean) | undefined;
-  /** `compaction.v2UserMessageRetention` * 1000 for the background window. */
   readonly userMessageRetentionTokens?: (() => number) | undefined;
-  /** Lane journal sink (`pi.appendEntry`); absent: nothing is journaled. */
   readonly append?: LaneAppend | undefined;
 }
 
-/** Generation snapshot taken before a handler's first await. */
 interface CodexBackgroundFence {
   readonly sessionId: string;
   readonly generation: number;
-  /** False while background compaction is disabled or unbound: legacy paths are never fenced. */
   readonly engaged: boolean;
 }
 
-/**
- * One session's binding state. `begin` replaces the slot (a new generation);
- * every refresh compares its expected generation and slot identity after each
- * await, so a superseded refresh never writes into the replacement.
- */
 interface SessionSlot {
   readonly sessionId: string;
-  /** Owner key the session's binding is published under, fixed at begin. */
   readonly ownerKey: string;
-  /** Process-unique: later begins (any registration) compare greater. */
   readonly generation: number;
   binding: CodexBackgroundBinding | undefined;
   replayEpoch: string | undefined;
   settingsSnapshot: CodexBackgroundSettings | undefined;
-  /** The committed checkpoint cannot be replayed here (provider/api/endpoint/account or metadata). */
   incompatibleCheckpoint: boolean;
-  /** Only the model ID changed: the foreground path replays the checkpoint; the lane stays unbound. */
   foregroundReplayOnly: boolean;
-  /** Entry ID of the checkpoint behind `incompatibleCheckpoint` / `foregroundReplayOnly`. */
   checkpointEntryId: string | undefined;
   unregisterRefresher: (() => void) | undefined;
 }
 
-/** Controller state: one slot per session this registration serves. */
 interface IntegrationState {
   readonly options: CodexBackgroundIntegrationOptions;
   readonly sessions: Map<string, SessionSlot>;
-  /** Settings diagnostics survive generation restarts so each session is told once. */
   readonly diagnosed: Set<string>;
-  /** Incompatibility warnings already shown, per session. */
   readonly incompatibilityNotices: Map<string, Set<string>>;
-  /** Lane transitions already journaled, per session (one record per transition). */
   readonly transitions: LaneTransitionMemo;
 }
 
-/** The lane-record fields a Codex background site chooses. */
 type CodexLaneRecord = Pick<
   LaneRecordInput,
   "route" | "event" | "from" | "reason" | "noticeAttempted"
 > &
   Partial<Pick<LaneRecordInput, "to" | "detail" | "checkpointEntryId">>;
 
-/** Journal one transition once per session (route, event, reason, checkpoint). */
 function journalOnce(
   state: IntegrationState,
   ctx: CodexBackgroundContext,
@@ -645,7 +561,6 @@ function journalOnce(
   );
 }
 
-/** Notify once per session and key. */
 function notifyOnce(
   state: IntegrationState,
   ctx: CodexBackgroundContext,
@@ -675,7 +590,6 @@ function unbindSession(slot: SessionSlot): void {
   withdrawBinding(slot.ownerKey, binding);
 }
 
-/** Retire one slot: its binding, published entry and refresher; other sessions are untouched. */
 function retireSlot(state: IntegrationState, slot: SessionSlot): void {
   if (isSlotCurrent(state, slot)) state.sessions.delete(slot.sessionId);
   unbindSession(slot);
@@ -688,7 +602,6 @@ function retireSlot(state: IntegrationState, slot: SessionSlot): void {
   slot.checkpointEntryId = undefined;
 }
 
-/** Session shutdown: retire only that session. Without an ID, every session (tests, teardown). */
 function stopIntegration(state: IntegrationState, sessionId?: string): void {
   const slots =
     sessionId === undefined ? [...state.sessions.values()] : [state.sessions.get(sessionId)];
@@ -720,7 +633,6 @@ function beginSession(state: IntegrationState, ctx: CodexBackgroundContext): num
     unregisterRefresher: undefined,
   };
   state.sessions.set(sessionId, slot);
-  // A reattached child (or any caller knowing only the session) re-runs the committed restore.
   slot.unregisterRefresher = registerSessionNativeRefresher(
     sessionId,
     "codex-native",
@@ -729,7 +641,6 @@ function beginSession(state: IntegrationState, ctx: CodexBackgroundContext): num
   return slot.generation;
 }
 
-/** Re-install the committed checkpoint for this slot's generation; nothing once superseded. */
 async function refreshSlotForReattach(
   state: IntegrationState,
   slot: SessionSlot,
@@ -751,11 +662,6 @@ function reportSettingsDiagnostic(
   ctx.ui.notify(settings.diagnostic, "warning");
 }
 
-/**
- * Warn once per session and reason; refreshes run before every provider
- * request. Unless the user authorized losing the checkpoint, the text names
- * the exits, since requests and compactions are refused until one is taken.
- */
 function notifyIncompatibleOnce(
   state: IntegrationState,
   ctx: CodexBackgroundContext,
@@ -772,7 +678,6 @@ function notifyIncompatibleOnce(
   });
 }
 
-/** Unbind, and fail closed (refuse) when a committed background checkpoint exists. */
 function markIncompatible(
   state: IntegrationState,
   slot: SessionSlot,
@@ -795,11 +700,6 @@ function markIncompatible(
   return undefined;
 }
 
-/**
- * Account credentials or identity are unavailable for now (signed out, token
- * refresh pending): unbind and retry on the next refresh. The checkpoint is
- * not marked incompatible and nothing is shown; one `yield` is journaled.
- */
 function yieldTransientIdentity(
   state: IntegrationState,
   slot: SessionSlot,
@@ -819,19 +719,12 @@ function yieldTransientIdentity(
   return undefined;
 }
 
-/** Whether only the model ID differs between the checkpoint's scope and the current one. */
 function onlyModelChanged(recorded: ProviderScope, current: ProviderScope): boolean {
   return (
     recorded.model !== current.model && jsonEqual({ ...recorded, model: current.model }, current)
   );
 }
 
-/**
- * Same provider, endpoint and account, another model ID: the lane unbinds and
- * the foreground path replays the checkpoint leniently (its account guard
- * still applies). Server acceptance of a window on another model is not
- * proven; a rejection there refuses the request rather than dropping history.
- */
 function useForegroundReplay(
   state: IntegrationState,
   slot: SessionSlot,
@@ -860,11 +753,6 @@ function useForegroundReplay(
   return undefined;
 }
 
-/**
- * The refusal for a request or compaction of a session whose committed
- * checkpoint is incompatible, or undefined. With the loss authorized there is
- * no refusal; the loss is journaled (and shown) once.
- */
 function incompatibleRefusal(
   state: IntegrationState,
   ctx: CodexBackgroundContext,
@@ -902,30 +790,16 @@ function incompatibleRefusal(
 
 type LatestNativeCompaction = ReturnType<typeof resolveLatestNativeCompactionEntry>;
 
-// ---------------------------------------------------------------------------
-// Opaque Codex checkpoint guard
-// ---------------------------------------------------------------------------
-
-/** How the current model's requests relate to the session's newest opaque Codex checkpoint. */
 export interface CodexOpaqueGuardInput {
-  /** The Codex native replay rewrites this model's requests (it replays or refuses itself). */
   readonly served: boolean;
-  /** The model is served by the Codex transport, whose prepared-payload hook enforces refusals. */
   readonly codexTransport: boolean;
-  /**
-   * `request`: decide one outgoing request (refusal text, notice, journal).
-   * `bind`: a session start, model or tree change, or compaction rebound the
-   * session: only the cross-provider block is maintained, nothing is shown.
-   */
   readonly site: "request" | "bind";
 }
 
-/** Withdraw this package's pending block for the session; another owner's block stays. */
 function clearCodexOpaqueBlock(sessionId: string): void {
   clearOpaqueBlockOf(sessionId, "codex-native");
 }
 
-/** Announce and journal (once per session and checkpoint) that a request drops the checkpoint's history. */
 function announceOpaqueLoss(
   state: IntegrationState,
   ctx: CodexBackgroundContext,
@@ -946,20 +820,6 @@ function announceOpaqueLoss(
   });
 }
 
-/**
- * The opaque-history guard for the session's newest checkpoint when it is an
- * opaque Codex record that the Codex replay will not rewrite for the current
- * model (native compaction off, voice-only, another provider or endpoint, an
- * untrusted alias): such a request would carry only the placeholder summary.
- * Evaluated before every eligibility and settings exit, so a session without
- * native compaction or without a background sidecar is still protected.
- *
- * - Loss authorized: no refusal; at a request the loss is shown and journaled once.
- * - Codex transport: the refusal text for this request (the caller records it
- *   for {@link assertCodexRequestAllowed}); shown and journaled once per checkpoint.
- * - Any other transport: a pending `codex-native` block, which the compaction
- *   host's provider guard enforces (and announces) before the request is sent.
- */
 function opaqueCheckpointRefusal(
   state: IntegrationState,
   ctx: CodexBackgroundContext,
@@ -996,12 +856,6 @@ function opaqueCheckpointRefusal(
   return text;
 }
 
-/**
- * The cancel text for a host compaction over an opaque Codex checkpoint that
- * Codex does not compact natively for this model, or undefined (no such
- * checkpoint, or its loss is authorized: the host's summarizer then
- * announces the loss). Every cancel is shown and journaled (policy `always`).
- */
 function opaqueCompactionCancel(
   state: IntegrationState,
   ctx: CodexBackgroundContext,
@@ -1136,7 +990,6 @@ function replaceBinding(
   slot.binding = binding;
   return binding;
 }
-/** Preserve the binding object while its scope is unchanged: factory consumers close over it. */
 function bindScope(state: IntegrationState, slot: SessionSlot, request: BindingRequest): void {
   const reusable =
     slot.binding !== undefined && sameBindingScope(slot.binding, request.scope)
@@ -1144,11 +997,9 @@ function bindScope(state: IntegrationState, slot: SessionSlot, request: BindingR
       : undefined;
   const active = reusable ?? replaceBinding(state, slot, request);
   active.runtime = request.runtime;
-  // Idempotent for the same binding; refused while a newer session start's binding is current.
   publishBinding(slot.ownerKey, { binding: active, generation: slot.generation });
 }
 
-/** The replay incompatibility message, or undefined when the committed replay is usable. */
 function replayIncompatibility(
   ctx: CodexBackgroundContext,
   checkpoint: CommittedBackgroundCheckpoint,
@@ -1171,7 +1022,6 @@ function replayIncompatibility(
     throw cause;
   }
 }
-/** Install the committed checkpoint once per epoch; returns an incompatibility reason. */
 function restoreCommittedReplay(
   state: IntegrationState,
   slot: SessionSlot,
@@ -1199,7 +1049,6 @@ function restoreCommittedReplay(
   return undefined;
 }
 
-/** The provider scope a binding serves and the runtime its preparation lane uses. */
 interface ScopedRuntime {
   readonly scope: ProviderScope;
   readonly runtime: NativeCompactionRuntime;
@@ -1302,7 +1151,6 @@ async function refreshIntegration(
   return scope;
 }
 
-/** Contain only stale-context failures; everything else reaches the caller. */
 async function refreshContainingStaleContext(
   state: IntegrationState,
   ctx: CodexBackgroundContext,
@@ -1317,7 +1165,6 @@ async function refreshContainingStaleContext(
   }
 }
 
-/** No new event hooks: the existing Codex lifecycle calls this controller. */
 export function createCodexBackgroundIntegration(options: CodexBackgroundIntegrationOptions) {
   const state: IntegrationState = {
     options,
@@ -1340,7 +1187,6 @@ export function createCodexBackgroundIntegration(options: CodexBackgroundIntegra
     },
     isStale: (snapshot: CodexBackgroundFence): boolean =>
       snapshot.engaged && slotGeneration(snapshot.sessionId) !== snapshot.generation,
-    /** Generations are process-unique, so a generation identifies its session's slot. */
     isGenerationCurrent: (expected: number): boolean =>
       [...state.sessions.values()].some((slot) => slot.generation === expected),
     requestState: (adapterState: AdapterState, sessionId: string) =>
@@ -1348,13 +1194,8 @@ export function createCodexBackgroundIntegration(options: CodexBackgroundIntegra
         adapterState,
         state.sessions.get(sessionId)?.incompatibleCheckpoint === true,
       ),
-    /**
-     * The refusal of a normal request (route `replay`) for an incompatible
-     * checkpoint whose loss is not authorized; undefined to send it.
-     */
     requestRefusal: (ctx: CodexBackgroundContext, sessionId: string): string | undefined =>
       incompatibleRefusal(state, ctx, sessionId, { route: "replay", event: "refuse" }),
-    /** The same for a host compaction: the caller answers `{ cancel: true }` with this text. */
     compactionRefusal: (
       ctx: CodexBackgroundContext,
       sessionId: string,
@@ -1364,27 +1205,16 @@ export function createCodexBackgroundIntegration(options: CodexBackgroundIntegra
         route: codexLaneRoute(event.reason),
         event: "cancel",
       }),
-    /** Whether only the model changed and the foreground path replays the checkpoint. */
     isForegroundReplayOnly: (sessionId: string): boolean =>
       state.sessions.get(sessionId)?.foregroundReplayOnly === true,
-    /** Drop the settings snapshots: the vendor rows the derived defaults read changed. */
     invalidateSettings: (): void => {
       for (const slot of state.sessions.values()) slot.settingsSnapshot = undefined;
     },
-    /**
-     * The opaque Codex checkpoint guard for a request or a rebind; the
-     * refusal text of a refused Codex-transport request, else undefined.
-     */
     opaqueRefusal: (
       ctx: CodexBackgroundContext,
       sessionId: string,
       input: CodexOpaqueGuardInput,
     ): string | undefined => opaqueCheckpointRefusal(state, ctx, sessionId, input),
-    /**
-     * Codex does not compact natively for this model, yet the newest
-     * checkpoint is an opaque Codex one: the cancel text (the caller answers
-     * `{ cancel: true }`), or undefined when there is none or loss is authorized.
-     */
     opaqueCompactionCancel: (
       ctx: CodexBackgroundContext,
       event: Pick<SessionBeforeCompactEvent, "reason">,
@@ -1399,7 +1229,6 @@ export function createCodexBackgroundIntegration(options: CodexBackgroundIntegra
         ctx,
         expectedGeneration ?? slotGeneration(ctx.sessionManager.getSessionId()) ?? 0,
       ),
-    /** Retire one session (session_shutdown); without an ID, every session. */
     stop: (sessionId?: string) => stopIntegration(state, sessionId),
   };
 }

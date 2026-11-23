@@ -30,12 +30,10 @@ test("probeWorktree reports present, unregistered, and missing worktrees", async
   const branch = "pi-agent-abc";
   assert.deepEqual(await probeWorktree({ path: worktree, branch, repo }), { present: true });
 
-  // git cannot run in a missing repo: a `.git` file in the directory suffices.
   assert.deepEqual(await probeWorktree({ path: worktree, branch, repo: join(root, "no-repo") }), {
     present: true,
   });
 
-  // A plain directory git does not list is not the agent's worktree.
   const plain = await mkdtemp(join(root, "plain-"));
   const unregistered = await probeWorktree({ path: plain, branch, repo });
   assert.equal(unregistered.present, false);

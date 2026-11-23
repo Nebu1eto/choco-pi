@@ -121,7 +121,6 @@ test("report applies only to the current controller at the matching revision", (
     "outcome is never persisted",
   );
 
-  // The same owner and generation reuses the controller; a new owner replaces it.
   assert.equal(
     bridge.register({
       sessionId: "s-report",
@@ -205,7 +204,6 @@ test("restoration replays the latest request and never the outcome", () => {
   );
   assert.deepEqual(restored, { requested: false, source: "explicit", revision: 4 });
 
-  // A stored default seed yields to the current default and invalidates older lookups.
   assert.deepEqual(
     restoreDaybreakInitialization([entry({ enabled: false, source: "default", revision: 2 })], {
       requested: true,
@@ -213,7 +211,6 @@ test("restoration replays the latest request and never the outcome", () => {
     }),
     { requested: true, source: "default", revision: 3 },
   );
-  // An explicit choice outranks the default seed.
   assert.deepEqual(
     restoreDaybreakInitialization([entry({ enabled: false, source: "explicit", revision: 2 })], {
       requested: true,
@@ -247,7 +244,6 @@ test("strip always removes access_programs and never adds it", () => {
   const { revision } = controller.set(true);
   controller.report("blue", revision);
   assert.equal(controller.getState().outcome, "blue");
-  // A previously granted session still has a stale or stock body stripped.
   assert.deepEqual(stripStaleDaybreakAccess({ model: "m", access_programs: ["daybreak_blue"] }), {
     model: "m",
   });
@@ -320,7 +316,6 @@ test("hidden child extension registers inherited state, restores on tree, strips
     model: "m",
   });
 
-  // A tree move restores from the branch and does not re-append the inherited snapshot.
   branch = [entry({ enabled: false, source: "explicit", revision: 2 })];
   handlers.tree?.(ctx);
   const restored = bridge.get("child")?.getState();

@@ -1,13 +1,3 @@
-/**
- * The Preferences row for background compaction, driven through the profile's
- * real lookup (the process-global provider) against a real session with the
- * real settings lookup: the agent directory comes from the environment, as in
- * production, and only the background summarizer is injected.
- *
- * Feature-off behavior matching the summarizer alone is proven by the
- * background-integration off test; the first test here proves a fresh agent
- * directory and project resolve to the feature on, with derived lanes.
- */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -44,9 +34,7 @@ import { compactionEntries, createHost, type Host, reply } from "./host-boundary
 const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 const ROW_ID = "backgroundCompaction.enabled";
 const ANTHROPIC_ROW_ID = "compactionAnthropic";
-/** Backend switches derived with both vendor rows on choco-pi (the injected test mode). */
 const LOCAL_LANES = { text: true, codexNative: false, anthropicNative: false };
-/** A global sidecar ready for text candidates except for the master switch. */
 const SWITCHED_OFF = {
   enabled: false,
   text: true,
@@ -81,11 +69,9 @@ const SUMMARY = [
 interface Dirs {
   readonly agentDir: string;
   readonly project: string;
-  /** The agent directory's sidecar the row writes. */
   readonly sidecar: string;
 }
 
-/** Fresh agent directory and project, with the agent directory set as in production. */
 async function withFreshDirs(run: (dirs: Dirs) => Promise<void>): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "choco-pi-background-preferences-"));
   const dirs = {
@@ -125,9 +111,7 @@ async function localMode(): Promise<AnthropicCompactionMode> {
   return "choco-pi";
 }
 
-/** What the extensions under test observed. */
 interface Probe {
-  /** The session context, standing in for the Preferences command's context. */
   ctx: ExtensionContext | undefined;
   readonly notices: string[];
   readonly summarizer: Gate;
@@ -163,7 +147,6 @@ function textSummarizer(model: Model<Api>, probe: Probe): TextSummarizer {
   };
 }
 
-/** Records the session context and its UI notices before the compaction extension starts. */
 function recordSession(probe: Probe): ExtensionFactory {
   return (pi) => {
     pi.on("session_start", (_event, ctx) => {
@@ -175,11 +158,6 @@ function recordSession(probe: Probe): ExtensionFactory {
   };
 }
 
-/**
- * The real extension with the real settings lookup; only the summarizer is
- * injected. The Anthropic mode is the injected local summarizer unless
- * `realMode` reads it from the agent directory as production does.
- */
 function compactionExtension(probe: Probe, realMode: boolean): ExtensionFactory {
   return (pi) => {
     registerCompaction(pi, {
@@ -234,7 +212,6 @@ function modeValue(section: PreferencesExtraSection): string | undefined {
   return section.buildItems().find((item) => item.id === ANTHROPIC_ROW_ID)?.currentValue;
 }
 
-/** Change the Anthropic row as the panel does and wait until the change is applied. */
 async function chooseMode(
   rig: Rig,
   mode: AnthropicCompactionMode,
@@ -246,7 +223,6 @@ async function chooseMode(
   return section;
 }
 
-/** Change the row as the panel does and wait until the change is applied. */
 async function toggle(rig: Rig, value: "on" | "off"): Promise<PreferencesExtraSection> {
   const section = sectionOf(rig);
   assert.deepEqual(section.handleChange(ROW_ID, value), { kind: "rebuild" });
@@ -310,7 +286,6 @@ test(
         assert.equal(rowValue(await toggle(rig, "off")), "off");
         assert.equal(getCoordinator(rig.ownerKey), undefined, "coordinator released");
         assert.equal(coordinator.status().state, "discarded-stale", "the ready candidate is gone");
-        // With the switch on, this idle input would adopt the ready candidate.
         await rig.host.session.prompt("NEXT");
         assert.deepEqual(compactionEntries(rig.host.manager.getBranch()), [], "no adoption");
         assert.equal(getCoordinator(rig.ownerKey), undefined);
@@ -338,7 +313,6 @@ test(
   async () => {
     await withFreshDirs(async ({ agentDir, project, sidecar }) => {
       await writeSidecar(sidecar, JSON.stringify({ anthropicNative: true, text: false }));
-      // OpenAI row on server-side; Anthropic row at its server-side default.
       await writeFile(
         join(agentDir, "choco-pi-codex.json"),
         JSON.stringify({ compaction: { responsesCompaction: true } }),

@@ -18,7 +18,6 @@ import {
 } from "../usage-limit-contract.ts";
 import { CODEX_ENTRY_WINDOW_MS, parseTime } from "./classifiers.ts";
 
-/** How long corroboration waits for the Synthetic provider to answer a quota refresh. */
 const SYNTHETIC_REQUEST_TIMEOUT_MS = 10_000;
 
 export type ExhaustedWindow = { resetAt?: number; label?: string; scope?: string };
@@ -28,14 +27,10 @@ export type QuotaReading = { exhausted: ExhaustedWindow[]; observedAt: number };
 export type SyntheticQuotaEvents = Pick<EventBus, "emit">;
 
 export type UsageLimitCorroborationContext = {
-  /** Reads Anthropic/Codex quota windows; defaults to `provider-usage.ts` when `extension` is set. */
   usageSnapshot?: (provider: string) => Promise<ProviderUsageSnapshot | undefined>;
   extension?: ExtensionContext;
-  /** Extension event bus used to reach the Synthetic quota store. */
   events?: SyntheticQuotaEvents;
-  /** Latest `CODEX_USAGE_LIMIT_ENTRY` payload on the session branch, if any. */
   codexEntry?: CodexUsageLimitEntry;
-  /** Epoch ms of the failure; defaults to `now()` at the start of corroboration. */
   failedAt?: number;
   now?: () => number;
   syntheticTimeoutMs?: number;

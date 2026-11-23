@@ -72,11 +72,6 @@ function join(parts: Array<string | undefined>): string {
 
 const TOOL_SEARCH_NAMES_SHOWN = 3;
 
-/**
- * Pi's built-in `tool_search` reports `details.loaded` (tool names it activated).
- * Sessions from choco-pi's former tool_search carry `matches`/`added` instead. Any other
- * shape falls back to the result text, so a load is never misreported as no matches.
- */
 function summarizeToolSearch(
   details: BoundaryRecord | undefined,
   result: ToolResultLike,
@@ -120,7 +115,6 @@ function pathSummary(args: BoundaryRecord | undefined): string | undefined {
   return Array.isArray(paths) ? `${paths.length} paths` : undefined;
 }
 
-/** Concise, producer-aware argument text. Never serializes the argument object. */
 export function summarizeToolInput(name: string, value: BoundaryValue): string {
   const args = record(value);
   if (name.startsWith("mcp__")) {
@@ -294,10 +288,6 @@ function scalar(value: BoundaryValue): string | undefined {
   return undefined;
 }
 
-/**
- * Named facts from a result record. Tool result text uses snake_case keys while result
- * details keep their camelCase shape, so both spellings of a key are read.
- */
 function summarizeRecord(value: BoundaryRecord): string {
   const parts: string[] = [];
   for (const key of [
@@ -361,7 +351,6 @@ function semanticText(text: string, expanded: boolean): string {
     .join("\n");
 }
 
-/** Concise result text. JSON payloads are reduced to named facts and counts. */
 export function summarizeToolResult(
   name: string,
   result: ToolResultLike,
@@ -422,7 +411,6 @@ function resultRenderer(name: string) {
   };
 }
 
-/** Adds semantic renderers only where the tool producer supplied none. */
 export function decorateToolDefinition(definition: ToolDefinition): ToolDefinition {
   if (!Object.hasOwn(DEFAULT_TOOL_LABELS, definition.name)) return definition;
   if (definition.renderCall && definition.renderResult) return definition;
@@ -443,7 +431,6 @@ export function decorateToolDefinition(definition: ToolDefinition): ToolDefiniti
   return next;
 }
 
-/** Installs the transcript-only renderer decorator once across extension reloads. */
 export function installToolRendering(): void {
   // SAFETY: AgentSession owns getToolDefinition; this guarded patch changes rendering metadata only.
   const prototype = AgentSession.prototype as PatchedSessionPrototype;

@@ -29,10 +29,6 @@ import {
   type FakeHelperDaemonOptions,
 } from "./helpers/fake-helper-daemon.ts";
 
-// helper.ts reads PI_CU_SOCKET_PATH at import time, so the scratch socket is
-// configured before the dynamic import below. Nothing here can reach the real
-// helper daemon's socket. The helper app path is a scratch bundle too, so the
-// rebuild check stats a fake executable instead of the installed helper.
 const scratch = await mkdtemp(path.join(os.tmpdir(), "cu-helper-"));
 const socketPath = path.join(scratch, "bridge.sock");
 process.env.PI_CU_SOCKET_PATH = socketPath;
@@ -40,7 +36,6 @@ const scratchAppPath = path.join(scratch, "pi-computer-use.app");
 const scratchExecutablePath = path.join(scratchAppPath, "Contents", "MacOS", "bridge");
 await mkdir(path.dirname(scratchExecutablePath), { recursive: true });
 await writeFile(scratchExecutablePath, "");
-/** The scratch executable's mtime (epoch seconds), a day before any fake starts. */
 const scratchExecutableMtime = Math.floor(Date.now() / 1000) - 86_400;
 await utimes(scratchExecutablePath, scratchExecutableMtime, scratchExecutableMtime);
 process.env.PI_COMPUTER_USE_HELPER_APP_PATH = scratchAppPath;
@@ -97,7 +92,6 @@ async function rejection<T>(promise: Promise<T>): Promise<Error> {
   assert.fail("expected the helper command to reject");
 }
 
-/** The real macOS backend over the fake daemon, with an optional act override. */
 function wireBackend(act?: ComputerUsePlatformBackend["act"]): ComputerUsePlatformBackend {
   return {
     name: "macos",
@@ -135,7 +129,6 @@ async function actThroughBridge(
     foregroundGrant?: string;
     findFixture?: boolean;
     signal?: AbortSignal;
-    /** Actions to send instead of one click on `ref`. */
     actions?: UiAction[];
   } = {},
 ): Promise<{ details: JsonObject; text: string }> {
@@ -156,8 +149,6 @@ async function actThroughBridge(
   try {
     const ctx = await createTestExtensionContext(cwd);
     await bridge.shutdownComputerUseSession();
-    // As the models do: find the fixture's root, then observe it (its pid,
-    // not the frontmost app's).
     if (options.findFixture)
       await bridge.executeFind("find", { app: FAKE_APP.appName }, signal, undefined, ctx);
     const observed = await bridge.executeObserve(
@@ -188,9 +179,6 @@ async function actThroughBridge(
     return { details: parsed, text: textOf(result.content) };
   } finally {
     await bridge.shutdownComputerUseSession();
-    // wireBackend has no shutdown hook; release as the macOS backend's
-    // shutdown does, so the shared client's learned session never leaks
-    // into the next test.
     await releaseMacosOwnership(AbortSignal.timeout(1_000));
     restore();
     for (const [key, value] of saved) {
@@ -248,7 +236,6 @@ test("abort sends cancel for the semantic requestId and records the ack", async 
 
   assert.ok(error instanceof helper.HelperAbortedError, "abort surfaces HelperAbortedError");
   assert.equal(error.message, "Operation aborted.");
-  // The first chunk is typed at once; the abort lands in the hold before chunk 1.
   assert.deepEqual(error.cancel, {
     acknowledged: true,
     state: "stopped",
@@ -306,7 +293,6 @@ test("s4 holds typeText past the client timeout and honors cancel at once", asyn
   assert.equal(error.interruption?.result?.outcome, "partial");
   assert.equal(error.interruption?.result?.stoppedAt, 1);
 
-  // Nothing else arrives after the cancel.
   await new Promise((resolve) => setTimeout(resolve, 200));
   await fake.close();
   daemon = undefined;
@@ -334,7 +320,7 @@ test("act log rows carry the response, including a stale_look refusal", async ()
   const fake = await startDaemon({ script: "s5-stale", logPath });
   const client = new helper.MacosHelperClient();
   const first = await lookId(client);
-  await lookId(client); // the second look bumps the generation
+  await lookId(client);
   const args = actArgs(session(), first, { action: "click", target: { ref: "button-1" } });
   const refused = await rejection(client.command("act", args));
   assert.ok(refused instanceof helper.HelperCommandError);
@@ -409,7 +395,6 @@ test("a second session is refused with owned_by_other_session", async () => {
   assert.ok(claim instanceof helper.HelperCommandError);
   assert.equal(claim.code, "owned_by_other_session");
 
-  // Owner-gated commands without their own session carry the learned one.
   const focus = await rejection(second.command("focusWindow", { pid: FAKE_APP.pid }));
   assert.ok(focus instanceof helper.HelperCommandError);
   assert.equal(focus.code, "owned_by_other_session");
@@ -429,7 +414,6 @@ function delay(ms: number): Promise<void> {
 }
 
 test("a stopping cancel ack is non-terminal: effect stays possible and nothing reports a stop", async () => {
-  // The cancel wakes the held act only after 1 s, so the fake acks `stopping`.
   const fake = await startDaemon({ script: "s4-slow-type", cancelBlockMs: 1_000 });
   const client = new helper.MacosHelperClient();
   const look = await lookId(client);
@@ -451,7 +435,6 @@ test("a stopping cancel ack is non-terminal: effect stays possible and nothing r
   assert.equal(interruption.reason, HELPER_STOPPING_REASON);
   assert.equal(interruption.result, undefined, "no stopped result is claimed");
 
-  // A stopping ack whose effectPossible is false still cannot prove no delivery.
   const forced = new HelperInterruption({
     code: "cancelled",
     effectPossible: false,
@@ -461,7 +444,6 @@ test("a stopping cancel ack is non-terminal: effect stays possible and nothing r
   assert.equal(forced.state, "stopping");
   assert.equal(forced.effectPossible, true);
 
-  // By contrast, the helper's own `cancelled` answer is terminal.
   const answered = new helper.HelperCommandError("Request was cancelled", "cancelled", {
     effectPossible: true,
     result: { outcome: "partial", stoppedAt: 1, reason: "cancelled" },
@@ -469,7 +451,6 @@ test("a stopping cancel ack is non-terminal: effect stays possible and nothing r
   assert.equal(answered.interruption?.state, "stopped");
   assert.equal(answered.interruption?.reason, undefined);
 
-  // The act reaches its checkpoint once the blocking call returns and reports cancelled.
   await delay(1_200);
   const act = fake.requests.find((request) => request.cmd === "act");
   assert.equal(field(field(act!, "response"), "error").code, "cancelled");
@@ -525,7 +506,6 @@ test("a cancel before registration tombstones the id and the act is refused befo
     reason: "cancelled",
   });
 
-  // Nothing was pressed: the label still reads "Ready", and another id works.
   const after = await client.command<{ outline?: JsonObject }>("look", { pid: FAKE_APP.pid });
   assert.match(JSON.stringify(after.outline), /"Ready"/);
   const other = await client.command<{ outcome?: string }>(
@@ -538,7 +518,6 @@ test("a cancel before registration tombstones the id and the act is refused befo
 });
 
 test("ownership is pinned while an act is in flight: TTL expiry, claims, and release are refused", async () => {
-  // A 50 ms lease would expire mid-act without the pin.
   await startDaemon({ script: "s4-slow-type", ownerTtlMs: 50 });
   const first = new helper.MacosHelperClient();
   const second = new helper.MacosHelperClient();
@@ -575,7 +554,6 @@ test("ownership is pinned while an act is in flight: TTL expiry, claims, and rel
   assert.ok(aborted instanceof helper.HelperAbortedError);
   assert.equal(aborted.cancel?.state, "stopped");
 
-  // Unpinned, the lease runs out 50 ms after the act ended.
   await delay(150);
   assert.deepEqual(await second.command("claim", { session: secondSession }), {
     claimed: true,
@@ -639,8 +617,6 @@ test("ensureProtocol keeps a daemon started after the executable was written", a
 });
 
 test("ensureProtocol reports the stale reason when a relaunch stays stale", async () => {
-  // An executable mtime later than the relaunch keeps even the relaunched
-  // daemon stale, so the second check fails and names the reason.
   await startDaemon({ script: "s1-ok", initialStartedAt: scratchExecutableMtime - 3_600 });
   const future = Math.floor(Date.now() / 1000) + 3_600;
   await utimes(scratchExecutablePath, future, future);
@@ -680,7 +656,6 @@ test("effectPossible:false from a helper error reaches HelperCommandError", asyn
     pixelChange: false,
   });
 
-  // ax_only keeps the refusal before delivery, with no attempt evidence.
   const axOnly = await rejection(
     client.command(
       "act",
@@ -697,7 +672,6 @@ test("effectPossible:false from a helper error reaches HelperCommandError", asyn
   assert.match(axOnly.message, /no accessibility action/);
   assert.equal(axOnly.evidence, undefined);
 
-  // Like the helper, a button with AXPress is pressed through AX in the background.
   const pressed = await client.command<JsonObject>(
     "act",
     actArgs(owner, look, { action: "click", target: { ref: "button-1" } }),
@@ -1027,7 +1001,6 @@ test("bridge maps an acknowledged client-timeout cancel without delivery to reje
   await startDaemon({ script: "s1-ok" });
   const { details } = await actThroughBridge(
     wireBackend(async () => {
-      // Mirrors what daemonCommand attaches after an acknowledged timeout cancel.
       const error = new helper.HelperTransportError(
         "Daemon command 'act' timed out after 15000ms.",
       );
@@ -1050,7 +1023,6 @@ test("bridge maps an acknowledged client-timeout cancel without delivery to reje
   assert.equal(field(execution, "cancel").state, "stopped");
 });
 
-/** Records every install/probe/launch attempt; probing still reaches the fake. */
 class LaunchTrackingClient extends helper.MacosHelperClient {
   launches: string[] = [];
 
@@ -1070,7 +1042,6 @@ class LaunchTrackingClient extends helper.MacosHelperClient {
   }
 }
 
-/** Teaches the client its session through an act, as the bridge does. */
 async function learnSession(client: InstanceType<typeof helper.MacosHelperClient>): Promise<void> {
   const owner = session();
   const look = await lookId(client);
@@ -1104,7 +1075,6 @@ test("release against a helper that never answers is bounded at 500 ms", async (
   daemon = undefined;
   client.launches = [];
   const accepted: net.Socket[] = [];
-  // Accepts the connection and never answers.
   const silent = net.createServer((socket) => accepted.push(socket));
   await new Promise<void>((resolve) => silent.listen(socketPath, resolve));
   try {
@@ -1144,7 +1114,6 @@ async function exists(file: string): Promise<boolean> {
   );
 }
 
-/** Connects, asks listApps once, then leaves the connection open and idle. */
 async function idleClient(sock: string): Promise<{ socket: net.Socket; apps: JsonValue }> {
   const socket = net.createConnection(sock);
   socket.setEncoding("utf8");
@@ -1189,7 +1158,7 @@ test("close() destroys idle client connections, unlinks the socket, and resolves
   assert.ok(elapsed < 500, `close() took ${elapsed} ms`);
   await clientClosed;
   assert.equal(await exists(sock), false, "socket path is unlinked");
-  await fake.close(); // idempotent
+  await fake.close();
 });
 
 test("the CLI exits on SIGTERM within 500 ms with an idle client connected", async () => {
@@ -1235,8 +1204,6 @@ test("a stale_look at action 2 over the wire returns a partial successor with bo
   const fake = await startDaemon({ script: "s1-ok", logPath });
   const mutator = new helper.MacosHelperClient();
   let acts = 0;
-  // Before the second act, a fixture mutation invalidates every look, so the
-  // helper refuses it with stale_look after the first act was delivered.
   const backend = wireBackend(async (request, options) => {
     acts += 1;
     if (acts === 2)

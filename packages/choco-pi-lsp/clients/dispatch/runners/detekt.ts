@@ -16,15 +16,7 @@ const DETEKT_CONFIG_CANDIDATES = [
   path.join("detekt", "detekt.yml"),
 ];
 
-// Rules that `detekt --auto-correct` rewrites deterministically. Detekt's
-// formatting ruleset wraps ktlint, whose rules are all autocorrectable; a
-// small handful of style rules also support autocorrect. Detekt's text
-// output does not surface a per-finding `canAutoCorrect` flag, so we keep a
-// curated allowlist here. Source: https://detekt.dev/docs/rules/formatting/
-// plus the autoCorrect-capable rules under style/comments. Conservative —
-// when in doubt, leave a rule off this list.
 const DETEKT_FIXABLE_RULES = new Set<string>([
-  // formatting (ktlint wrapper) — every rule supports autocorrect
   "AnnotationOnSeparateLine",
   "AnnotationSpacing",
   "ArgumentListWrapping",
@@ -76,7 +68,6 @@ const DETEKT_FIXABLE_RULES = new Set<string>([
   "TypeParameterListSpacing",
   "UnnecessaryParenthesesBeforeTrailingLambda",
   "Wrapping",
-  // style / comments — these implement autoCorrect in their detekt rule classes
   "OptionalUnit",
   "OptionalAbstractKeyword",
   "ProtectedMemberInFinalClass",
@@ -94,7 +85,6 @@ export function findDetektConfig(cwd: string): string | undefined {
   return undefined;
 }
 
-// detekt text output: /path/file.kt:10:5: error: Message [RuleId]
 function parseDetektOutput(raw: string, filePath: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const pattern = /^(.+?):(\d+):(\d+): (error|warning): (.+?)(?:\s+\[([^\]]+)\])?$/gm;

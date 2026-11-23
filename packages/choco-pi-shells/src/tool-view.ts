@@ -1,8 +1,3 @@
-/**
- * Model-visible snake_case views of shell manager objects. The manager objects and the
- * frozen `shells:*` event payloads keep their camelCase names; only tool content and
- * notification text are built from these views.
- */
 import type { ShellCompletionDetails } from "./index.ts";
 import type {
   ListShellResult,

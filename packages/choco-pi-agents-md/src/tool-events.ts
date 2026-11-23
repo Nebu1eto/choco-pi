@@ -21,8 +21,6 @@ interface HostToolInput {
 const ToolContentSchema = obj({ type: str(), text: opt(str()) }, { open: true });
 export type ToolContent = Static<typeof ToolContentSchema>;
 
-// Host tool-call payloads are in-process JSON-like objects; compiled guards keep
-// the former TypeBox accept/reject behaviour (open objects, no coercion).
 const isStringValue = compile(str()).check;
 const isToolContent = compile(ToolContentSchema).check;
 
@@ -106,10 +104,6 @@ function parseDiscoveryToolInput(input: HostToolInput): DiscoveryToolInput {
   return parsed;
 }
 
-/**
- * Expand a host tool result into the outer event plus completed nested tools
- * recorded by Pi code mode in `details.traces`.
- */
 export function codeModeDiscoveryEvents(event: ToolResultEvent): DiscoveryToolResultEvent[] {
   const events: DiscoveryToolResultEvent[] = [
     {

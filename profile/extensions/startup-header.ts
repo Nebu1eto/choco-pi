@@ -1,18 +1,3 @@
-/**
- * choco-pi's startup header and startup-detail policy.
- *
- * The header replaces Pi's: the choco-pi logo drawn in half blocks, the
- * choco-pi and Pi versions, the key hints, and a one-line description. It
- * shows wherever Pi would show its own header, so `quietStartup: true` still
- * hides it and `--verbose` still forces it.
- *
- * Pi prints the model scope and the loaded-resource listing (`[Context]`,
- * `[Skills]`, ...) whenever `quietStartup` is `false`, its default, and it
- * decides that inside `InteractiveMode` before any `session_start` handler
- * runs. No extension API reaches that decision, so this module patches the
- * host's `shouldShowStartupDetails` to answer only `--verbose`. Diagnostics
- * such as skill collisions still show: Pi renders them even when quiet.
- */
 import { readFile } from "node:fs/promises";
 import {
   InteractiveMode,
@@ -42,7 +27,6 @@ export const CHOCO_PI_DESCRIPTION = "choco-pi is an opinionated coding agent har
 const ROOT_MANIFEST_URL = new URL("../../package.json", import.meta.url);
 const isVersionedManifest = compile(obj({ version: str() }, { open: true })).check;
 
-/** The checkout's own version from its root `package.json`, or undefined when unreadable. */
 export async function readHarnessVersion(
   manifestUrl: URL = ROOT_MANIFEST_URL,
 ): Promise<string | undefined> {
@@ -55,18 +39,12 @@ export async function readHarnessVersion(
   return isVersionedManifest(parsed) && parsed.version.length > 0 ? parsed.version : undefined;
 }
 
-/** `v<choco-pi> (pi v<pi>)`, or just the Pi part when the choco-pi version is unknown. */
 export function versionLabel(harnessVersion: string | undefined, piVersion: string): string {
   return harnessVersion === undefined
     ? `(pi v${piVersion})`
     : `v${harnessVersion} (pi v${piVersion})`;
 }
 
-/**
- * The logo as square pixels, two per terminal cell (upper and lower half
- * block): a chocolate dome with a drizzle and a highlight, drips over the cake,
- * a cream layer, and the dark base. `.` is transparent.
- */
 const LOGO_PIXELS = [
   "....BBBBBB....",
   "..BBWBBHHHBB..",
@@ -78,7 +56,6 @@ const LOGO_PIXELS = [
   ".DDDDDDDDDDDD.",
 ];
 
-/** Brand colors from `assets/choco-pi-logo.svg`; fixed across themes like Pi's own logo. */
 const LOGO_COLORS = {
   B: rgbColor(107, 53, 25),
   D: rgbColor(82, 40, 18),
@@ -96,12 +73,10 @@ function pixelColor(code: string | undefined): RgbColorValue | undefined {
   return code !== undefined && isLogoPixel(code) ? LOGO_COLORS[code] : undefined;
 }
 
-/** The theme methods the header uses; Pi passes its live theme. */
 export type HeaderTheme = Pick<Theme, "fg" | "bold" | "getColorMode">;
 
 const RESET = "\u001b[0m";
 
-/** The logo's terminal lines, each `LOGO_WIDTH` cells wide. */
 export function logoLines(mode: TerminalColorMode): string[] {
   const lines: string[] = [];
   for (let row = 0; row < LOGO_PIXELS.length; row += 2) {
@@ -124,7 +99,6 @@ export function logoLines(mode: TerminalColorMode): string[] {
 
 export const LOGO_WIDTH = LOGO_PIXELS[0]?.length ?? 0;
 
-/** Pi's startup key hints: compact (one group of segments) or expanded (one hint per line). */
 function keyHints(theme: HeaderTheme, expanded: boolean): HeaderLine[] {
   if (!expanded) {
     return [
@@ -167,16 +141,10 @@ function keyHints(theme: HeaderTheme, expanded: boolean): HeaderLine[] {
 }
 
 export interface StartupHeaderContent {
-  /** Logo lines; empty where the terminal cannot draw half blocks. */
   logo: readonly string[];
-  /** Text lines; the first holds the versions. */
   lines: readonly HeaderLine[];
 }
 
-/**
- * Segments joined by `separator` that wrap only between segments, so a key
- * hint never splits across rows; a segment wider than the column still wraps.
- */
 export interface HeaderLine {
   segments: readonly string[];
   separator: string;
@@ -186,24 +154,18 @@ function plain(text: string): HeaderLine {
   return { segments: [text], separator: "" };
 }
 
-/** The header's left and right margin, matching Pi's own header. */
 const MARGIN = 1;
-/** The gap between the logo and the text column. */
 const GAP = 1;
-/** Below this text-column width the logo is dropped so the text stays readable. */
 export const MIN_TEXT_COLUMN = 30;
 
-/** The text column's width beside the logo at terminal `width`. */
 export function textColumnWidth(width: number, withLogo: boolean): number {
   return width - 2 * MARGIN - (withLogo ? LOGO_WIDTH + GAP : 0);
 }
 
-/** Whether the logo fits at terminal `width` with a readable text column beside it. */
 export function logoFits(width: number): boolean {
   return textColumnWidth(width, true) >= MIN_TEXT_COLUMN;
 }
 
-/** Wraps one header line to `width` cells. */
 function wrapLine(line: HeaderLine, width: number): string[] {
   const rows: string[] = [];
   let current = "";
@@ -219,11 +181,6 @@ function wrapLine(line: HeaderLine, width: number): string[] {
   return rows.flatMap((row) => (visibleWidth(row) > width ? wrapTextWithAnsi(row, width) : [row]));
 }
 
-/**
- * Lays the header out at terminal `width`: text wrapped inside its column
- * beside the logo, rows past the logo indented to the column, and every row
- * at most `width` cells, so Pi never re-wraps a row and splits the logo.
- */
 export function layoutHeader(content: StartupHeaderContent, width: number): string[] {
   const withLogo = content.logo.length > 0;
   const column = Math.max(1, textColumnWidth(width, withLogo));
@@ -248,7 +205,6 @@ export function startupHeaderContent(
 ): StartupHeaderContent {
   const versions = theme.fg("dim", versionLabel(options.harnessVersion, VERSION));
   const title = theme.bold("choco-pi");
-  // Beside the logo the title gets its own row; without it, one row names both.
   const heading = options.showLogo
     ? [plain(title), plain(versions)]
     : [plain(`${title} ${versions}`)];
@@ -264,11 +220,6 @@ export function startupHeaderContent(
   return { logo: options.showLogo ? logoLines(theme.getColorMode()) : [], lines };
 }
 
-/**
- * The header component; laid out on every render so it follows theme and
- * width changes. The logo shows only where the terminal can draw it and the
- * width leaves a readable text column beside it.
- */
 export class StartupHeader implements Component {
   private readonly theme: HeaderTheme;
   private readonly harnessVersion: string | undefined;
@@ -297,14 +248,9 @@ export class StartupHeader implements Component {
   }
 }
 
-/**
- * Process-wide patch state on `globalThis`: `/reload` re-imports this module
- * while the patched prototype keeps running.
- */
 const STARTUP_POLICY = Symbol.for("choco-pi.startup-policy");
 
 interface StartupPolicy {
-  /** Whether the host decided to show its startup header; unset until it decides. */
   headerShown?: boolean;
 }
 
@@ -317,10 +263,6 @@ function verboseHost(host: RuntimeValue): boolean {
   return reinterpretHostValue<Record<string, RuntimeValue>>(options)["verbose"] === true;
 }
 
-/**
- * Hide Pi's startup details unless `--verbose`, and record whether the host
- * shows its header. Idempotent; leaves the host alone when its methods moved.
- */
 export function installStartupPolicy(
   prototype: Record<PropertyKey, RuntimeValue> = reinterpretHostValue<
     Record<PropertyKey, RuntimeValue>

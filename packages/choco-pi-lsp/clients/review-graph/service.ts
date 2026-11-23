@@ -37,7 +37,6 @@ export function formatImpactCascade(
   return formatImpactCascadeImpl(result, maxFiles);
 }
 
-/** Transitive (depth-bounded) dependents of a file — see query.computeTransitiveImpact. */
 export function computeTransitiveImpact(
   graph: ReviewGraph,
   seedFile: string,

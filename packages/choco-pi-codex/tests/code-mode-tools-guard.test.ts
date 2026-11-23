@@ -250,8 +250,6 @@ test("a session without write or shell permissions cannot reach the notebook", (
   const withShell = new Set(["read", "grep", "bash", "exec"]);
   const writable = new Set(["read", "edit", "write", "exec"]);
 
-  // Notebook cells run on shared Deno globals, so `Deno.writeTextFile` would
-  // reopen the write path that scoping the tools namespace just closed.
   assert.equal(codeModeExecutionKindForPermissions("notebook", readOnly), "code");
   assert.equal(codeModeExecutionKindForPermissions("notebook", withShell), "notebook");
   assert.equal(codeModeExecutionKindForPermissions("notebook", writable), "notebook");

@@ -1,7 +1,3 @@
-/**
- * Leaving, finishing and failing to draw: the review's lifecycle phases and
- * the one `close` every completion goes through.
- */
 import { propertiesWhen, type RuntimeValue } from "../../lib/runtime-values.ts";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { renderReviewMarkdown } from "../core/markdown-export.ts";
@@ -25,7 +21,6 @@ export function close(ctx: ReviewContext, result: ReviewViewResult): boolean {
   return true;
 }
 
-/** True while the Finish or leave started with `token` still owns the view. */
 export function owns(ctx: ReviewContext, token: number): boolean {
   return (
     !ctx.closed &&
@@ -34,26 +29,12 @@ export function owns(ctx: ReviewContext, token: number): boolean {
   );
 }
 
-/** Pi's notifications, for what must outlive the view. Never throws; silent when stale. */
 export function hostNotice(ctx: ReviewContext, text: string, type: "warning" | "error"): void {
   try {
     ctx.options.host.notify(safe(text), type);
-  } catch {
-    // A stale context: the session ended, there is nobody to tell.
-  }
+  } catch {}
 }
 
-/**
- * Run a host prompt that draws into the session's own editor row.
- *
- * The review is a focus-capturing overlay: while it is visible it covers
- * the editor row and holds the keyboard. A `select` or `input` opened from
- * inside it is mounted underneath, so it renders invisibly while taking
- * focus away from the review — the user sees a frozen review, every key
- * reaches a prompt that is not on screen, and the awaited promise never
- * settles. Hiding the overlay for the duration puts the prompt where it
- * can be seen and answered, and restores the review afterwards.
- */
 export async function withHostPrompt<T>(ctx: ReviewContext, prompt: () => Promise<T>): Promise<T> {
   ctx.overlayHandle?.setHidden(true);
   try {
@@ -64,7 +45,6 @@ export async function withHostPrompt<T>(ctx: ReviewContext, prompt: () => Promis
   }
 }
 
-/** Sensitive paths whose comments must not quote source lines. */
 export function hiddenCommentPaths(ctx: ReviewContext): string[] {
   const listed = new Set(ctx.changes.files().map((file) => file.path));
   const paths = new Set(hiddenPaths(ctx));
@@ -74,18 +54,12 @@ export function hiddenCommentPaths(ctx: ReviewContext): string[] {
   return [...paths];
 }
 
-/**
- * The record as it is exported: every comment where `locateComment`
- * finds it now, and `unconfirmed` ones (work that could move them did
- * not finish) marked so rather than presented as current.
- */
 export function prepareRecord(ctx: ReviewContext, unconfirmed: ReadonlySet<string>): ReviewRecord {
   followComments(ctx, unconfirmed);
   ctx.record = { ...ctx.record, updatedAt: ctx.now() };
   return ctx.record;
 }
 
-/** Comments that pending coordinate work could still move. */
 export function pendingComments(
   ctx: ReviewContext,
   extra: readonly CoordinateWork[] = [],
@@ -98,14 +72,6 @@ export function pendingComments(
   );
 }
 
-/**
- * Finish waits for the work that can move comments (a refresh, a
- * context read, a reveal), at most FINISH_WAIT_MS in all, saying so on
- * the message line; q cancels the wait. Work that started meanwhile
- * (a refresh starts a context read) is waited for too. Undefined when
- * the Finish no longer owns the view; else the comments to export as
- * unconfirmed (work still pending at the limit, or failed).
- */
 export async function settleCoordinateWork(
   ctx: ReviewContext,
   token: number,
@@ -138,7 +104,6 @@ export async function settleCoordinateWork(
     ]);
     clearTimeout(timer);
     if (!owns(ctx, token)) return undefined;
-    // Let what the settled work does next run (the store's update, a follow-up read).
     await new Promise<void>((resolve) => setImmediate(resolve));
     if (!owns(ctx, token)) return undefined;
     if (outcome === "timeout") break;
@@ -146,15 +111,6 @@ export async function settleCoordinateWork(
   return pendingComments(ctx, failed);
 }
 
-/**
- * q, Esc and the chat's /quit. From open or finishing: one save of the
- * record as it stands (a pending Finish is cancelled), at most
- * LEAVE_SAVE_MS; the message line says that q again leaves without
- * saving. While that save runs: q closes at once. A save that fails or
- * takes too long keeps the review open and says so; leaving again then
- * closes without saving, so a store that keeps failing can never keep
- * the user in the review.
- */
 export function leave(ctx: ReviewContext): void {
   if (ctx.closed || ctx.phase.kind === "closed") return;
   if (ctx.phase.kind === "leaving") {
@@ -187,7 +143,6 @@ export function leave(ctx: ReviewContext): void {
   ctx.phase = { kind: "leaving", token, timer };
   notify(ctx, "Saving the review… q again leaves without saving.", "info");
   ctx.tui.requestRender();
-  // Started now, in this key's turn; a store that throws at once counts as failing.
   let saving: Promise<void>;
   try {
     saving = Promise.resolve(ctx.options.store.save(kept));
@@ -256,10 +211,6 @@ export async function finish(ctx: ReviewContext): Promise<void> {
     }
     const unconfirmed = await settleCoordinateWork(ctx, token);
     if (unconfirmed === undefined || !owns(ctx, token)) return;
-    // Committed: the chosen outcome enters the record only now, so a
-    // Finish cancelled before its save leaves the verdict and body as
-    // they were. From here on the user has confirmed them; if this save
-    // fails they stay, and the next save (q or S) writes them.
     if (outcome) {
       const { verdict: _verdict, body: _body, ...rest } = ctx.record;
       const chosen = outcome;
@@ -289,7 +240,6 @@ export async function finish(ctx: ReviewContext): Promise<void> {
     });
     if (finished && agentInstruction) ctx.options.host.setEditorText(agentInstruction);
   } catch (error) {
-    // A Finish that a q cancelled stays silent, whatever its save does.
     if (owns(ctx, token)) throw error;
   } finally {
     if (owns(ctx, token)) ctx.phase = { kind: "open" };
@@ -300,22 +250,16 @@ export function renderFailed(ctx: ReviewContext, error: RuntimeValue): void {
   if (ctx.renderFailure) return;
   ctx.renderFailure = { error };
   const reason = failureLine(error);
-  // After this frame: closing inside pi-tui's render would re-enter it.
-  // Nothing in this microtask may throw: nothing above it would catch.
   queueMicrotask(() => {
     if (ctx.closed || ctx.phase.kind === "closed") return;
     let updatedAt = ctx.record.updatedAt;
     try {
       updatedAt = ctx.now();
-    } catch {
-      // The clock is what failed: keep the last time.
-    }
+    } catch {}
     const kept = { ...ctx.record, updatedAt };
     try {
       close(ctx, { action: "save", record: kept });
-    } catch {
-      // The host already tore the view down; the save below still runs.
-    }
+    } catch {}
     void Promise.resolve()
       .then(() => ctx.options.store.save(kept))
       .then(

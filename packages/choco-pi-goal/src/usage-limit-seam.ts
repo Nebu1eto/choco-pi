@@ -2,12 +2,6 @@ import { compile, obj, oneOf, opt, str, unknown, type Static } from "@earendil-w
 
 import { finiteNum } from "@choco-pi/shared/value-guards";
 
-/**
- * Structural reader for the root usage-limit policy seam. The root harness registers owner-indexed
- * policies at `globalThis[Symbol.for("choco-pi.usage-limit-policy")]` as `Map<ownerSessionId,
- * policy>`; this package validates the slot, the owner's `classify` method, and its result instead
- * of importing the root contract.
- */
 export const USAGE_LIMIT_POLICY_SYMBOL = Symbol.for("choco-pi.usage-limit-policy");
 
 export type UsageLimitKind = "quota" | "billing" | "transient";
@@ -19,8 +13,6 @@ export interface UsageLimitClassifyInput {
   errorMessage: string;
 }
 
-// The policy and its result are foreign in-process objects: both stay open (extra keys accepted)
-// as the previous TypeBox objects were, and resetAt keeps rejecting NaN/Infinity.
 const UsageLimitClassificationSchema = obj(
   {
     kind: oneOf(["quota", "billing", "transient"]),
@@ -37,13 +29,8 @@ export type UsageLimitClassification = Static<typeof UsageLimitClassificationSch
 
 const isUsageLimitClassification = compile(UsageLimitClassificationSchema).check;
 
-/** Function-valued members are not JSON; the shape check leaves them unknown for instanceof Function. */
 const hasClassifyMember = compile(obj({ classify: unknown() }, { open: true })).check;
 
-/**
- * Classifies an errored assistant turn through the owner's registered policy. Returns `undefined`
- * when the seam, the owner's policy, or a valid classification is absent; never throws.
- */
 export function classifyViaSeam(
   owner: string,
   input: UsageLimitClassifyInput,
@@ -70,5 +57,4 @@ export function classifyViaSeam(
   }
 }
 
-/** Host-owned value read from a global slot before validation. */
 type RuntimeSlot = {} | null | undefined;

@@ -1,22 +1,12 @@
-/** Bounds that keep the diff pane cheap on large or slow repositories. */
 export type DiffLimits = {
-  /** Files listed in a snapshot; the rest are counted in `omittedFiles`. */
   maxFiles: number;
-  /** Largest file body `loadFile` reads; larger files report "too-large". */
   maxFileBytes: number;
-  /** Untracked files read for line counts per refresh; beyond this, counts are null. */
   maxUntrackedReads: number;
-  /** Deadline for every git call. */
   timeoutMs: number;
-  /** Largest stdout accepted from one git call. */
   maxOutputBytes: number;
-  /** Delay between a refresh request and the refresh it schedules. */
   debounceMs: number;
-  /** Interval between change probes while the pane is visible. */
   pollIntervalMs: number;
-  /** A refresh taking at least this long lengthens debounce and polling. */
   slowRefreshMs: number;
-  /** Upper bound for the debounce and poll multiplier. */
   maxBackoffFactor: number;
 };
 
@@ -36,7 +26,6 @@ function positive(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
-/** Apply defaults, ignoring negative or non-finite overrides. */
 export function resolveDiffLimits(overrides: Partial<DiffLimits> = {}): DiffLimits {
   return {
     maxFiles: Math.floor(positive(overrides.maxFiles, DEFAULT_DIFF_LIMITS.maxFiles)),

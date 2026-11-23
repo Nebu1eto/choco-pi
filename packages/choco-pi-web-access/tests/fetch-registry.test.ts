@@ -80,7 +80,6 @@ test("custom ContentExtractor dispatches by priority and falls through when retu
   assert.equal(res.content, "Extracted by custom.low");
   assert.deepEqual(calls, ["skip", "low"]);
 
-  // Unregistering removes only the matching extractor.
   unregisterLow();
   const resAfter = await extractContent("https://custom-doc.example/page", undefined, {
     scope,
@@ -114,7 +113,6 @@ test("custom FetchTransport registers, checks availability, and serves fallback 
   };
   registerFetchTransport(customTransport, scope);
 
-  // Duplicate id is rejected.
   assert.throws(() => registerFetchTransport(customTransport, scope), /already registered/);
 
   const result = await extractContent("https://example.com/spa", undefined, {
@@ -133,7 +131,6 @@ test("custom FetchTransport registers, checks availability, and serves fallback 
 });
 
 test("scope is shared across separately evaluated fetch-registry module copies", async () => {
-  // Pi loads extensions through jiti with moduleCache: false; query strings reproduce that here.
   const firstHref = new URL("../fetch-registry.ts?instance=1", import.meta.url).href;
   const secondHref = new URL("../fetch-registry.ts?instance=2", import.meta.url).href;
   const first: typeof import("../fetch-registry.ts") = await import(firstHref);
@@ -163,7 +160,6 @@ test("scope is shared across separately evaluated fetch-registry module copies",
     const viaSecond = second.getWebAccessScope();
     assert.strictEqual(viaSecond.getFetchTransport("cross-copy-transport"), transport);
     assert.strictEqual(viaSecond.extractors.get("cross-copy-extractor"), extractor);
-    // Built-in registrations made by the extract.ts copy survive as well.
     assert.ok(viaSecond.getFetchTransport("http"));
     assert.ok(viaSecond.extractors.has("readability"));
   } finally {
@@ -206,7 +202,6 @@ test("response-stage extractor claims non-HTML responses before the plain-text f
   assert.equal(claimed.content, "custom json");
   assert.deepEqual(seen, [{ stage: "response", mimeType: "application/json" }]);
 
-  // Without a claiming extractor the built-in plain-text fallback is unchanged.
   const fallback = await extractContent("https://api.example.com/data.json", undefined, {
     scope: createWebAccessScope(),
     lookup: publicLookup,

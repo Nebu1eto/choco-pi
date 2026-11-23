@@ -1,7 +1,3 @@
-/**
- * Review-graph builder facade. The implementation lives in `./builder/`; this
- * module re-exports the public surface unchanged.
- */
 export { REVIEW_GRAPH_VERSION, REVIEW_GRAPH_SOURCE_EXTENSIONS } from "./builder/workspace-cache.ts";
 export {
   getGraphBuildInfoForGraph,

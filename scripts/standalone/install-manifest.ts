@@ -1,16 +1,3 @@
-/**
- * `$CHOCO_PI_HOME/install.json`: what the standalone installer created.
- *
- * `self uninstall` removes only paths listed in `created`, so validation is
- * strict: every path is absolute and normalized, and every created path is
- * either inside the home (but never the home itself, `agent/` or `lsp/`) or
- * the recorded bin link. `node_path` is also read by the POSIX launcher with
- * a line-based parser, so it may not contain characters JSON would escape.
- *
- * `runtime` and `bun_path` were added for the Bun runtime option; manifests
- * written before them stay valid and mean runtime node. The launcher reads
- * both with the same line parser.
- */
 import { randomUUID } from "node:crypto";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -47,7 +34,6 @@ export const InstallManifestSchema = obj({
 export type InstallManifest = Static<typeof InstallManifestSchema>;
 const isInstallManifestRecord = compile(InstallManifestSchema).check;
 
-/** User state that only `self uninstall --purge` removes. */
 export const USER_STATE_ENTRIES: readonly string[] = ["agent", "lsp"];
 
 function isNormalizedAbsolute(value: string): boolean {
@@ -59,7 +45,6 @@ function isInside(parent: string, child: string): boolean {
   return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
-/** Characters the launcher's line parser cannot read back from JSON. */
 export function isLauncherReadablePath(value: string): boolean {
   for (const character of value) {
     const code = character.codePointAt(0) ?? 0;
@@ -114,7 +99,6 @@ export function manifestProblems(manifest: InstallManifest): string[] {
   return problems;
 }
 
-/** Parses manifest JSON text; throws with every problem found. */
 export function parseInstallManifest(text: string, origin: string): InstallManifest {
   let parsed: unknown;
   try {
@@ -133,7 +117,6 @@ export function manifestPath(home: string): string {
   return path.join(home, INSTALL_MANIFEST_NAME);
 }
 
-/** Reads the manifest of `home`; null when absent. */
 export async function readInstallManifest(home: string): Promise<InstallManifest | null> {
   const file = manifestPath(home);
   let text: string;

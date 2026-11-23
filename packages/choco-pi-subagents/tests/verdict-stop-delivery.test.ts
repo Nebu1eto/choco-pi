@@ -1,16 +1,3 @@
-/**
- * What a stop of a review or verification run tells its caller, and whether it
- * happens. stop_subagent replies "terminal result is still pending ... until
- * the terminal completion notification arrives" exactly when
- * resolveStopOutcome(record) is "pending" right after manager.abort; it replies
- * "stopped and settled" (no notification) otherwise. Since verdict recording,
- * a queued verdict-role run publishes after its record is written, so its stop
- * is pending: the completion (onComplete) must then follow exactly once.
- * Non-verdict queued stops stay settled at once and never notify.
- *
- * Also: the stop reason reaches the verdict line on queued paths, as it does
- * for a running run. No assertion compares a record object.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -77,7 +64,6 @@ function verdictLine(record: AgentRecord): string {
   return (line ?? "").replace(/ -> .*$/, "");
 }
 
-/** Fill the only slot, then queue a run of type with a ticket when it is a verdict role. */
 async function queued(s: Setup, type: string): Promise<AgentRecord> {
   s.h.manager.spawn(s.env.pi, s.env.context(), "implementer", "busy", {
     ...background,
@@ -169,7 +155,6 @@ test("/stop of a queued reviewer: the report waits for publication; one notifica
   const s = await setup(t, 1);
   const record = await queued(s, "reviewer");
   const result = s.h.manager.stopAllForRoot(s.env.owner);
-  // The busy run is stopped too; its runner settles as aborted.
   s.h.runs[0].resolve({
     responseText: "",
     session: await s.env.childSession(),
@@ -215,7 +200,6 @@ test("a queued reviewer refused at a closed latch notifies once, with the refusa
   });
   const session = await s.env.childSession();
   const record = await queued(s, "reviewer");
-  // The latch closes without the coordinator stopping the queue; the busy run ends normally.
   closed = true;
   s.h.runs[0].resolve({ responseText: "done", session, aborted: false, steered: false });
   await settled(record);

@@ -5,9 +5,7 @@ export function cancelOperation(session: CodeModeHostSession, id: number): Error
   const error = abortError();
   try {
     session.send({ type: "operation/cancel", id });
-  } catch {
-    // Host teardown is already authoritative.
-  }
+  } catch {}
   session.rejectOperation(id, error);
   return error;
 }

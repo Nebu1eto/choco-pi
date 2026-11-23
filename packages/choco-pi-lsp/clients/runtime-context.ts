@@ -12,16 +12,10 @@ import { logLatency } from "./latency-logger.ts";
 
 type TurnEndMessageResultContract = { role: "user"; content: string };
 
-// Exported so the Stop-hook bin strips exactly what these bridges prepend.
 export const AUTOMATION_FRAMING = "[choco-pi-lsp automated check — not a user request] ";
 
 type ContextResult = { messages: Array<{ role: "user"; content: string }> };
 
-// #1432 review (S3b): a multi-file bash write can carry hundreds of changed
-// paths, one `reasons` entry apiece — logging all of them shrinks the
-// smells-rollup tail window (a fixed-size ring) to a handful of these
-// records. Cap what this decision row carries; the full list is never
-// needed for triage, only "how many and roughly what kind".
 const MAX_LOGGED_REASONS = 8;
 
 function boundedReasons(reasons: string[]): string[] {
@@ -73,7 +67,6 @@ function turnEndMessage(
   };
 }
 
-/** Read a turn-end finding without changing its durable delivery state. */
 export function peekTurnEndFindings(
   cacheManager: CacheManager,
   cwd: string,
@@ -106,10 +99,6 @@ export function consumeTurnEndFindings(
   const validation = validateAdvisoryProvenance(findings.data, cwd, runtime);
   logProvenanceDecision(validation, findings.data.provenance, "turn-end", cwd);
 
-  // A blocker record is also the opt-in commit gate's durable state. Mark the
-  // context message consumed without deleting the record; clean/advisory-only
-  // records retain the historical consume-and-clear behavior.
-
   if (findings.data.hasBlockers === true && isString(findings.data.sessionId)) {
     cacheManager.writeCache("turn-end-findings", { ...findings.data, consumed: true }, cwd);
   } else {
@@ -127,7 +116,6 @@ export function consumeTurnEndFindings(
   };
 }
 
-/** Read test findings without consuming them; used by acknowledged IPC delivery. */
 export function peekTestFindings(
   cacheManager: CacheManager,
   cwd: string,
@@ -162,11 +150,6 @@ export function consumeTestFindings(
   if (!record?.data?.content) return;
   const findings = peekTestFindings(cacheManager, cwd, runtime, true);
   if (!findings) return;
-  // Retire the content but PRESERVE the generation high-water mark: nulling
-  // the whole slot would let a still-in-flight OLDER batch see `undefined`,
-  // pass the strictly-greater suppression check, and resurrect a consumed
-  // one-shot advisory with stale results. An empty-content record peeks as
-  // undelivered while keeping late-generation ordering intact.
   const priorGeneration = cacheManager.readCache<TestRunnerFindingsCache>(
     "test-runner-findings",
     cwd,
@@ -181,7 +164,6 @@ export function consumeTestFindings(
   return findings;
 }
 
-/** Complete an acknowledged MCP delivery without re-validating or re-rendering it. */
 export function acknowledgeTurnEndFindings(cacheManager: CacheManager, cwd: string): void {
   const findings = cacheManager.readCache<Partial<TurnEndFindingsCache>>("turn-end-findings", cwd);
   if (!findings?.data?.content || findings.data.consumed === true) return;
@@ -196,7 +178,6 @@ export function acknowledgeTurnEndFindings(cacheManager: CacheManager, cwd: stri
 export function acknowledgeTestFindings(cacheManager: CacheManager, cwd: string): void {
   const findings = cacheManager.readCache<TestRunnerFindingsCache>("test-runner-findings", cwd);
   if (!findings?.data?.content) return;
-  // Same high-water-mark preservation as consumeTestFindings.
   cacheManager.writeCache(
     "test-runner-findings",
 

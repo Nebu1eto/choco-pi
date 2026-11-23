@@ -4,7 +4,6 @@ import { RequestError } from "@agentclientprotocol/sdk";
 import { PiAcpAgent } from "../src/acp/agent.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 
-/** Run `call` and return the `RequestError` it must reject with. */
 async function rejectionOf(call: () => Promise<void>): Promise<RequestError> {
   try {
     await call();

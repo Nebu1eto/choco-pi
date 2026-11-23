@@ -115,7 +115,6 @@ export const OPEN_RESULT_TAB_CORRECTION_FLAGS = new Set<string>([
   "--state",
 ]);
 
-/** Launch modes that must never be combined with wrapper-managed restore state. */
 export const MANAGED_RESTORE_INCOMPATIBLE_FLAGS = [
   "--restore",
   "--restore-save",
@@ -145,7 +144,6 @@ export const MANAGED_RESTORE_INCOMPATIBLE_FLAGS = [
   "--engine",
 ] as const;
 
-/** Nonempty upstream env defaults that can replace or mutate the browser receiving restored state. */
 export const MANAGED_RESTORE_INCOMPATIBLE_ENVS = [
   "AGENT_BROWSER_RESTORE",
   "AGENT_BROWSER_RESTORE_SAVE",
@@ -179,7 +177,6 @@ export const MANAGED_RESTORE_INCOMPATIBLE_ENVS = [
   "all_proxy",
 ] as const;
 
-/** Boolean launch mutators block restore only when enabled. */
 export const MANAGED_RESTORE_INCOMPATIBLE_BOOLEAN_ENVS = [
   "AGENT_BROWSER_AUTO_CONNECT",
   "AGENT_BROWSER_IGNORE_HTTPS_ERRORS",

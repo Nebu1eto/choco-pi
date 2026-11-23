@@ -48,7 +48,6 @@ function parseJson<T extends JsonSchema>(contents: string, schema: T): Static<T>
 
 const SidecarSchema = map(unknown());
 
-/** Bundled packages as an earlier install of this checkout recorded them. */
 const BUNDLED_PACKAGES = [
   "choco-pi-web-search",
   "choco-pi-web-access",
@@ -71,10 +70,6 @@ const BUNDLED_PACKAGES = [
   "choco-pi-editor-context",
 ].map((name) => path.resolve("packages", name));
 
-/**
- * The checkout ships no `.pi/settings.json`, so the installer takes its policy
- * from the global settings an earlier install wrote; seed those.
- */
 type SeedSettings = {
   packages?: string[];
   extensions?: string[];
@@ -97,11 +92,6 @@ type SidecarFixture = {
   compactionAnthropic?: string;
 };
 
-/**
- * A minimal profile root plus agent directory. The codex config is linked from
- * the root, as in a real install, so `responsesCompaction` reaches the
- * installer through the link.
- */
 async function sidecarFixture(
   context: TestContext,
   { sidecar, responsesCompaction, compactionAnthropic }: SidecarFixture,
@@ -247,7 +237,6 @@ test("profile installer links tracked config and is idempotent", async (context)
     path.resolve("profile/extensions"),
     ...DEFAULT_PROFILE_EXTENSIONS,
   ]);
-  // User levels win; profile defaults fill only the models the user has not set.
   assert.deepEqual(settings.modelThinkingLevels, {
     ...DEFAULT_PROFILE_MODEL_THINKING_LEVELS,
     ...thinking,
@@ -258,7 +247,6 @@ test("profile installer links tracked config and is idempotent", async (context)
 test("without project settings, global settings supply the profile and lose superseded packages", async (context) => {
   const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-global-"));
   context.after(() => rm(agentDir, { recursive: true, force: true }));
-  // choco-pi-lsp supersedes pi-lens; the user's own package stays.
   await seedProfileSettings(agentDir, {
     packages: [...BUNDLED_PACKAGES, "npm:pi-lens@1.0.0", "npm:user-package@2.0.0"],
   });
@@ -271,7 +259,6 @@ test("without project settings, global settings supply the profile and lose supe
 
 const GOOGLE_PACKAGE = path.resolve("packages", "choco-pi-provider-google-antigravity");
 
-/** Writes the profile marker an earlier install left, optionally with its offer record. */
 async function seedProfileMarker(agentDir: string, bundledPackages?: string[]) {
   const target = profileMarkerPath(agentDir);
   await mkdir(path.dirname(target), { recursive: true });
@@ -296,7 +283,6 @@ async function seedProfileMarker(agentDir: string, bundledPackages?: string[]) {
 test("a reinstall from before the offer record adds packages bundled since, in default order", async (context) => {
   const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-new-bundled-"));
   context.after(() => rm(agentDir, { recursive: true, force: true }));
-  // An install from before the Google provider was bundled; its marker predates the record.
   await seedProfileSettings(agentDir, {
     packages: [
       ...BUNDLED_PACKAGES.filter((spec) => spec !== GOOGLE_PACKAGE),
@@ -400,7 +386,6 @@ test("a reinstall disables Pi's built-in tool-search, which choco-pi's tool_sear
   assert.deepEqual(DEFAULT_PROFILE_EXTENSIONS, ["-builtin:codemode", "-builtin:tool-search"]);
   const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-tool-search-"));
   context.after(() => rm(agentDir, { recursive: true, force: true }));
-  // An install from before the change, where the user re-enabled the built-in.
   await seedProfileSettings(agentDir, {
     extensions: [
       path.resolve("profile/extensions"),
@@ -468,7 +453,6 @@ test("the profile removes stale built-in exclusions and preserves unrelated sett
 });
 
 test("reinstalling keeps exactly one copy of the built-in extension policy", async (context) => {
-  // A checkout that ships project settings: its policy overrides the user's.
   const root = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-builtins-"));
   context.after(() => rm(root, { recursive: true, force: true }));
   const agentDir = path.join(root, "agent");
@@ -585,8 +569,6 @@ test("installing the profile drops another checkout's resource directories", () 
 
   const settings = buildGlobalSettings(projectSettings, existingSettings, "/repo");
 
-  // A previous checkout's .pi/extensions would load a second copy of every
-  // extension; pi then refuses to start because both register the same tools.
   assert.deepEqual(settings.extensions, [
     path.resolve("/repo/profile/extensions"),
     "/Users/someone/my-tools",
@@ -599,7 +581,6 @@ test("every bundled fork declares the packages it supersedes", async () => {
     const manifest = JSON.parse(
       await readFile(path.resolve("packages", name, "package.json"), "utf8"),
     );
-    // Only Pi packages are installed; choco-pi-acp is a standalone binary.
     if (manifest.pi === undefined) continue;
     assert.ok(
       Array.isArray(manifest.chocoPi?.supersedes),
@@ -805,7 +786,6 @@ test("install removes a stale context-cap.json link and reports it once", async 
   await seedProfileSettings(agentDir);
   const target = path.join(agentDir, "extensions", "context-cap.json");
   await mkdir(path.dirname(target), { recursive: true });
-  // An earlier install linked the tracked file, which no longer exists: dangling.
   await symlink(path.resolve("profile/extensions/context-cap.json"), target);
 
   const first = await installProfile({ root: process.cwd(), agentDir });
@@ -854,8 +834,6 @@ test("retired profile files are neither shipped, linked, nor migrated", async ()
 });
 
 test("every profile extension sidecar is linked or migrated by the installer", async () => {
-  // Tracked and untracked-but-not-ignored files: a new sidecar fails here
-  // before it is committed. Ignored files (such as synthetic.json) are user state.
   const { stdout } = await promisify(execFile)("git", [
     "ls-files",
     "--cached",
@@ -864,7 +842,6 @@ test("every profile extension sidecar is linked or migrated by the installer", a
     "--",
     "profile/extensions",
   ]);
-  // A tracked file deleted in the working tree is no longer shipped.
   const deleted = new Set(
     (
       await promisify(execFile)("git", ["ls-files", "--deleted", "--", "profile/extensions"])
@@ -917,12 +894,9 @@ test("bundled packages and profile directories of any checkout layout dedupe to 
     },
     root,
     [],
-    // Only /other was confirmed as a choco-pi checkout.
     new Set(["/other"]),
   );
 
-  // A bundled name under another checkout's packages/ is this profile's copy;
-  // any other name under packages/ and any other parent stay the user's.
   assert.deepEqual(settings.packages, [
     path.resolve("/repo/packages/choco-pi-lsp"),
     path.resolve("/repo/packages/choco-pi-ui"),
@@ -944,23 +918,19 @@ test("bundled packages and profile directories of any checkout layout dedupe to 
 test("another checkout's profile directory is dropped only with choco-pi checkout evidence", async (context) => {
   const fixture = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-evidence-"));
   context.after(() => rm(fixture, { recursive: true, force: true }));
-  // A user's own project that happens to have profile/skills: no checkout markers.
   const userSkills = path.join(fixture, "user-proj", "profile", "skills");
   await mkdir(userSkills, { recursive: true });
-  // A checkout recognized by its profile and bundled package markers.
   const markedCheckout = path.join(fixture, "other-checkout");
   await mkdir(path.join(markedCheckout, "profile", "skills"), { recursive: true });
   await writeFile(path.join(markedCheckout, "profile", "SYSTEM.md"), "system\n", "utf8");
   await mkdir(path.join(markedCheckout, "packages", "choco-pi-ui"), { recursive: true });
   await writeFile(path.join(markedCheckout, "packages", "choco-pi-ui", "package.json"), "{}\n");
-  // A checkout recognized by its root manifest name.
   const harnessCheckout = path.join(fixture, "harness-checkout");
   await mkdir(path.join(harnessCheckout, "profile", "prompts"), { recursive: true });
   await writeFile(
     path.join(harnessCheckout, "package.json"),
     `${JSON.stringify({ name: "choco-pi", private: true })}\n`,
   );
-  // Only one of the two markers is not enough.
   const halfMarked = path.join(fixture, "half-marked");
   await mkdir(path.join(halfMarked, "profile", "extensions"), { recursive: true });
   await writeFile(path.join(halfMarked, "profile", "SYSTEM.md"), "system\n", "utf8");
@@ -989,20 +959,11 @@ test("another checkout's profile directory is dropped only with choco-pi checkou
   ]);
 });
 
-/** Where the old layout kept each linked profile file, relative to the checkout. */
 function oldLayoutSource(sourceRelative: string) {
   assert.ok(sourceRelative.startsWith("profile/"));
   return `.pi/${sourceRelative.slice("profile/".length)}`;
 }
 
-/**
- * A checkout in the new layout (`packages` and `profile` borrowed from this
- * one) plus an agent directory an old-layout install of the same checkout
- * wrote: settings name `<root>/.pi/packages/*` in load order and the old
- * profile directories, and every profile link points into `<root>/.pi`. The
- * old `.pi/SYSTEM.md` source still exists; every other old link is dangling,
- * and `agents/planner.md` points into an old checkout that has since moved.
- */
 async function oldLayoutFixture(context: TestContext) {
   const fixture = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-old-layout-"));
   context.after(() => rm(fixture, { recursive: true, force: true }));
@@ -1103,7 +1064,6 @@ test("an old-layout upgrade still refuses to replace a foreign file without --ba
   const foreign = path.join(agentDir, "review-policy.md");
   await rm(foreign);
   await writeFile(foreign, "user-owned\n", "utf8");
-  // A live link into another checkout's .pi is someone else's file too.
   const elsewhere = path.join(path.dirname(root), "elsewhere", ".pi", "SYSTEM.md");
   await mkdir(path.dirname(elsewhere), { recursive: true });
   await writeFile(elsewhere, "elsewhere\n", "utf8");
@@ -1128,7 +1088,6 @@ test("an old-layout upgrade still refuses to replace a foreign file without --ba
 });
 
 test("the CLI installs when its path runs through a symlinked directory", async (context) => {
-  // Node runs the main module's real path; argv[1] keeps the symlink (macOS /tmp -> /private/tmp).
   const directory = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-cli-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const linkedCheckout = path.join(directory, "checkout");

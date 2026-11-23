@@ -19,12 +19,6 @@ export type UsageLimitClassifierInput = {
   now: number;
 };
 
-/**
- * Pluggable per-provider usage-limit error classifier.
- * Returning a {@link UsageLimitClassification} matches the error; returning
- * `null` claims the error as not a usage limit (stopping fallback checks);
- * returning `undefined` defers to later classifiers and generic patterns.
- */
 export type UsageLimitClassifier = {
   id: string;
   providers: readonly string[];

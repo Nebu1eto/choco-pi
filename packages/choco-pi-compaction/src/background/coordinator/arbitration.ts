@@ -1,4 +1,3 @@
-/** Adoption: commit lookup, host-compaction arbitration, and commit reconciliation. */
 import type { FrozenSnapshot } from "../contract.ts";
 import { adoptionDraft, firstRetainedEntry, type CommittedCandidate } from "../adoption.ts";
 import { arbitrationIntent, type HostCompactionTrigger } from "../arbitration.ts";
@@ -13,8 +12,6 @@ import {
   ownerCurrent,
   validate,
 } from "./state.ts";
-
-// ---- adoption: commit lookup, arbitration, reconciliation ----
 
 function committedEntryMatches(
   state: CoordinatorState,
@@ -82,7 +79,6 @@ async function observeCommit(state: CoordinatorState, draftFinished: boolean): P
   if (!ownerCurrent(state)) return;
   if (committed) {
     await installCommitted(state, current, committed, fingerprint);
-    // Recheck after the await so a lost owner is invalidated before the caller continues.
     ownerCurrent(state);
     return;
   }
@@ -101,7 +97,6 @@ async function arbitrateAdopting(
 ): Promise<CoordinatorArbitrationResult> {
   await reconcileCommit(state);
   if (!ownerCurrent(state)) return PROCEED;
-  // Even an uncommitted proposal does not indefinitely block hard-limit recovery.
   if (
     event.customInstructions !== undefined &&
     event.customInstructions !== current.customInstructions &&
@@ -111,7 +106,6 @@ async function arbitrateAdopting(
   return PROCEED;
 }
 
-/** Ensure a retained entry follows the cut, appending an anchor when the cut is the branch tip. */
 async function retainedEntryAfterCut(
   state: CoordinatorState,
   current: Candidate,
@@ -171,14 +165,6 @@ function arbitrateCandidate(
   return proposeAdoption(state, current);
 }
 
-/**
- * Wait for the in-flight preparation, then adopt it if it is still this
- * owner's ready candidate; otherwise the host proceeds with its own summary
- * exactly as before. The wait ends at the first of: the preparation settling,
- * the candidate being finished (its abort fires on timeout, cancellation or
- * owner invalidation), the host aborting its compaction, or the preparation
- * timeout. The physical work keeps running and settles its own scheduler slot.
- */
 async function awaitOutstanding(
   state: CoordinatorState,
   current: Candidate,
@@ -190,7 +176,6 @@ async function awaitOutstanding(
   return proposeAdoption(state, current);
 }
 
-/** Resolves true when `work` settles first; false on any abort or the preparation timeout. */
 function firstOf(
   state: CoordinatorState,
   work: Promise<WorkSettlement>,
@@ -226,7 +211,6 @@ export async function arbitrate(
 ): Promise<CoordinatorArbitrationResult> {
   if (!ownerCurrent(state)) return PROCEED;
   if (state.arbitrating) {
-    // A manual request can invalidate an automatic proposal awaiting its anchor.
     if (
       event.customInstructions !== undefined &&
       event.customInstructions !== state.candidate?.customInstructions

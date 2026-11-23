@@ -31,7 +31,6 @@ function fakeTui(): TUI {
   return reinterpretHostValue<TUI>({ terminal: { rows: 40 }, requestRender: () => {} });
 }
 
-/** Completion is asynchronous; let its request chain finish. */
 async function settle(): Promise<void> {
   for (let tick = 0; tick < 20; tick += 1) {
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -58,10 +57,6 @@ after(() => {
   }
 });
 
-/**
- * A stand-in review worktree. Its entries share no name with this repository's
- * own root, so a completion rooted at the wrong tree is visible as a miss.
- */
 function reviewRoot(): string {
   const root = temporaryDirectory("review-input-root-");
   writeFileSync(join(root, "alpha.ts"), "export const alpha = 1;\n");
@@ -79,7 +74,6 @@ type InputFixture = {
 };
 
 function createInput(root: string, width = 60): InputFixture {
-  // fdPath null keeps the test off the `@` fuzzy path, which shells out.
   const input = new ReviewInput(fakeTui(), EDITOR_THEME, { root, fdPath: null });
   const rendered = () => input.render(width);
   return {
@@ -107,8 +101,6 @@ test("path completion resolves against the review root, never the process direct
     "both review root entries are offered, the first one highlighted",
   );
 
-  // This repository's root holds package.json, tsconfig.json, and tests/.
-  // The review root holds none of them, and nothing may leak in from the cwd.
   for (const missing of ["pack", "tsconfig", "test"]) {
     input.setText("");
     type(missing);

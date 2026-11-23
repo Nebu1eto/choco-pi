@@ -1,4 +1,3 @@
-/** The pane's source: the session, a branch, a turn, or one turn alone, and stepping between turns. */
 import type { DefaultBaseChoice } from "../../lib/changes/git/default-base.ts";
 import type { DiffSource } from "../../lib/changes/git/model.ts";
 import { sourceKey } from "../../lib/changes/git/snapshot.ts";
@@ -32,7 +31,6 @@ export function applySource(pane: DiffPaneController, session: Session, source: 
   }
 }
 
-/** Opening without an explicit source, and closing, return to the session source. */
 export function resetToSessionSource(pane: DiffPaneController, session: Session): void {
   if (session.source.kind === "session") return;
   applySource(pane, session, SESSION_SOURCE);
@@ -46,7 +44,6 @@ export function turnsOf(pane: DiffPaneController, session: Session): readonly Tu
   }
 }
 
-/** A branch source for `base`, or for the repository's default base when it is undefined. */
 export async function branchSource(
   pane: DiffPaneController,
   session: Session,
@@ -78,7 +75,6 @@ export async function branchSource(
   return { kind: "found", source: { kind: "branch-base", base: choice.base } };
 }
 
-/** An explicit `/diff source …`: show it, opening the pane when it is closed. */
 export async function showSource(
   pane: DiffPaneController,
   session: Session,
@@ -93,11 +89,9 @@ export async function showSource(
     saySource(pane, session, source);
     return;
   }
-  // The inline list showed it; the pane is still closed, so the explicit source ends here.
   if (session.alive) resetToSessionSource(pane, session);
 }
 
-/** `/diff source branch [<base>]`; keeps the current source when no base exists. */
 export async function sourceBranch(
   pane: DiffPaneController,
   session: Session,
@@ -112,7 +106,6 @@ export async function sourceBranch(
   await showSource(pane, session, choice.source);
 }
 
-/** `/diff source turn [<n>]`; keeps the current source when no checkpoint matches. */
 export async function sourceTurn(
   pane: DiffPaneController,
   session: Session,
@@ -126,9 +119,7 @@ export async function sourceTurn(
   await showSource(pane, session, turnSource(choice.turn));
 }
 
-/** The pane's `s` key: session, uncommitted, latest turn, branch base, and around again. */
 export async function cycleSource(pane: DiffPaneController, session: Session): Promise<void> {
-  // A turn shown alone is outside the cycle, which starts over from it.
   if (session.turnOnly !== undefined) {
     applySource(pane, session, SESSION_SOURCE);
     saySource(pane, session, SESSION_SOURCE);
@@ -160,7 +151,6 @@ export async function cycleSource(pane: DiffPaneController, session: Session): P
   else saySource(pane, session, next);
 }
 
-/** Show `turns[index]` alone; false when there is no such turn. */
 export function showTurnOnly(
   pane: DiffPaneController,
   session: Session,
@@ -175,11 +165,6 @@ export function showTurnOnly(
   return true;
 }
 
-/**
- * The pane's ← and →. The turns are in order with every session change after
- * the newest: ← goes to the turn before the one shown, or to the newest from
- * any other source; → goes to the turn after it and then to the session.
- */
 export function stepTurn(pane: DiffPaneController, session: Session, delta: -1 | 1): void {
   const turns = turnsOf(pane, session);
   const shown =
@@ -213,12 +198,6 @@ export function stepTurn(pane: DiffPaneController, session: Session, delta: -1 |
   );
 }
 
-/**
- * Keep a turn shown alone on its own changes. The newest turn is compared
- * with the working tree until the next prompt records a checkpoint, and with
- * that checkpoint from then on; a turn that left the branch gives way to the
- * session source.
- */
 export function followTurn(pane: DiffPaneController, session: Session): void {
   if (session.turnOnly === undefined) return;
   const turns = turnsOf(pane, session);
@@ -235,5 +214,3 @@ export function followTurn(pane: DiffPaneController, session: Session): void {
   }
   if (sourceKey(source) !== sourceKey(session.source)) showTurnOnly(pane, session, turns, index);
 }
-
-/* ---------------------------------------------------------- actions */

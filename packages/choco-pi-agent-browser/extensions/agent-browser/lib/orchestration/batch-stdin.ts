@@ -32,7 +32,6 @@ function isStringToken(value: BatchStdinValue): value is string {
 const BATCH_STDIN_EXAMPLE =
   ' Example: { "args": ["batch"], "stdin": "[[\\"get\\",\\"title\\"],[\\"get\\",\\"url\\"]]" }';
 
-// Mirror upstream commands::shell_words_split so policy inspection sees the same argv.
 export function parseBatchCommandArgument(command: string): ParsedBatchCommandArgument {
   const tokens: string[] = [];
   let token = "";
@@ -134,13 +133,6 @@ export function parseUserBatchStdin(stdin: string | undefined): ParsedUserBatchS
   return { steps };
 }
 
-/**
- * The batch steps upstream will actually execute: run_batch uses raw batch
- * arguments exclusively when any exist and reads stdin only otherwise.
- * Upstream filters only the exact `--bail` token, so an equals form such as
- * `--bail=true` stays a raw command (an unknown-command row) and keeps stdin
- * ignored.
- */
 export function getUpstreamEffectiveBatchSteps(
   commandTokens: readonly string[],
   stdin: string | undefined,

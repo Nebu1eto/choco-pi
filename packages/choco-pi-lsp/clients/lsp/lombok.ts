@@ -78,9 +78,7 @@ function newestExistingJar(candidates: string[]): string | undefined {
       if (!best || stat.mtimeMs > best.mtimeMs) {
         best = { filePath: candidate, mtimeMs: stat.mtimeMs };
       }
-    } catch {
-      // missing candidate
-    }
+    } catch {}
   }
   return best?.filePath;
 }

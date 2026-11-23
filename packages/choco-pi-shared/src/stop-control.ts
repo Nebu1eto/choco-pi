@@ -1,17 +1,11 @@
 import { arr, bool, compile, int, lit, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 
-/**
- * Canonical choco-pi stop-control v1 contract shared by the root coordinator and
- * subagents, shells, goal, and hooks participants. Stateless: reads process-global state
- * via `globalThis[STOP_CONTROL_REGISTRY_KEY]`. Absent or malformed registries read as open epoch 0.
- */
 export const STOP_CONTROL_PROTOCOL = "choco-pi:stop-control/v1";
 export const STOP_CONTROL_REGISTRY_KEY = Symbol.for(STOP_CONTROL_PROTOCOL);
 export const STOP_CONTROL_REVOKE_CHANNEL = "choco-pi:stop-control/v1/revoke";
 export const STOP_CONTROL_STOP_SHELLS_CHANNEL = "choco-pi:stop-control/v1/stop-shells";
 export const STOP_CONTROL_REPORT_CHANNEL = "choco-pi:stop-control/v1/report";
 
-/** Refusal text for any admission (spawn, resume, revival, queued or parked start) while closed. */
 export const ADMISSION_CLOSED_MESSAGE =
   "Agent admission is closed: the user stopped this session's work (/stop). Ask the user to run /resume-work.";
 
@@ -103,7 +97,6 @@ interface RegistryCandidate {
   state?: unknown;
 }
 
-/** Read the coordinator's state for one root session; never throws. */
 export function readStopState(rootSessionId: string): StopState {
   const entry: unknown = Object.getOwnPropertyDescriptor(
     globalThis,
@@ -121,20 +114,14 @@ export function readStopState(rootSessionId: string): StopState {
   }
 }
 
-/** True while `root` admits new work (latch open). An unknown root is never closed. */
 export function isAdmissionOpen(rootSessionId: string | undefined): boolean {
   return rootSessionId === undefined || !readStopState(rootSessionId).closed;
 }
 
-/** Throws the verbatim refusal while the root's latch is closed. */
 export function requireAdmissionOpen(rootSessionId: string | undefined): void {
   if (!isAdmissionOpen(rootSessionId)) throw new Error(ADMISSION_CLOSED_MESSAGE);
 }
 
-/**
- * Work authorised at `capturedEpoch` may trigger a turn only while the same epoch stays open.
- * An unknown root or epoch (records that predate the latch) follows the open/closed state alone.
- */
 export function mayTriggerTurn(
   rootSessionId: string | undefined,
   capturedEpoch: number | undefined,

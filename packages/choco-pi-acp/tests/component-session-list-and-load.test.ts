@@ -38,7 +38,6 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 }
 
 test("PiAcpAgent: listSessions lists pi sessions and loadSession replays history", async () => {
-  // Create a fake PI_CODING_AGENT_DIR with one session.
   const root = mkdtempSync(join(tmpdir(), "pi-acp-test-"));
   const projectDir = join(root, "project");
   const sessionsDir = join(
@@ -49,7 +48,6 @@ test("PiAcpAgent: listSessions lists pi sessions and loadSession replays history
   const sessionFile = join(sessionsDir, "0000_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jsonl");
   const recordsPath = join(root, "records.jsonl");
 
-  // Ensure parent dirs.
   mkdirSync(projectDir);
   mkdirSync(sessionsDir, { recursive: true });
 
@@ -97,7 +95,6 @@ test("PiAcpAgent: listSessions lists pi sessions and loadSession replays history
       piCommand: executable(root, recordsPath),
     });
 
-    // 1) list sessions
     const listed = await agent.listSessions({
       cwd: projectDir,
       cursor: null,
@@ -110,7 +107,6 @@ test("PiAcpAgent: listSessions lists pi sessions and loadSession replays history
     assert.equal(s?.cwd, projectDir);
     assert.equal(s?.title, "My Named Session");
 
-    // 2) load session through a scripted Pi process with getMessages history.
     try {
       await agent.loadSession({
         sessionId: "sess-1",
@@ -131,7 +127,6 @@ test("PiAcpAgent: listSessions lists pi sessions and loadSession replays history
       assert.ok(isString(resumedPath));
       assert.ok(resumedPath.endsWith("/0000_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jsonl"));
 
-      // loadSession should have replayed messages as session/update notifications.
       const texts = conn.updates
         .map((notification) => notification.update)
         .flatMap((update) =>

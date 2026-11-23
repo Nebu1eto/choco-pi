@@ -15,7 +15,6 @@ class ModelPicker extends Container implements Focusable {
   constructor(list: SelectList) {
     super();
     this.list = list;
-    // SettingsList forwards keys, but does not propagate focus to its submenu.
     this.input.focused = true;
     this.addChild(this.input);
     this.addChild(list);
@@ -83,7 +82,6 @@ export function modelPickerSubmenu(args: {
     };
     list.onSelect = (item) => finish(values.length > 0 ? item.value : undefined);
     list.onCancel = () => finish();
-    // Keep the empty placeholder selectable only as a cancel action.
     return values.length > 0 ? new ModelPicker(list) : list;
   };
 }

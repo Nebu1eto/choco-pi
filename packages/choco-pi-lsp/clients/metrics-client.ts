@@ -1,37 +1,20 @@
-/**
- * Silent Metrics Client for choco-pi-lsp
- *
- * Tracks code quality metrics silently during the session.
- * Metrics are aggregated and shown in session summary only.
- *
- * Tracks:
- * - Code Entropy: Shannon entropy delta per file
- *
- * These are observational metrics — they inform the human in session summary,
- * they don't gate or interrupt the agent mid-task.
- */
-
 import { createSubsystemLogger } from "./extension-log.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-// --- Types ---
-
 export interface FileMetrics {
   filePath: string;
   totalLines: number;
-  entropyStart: number; // Shannon entropy at first touch
-  entropyCurrent: number; // Current Shannon entropy
-  entropyDelta: number; // Change in entropy
+  entropyStart: number;
+  entropyCurrent: number;
+  entropyDelta: number;
 }
 
 export interface SessionMetrics {
   filesModified: number;
-  avgEntropyDelta: number; // average across files
+  avgEntropyDelta: number;
   fileDetails: Map<string, FileMetrics>;
 }
-
-// --- Client ---
 
 export class MetricsClient {
   private log: (msg: string) => void;
@@ -41,13 +24,10 @@ export class MetricsClient {
     this.log = verbose ? createSubsystemLogger("metrics") : () => {};
   }
 
-  /**
-   * Record initial state of a file when first touched this session
-   */
   recordBaseline(filePath: string): void {
     const absolutePath = path.resolve(filePath);
     if (!fs.existsSync(absolutePath)) return;
-    if (this.fileBaselines.has(absolutePath)) return; // Already recorded
+    if (this.fileBaselines.has(absolutePath)) return;
 
     const content = fs.readFileSync(absolutePath, "utf-8");
     const entropy = this.calculateEntropy(content);
@@ -56,9 +36,6 @@ export class MetricsClient {
     this.log(`Baseline recorded: ${path.basename(filePath)} (entropy: ${entropy.toFixed(2)})`);
   }
 
-  /**
-   * Get metrics for a specific file
-   */
   getFileMetrics(filePath: string): FileMetrics | null {
     const absolutePath = path.resolve(filePath);
     const baseline = this.fileBaselines.get(absolutePath);
@@ -81,9 +58,6 @@ export class MetricsClient {
     };
   }
 
-  /**
-   * Get entropy delta for all touched files
-   */
   getEntropyDeltas(): Array<{
     file: string;
     start: number;
@@ -115,10 +89,6 @@ export class MetricsClient {
     return results.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   }
 
-  /**
-   * Calculate Shannon entropy of a string
-   * Returns bits per character
-   */
   calculateEntropy(text: string): number {
     if (text.length === 0) return 0;
 
@@ -139,9 +109,6 @@ export class MetricsClient {
     return entropy;
   }
 
-  /**
-   * Reset session state (for new session)
-   */
   reset(): void {
     this.fileBaselines.clear();
     this.log("Session metrics reset");

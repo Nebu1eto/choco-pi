@@ -360,7 +360,6 @@ test("non-continue provider error skips independent pending work", async () => {
   assert.deepEqual(runner.starts, ["hard"]);
   const result = await manager.wait(started.workflowId)!;
   assert.equal(result.status, "error");
-  // Exact-once provider leniency belongs to spawn/precheck gates, not settled hard failures.
   assert.equal(result.steps.find((step) => step.id === "independent")?.status, "skipped");
 });
 
@@ -1009,8 +1008,6 @@ test("a cancelled step reports cancellation instead of the runner's abort text",
 
   await flush();
   manager.cancel(started.workflowId);
-  // The runner surfaces its own abort wording; a deliberate cancel must not
-  // present that to the user as a step failure.
   runner.finish("a", { status: "cancelled", error: "Agent ended with status stopped." });
 
   const result = await manager.wait(started.workflowId)!;
@@ -1027,7 +1024,6 @@ test("provider precheck names a usage-limit closure's reset and suggestion", asy
     const runner = Object.assign(new DeferredRunner(), {
       providerKey: (step: WorkflowStepDefinition): string | undefined => step.model,
       isProviderAvailable: (key: string): boolean => key !== providerKey,
-      // The owner-scoped refusal text comes from the runner (the manager in production).
       unavailableMessage: (key: string): string => providerUnavailableMessage(key, closure),
     });
     const manager = new WorkflowManager();
@@ -1051,7 +1047,6 @@ test("provider precheck names a usage-limit closure's reset and suggestion", asy
   }
 });
 
-/** Runner on a closed provider whose re-check runs `onRefresh`. */
 class RecheckingRunner extends DeferredRunner {
   available = false;
   refreshes = 0;

@@ -14,7 +14,6 @@ const HELPER_SETUP_TIMEOUT_MS = 60_000;
 const COMMAND_TIMEOUT_MS = 15_000;
 
 export const LINUX_HELPER_PROTOCOL_VERSION = 4;
-/** The Linux helper path: the explicit override, else `<agent dir>/helpers/pi-computer-use/linux-bridge`. */
 export function linuxHelperPath(
   env: Readonly<Record<string, string | undefined>> = process.env,
   home: string = os.homedir(),

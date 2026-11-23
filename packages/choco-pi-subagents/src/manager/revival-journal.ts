@@ -1,7 +1,3 @@
-/**
- * revival-journal.ts — Internal AgentManager module extracted from agent-manager.ts.
- */
-
 import {
   buildJournalData,
   journalClassificationOf,
@@ -23,11 +19,6 @@ import {
   type ManagerState,
 } from "./state.ts";
 
-/**
- * Install or remove the journal writer. A different root session clears the
- * dormant map, the lookup, and the dedupe state: they describe another
- * session's file. Removing the sink keeps them, but hides dormant entries.
- */
 export function setJournalSink(mgr: ManagerState, sink: SubagentJournalSink | undefined): void {
   const root = sink?.rootSessionId;
   if (root !== undefined && root !== mgr.journalRoot) {
@@ -40,7 +31,6 @@ export function setJournalSink(mgr: ManagerState, sink: SubagentJournalSink | un
   mgr.journalSink = sink;
 }
 
-/** Fallback consulted by `getDormant` when the in-memory map misses. */
 export function setJournalLookup(
   mgr: ManagerState,
   lookup: SubagentJournalLookup | undefined,
@@ -48,15 +38,10 @@ export function setJournalLookup(
   mgr.journalLookup = lookup;
 }
 
-/** Journaling failures since construction, for diagnostics and tests. */
 export function getJournalHealth(mgr: ManagerState): SubagentJournalHealth {
   return { failures: mgr.journalFailures, lastError: mgr.lastJournalError };
 }
 
-/**
- * Re-journal a live record after a change made outside the manager (a
- * result read flipping `resultConsumed`). Returns false for an unknown id.
- */
 export function journalRecord(mgr: ManagerState, id: string): boolean {
   const record = mgr.agents.get(id);
   if (record === undefined) return false;
@@ -64,7 +49,6 @@ export function journalRecord(mgr: ManagerState, id: string): boolean {
   return true;
 }
 
-/** Set a live record's consecutive unclean-revival count and journal it. */
 export function setRevivals(mgr: ManagerState, id: string, revivals: number): boolean {
   const record = mgr.agents.get(id);
   if (record === undefined || !Number.isInteger(revivals) || revivals < 0) return false;
@@ -73,11 +57,6 @@ export function setRevivals(mgr: ManagerState, id: string, revivals: number): bo
   return true;
 }
 
-/**
- * Load dormant snapshots (startup: terminal snapshots of the current root).
- * Call after `setJournalSink` for that root. Invalid snapshots and ids that
- * are live are skipped. Returns how many were stored.
- */
 export function hydrateDormant(
   mgr: ManagerState,
   snapshots: Iterable<JournalAgentSnapshot>,
@@ -90,7 +69,6 @@ export function hydrateDormant(
   return stored;
 }
 
-/** Dormant snapshot by id; undefined while a live record holds the id or no sink is set. */
 export function getDormant(mgr: ManagerState, id: string): JournalAgentSnapshot | undefined {
   if (mgr.journalSink === undefined || mgr.agents.has(id)) return undefined;
   const stored = mgr.dormant.get(id);
@@ -106,10 +84,6 @@ export function getDormant(mgr: ManagerState, id: string): JournalAgentSnapshot 
     : undefined;
 }
 
-/**
- * Newest top-level dormant snapshot whose handle or alias matches
- * case-insensitively, or whose id matches exactly. In-memory map only.
- */
 export function findDormantByHandle(
   mgr: ManagerState,
   handleOrAlias: string,
@@ -130,7 +104,6 @@ export function findDormantByHandle(
   return match;
 }
 
-/** Record that a dormant agent's result was read, and journal it. */
 export function markDormantResultConsumed(mgr: ManagerState, id: string): boolean {
   const sink = mgr.journalSink;
   const entry = getDormant(mgr, id);
@@ -148,12 +121,6 @@ export function markDormantResultConsumed(mgr: ManagerState, id: string): boolea
   return true;
 }
 
-/**
- * Explicit stop of a dormant agent that has no run (interrupted, parked or
- * never revived): journal it `stopped` with `stoppedByUser` so no startup
- * revives it. Returns the stopped snapshot, or undefined when the id is
- * live, being revived, unknown, or already terminal.
- */
 export function stopDormant(mgr: ManagerState, id: string): JournalAgentSnapshot | undefined {
   const sink = mgr.journalSink;
   if (sink === undefined || mgr.disposed || mgr.revivalReservations.has(id)) return undefined;
@@ -178,17 +145,10 @@ export function stopDormant(mgr: ManagerState, id: string): JournalAgentSnapshot
   return stopped;
 }
 
-/** Whether a startup revival or dormant resume currently holds `id`. */
 export function isRevivalPending(mgr: ManagerState, id: string): boolean {
   return mgr.revivalReservations.has(id);
 }
 
-/**
- * Queue a journal write. Writes are coalesced in one microtask so a settle
- * path that sets status, then error/result/consumption synchronously, lands
- * as one complete entry. The microtask runs before any I/O callback, so the
- * entry precedes the run's first provider call.
- */
 export function scheduleJournal(mgr: ManagerState, record: AgentRecord): void {
   if (mgr.journalSink === undefined || mgr.disposed) return;
   mgr.pendingJournal.set(record.id, record);
@@ -200,10 +160,6 @@ export function scheduleJournal(mgr: ManagerState, record: AgentRecord): void {
   });
 }
 
-/**
- * Write every coalesced journal entry now (e.g. inside `session_shutdown`,
- * where a pending microtask may never run before the process exits).
- */
 export function flushJournal(mgr: ManagerState): void {
   const pending = [...mgr.pendingJournal.values()];
   mgr.pendingJournal.clear();
@@ -212,19 +168,14 @@ export function flushJournal(mgr: ManagerState): void {
   }
 }
 
-/** The sink this record journals to, or undefined when it must not be journaled. */
 export function journalSinkFor(
   mgr: ManagerState,
   record: AgentRecord,
 ): SubagentJournalSink | undefined {
   const sink = mgr.journalSink;
   if (sink === undefined || mgr.disposed || mgr.unjournaled.has(record.id)) return undefined;
-  // A record of another root session (spawned before a switch) is not this file's.
   const owner = mgr.usageScopes.get(record.id)?.owner;
   if (owner !== undefined && owner !== sink.rootSessionId) return undefined;
-  // Host shutdown stops are not outcomes: the journal keeps the last real
-  // state so startup can revive. A suspended record's suspend entry must
-  // stay its latest, so nothing after it is journaled.
   const generation = record.resultGeneration ?? 1;
   if (
     record.cancellation?.generation === generation &&
@@ -235,7 +186,6 @@ export function journalSinkFor(
   return sink;
 }
 
-/** Build and append one snapshot. Never throws; returns the snapshot built. */
 export function writeJournal(
   mgr: ManagerState,
   record: AgentRecord,
@@ -277,15 +227,9 @@ export function noteJournalFailure(
   mgr.journalFailureReported.add(agentId);
   try {
     sink.reportError?.(agentId, error);
-  } catch {
-    /* a failing diagnostic must not break the run either */
-  }
+  } catch {}
 }
 
-/**
- * Write the suspend entry (`suspended: true`) synchronously. `status` is
- * `interrupted`, or `waiting_for_reset` with the wait it continues.
- */
 export function writeSuspendedJournal(
   mgr: ManagerState,
   record: AgentRecord,
@@ -309,7 +253,6 @@ export function writeSuspendedJournal(
   }
 }
 
-/** Plain snapshot of a record; `buildJournalData` copies, caps and validates it. */
 export function journalSnapshot(
   mgr: ManagerState,
   record: AgentRecord,
@@ -346,8 +289,6 @@ export function journalSnapshot(
     status,
     sessionFile,
     model: modelRefOf(record.session?.model) ?? record.spawnModel,
-    // Spawn-time options, with the fields the record carries forward (a
-    // parked foreground child becomes background; fast/daybreak can change).
     options: {
       ...spawnOptions,
       isBackground: record.isBackground,
@@ -386,11 +327,6 @@ export function journalSnapshot(
   };
 }
 
-/**
- * The child's session file now holds the conversation (first assistant
- * message, turn end, or tool activity of this generation), so the journal can
- * point at it instead of carrying the prompt. One-shot per record.
- */
 export function confirmSessionFile(
   mgr: ManagerState,
   record: AgentRecord,
@@ -403,7 +339,6 @@ export function confirmSessionFile(
   scheduleJournal(mgr, record);
 }
 
-/** Store a dormant snapshot as the newest entry; false when its id is live. */
 export function putDormant(mgr: ManagerState, snapshot: JournalAgentSnapshot): boolean {
   if (mgr.agents.has(snapshot.id)) return false;
   mgr.dormant.delete(snapshot.id);
@@ -416,7 +351,6 @@ export function putDormant(mgr: ManagerState, snapshot: JournalAgentSnapshot): b
   return true;
 }
 
-/** Drop a record's journal bookkeeping (eviction or a failed spawn). */
 export function forgetJournalState(mgr: ManagerState, id: string): void {
   mgr.pendingJournal.delete(id);
   mgr.lastJournaled.delete(id);
@@ -425,11 +359,6 @@ export function forgetJournalState(mgr: ManagerState, id: string): void {
   mgr.journalFailureReported.delete(id);
 }
 
-/**
- * Final journal write for an evicted record, then keep its terminal snapshot
- * for the dormant map. Catches up on changes made outside the manager
- * (result reads). The caller stores it after the live record is gone.
- */
 export function retireJournal(
   mgr: ManagerState,
   record: AgentRecord,

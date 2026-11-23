@@ -230,7 +230,6 @@ export function goalToolResponse(
   };
 }
 
-/** Goal status as the goal tools show it: snake_case, while ThreadGoal and persisted state keep camelCase. */
 export type ToolGoalStatus = "active" | "paused" | "budget_limited" | "complete";
 
 export function toolGoalStatus(status: GoalStatus): ToolGoalStatus {

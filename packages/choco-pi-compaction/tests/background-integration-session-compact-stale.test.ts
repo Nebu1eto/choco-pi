@@ -1,15 +1,3 @@
-/**
- * A programmatic `compact()` whose owner retires, or whose session is
- * replaced, while the bridge is still deciding settles without any compaction:
- * it never falls through to the host's compact() on whatever session the
- * `AgentSession` holds by then. Only stale-context errors from a defer are
- * contained; any other failure reaches the caller.
- *
- * Each test counts calls to the host's own `compact` by wrapping the prototype
- * method before the bridge is installed (it captures the wrapper as the
- * original). This file runs in its own process, so no earlier registration
- * holds the bridge.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -36,7 +24,6 @@ import { compactionEntries, createHost, type Host, reply } from "./host-boundary
 
 const STALE_CONTEXT_MESSAGE = "This extension ctx is stale after session replacement or reload.";
 
-/** A compact() result, or "unsettled" before the request settles. */
 type Settled = CompactionResult | undefined | "unsettled";
 
 const SUMMARY = [
@@ -59,7 +46,6 @@ const SUMMARY = [
   "- None",
 ].join("\n");
 
-/** Background on; the usage threshold is never crossed, so only compact() prepares. */
 const SIDECAR = {
   enabled: true,
   text: true,
@@ -104,7 +90,6 @@ function compactionWithSidecar(file: string): ExtensionFactory {
   };
 }
 
-/** Records UI notices from session_start on. Registers no session_shutdown handler. */
 function recordNotices(notices: string[]): ExtensionFactory {
   return (pi) => {
     pi.on("session_start", (_event, ctx) => {
@@ -128,7 +113,6 @@ interface HostCompactCounter {
   readonly restore: () => void;
 }
 
-/** Wrap the host's own compact so the bridge installed next captures (and counts) it. */
 function countHostCompact(): HostCompactCounter {
   assert.equal(liveSessionCompactDefers(), 0, "no bridge is installed yet");
   const hostCompact = AgentSession.prototype.compact;
@@ -148,7 +132,6 @@ function countHostCompact(): HostCompactCounter {
   };
 }
 
-/** Host compaction lifecycle events seen while `run` runs. */
 async function hostCompactionEvents(host: Host, run: () => Promise<void>): Promise<string[]> {
   const events: string[] = [];
   const unsubscribe = host.session.subscribe((event) => {
@@ -166,12 +149,10 @@ async function hostCompactionEvents(host: Host, run: () => Promise<void>): Promi
 
 interface PendingDefer {
   readonly defer: SessionCompactDefer;
-  /** Resolves once the bridge has offered a request to `defer`. */
   readonly offered: Promise<void>;
   readonly settle: (outcome: SessionCompactOutcome | Error) => void;
 }
 
-/** A defer that stays pending until the test settles it. */
 function pendingDefer(): PendingDefer {
   let markOffered: () => void = () => undefined;
   const offered = new Promise<void>((resolve) => {
@@ -191,7 +172,6 @@ function pendingDefer(): PendingDefer {
   return { defer, offered, settle: (outcome) => settle(outcome) };
 }
 
-/** Run `body` with only `defer` installed on a host without the compaction extension. */
 async function withBridge(
   defer: SessionCompactDefer,
   body: (host: Host, counter: HostCompactCounter) => Promise<void>,
@@ -224,8 +204,6 @@ test(
       let result: Settled = "unsettled";
       const events = await hostCompactionEvents(host, async () => {
         const pending = host.session.compact();
-        // The shutdown handler runs synchronously inside emit, while the
-        // defer awaits the preparation request.
         await host.session.extensionRunner.emit({ type: "session_shutdown", reason: "reload" });
         result = await pending;
       });

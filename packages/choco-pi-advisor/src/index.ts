@@ -16,7 +16,6 @@ import { hostParams } from "./schema-bridge.ts";
 import { type AdvisorSettings, loadAdvisorSettings } from "./settings.ts";
 
 const ADVISOR_TOOL_NAME = "advisor";
-// TypeBox objects were open; keep extra keys tolerated.
 const advisorParams = obj({ question: str(), context: opt(str()) }, { open: true });
 type AdvisorParams = Static<typeof advisorParams>;
 
@@ -25,7 +24,6 @@ function textResult(text: string) {
 }
 
 export default function (pi: ExtensionAPI) {
-  // Safe in child sessions: the advisor agent excludes this extension, so only non-advisor children register the tool.
   const agentDir = getAgentDir();
   let generation = 0;
   let active = true;
@@ -39,7 +37,6 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     const owner = generation;
     const cwd = ctx.cwd;
-    // The preferences section shows only once these settings are loaded (see preferences-section.ts).
     const loaded = await loadAdvisorSettings(agentDir, cwd);
     if (!active || generation !== owner) return;
     settingsByCwd.set(cwd, loaded.settings);
@@ -84,7 +81,6 @@ export default function (pi: ExtensionAPI) {
           const resolution = resolveModel(settings.model, ctx.modelRegistry);
           if (resolution.tag === "error")
             return textResult(`advisor model not available: ${settings.model}`);
-          // Resolve through the typed registry after the shared resolver chooses a model.
           const selected: Model<Api> = resolution.model;
           const selection = await selectAdvisorModel(
             selected,

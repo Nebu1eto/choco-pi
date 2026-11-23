@@ -1,9 +1,3 @@
-/**
- * Client lookup, root resolution, use leases, capacity eviction, and TypeScript idle eviction for {@link LSPService}.
- *
- * Extracted from `clients/lsp/index.ts`; behavior is unchanged.
- */
-
 import path from "node:path";
 import { logLatency } from "../latency-logger.ts";
 import { logSessionStart } from "../sessionstart-logger.ts";
@@ -18,11 +12,6 @@ import { ensureClientForServer } from "./service-spawn.ts";
 import { getLspClientCeiling, getTypeScriptIdleEvictMs } from "./service-tunables.ts";
 import type { LSPTouchClientScope, LSPTouchFileOptions, SpawnedServer } from "./service-types.ts";
 
-/**
- * Resolve one server's client identity root. Root selection is hard-bounded
- * by the session cwd, then config-only nested roots reuse an already-hosted
- * same-server ancestor. Real nested projects retain independent clients.
- */
 export async function resolveServerRoot(
   core: LSPServiceInternals,
   server: LSPServerInfo,
@@ -58,7 +47,6 @@ export async function resolveServerRoot(
   return core.state.clients.get(`${server.id}:${nearestAncestor}`)?.root ?? nearestAncestor;
 }
 
-/** Guard: return true if service is shutting down or shut down */
 export function checkDestroyed(core: LSPServiceInternals): boolean {
   return core.isDestroyed;
 }
@@ -214,9 +202,6 @@ export function clearTypeScriptIdleTimer(core: LSPServiceInternals, key: string)
 
 export function scheduleTypeScriptIdleEviction(core: LSPServiceInternals, key: string): void {
   if (!key.startsWith("typescript:")) return;
-  // Pressure-gating these timers would require a separate reconciliation pass
-  // when the manager crosses the threshold; keep ownership simple and use the
-  // warm-LSP-friendly 20-minute default instead.
   clearTypeScriptIdleTimer(core, key);
   const lastUsedAt = core.clientLastUsedAt.get(key) ?? Date.now();
   const timer = setTimeout(() => {
@@ -234,9 +219,6 @@ export function scheduleTypeScriptIdleEviction(core: LSPServiceInternals, key: s
         return;
       }
 
-      // Publish the cold state synchronously before awaiting teardown. A request
-      // arriving while shutdown is in progress therefore waits on the spawn gate
-      // and creates a fresh client; it can never receive this retiring one.
       core.state.clients.delete(key);
       core.state.clientSpawnedAt.delete(key);
       core.state.demonstratedReady.delete(key);
@@ -244,10 +226,7 @@ export function scheduleTypeScriptIdleEviction(core: LSPServiceInternals, key: s
       core.clientLastUsedAt.delete(key);
       try {
         await client.shutdown({ reason: "typescript_idle_eviction" });
-      } catch {
-        // The strong manager reference is already gone; shutdown is best-effort
-        // like the other eviction paths and must not reject from a timer callback.
-      }
+      } catch {}
       logSessionStart(`lsp typescript idle eviction: released ${key}`);
       recordDegradation({
         kind: "ts-idle-eviction",
@@ -260,17 +239,6 @@ export function scheduleTypeScriptIdleEviction(core: LSPServiceInternals, key: s
   core.typeScriptIdleTimers.set(key, timer);
 }
 
-/**
- * Key `demonstratedReady`/`clientSpawnedAt`/`state.clients` all share:
- * "serverId:normalizedRoot" — the same identity `ensureClientForServer`
- * uses to store/look up a client. Deliberately resolved from the
- * `LSPServerInfo.root()` config resolver (NOT `LSPClientInfo.root`):
- * `touchFile`'s spawned entries carry both `{ client, info }`, and
- * resolving from `info.root()` guarantees this lines up with
- * `ensureWarmForSweep`'s own key derivation (also via `server.root()`)
- * even for a not-fully-real client (test fixture, or any future client
- * implementation that doesn't independently stamp `.root`).
- */
 export async function demonstratedReadyKeyFor(
   core: LSPServiceInternals,
   server: LSPServerInfo,
@@ -283,36 +251,9 @@ export async function demonstratedReadyKeyFor(
 
 export function markDemonstratedReadyKey(core: LSPServiceInternals, key: string): void {
   core.state.demonstratedReady.add(key);
-  // #799: readiness through ANY path supersedes an earlier cold verdict —
-  // a server that recovers later in the session must not stay stuck in
-  // the negative cache.
   core.state.demonstratedCold.delete(key);
 }
 
-/**
- * #1459: the auxiliary scanners that WOULD have attached to this touch but got
- * no client because their circuit breaker is open (cooldown or permanent).
- *
- * A skipped scanner said nothing about the file. Until now it also left no
- * trace on the result: it simply dropped out of `spawned`, and the touch
- * resolved `confirmation: "confirmed"` on the strength of whoever was left —
- * so a 15 s opengrep cooldown read as "scanned, clean" for every file swept
- * inside it. Naming the scanners here narrows the touch to `"partial"` instead,
- * which every coverage consumer already fails closed on (#1470).
- *
- * Deliberately AUXILIARY-only. A broken primary is already visible through the
- * `no_clients` failure kind and the demonstrated-cold path; the false-clean
- * hazard this addresses is the scanner lane, where an empty result is the
- * normal, expected answer.
- *
- * SCOPE, stated so the next reader does not assume the room is closed: this
- * covers the BREAKER doors only (cooldown + permanent). `ensureClientForServer`
- * also drops a scanner for a temporarily-unavailable command (the #1496 latch),
- * `optionalDisabled`, a spawn failure, or capacity eviction. Those are the same
- * defect class in the same lane, but they are persistent-absence states rather
- * than a transient blackout, so flagging every touch partial for them is a
- * broader behavior change than #1459 is scoped to make. Tracked separately.
- */
 export async function brokenSkippedAuxiliaryServerIds(
   core: LSPServiceInternals,
   filePath: string,
@@ -320,7 +261,6 @@ export async function brokenSkippedAuxiliaryServerIds(
   options: LSPTouchFileOptions,
   spawned: SpawnedServer[],
 ): Promise<string[]> {
-  // "primary" scope attaches no auxiliaries at all, so nothing was skipped.
   if (clientScope === "primary") return [];
   const enabledAuxiliaries =
     clientScope === "with-auxiliary" ? new Set(options.auxiliaryServerIds ?? []) : undefined;
@@ -329,9 +269,6 @@ export async function brokenSkippedAuxiliaryServerIds(
   for (const server of getServersForFileWithConfig(filePath)) {
     if (server.role !== "auxiliary") continue;
     if (attached.has(server.id)) continue;
-    // An explicitly excluded server (the #584 workspace-sweep exclusion) was
-    // never asked, and its findings come from its own CLI extractor — that is
-    // a routing decision, not a coverage gap.
     if (options.excludeServerIds?.has(server.id)) continue;
     if (enabledAuxiliaries && !enabledAuxiliaries.has(server.id)) continue;
     const key = await demonstratedReadyKeyFor(core, server, filePath);
@@ -374,7 +311,6 @@ export function activeClientsForCwd(
   );
 }
 
-/** Implements {@link LSPService.getClientForFile}. */
 export async function getClientForFile(
   core: LSPServiceInternals,
   filePath: string,
@@ -382,19 +318,11 @@ export async function getClientForFile(
   hardCapMs?: number,
 ): Promise<SpawnedServer | undefined> {
   if (checkDestroyed(core)) return undefined;
-  // Primary selection considers language servers only — auxiliary servers
-  // (opengrep, …) attach alongside the primary and are never chosen as it.
   const servers = getServersForFileWithConfig(filePath).filter((s) => s.role !== "auxiliary");
   const serverWaitOverrideMs = servers.reduce(
     (max, server) => Math.max(max, server.clientWaitTimeoutMs ?? 0),
     0,
   );
-  // hardCapMs is a caller-imposed ceiling (e.g. pipeline budget) that
-  // prevents tool_result from blocking the TUI for the full LSP cold-start
-  // window. When no server config sets a wait (serverWaitOverrideMs = 0),
-  // hardCapMs is used directly — Math.min(0, cap) = 0 would otherwise
-  // take the no-timeout branch and block indefinitely (e.g. pyright, which
-  // has no clientWaitTimeoutMs but can take 30s to initialize on cold start).
   const serverBaseMs = Math.max(maxWaitMs ?? 0, serverWaitOverrideMs);
   const effectiveMaxWaitMs =
     hardCapMs !== undefined
@@ -406,7 +334,6 @@ export async function getClientForFile(
   const withBudget = async (): Promise<SpawnedServer | undefined> => {
     if (servers.length === 0) return undefined;
 
-    // Try each matching server
     for (const server of servers) {
       const spawned = await ensureClientForServer(core, filePath, server);
       if (spawned) {
@@ -456,17 +383,6 @@ export async function getClientForFile(
   }
 
   const timeoutSentinel = Symbol("lsp-client-wait-timeout");
-  // #1097: store the timer and clear it once the race settles. Without this,
-  // when `withBudget()` wins (the common case: the client is ready well before
-  // the budget), the losing `setTimeout` stays a REF'D pending timer for the
-  // full remaining `effectiveMaxWaitMs`. In a long-lived interactive session
-  // that is invisible (it fires later, resolves an orphan promise, is GC'd).
-  // In a one-shot `pi --print --no-session` process it is fatal: the timer
-  // keeps the event loop alive for up to `effectiveMaxWaitMs` after
-  // `agent_settled`/`session_shutdown`, so the completed process never exits
-  // (issue #1097 — a recurrence of the #22 symptom via a different handle, and
-  // a member of the uncleared-race-timeout class the shared `withDeadline`
-  // helper already guards against elsewhere).
   let waitTimer: ReturnType<typeof setTimeout> | undefined;
   let waitResult: SpawnedServer | undefined | typeof timeoutSentinel;
   try {
@@ -481,7 +397,6 @@ export async function getClientForFile(
   }
 
   if (waitResult === timeoutSentinel) {
-    // Snapshot known client health — scan by serverId prefix (no root needed)
     const knownHealth = [...core.state.clients.entries()]
       .filter(([k]) => servers.some((s) => k.startsWith(`${s.id}:`)))
       .map(([k, c]) => ({
@@ -497,7 +412,6 @@ export async function getClientForFile(
       metadata: {
         maxWaitMs: effectiveMaxWaitMs,
         serverIds: servers.map((s) => s.id),
-        // servers absent from knownHealth were never spawned or are still spawning
         knownClientHealth: knownHealth,
       },
     });
@@ -507,7 +421,6 @@ export async function getClientForFile(
   return waitResult;
 }
 
-/** Implements {@link LSPService.getClientsForFile}. */
 export async function getClientsForFile(
   core: LSPServiceInternals,
   filePath: string,
@@ -520,8 +433,6 @@ export async function getClientsForFile(
       : allServers;
   if (servers.length === 0) return { clients: [], serverCountAttempted: 0 };
 
-  // Count servers with a valid root as "attempted" — extension-only matches
-  // that fail the root check are not real spawn attempts.
   const roots = await Promise.all(servers.map((s) => resolveServerRoot(core, s, filePath)));
   const serverCountAttempted = roots.filter(Boolean).length;
 
@@ -534,7 +445,6 @@ export async function getClientsForFile(
   };
 }
 
-/** Implements {@link LSPService.getAuxiliaryClientsForFile}. */
 export async function getAuxiliaryClientsForFile(
   core: LSPServiceInternals,
   filePath: string,
@@ -551,7 +461,6 @@ export async function getAuxiliaryClientsForFile(
   return spawned.filter((entry): entry is SpawnedServer => Boolean(entry));
 }
 
-/** Implements {@link LSPService.getWarmClientForFile}. */
 export async function getWarmClientForFile(
   core: LSPServiceInternals,
   filePath: string,
@@ -570,7 +479,6 @@ export async function getWarmClientForFile(
   return undefined;
 }
 
-/** Implements {@link LSPService.isServerAliveForFile}. */
 export async function isServerAliveForFile(
   core: LSPServiceInternals,
   serverId: string,
@@ -587,12 +495,10 @@ export async function isServerAliveForFile(
   return false;
 }
 
-/** Implements {@link LSPService.supportsLSP}. */
 export function supportsLSP(filePath: string): boolean {
   return getServersForFileWithConfig(filePath).length > 0;
 }
 
-/** Implements {@link LSPService.isSpawnInFlight}. */
 export function isSpawnInFlight(core: LSPServiceInternals, filePath: string): boolean {
   const servers = getServersForFileWithConfig(filePath).filter((s) => s.role !== "auxiliary");
   if (servers.length === 0) return false;
@@ -603,13 +509,11 @@ export function isSpawnInFlight(core: LSPServiceInternals, filePath: string): bo
   return false;
 }
 
-/** Implements {@link LSPService.hasWarmLSP}. */
 export async function hasWarmLSP(core: LSPServiceInternals, filePath: string): Promise<boolean> {
   const spawned = await core.service.getWarmClientForFile(filePath);
   return Boolean(spawned);
 }
 
-/** Implements {@link LSPService.hasLSP}. */
 export async function hasLSP(core: LSPServiceInternals, filePath: string): Promise<boolean> {
   const spawned = await core.service.getClientForFile(filePath);
   return Boolean(spawned);

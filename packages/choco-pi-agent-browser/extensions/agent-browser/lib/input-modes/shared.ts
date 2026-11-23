@@ -4,10 +4,8 @@ import {
   SOURCE_LOOKUP_MAX_WORKSPACE_FILES,
 } from "./types.ts";
 
-/** A JSON-compatible value before an input-mode parser assigns it a domain type. */
 export type InputValue = string | number | boolean | null | undefined | InputValue[] | InputRecord;
 
-/** A JSON object at the structured-input or external-result boundary. */
 export interface InputRecord {
   [key: string]: InputValue;
 }

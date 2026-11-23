@@ -12,28 +12,24 @@ type ToolCallStart = Extract<SessionUpdate, { sessionUpdate: "tool_call" }>;
 type ToolCallProgress = Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>;
 type AgentMessageChunk = Extract<SessionUpdate, { sessionUpdate: "agent_message_chunk" }>;
 
-/** The recorded `session/update` payload at `index`. */
 function updateAt(conn: FakeAgentSideConnection, index: number): SessionUpdate {
   const notification = conn.updates[index];
   assert.ok(notification, `expected a session update at index ${index}`);
   return notification.update;
 }
 
-/** The recorded update at `index`, which must announce a new tool call. */
 function toolCallAt(conn: FakeAgentSideConnection, index: number): ToolCallStart {
   const update = updateAt(conn, index);
   assert.ok(update.sessionUpdate === "tool_call", `update ${index} is a tool_call`);
   return update;
 }
 
-/** The recorded update at `index`, which must carry tool call progress. */
 function toolCallUpdateAt(conn: FakeAgentSideConnection, index: number): ToolCallProgress {
   const update = updateAt(conn, index);
   assert.ok(update.sessionUpdate === "tool_call_update", `update ${index} is a tool_call_update`);
   return update;
 }
 
-/** The recorded update at `index`, which must be an agent message chunk. */
 function chunkAt(conn: FakeAgentSideConnection, index: number): AgentMessageChunk {
   const update = updateAt(conn, index);
   assert.ok(
@@ -43,14 +39,12 @@ function chunkAt(conn: FakeAgentSideConnection, index: number): AgentMessageChun
   return update;
 }
 
-/** The text of the agent message chunk recorded at `index`. */
 function chunkTextAt(conn: FakeAgentSideConnection, index: number): string {
   const { content } = chunkAt(conn, index);
   assert.ok(content.type === "text", `update ${index} carries text content`);
   return content.text;
 }
 
-/** The text of a notification that is an agent message chunk, else `undefined`. */
 function chunkTextOf(notification: SessionNotification): string | undefined {
   const { update } = notification;
   if (update.sessionUpdate !== "agent_message_chunk") return undefined;
@@ -554,8 +548,6 @@ test("PiAcpSession: preserves ordering when auto_retry_start is interleaved with
 
   await new Promise((r) => setTimeout(r, 0));
 
-  // The retry notice is a distinct output, so it and the text resumed after it each
-  // start a new paragraph instead of running into the previous text.
   assert.deepEqual(conn.updates.map(chunkTextOf), [
     "before ",
     "\n\nRetrying (attempt 1/2, waiting 2s)...",

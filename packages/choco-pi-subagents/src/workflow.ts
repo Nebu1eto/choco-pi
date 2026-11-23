@@ -7,16 +7,8 @@ import {
 } from "./provider-health.ts";
 import { WORK_TASK_PATTERN } from "./review-rounds.ts";
 
-/**
- * Advertised thinking levels, ordered to mirror pi-ai's EXTENDED_THINKING_LEVELS
- * (`off` + every `ThinkingLevel`). Single source for the workflow step and
- * Agent tool schemas, the generated-agent template, and the `/agents` wizard so
- * these lists can't drift behind pi again (#147). Availability of any level
- * still depends on the host pi version and the selected model.
- */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
-/** Enum of {@link THINKING_LEVELS}, so validation rejects any other level. */
 export function thinkingLevelSchema(description?: string) {
   return description === undefined
     ? oneOf(THINKING_LEVELS)
@@ -27,7 +19,6 @@ const STEP_ID_PATTERN = "^[A-Za-z][A-Za-z0-9_-]{0,63}$";
 const TEMPLATE_REFERENCE =
   /\{\{\s*steps\.([A-Za-z][A-Za-z0-9_-]{0,63})\.([A-Za-z][A-Za-z0-9_-]*)\s*\}\}/g;
 
-/** Maximum rendered characters contributed by one upstream-output reference. */
 export const WORKFLOW_REFERENCE_MAX_CHARS = 32_000;
 
 export const WorkflowStepSchema = obj({
@@ -72,7 +63,6 @@ export const WorkflowStepSchema = obj({
   ),
 });
 
-/** The single JSON definition accepted by workflow_run and the graph validator. */
 export const WorkflowDefinitionSchema = obj({
   name: str({ minLength: 1, maxLength: 120 }),
   work_task: opt(
@@ -146,20 +136,9 @@ export type WorkflowRunnerContext = {
 };
 
 export type WorkflowStepRunner = {
-  /**
-   * Availability gate key of a step: `<provider>` or `<provider>/<model id>`.
-   * A model-level key lets a model-scoped usage limit hold only the steps on
-   * the models it covers. The other members receive the same key.
-   */
   providerKey?(step: WorkflowStepDefinition): string | undefined;
   isProviderAvailable?(providerKey: string): boolean;
-  /**
-   * Re-check a closed provider against live evidence; the scheduler holds that
-   * provider's steps until it settles and then reads availability once more.
-   * Never rejects.
-   */
   refreshProvider?(providerKey: string): Promise<void>;
-  /** Refusal text for a closed provider (owner-scoped usage-limit details). */
   unavailableMessage?(providerKey: string): string;
   run(
     step: WorkflowStepDefinition,
@@ -169,14 +148,9 @@ export type WorkflowStepRunner = {
 };
 
 function unavailableProvider(error: string | undefined): string | undefined {
-  // Accepts the usage-limit form, which appends the reset time and suggestion.
   return providerKeyFromUnavailableMessage(error);
 }
 
-/**
- * Whether a refusal for gate key `refused` covers a step with gate key
- * `stepKey`: the same key, or a provider refusal covering a model-level key.
- */
 function refusalCovers(refused: string, stepKey: string | undefined): boolean {
   return stepKey !== undefined && (stepKey === refused || stepKey.startsWith(`${refused}/`));
 }
@@ -222,7 +196,6 @@ function ancestorsOf(id: string, byId: Map<string, WorkflowStepDefinition>): Set
   return ancestors;
 }
 
-/** Validate structure, agent types, dependencies, cycles, and template references. */
 export function validateWorkflowDefinition(
   input: WorkflowBoundaryValue,
   resolveType: WorkflowTypeResolver,
@@ -316,7 +289,6 @@ function boundedReference(output: string, maxChars: number): string {
   return output.slice(0, Math.max(0, maxChars - suffix.length)) + suffix;
 }
 
-/** Render upstream outputs, bounding every reference independently. */
 export function renderWorkflowPrompt(
   prompt: string,
   results: ReadonlyMap<string, Pick<WorkflowStepResult, "output">>,
@@ -349,9 +321,7 @@ class WorkflowController {
   private readonly progressWaiters = new Set<(result: WorkflowResult) => void>();
   private resolveCompletion!: (result: WorkflowResult) => void;
   private runningCount = 0;
-  /** Providers being re-checked; their steps wait instead of failing. */
   private providerRechecks = new Set<string>();
-  /** Providers whose re-check settled; the next refusal fails their steps. */
   private recheckedProviders = new Set<string>();
   private sealed: boolean;
   private settled = false;
@@ -520,7 +490,6 @@ class WorkflowController {
     }
   }
 
-  /** Hold `providerKey`'s steps while `refresh` re-checks it, then schedule again. */
   private recheckProvider(providerKey: string, refresh: (providerKey: string) => Promise<void>) {
     this.providerRechecks.add(providerKey);
     void Promise.resolve()
@@ -608,7 +577,6 @@ class WorkflowController {
       : this.cancelled || result.status === "cancelled"
         ? "cancelled"
         : result.status;
-    // A cancelled step reports the cancellation, not the runner's abort text.
     state.error = timedOut
       ? `Step timed out after ${step.timeout_ms}ms.`
       : state.status === "cancelled"
@@ -642,11 +610,8 @@ class WorkflowController {
   }
 
   private failProviderUnavailable(providerKey: string): string {
-    // Usage-limit closures extend the base text with "until <T>; suggested: <model>".
     const message =
       this.runner.unavailableMessage?.(providerKey) ?? providerUnavailableMessage(providerKey);
-    // The refusal names what is closed: the whole provider, or one model under a
-    // model-scoped limit. Every step that refusal covers is skipped together.
     const refused = unavailableProvider(message) ?? providerKey;
     const pendingSteps = this.definition.steps.filter(
       (step) =>
@@ -712,9 +677,7 @@ class WorkflowController {
     this.progressWaiters.clear();
     try {
       this.onComplete?.(result);
-    } catch {
-      /* completion notifications are best effort */
-    }
+    } catch {}
   }
 }
 
@@ -726,7 +689,6 @@ export class WorkflowManager {
 
   constructor(onComplete?: (result: WorkflowResult) => void) {
     this.onComplete = onComplete;
-    // Cleanup settled workflows after 10 minutes.
     this.cleanupInterval = setInterval(() => this.cleanup(), 60_000);
     this.cleanupInterval.unref();
   }

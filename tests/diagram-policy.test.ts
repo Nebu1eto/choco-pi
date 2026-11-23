@@ -16,7 +16,6 @@ function createApi() {
   };
 }
 
-// The exact sketch from session 01a03293, which the mermaid rule failed to prevent.
 const REAL_VIOLATION = [
   "Topology:",
   "",

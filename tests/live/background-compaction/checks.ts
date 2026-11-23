@@ -3,7 +3,6 @@ import { int, obj, str } from "@earendil-works/pi-schema";
 import { matches } from "./schema-check.ts";
 import { artifactLeaks, parseArtifactValue, type EvidenceRecord } from "./artifacts.ts";
 
-/** Behavior checks a scenario can require; each is proven by scenario observations. */
 export type ObservedCheck =
   | "kept-suffix-exact"
   | "single-checkpoint"
@@ -28,7 +27,6 @@ export type ObservedCheck =
   | "context-window-preset-change"
   | "compaction-point"
   | "lane-journal";
-/** Checks every scenario requires, computed from launcher counters and records. */
 export type HarnessCheck = "no-secret-leak" | "no-abort" | "zero-network" | "live-accepted";
 export type CheckName = ObservedCheck | HarnessCheck;
 
@@ -37,7 +35,6 @@ export interface Verdict {
   status: "pass" | "fail" | "not-applicable";
   evidenceRefs: number[];
   reasons: string[];
-  /** Non-failing context, e.g. tolerated blocked non-provider fetches. */
   notes?: string[];
 }
 export interface Observation {
@@ -53,7 +50,6 @@ export interface CheckEvidence {
   mode: "fake" | "live";
   notifications: readonly { consumer: string; adoptionId: string; evidenceRef: number }[];
   expectedNotifications?: readonly { consumer: string; adoptionId: string }[];
-  /** Memory-only protected values (signatures, keys) no artifact may contain. */
   knownSecrets?: readonly string[];
   observations: Partial<Record<ObservedCheck, readonly Observation[]>>;
 }
@@ -77,11 +73,6 @@ function noAbort(evidence: CheckEvidence): Verdict {
   );
 }
 
-/**
- * Blocked global-fetch attempts that are not provider traffic. The isolated agent
- * dir has no cached choco-pi-codex Code Mode host, so its installer tries GitHub;
- * the blocker refuses it like every other call.
- */
 const TOLERATED_BLOCKED_ORIGINS: ReadonlyMap<string, string> = new Map([
   ["https://github.com", "choco-pi-codex Code Mode host asset download"],
 ]);
@@ -91,7 +82,6 @@ function blockedOrigin(record: EvidenceRecord): string {
   return matches(BlockedSchema, record.data) ? record.data.origin : "unrecorded";
 }
 
-/** Fails on any blocked attempt outside the tolerated non-provider origins. */
 function zeroNetwork(evidence: CheckEvidence): Verdict {
   const blocked = evidence.records.filter((record) => record.kind === "network-blocked");
   const refs = blocked.map((record) => record.sequence);
@@ -119,10 +109,6 @@ function zeroNetwork(evidence: CheckEvidence): Verdict {
 }
 
 const LiveResponseSchema = obj({ kind: str(), status: int() }, { open: true });
-/**
- * A live turn whose transport the provider package owns (Codex WebSocket):
- * no fetch response exists, so acceptance is the turn's own stop reason.
- */
 const ProviderTurnSchema = obj({ transport: str(), stopReason: str() }, { open: true });
 const ACCEPTED_STOP_REASONS: ReadonlySet<string> = new Set(["stop", "length", "toolUse"]);
 
@@ -133,7 +119,6 @@ function rejectedResponse(record: EvidenceRecord): string[] {
   return [`${kind} request #${record.sequence} answered HTTP ${status}`];
 }
 
-/** Live: every provider-origin request the run sent was accepted (2xx). */
 function liveAccepted(evidence: CheckEvidence): Verdict {
   if (evidence.mode !== "live")
     return { check: "live-accepted", status: "not-applicable", reasons: [], evidenceRefs: [] };
@@ -161,7 +146,6 @@ function noticeKey(notice: { consumer: string; adoptionId: string }): string {
   return `${notice.consumer}\u0000${notice.adoptionId}`;
 }
 
-/** Every expected consumer saw each adoption exactly once, and nothing else was notified. */
 function rosterReasons(evidence: CheckEvidence): string[] {
   const seen = new Set<string>();
   const reasons: string[] = [];
@@ -181,7 +165,6 @@ function rosterReasons(evidence: CheckEvidence): string[] {
   return reasons;
 }
 
-/** Combines the consumer roster with any scenario observations (e.g. runner counts). */
 function consumersNotifiedOnce(evidence: CheckEvidence): Verdict {
   const refs = evidence.notifications.map((notice) => notice.evidenceRef);
   const extra = evidence.observations["consumers-notified-once"];
@@ -200,7 +183,6 @@ function hasValidRefs(observation: Observation, evidence: CheckEvidence): boolea
   );
 }
 
-/** Missing observations fail: a required check never passes without runtime evidence. */
 function observedVerdict(check: ObservedCheck, evidence: CheckEvidence): Verdict {
   const observations = evidence.observations[check] ?? [];
   if (!observations.length) return verdict(check, ["No runtime evidence observed"], []);
@@ -238,7 +220,6 @@ function isHarnessCheck(check: CheckName): check is HarnessCheck {
   return HARNESS_CHECKS.some((item) => item === check);
 }
 
-/** Comparisons must originate at the real host/transport, never from the scenario's desired state. */
 export function evaluateCheck(check: CheckName, evidence: CheckEvidence): Verdict {
   if (isHarnessCheck(check)) return HARNESS_VERDICTS[check](evidence);
   if (check === "consumers-notified-once") return consumersNotifiedOnce(evidence);

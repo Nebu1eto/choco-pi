@@ -318,8 +318,6 @@ test("owned leftovers and stale worktree entries recover without touching an uno
   assert.notEqual(first.worktreePath, collidedPath);
   assert.equal(await readFile(join(collidedPath, "user-owned"), "utf8"), "keep\n");
 
-  // Simulate a crashed prior session: checkout gone, ownership claim and Git's
-  // administrative entry left behind.
   await rm(first.worktreePath, { recursive: true, force: true });
   const second = await resolvePullRequestTarget(
     fixture.root,

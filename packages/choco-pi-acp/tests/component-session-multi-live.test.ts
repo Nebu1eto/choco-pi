@@ -47,7 +47,6 @@ test("SessionManager retains multiple live sessions and evicts the least recentl
     ],
   );
 
-  // This mirrors session/load touching an already-live session before applying the cap.
   assert.deepEqual(manager.retainRecent("first", 2), ["second"]);
   await new Promise<void>((resolve) => setImmediate(resolve));
 

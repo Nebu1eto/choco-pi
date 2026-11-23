@@ -94,7 +94,6 @@ async function sha(file: string, algorithm: "sha256" | "sha512"): Promise<Buffer
     .digest();
 }
 
-/** Packs `files` (relative path -> contents) under `top/` into a .tar.gz. */
 async function fixtureTarball(
   directory: string,
   top: string,
@@ -115,7 +114,6 @@ async function fixtureTarball(
 
 const ZERO_INTEGRITY = `sha512-${Buffer.alloc(64).toString("base64")}`;
 
-/** The pinned pnpm of these fixtures; tests that run a real pnpm use the shipped pin. */
 const FIXTURE_PNPM = "12.21.0";
 
 function pinsText(
@@ -137,7 +135,6 @@ function pinsText(
   ].join("\n");
 }
 
-/** Fixture pins whose pnpm integrity is `integrities` for those platforms and ZERO_INTEGRITY for the rest. */
 function pnpmPins(integrities: Partial<Record<PnpmPlatform, string>>): RuntimePins {
   let text = pinsText("24.0.0", "0".repeat(64), ZERO_INTEGRITY);
   for (const platform of PNPM_PLATFORMS) {
@@ -268,7 +265,6 @@ async function onPath(command: string, searchPath: string): Promise<boolean> {
   );
 }
 
-/** A git source whose only content is a pins file; enough for install.sh stage 0. */
 async function pinsOnlySource(directory: string, pins: string): Promise<string> {
   const source = path.join(directory, "source");
   await mkdir(path.join(source, "scripts", "standalone"), { recursive: true });
@@ -396,8 +392,6 @@ test("pnpm qualifies only at exactly the pinned version", async (t) => {
     await findSystemPnpm([newer, prerelease].join(path.delimiter), "11.11.0", directory),
     null,
   );
-  // pnpm 11 and 12 switch to (and download) a packageManager version found
-  // above the probe directory unless pm-on-fail says otherwise.
   const guarded = path.join(directory, "guarded");
   await mkdir(guarded);
   await writeFile(
@@ -408,10 +402,6 @@ test("pnpm qualifies only at exactly the pinned version", async (t) => {
   assert.equal(await findSystemPnpm(guarded, "11.11.0", directory), path.join(guarded, "pnpm"));
 });
 
-/**
- * Writes an `@pnpm/exe.<platform>` tarball, whose `package/pnpm` is
- * `script`, where stage 1 fetches it from `registry`; returns its integrity.
- */
 async function fixturePnpmExe(
   directory: string,
   registry: string,
@@ -449,7 +439,6 @@ test("the private pnpm is the platform's native binary, verified before extracti
     FIXTURE_PNPM,
     versionScript(FIXTURE_PNPM),
   );
-  // The same bytes under another platform's name: only that platform's pin counts.
   const other = fileURLToPath(pnpmTarballUrl(href, "darwin-x64", FIXTURE_PNPM));
   await mkdir(path.dirname(other), { recursive: true });
   await cp(fileURLToPath(pnpmTarballUrl(href, "linux-arm64", FIXTURE_PNPM)), other);
@@ -460,7 +449,6 @@ test("the private pnpm is the platform's native binary, verified before extracti
     ChecksumMismatchError,
   );
   assert.deepEqual(await readdir(runtime), [], "nothing extracted, no archive or staging left");
-  // An unreachable registry: the platform check fails before any download.
   await assert.rejects(
     provisionPrivatePnpm(runtime, pins, { registry: "https://registry.invalid", platform: null }),
     /no pinned pnpm build for .*glibc Linux and macOS only.* put pnpm 12\.21\.0 on PATH/,
@@ -503,7 +491,6 @@ test("pnpm platforms: macOS and glibc Linux on arm64 and x64 only", async () => 
   assert.equal(await currentPnpmPlatform("linux", "arm64"), musl ? null : "linux-arm64");
 });
 
-/** A runtime/pnpm in an earlier layout whose executables leave `marker` when run. */
 async function earlierPnpmLayout(
   pnpmDirectory: string,
   version: string,
@@ -517,7 +504,6 @@ async function earlierPnpmLayout(
     JSON.stringify({ name: "pnpm", version }),
   );
   await writeFile(path.join(pnpmDirectory, "bin", "pnpm.mjs"), script, { mode: 0o755 });
-  // The pnpm 12 npm wrapper also has a top-level `pnpm` placeholder.
   if (wrapper) await writeFile(path.join(pnpmDirectory, "pnpm"), script, { mode: 0o755 });
 }
 
@@ -651,7 +637,6 @@ test("install.json written before the runtime option stays valid; runtime and bu
   assert.match(manifestProblems({ ...legacy, bun_path: '/a"b/bun' }).join(), /bun_path contains/);
 });
 
-/** A fake bun: answers the installer's probe as `version`, prints Pi's 1.6.0 for --version, else its argv. */
 function fakeBunScript(version: string): string {
   return [
     "#!/bin/sh",
@@ -662,7 +647,6 @@ function fakeBunScript(version: string): string {
   ].join("\n");
 }
 
-/** Zips a fake bun as `bun-<platform>/bun`, the layout of Bun's release assets. */
 async function fixtureBunZip(
   directory: string,
   platform: string,
@@ -786,17 +770,14 @@ test("the launcher link replaces only our own link and refuses a foreign file", 
   );
 });
 
-/** A git-managed fixture app: the real launcher and management code, a stub Pi and a stub profile installer. */
 async function fixtureSource(directory: string): Promise<string> {
   const source = path.join(directory, "source");
   await mkdir(path.join(source, "bin"), { recursive: true });
   await cp(path.join(ROOT, "bin", "choco-pi"), path.join(source, "bin", "choco-pi"));
-  // self update hands off to the target revision's own install.sh.
   await cp(INSTALL_SH, path.join(source, "install.sh"));
   await cp(path.join(ROOT, "scripts", "standalone"), path.join(source, "scripts", "standalone"), {
     recursive: true,
   });
-  // self setup applies the standalone settings seed.
   await cp(path.join(ROOT, "profile", "standalone"), path.join(source, "profile", "standalone"), {
     recursive: true,
   });
@@ -835,13 +816,11 @@ async function fixtureSource(directory: string): Promise<string> {
       bin: { pi: "dist/bundle/cli.js" },
     }),
   );
-  // Executable from the start: pnpm marks linked bins executable, which would dirty the tree.
   await writeFile(
     path.join(fakePi, "dist", "bundle", "cli.js"),
     'process.stdout.write("1.6.0\\n");\n',
     { mode: 0o755 },
   );
-  // The management CLI's own dependencies, vendored so pnpm links them offline.
   const vendored: Record<string, string> = {};
   for (const name of [
     "@choco-pi/shared",
@@ -876,7 +855,6 @@ async function snapshot(root: string): Promise<string[]> {
   return entries.filter((entry) => !entry.split(path.sep).includes("node_modules")).toSorted();
 }
 
-/** The skip reason when pnpm on PATH is not the shipped pin, else null. */
 async function pinnedPnpmMissing(): Promise<string | null> {
   const pinned = (await readRuntimePins()).pnpmVersion;
   const version = await runFile("pnpm", ["--version"]).then(
@@ -886,12 +864,6 @@ async function pinnedPnpmMissing(): Promise<string | null> {
   return version === pinned ? null : `needs pnpm ${pinned} on PATH (found ${version ?? "none"})`;
 }
 
-/**
- * A file: registry serving this machine's `@pnpm/exe` package as a wrapper
- * around the real pnpm on PATH, with `source`'s pins rewritten to its
- * integrity: stage 1 provisions a private pnpm without the network. Null on a
- * platform without a pnpm pin.
- */
 async function fixturePnpmRegistry(
   directory: string,
   source: string,
@@ -923,7 +895,6 @@ async function fixturePnpmRegistry(
   return pathToFileURL(registry).href;
 }
 
-/** A user home under `directory` and an environment that resolves node and pnpm. */
 async function fixtureEnvironment(
   directory: string,
 ): Promise<{ userHome: string; environment: NodeJS.ProcessEnv }> {
@@ -935,9 +906,6 @@ async function fixtureEnvironment(
     PATH: `${NODE_DIR}:${process.env.PATH ?? ""}`,
   };
   delete environment.CHOCO_PI_HOME;
-  // pnpm's own home and the XDG directories would otherwise point pnpm at the
-  // developer's real ones; unset, pnpm falls back to HOME, which the
-  // nothing-written-to-the-user's-home checks watch.
   for (const name of [
     "PNPM_HOME",
     "XDG_DATA_HOME",
@@ -949,7 +917,6 @@ async function fixtureEnvironment(
   return { userHome, environment };
 }
 
-/** Locks the fixture's dependencies and commits it as branch main. */
 async function commitFixture(
   source: string,
   directory: string,
@@ -962,7 +929,6 @@ async function commitFixture(
   ];
   await runFile("pnpm", ["install", "--lockfile-only", ...lockDirs], {
     cwd: source,
-    // pnpm 12 creates PNPM_HOME (default ~/Library/pnpm or ~/.local/share/pnpm) even here.
     env: { ...environment, PNPM_HOME: path.join(directory, "lock-home") },
   });
   await runFile("git", ["init", "--quiet", "--initial-branch=main", source]);
@@ -977,7 +943,6 @@ async function commitChange(source: string): Promise<string> {
   return (await runFile("git", ["-C", source, "rev-parse", "HEAD"])).stdout.trim();
 }
 
-/** Runs bootstrap.ts and stage 1 the way install.sh does right after it cloned (and journaled) `app`. */
 async function stageOneInstall(
   app: string,
   home: string,
@@ -1024,7 +989,6 @@ test("stage 1 install is idempotent, updates by fast-forward, and uninstall remo
   const directory = await scratch(t);
   const { userHome, environment } = await fixtureEnvironment(directory);
   const source = await fixtureSource(directory);
-  // The app's pins name a fixture Bun zip, served from a file: mirror below.
   const bunPlatform = await currentBunPlatform();
   const shippedPins = await readRuntimePins();
   const bunMirror = path.join(directory, "bun-mirror");
@@ -1173,7 +1137,6 @@ test("a runtime directory the installer did not create survives install, update 
     t.diagnostic("private pnpm part skipped (no pnpm pin for this platform)");
     return;
   }
-  // What a pnpm 11 install leaves in runtime/pnpm: never run, replaced by the native binary.
   const pnpmDirectory = path.join(home, "runtime", "pnpm");
   const marker = path.join(directory, "old-pnpm-ran");
   await earlierPnpmLayout(pnpmDirectory, "11.11.0", false, marker);
@@ -1197,7 +1160,6 @@ test("a runtime directory the installer did not create survives install, update 
   );
   const updated = await readManifest(home);
   assert.equal(updated.rev, head);
-  // No pnpm on this PATH, so the update provisions (and owns) a private pnpm.
   assert.deepEqual(updated.created.slice(0, installed.created.length), installed.created);
   assert.ok(updated.created.includes(pnpmDirectory));
   assert.deepEqual(await readdir(pnpmDirectory), ["pnpm"]);
@@ -1214,12 +1176,10 @@ test("a runtime directory the installer did not create survives install, update 
   assert.deepEqual(await readdir(path.join(home, "runtime")), ["bun"]);
 });
 
-/** Matches `text` literally inside a RegExp. */
 function literal(text: string): string {
   return text.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** A stand-in node that answers install.sh's probes and prints the stage 1 command. */
 const STUB_NODE = [
   "#!/bin/sh",
   'case "$1" in',
@@ -1279,7 +1239,6 @@ test("install.sh downloads Node, then hands stage 1 the runtime name rather than
   const directory = await scratch(t);
   const { environment } = await fixtureEnvironment(directory);
   const source = await fixtureSource(directory);
-  // The downloaded "Node.js" runs the real node, so stage 1 is the real manage.ts.
   const calls = path.join(directory, "node-calls.log");
   const nodeName = `node-v24.0.0-${platform}`;
   const nodeMirror = path.join(directory, "node-mirror");
@@ -1312,7 +1271,6 @@ test("install.sh downloads Node, then hands stage 1 the runtime name rather than
   }
   await writeFile(pinsFile, pins);
   await commitFixture(source, directory, environment);
-  // Stage 1 finds this pnpm on PATH; only pnpm itself sees a node on PATH.
   const shims = path.join(directory, "shims");
   await mkdir(shims);
   const pnpm = (
@@ -1419,7 +1377,6 @@ test("the creation journal yields only ownable paths and is empty when absent", 
   assert.equal(provenanceEntryProblem(home, null, path.join(home, "runtime", "pnpm")), null);
 });
 
-/** Runs `self uninstall` of this checkout's manage.ts against `home`, as the launcher would. */
 async function uninstallHome(
   home: string,
   userHome: string,
@@ -1446,7 +1403,6 @@ async function uninstallHome(
   );
 }
 
-/** An install home with an app and a runtime/node, and `<home>/alias` linked to a sibling. */
 async function aliasedHome(directory: string, label: string) {
   const home = path.join(directory, label);
   const outside = path.join(directory, `${label}-outside`);
@@ -1464,7 +1420,6 @@ async function aliasedHome(directory: string, label: string) {
 test("uninstall never deletes through a symlinked ancestor, with or without install.json", async (t) => {
   const directory = await scratch(t);
 
-  // No install.json: only the journal records the install.
   const bare = await aliasedHome(directory, "journal-only");
   await writeFile(
     path.join(bare.home, PROVENANCE_NAME),
@@ -1479,7 +1434,6 @@ test("uninstall never deletes through a symlinked ancestor, with or without inst
   );
   assert.equal(await exists(path.join(bare.home, "app")), false, "the real entry is removed");
 
-  // install.json lists the escaping path; app, runtime and the bin link still go.
   const recorded = await aliasedHome(directory, "manifest");
   const binDir = path.join(directory, "bin");
   await mkdir(binDir);
@@ -1562,7 +1516,6 @@ test("owned entries are resolved through the filesystem, not just lexically", as
   );
 });
 
-/** Pins naming a fixture Node tarball (wrapping this node) served from a file: mirror. */
 async function nodeDownloadFixture(
   directory: string,
   source: string,
@@ -1613,7 +1566,6 @@ test("a failed install keeps ownership of what it created, for the retry and for
   );
   const userHome = path.join(directory, "user-home");
   const binDir = path.join(directory, "bin");
-  // Stage 1 finds no pnpm on PATH and cannot download one from here.
   const noPnpm = {
     PATH: basePath,
     CHOCO_PI_NODE_MIRROR: nodeMirror,
@@ -1668,7 +1620,6 @@ test("a failed install keeps ownership of what it created, for the retry and for
   assert.deepEqual(await readdir(home), ["agent"]);
   assert.deepEqual(await readdir(binDir), []);
 
-  // An install abandoned after a failure is uninstalled from its journal alone.
   const abandoned = path.join(directory, "abandoned");
   const failed = await installSh(abandoned, noPnpm);
   assert.equal(failed.code, 1, failed.output);
@@ -1682,7 +1633,6 @@ test("a failed install keeps ownership of what it created, for the retry and for
   assert.deepEqual(await readdir(userHome), [], "nothing written to the user's home");
 });
 
-/** A stage 1 that, like the one at a1a0efa0, rejects every argument it does not know. */
 const PROTOCOL_ONE_STAGE_ONE = [
   'const valued = new Set(["--home", "--bin-dir", "--source", "--ref", "--runtime"]);',
   "const args = process.argv.slice(2);",
@@ -1696,7 +1646,6 @@ const PROTOCOL_ONE_STAGE_ONE = [
   "",
 ].join("\n");
 
-/** A git source holding only `pins` and `stageOne` as scripts/standalone/manage.ts. */
 async function stageOneSource(directory: string, pins: string, stageOne: string): Promise<string> {
   const source = await pinsOnlySource(directory, pins);
   await writeFile(path.join(source, "scripts", "standalone", "manage.ts"), stageOne);
@@ -1736,7 +1685,6 @@ test("install.sh refuses an app without installer_protocol before downloading No
   const refusal =
     /the app at main \([0-9a-f]{12}\) predates standalone installer protocol 3 \(it declares none\); install it with that revision's own install\.sh/;
 
-  // A fresh home: this run's clone, and the journal and home it made, are undone.
   const home = path.join(directory, "home");
   const fresh = await installSh(home);
   assert.ok(fresh !== null, "install.sh must fail");
@@ -1749,7 +1697,6 @@ test("install.sh refuses an app without installer_protocol before downloading No
   assert.equal(await exists(path.join(home, "runtime", "node")), false, "no Node provisioned");
   assert.equal(await exists(home), false, "the clone, journal and new home are removed");
 
-  // A checkout this run did not clone is left as it is.
   const kept = path.join(directory, "kept");
   await runFile("git", ["clone", "--quiet", source, path.join(kept, "app")]);
   const existing = await installSh(kept);
@@ -1803,7 +1750,6 @@ test("install.sh refuses an app that needs a newer installer protocol before dow
   );
 });
 
-/** A first install of the fixture app, ready for self update without a pnpm on PATH; null without a pnpm pin for this platform. */
 async function installedFixture(t: test.TestContext) {
   const directory = await scratch(t);
   const { environment } = await fixtureEnvironment(directory);
@@ -1839,7 +1785,6 @@ async function installedFixture(t: test.TestContext) {
   return { source, home, app, selfUpdate, head, version };
 }
 
-/** Commits the working tree of `source` and returns the new HEAD. */
 async function commitSource(source: string, message: string): Promise<string> {
   await runFile("git", ["-C", source, "add", "-A"]);
   await runFile("git", ["-C", source, ...GIT_IDENTITY, "commit", "--quiet", "-m", message]);
@@ -1868,7 +1813,6 @@ test("self update runs the target's own installer, so it crosses a pins format t
   );
   await appendFile(pinsFile, "future_pin in a format the installed code does not know\n");
   const targetPins = await readFile(pinsFile, "utf8");
-  // The installed revision's parser is this checkout's: run in place, it would stop here.
   assert.throws(() => parseRuntimePins(targetPins), /malformed runtime pin line: future_pin/);
   const target = await commitSource(fixture.source, "new pins format");
 
@@ -1901,7 +1845,6 @@ test("a failed self update reinstalls the old revision with its own installer, e
     'export async function installProfile(): Promise<never> {\n  throw new Error("target setup fails");\n}\n',
   );
   const target = await commitSource(fixture.source, "broken setup");
-  // The recorded ref no longer exists upstream: the rollback must not need it.
   await runFile("git", ["-C", fixture.source, "branch", "--move", "main", "replacement"]);
 
   const update = await fixture.selfUpdate(["--ref", "replacement"]);
@@ -1913,7 +1856,6 @@ test("a failed self update reinstalls the old revision with its own installer, e
   const after = await readManifest(fixture.home);
   assert.equal(after.rev, oldRev);
   assert.equal(after.ref, before.ref);
-  // The failed run downloaded the private pnpm (no pnpm on PATH); it stays owned.
   const pnpmDirectory = path.join(fixture.home, "runtime", "pnpm");
   assert.equal(before.created.includes(pnpmDirectory), false);
   assert.ok(after.created.includes(pnpmDirectory), "the failed run's pnpm is owned");
@@ -1964,7 +1906,6 @@ test("the management CLI answers usage errors with exit 2 and --help with exit 0
     ["self", "update", "--bogus"],
     ["self", "update", "--ref"],
     ["self", "nope"],
-    // Empty values were usage errors before the CLI moved to Optique, too.
     ["self", "update", "--ref="],
     ["self", "update", "--ref", ""],
     ["self", "setup", "--import-pi-settings", "--from="],

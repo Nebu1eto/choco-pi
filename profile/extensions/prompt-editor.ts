@@ -30,8 +30,6 @@ interface EditorState {
   cursorCol: number;
 }
 
-// Pi 0.84.1 has no public cursor/paste snapshot API. Keep this adapter aligned
-// with its pinned Editor implementation so stash can preserve both precisely.
 interface EditorInternals extends EditorComponent {
   state: EditorState;
   pastes: Map<number, string>;
@@ -52,7 +50,6 @@ export interface PromptStash {
   pasteCounter: number;
 }
 
-/** Where the stash lives. The default store is process-wide so a draft survives editor rebuilds and `/reload`. */
 export interface PromptStashStore {
   get(): PromptStash | undefined;
   set(value: PromptStash | undefined): void;
@@ -63,7 +60,6 @@ type StashRestoreTarget = {
   restore: () => boolean;
 };
 
-/** Routes an `input` event to the most recently decorated editor of the current session generation. */
 export interface PromptStashController {
   readonly generation: number;
   advance(): number;
@@ -121,10 +117,6 @@ function isIndex(value: RuntimeValue): value is number {
   return isNumber(value) && Number.isInteger(value) && value >= 0;
 }
 
-/**
- * Validate a stash read from process-global state. A reloaded module may be
- * newer or older code than the one that wrote it, so nothing is trusted.
- */
 export function readPromptStash(value: RuntimeValue): PromptStash | undefined {
   if (!isJsonRecord(value)) return undefined;
   const state = propertyOf(value, "state");
@@ -165,7 +157,6 @@ function globalStashRecord(): StashRecord {
   return record;
 }
 
-/** Process-lifetime stash; cleared only when a draft is restored. */
 export const globalPromptStashStore: PromptStashStore = {
   get: () => readPromptStash(globalStashRecord().stash),
   set: (value) => {
@@ -214,7 +205,6 @@ export function decoratePromptEditor(
   const handleInput = editor.handleInput.bind(editor);
   const render = editor.render.bind(editor);
 
-  // A suggestion shows only in an empty editor with no autocomplete menu open.
   const visibleSuggestion = (): string | undefined => {
     const text = suggestion?.text;
     if (text === undefined || target.getText() !== "") return undefined;
@@ -267,8 +257,6 @@ export function decoratePromptEditor(
       requestRender();
       return;
     }
-    // Submitting never restores here: Enter also runs commands and bash. The
-    // extension's `input` handler restores only once a real prompt is accepted.
     handleInput(data);
   };
 
@@ -284,7 +272,6 @@ export function decoratePromptEditor(
   Object.defineProperty(target, decoratedEditor, { value: true });
   binding?.controller.register({
     generation: binding.generation,
-    // Never overwrite a draft typed after submission; keep the stash for Ctrl+S.
     restore: () => target.getText().length === 0 && restoreStash(),
   });
   onStashChange(store.get() !== undefined);
@@ -325,8 +312,6 @@ export function wrapPromptEditorFactory(
   }) as PromptEditorFactory;
   Object.defineProperty(wrappedFactory, factoryState, { value: state });
 
-  // Keep Zentui ownership and other factory adapters intact. Fleet navigation
-  // then sees the original PolishedEditor instance instead of a wrapper object.
   for (const symbol of Object.getOwnPropertySymbols(baseFactory)) {
     if (symbol === factoryState) continue;
     const descriptor = Object.getOwnPropertyDescriptor(baseFactory, symbol);
@@ -351,14 +336,11 @@ export function installPromptEditorWhenReady(
     try {
       const factory = ui.getEditorComponent();
       if (factory && isZentuiFactory(factory)) {
-        // Already installed with this exact state: rebuilding would only drop editor-private state.
         if (factoryStateOf(factory) === state) return;
         ui.setEditorComponent(wrapPromptEditorFactory(factory, state));
         return;
       }
-    } catch {
-      // Zentui may be replacing the editor while this retry runs.
-    }
+    } catch {}
 
     attempts++;
     if (attempts < maxAttempts) schedule(tryInstall, intervalMs);
@@ -379,11 +361,6 @@ function readFuzzyMentionsFlag(settingsPath: string): boolean | undefined {
   }
 }
 
-/**
- * Project settings win when the key is present there; otherwise the agent
- * profile's value applies. The checkout ships no `.pi/settings.json`, so the
- * agent profile's value applies unless a project adds one.
- */
 export function fuzzyFileMentionsEnabled(agentDir = getAgentDir(), projectDir?: string): boolean {
   const project =
     projectDir === undefined
@@ -462,9 +439,6 @@ export function createPromptEditor(options: PromptEditorOptions = {}): (pi: Exte
       installPromptEditorWhenReady(ctx.ui, state, isCurrent, installOptions);
     });
 
-    // Pi emits `input` only from AgentSession.prompt(), after extension commands
-    // are consumed; built-in commands and `!` bash never reach it. A stashed
-    // draft therefore returns only once a real prompt has been accepted.
     pi.on("input", (event, ctx) => {
       suggestions.invalidate();
       if (event.source !== "interactive") return undefined;
@@ -476,26 +450,20 @@ export function createPromptEditor(options: PromptEditorOptions = {}): (pi: Exte
         rethrowUnlessStaleContext(error);
         return undefined;
       }
-      // Restore only into a live editor this controller decorated; otherwise
-      // keep the stash (and its widget) rather than write into a detached editor.
       if (!controller.isCurrent(generation)) return undefined;
       if (factoryStateOf(factory)?.binding?.controller !== controller) return undefined;
       controller.restore();
       return undefined;
     });
 
-    // A new run makes any suggestion stale; a settled run may produce the next one.
     pi.on("agent_start", () => {
       suggestions.invalidate();
     });
 
-    // Never await here: Pi defers new prompts until settled handlers return.
     pi.on("agent_settled", (_event, ctx) => {
       void suggestions.settled(ctx);
     });
 
-    // Zentui's /preferences editor toggle installs a fresh, undecorated factory
-    // inside a custom dialog; re-decorate it once that dialog closes.
     pi.on("ui_prompt_end", (_event, ctx) => {
       const install = zentuiInstall;
       if (!install?.isCurrent()) return;

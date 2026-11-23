@@ -31,8 +31,6 @@ export function requestBodyForWebSocketContinuationComparison(
   const {
     input: _input,
     previous_response_id: _previousResponseId,
-    // Request metadata may carry per-turn transport fields such as the
-    // Responses Lite marker. It does not change conversation continuity.
     client_metadata: _clientMetadata,
     ...rest
   } = body;
@@ -161,10 +159,6 @@ export function buildCachedWebSocketRequestBody(
   body: ResponsesBody,
   nativeSteeringStart = false,
 ): CachedWebSocketRequestBodyResult {
-  // GPT-6's cached previous_response_id path rejects thinking-phase successors
-  // with "prompt_cache_options is not supported on this model".
-  // Start steerable responses with full input; pending native successors still
-  // need the ordinary delta for identity/settings validation and tool outputs.
   if (nativeSteeringStart) return { body, decision: "native_steering_full" };
   if (!continuation) {
     return { body, decision: "no_continuation" };

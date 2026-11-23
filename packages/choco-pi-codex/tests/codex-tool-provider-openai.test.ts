@@ -75,12 +75,9 @@ const foreignModel = () =>
   model("synthetic", "hf:moonshotai/Kimi-K3", "openai-responses", "https://proxy.example/v1");
 
 interface RegistryOptions {
-  /** Models whose provider has configured auth (getAvailable). */
   available: Model<Api>[];
-  /** Additional catalog-only models without auth. */
   catalog?: Model<Api>[];
   openAIOAuth?: boolean;
-  /** Extra auth headers injected by the host (e.g. a stray account id). */
   headers?: Record<string, string>;
 }
 
@@ -90,7 +87,6 @@ function tokenFor(candidate: Model<Api>, options: RegistryOptions): string {
   return FOREIGN_TOKEN;
 }
 
-/** Plain registry for the provider resolver; records every credential lookup. */
 function plainRegistry(options: RegistryOptions) {
   const authProviders: string[] = [];
   const all = [...options.available, ...(options.catalog ?? [])];
@@ -244,7 +240,6 @@ test("openai Sign in with ChatGPT is preferred over the legacy openai-codex logi
   assert.equal(provider.token, SIGN_IN_TOKEN);
   assert.equal(provider.accountId, "");
   assert.deepEqual(provider.openAIPlatform, { subscriptionSignIn: true });
-  // The expired legacy credential is never resolved (and so never refreshed).
   assert.deepEqual(authProviders, ["openai"]);
 
   const current = await resolveCodexToolProvider({
@@ -268,7 +263,6 @@ test("an openai sk- API key resolves the same public Responses route", async () 
 test("legacy openai-codex is used only when openai has no configured auth", async () => {
   const { registry, authProviders } = plainRegistry({
     available: [legacyModel()],
-    // Catalog-only openai models (no auth) must not be selected.
     catalog: [openAIModel()],
   });
   const provider = await resolveCodexToolProvider({
@@ -285,7 +279,6 @@ test("legacy openai-codex is used only when openai has no configured auth", asyn
   const search = await resolveOpenAICodexToolProvider(registry);
   assert.equal(search.route, "openai-codex");
 
-  // An explicitly selected openai-codex model keeps the legacy route (opt-in).
   const both = plainRegistry({ available: [legacyModel(), openAIModel()], openAIOAuth: true });
   const selected = await resolveCodexToolProvider({
     model: legacyModel(),
@@ -299,7 +292,6 @@ test("a non-OpenAI conversation credential is never forwarded", async () => {
   const { registry, authProviders } = plainRegistry({
     available: [
       foreignModel(),
-      // `openai` pointed at a proxy is not the public platform.
       model("openai", "gpt-5.5", "openai-responses", "https://proxy.example/v1"),
     ],
   });
@@ -357,7 +349,6 @@ test("web_run search route fails fast for openai before any credential lookup", 
   await assert.rejects(resolveOpenAICodexToolProvider(registry), isUnsupported);
   assert.deepEqual(authProviders, []);
 
-  // Defense in depth: the helper is never spawned with an api.openai.com credential.
   const provider = await resolveCodexToolProvider({
     model: openAIModel(),
     modelRegistry: registry,
@@ -451,7 +442,6 @@ test("imagegen uses the openai credential and labels sign-in as unverified", asy
   assert.deepEqual(signIn.registry.authProviders, ["openai"]);
 
   const apiKey = await createHost(t, foreignModel(), { available: [openAIModel()] });
-  // A foreign conversation model reaches the tool only in all-providers fallback mode.
   const fallbackTool = createImageGenerationTool({
     customRustBinariesDir: root,
     allowCodexProviderFallback: true,
@@ -532,12 +522,10 @@ test("web search model setting shows the credential provider and stores a bare i
       assert.equal(legacy.update(`openai-codex/${id}`, config).openai.webSearchModel, id);
     }
     assert.equal(DEFAULT_CODEX_CONVERSION_CONFIG.openai.webSearchModel, "gpt-6.1-terra");
-    // gpt-5.4-mini is retired from the web search list; a stale choice falls back to the default.
     assert.equal(
       legacy.update("openai-codex/gpt-5.4-mini", config).openai.webSearchModel,
       DEFAULT_CODEX_CONVERSION_CONFIG.openai.webSearchModel,
     );
-    // Pi 1.4.0 dropped gpt-5.5 from openai-codex; a stale choice falls back to the default.
     assert.equal(
       legacy.update("openai-codex/gpt-5.5", config).openai.webSearchModel,
       DEFAULT_CODEX_CONVERSION_CONFIG.openai.webSearchModel,

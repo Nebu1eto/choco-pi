@@ -24,7 +24,6 @@ const user = (content: string, timestamp = 1): UserMessage => ({
 });
 
 test("the actual context handler retains delivered guidance when a findings collector fails", async () => {
-  // Execute the production callback with controlled collectors, without booting LSP services.
   const source = readFileSync(new URL("../extension/context-hook.ts", import.meta.url), "utf8");
   const start = source.indexOf("    async (\n      event: { messages?");
   assert.ok(start >= 0);
@@ -110,7 +109,6 @@ test("consumed startup guidance remains in the exact serialized native continuat
   assert.deepEqual(prepared.body.input, [
     { role: "user", content: [{ type: "input_text", text: "steer" }] },
   ]);
-  // The original one-shot behavior drops guidance and cannot prove continuation.
   const dropped = buildRequestBody(model, normalizeContext({ messages: raw }));
   assert.notEqual(buildCachedWebSocketRequestBody(continuation, dropped).decision, "delta");
   const edited: Message[] = [user("changed original task"), ...raw.slice(1)];

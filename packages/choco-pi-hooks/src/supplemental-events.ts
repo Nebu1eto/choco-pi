@@ -21,11 +21,9 @@ interface SupplementalLifecycle {
 }
 
 export interface SupplementalOptions {
-  /** Whether this is a subagent session, which fires no session-level or display events. */
   isSubagentSession?: () => boolean;
 }
 
-/** InstructionsLoaded `memory_type` for a loaded instruction file. */
 function memoryType(filePath: string, cwd: string): string {
   if (filePath.includes(`${path.sep}ClaudeCode${path.sep}`)) return "Managed";
   const relative = path.relative(cwd, filePath);
@@ -75,7 +73,6 @@ export function registerSupplementalEvents(
     clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
       if (!isGenerationCurrent(generationToken)) return;
-      // No idle notification while a background subagent is still running.
       if (backgroundTasks.size) return;
       runDetached(
         dispatch("Notification", ctx, {
@@ -119,7 +116,6 @@ export function registerSupplementalEvents(
   pi.on("turn_end", async (event, ctx) => {
     if (disposed) return;
     context = ctx;
-    // PostToolBatch follows a batch of tool calls, before the next model request.
     if (!event.toolResults.length) return;
     const generationToken = generation;
     const hasUI = ctx.hasUI;
@@ -151,7 +147,6 @@ export function registerSupplementalEvents(
       (file) => !loadedInstructions.has(file.path),
     );
     for (const file of files) loadedInstructions.add(file.path);
-    // InstructionsLoaded is observational and runs without delaying the run.
     runDetached(
       (async () => {
         for (const file of files) {
@@ -166,7 +161,6 @@ export function registerSupplementalEvents(
     );
   });
 
-  /** Run MessageDisplay for one batch of displayed text and record what to render. */
   const displayBatch = async (ctx: ExtensionContext, delta: string, final: boolean) => {
     const generationToken = generation;
     const result = await dispatch("MessageDisplay", ctx, {
@@ -181,8 +175,6 @@ export function registerSupplementalEvents(
     displayRendered += result.displayContent ?? delta;
   };
 
-  // MessageDisplay sees assistant text in batches of completed lines; a
-  // subagent's messages are never displayed.
   pi.on("message_update", async (event, ctx) => {
     if (disposed || isSubagent()) return;
     context = ctx;
@@ -200,7 +192,6 @@ export function registerSupplementalEvents(
     if (disposed || isSubagent()) return;
     if (event.message.role !== "assistant") return;
     context = ctx;
-    // A message without text, such as a tool-call-only response, is not displayed.
     if (displayIndex === 0 && !displayPending) return;
     const rest = displayPending;
     displayPending = "";
@@ -221,10 +212,6 @@ export function registerSupplementalEvents(
         agent_type: isStringValue(data.type) ? data.type : undefined,
       });
   };
-  // SubagentStart and SubagentStop fire inside the subagent session itself, where
-  // SubagentStart can add context and SubagentStop can keep the subagent working.
-  // Here the parent only tracks background work and, for workflow members (the
-  // agent-team analog), runs TeammateIdle and TaskCompleted.
   const onSubagentStopped = <Value>(payload: Value): void => {
     const ctx = context;
     const generationToken = generation;

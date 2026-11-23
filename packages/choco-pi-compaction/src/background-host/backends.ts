@@ -35,14 +35,6 @@ import {
 } from "./token-counters.ts";
 import { isNonEmptyString, isRecord, readProperty } from "../guards.ts";
 
-// ---------------------------------------------------------------------------
-// Backend factories and per-owner backend selection
-// ---------------------------------------------------------------------------
-
-/**
- * The owner fields backend resolution and selection read. The Anthropic
- * disable switch and shared gate are optional for partial test runtimes.
- */
 export type BackendOwnerSpec = Pick<
   OwnerSpec,
   | "ownerKey"
@@ -62,26 +54,13 @@ export type BackendOwnerSpec = Pick<
 > &
   Partial<Pick<OwnerSpec, "anthropicDisabled" | "anthropicGate">>;
 
-/** Per-owner inputs the in-package default backend factories bind to. */
 interface OwnerBackendInputs {
   readonly spec: BackendOwnerSpec;
   readonly options: BackgroundCompactionOptions;
 }
 
-/**
- * Inputs of owners currently resolving backends, keyed by owner key and
- * generation. The registry's default factories are process-global (the first
- * registration wins), so they never close over one owner's inputs; they look
- * them up by the factory context's owner identity.
- *
- * The table is process-global too. Pi loads every extension copy through its
- * own module instance, so a subagent child's copy of this module resolves
- * backends through factories registered by the main session's copy; a
- * module-level map would leave those factories looking at an empty table.
- */
 const RESOLVING_OWNERS_SYMBOL = Symbol.for("choco-pi:compaction-resolving-owners");
 
-/** `{ spec: { ownerKey }, options: {} }`: the shape only, as TypeBox `Object` checked it. */
 function isOwnerInputsEntry<T>(value: T): value is T & OwnerBackendInputs {
   const spec = readProperty(value, "spec");
   return (
@@ -92,7 +71,6 @@ function isOwnerInputsEntry<T>(value: T): value is T & OwnerBackendInputs {
   );
 }
 
-/** Entries are written only by `resolveBackends`; check their shape, not their domain. */
 function isOwnerInputsTable<T>(value: T): value is T & Map<string, OwnerBackendInputs> {
   return (
     value instanceof Map &&
@@ -126,7 +104,6 @@ function ownerInputs(context: BackendFactoryContext): OwnerBackendInputs {
   return inputs;
 }
 
-/** Window, output cap, and reasoning flag of the owner's model; admission and the text backend share it. */
 export function ownerModelBudget(spec: Pick<BackendOwnerSpec, "model">): ModelBudget {
   return {
     contextWindow: spec.model.contextWindow,
@@ -135,18 +112,8 @@ export function ownerModelBudget(spec: Pick<BackendOwnerSpec, "model">): ModelBu
   };
 }
 
-/**
- * Negative count results shared by every owner of this module instance, so a
- * model whose endpoint fails (Synthetic GLM-5.3/Kimi-K3 return 500) costs one
- * request per TTL rather than one per preparation.
- */
 const SHARED_COUNT_CACHE: CountTokensNegativeCache = new Map();
 
-/**
- * Provider prompt counter for this owner's admission, or undefined when the
- * `countTokens` setting is off. An injected seam wins; otherwise the
- * provider counter (Synthetic, Anthropic; others uncounted) is used.
- */
 export function ownerTokenCounter(
   spec: Pick<BackendOwnerSpec, "model" | "settings"> & { readonly modelRegistry: CountRegistry },
   options: BackgroundCompactionOptions,
@@ -163,7 +130,6 @@ export function ownerTokenCounter(
   return { counter, model: spec.model };
 }
 
-/** Default text backend: summarizes with the owner's own session model. */
 const defaultTextBackendFactory: BackendFactory = (context) => {
   const { spec, options } = ownerInputs(context);
   const summarizer = options.createTextSummarizer
@@ -182,14 +148,12 @@ const defaultTextBackendFactory: BackendFactory = (context) => {
   });
 };
 
-/** Default Anthropic native backend: allow-listed scopes only, captures of the owner's session. */
 const defaultAnthropicBackendFactory: BackendFactory = anthropicBackendFactory((context) => {
   const { spec, options } = ownerInputs(context);
   const registry = spec.modelRegistry;
   const sessionId = spec.sessionId;
   const clock = options.clock;
   return {
-    // One gate per registration (M4): a foreground failure cools the background lane too.
     gate:
       spec.anthropicGate ??
       new AnthropicCapabilityGate({
@@ -209,17 +173,11 @@ const defaultAnthropicBackendFactory: BackendFactory = anthropicBackendFactory((
   };
 });
 
-/**
- * Publish the in-package backends through the neutral registry. Registration
- * is first-wins per ID, so a harness that registered its own factory for
- * "text" or "anthropic-native" before the extension binds keeps it.
- */
 export function registerDefaultBackendFactories(): void {
   registerBackendFactory(TEXT_BACKEND_ID, defaultTextBackendFactory);
   registerBackendFactory(ANTHROPIC_BACKEND_ID, defaultAnthropicBackendFactory);
 }
 
-/** Whether this owner's switches admit a registered backend ID. */
 function isBackendAllowed(spec: BackendOwnerSpec, id: string): boolean {
   if (!isCompactionBackendEnabled(id, spec.settings)) return false;
   if (id === TEXT_BACKEND_ID) return true;
@@ -227,15 +185,10 @@ function isBackendAllowed(spec: BackendOwnerSpec, id: string): boolean {
   return spec.allowForeign;
 }
 
-/** The factory for a backend ID: the neutral registry first, then a registered provider lane. */
 function backendFactoryFor(id: string): BackendFactory | undefined {
   return getRegistry().backendFactories.get(id) ?? registeredBackendProvider(id)?.backendFactory;
 }
 
-/**
- * Backend IDs this owner may use, filtered by its switches: the neutral
- * registry's in its order, then registered provider lanes it does not hold.
- */
 function allowedBackendIds(spec: BackendOwnerSpec): string[] {
   const ids = [...getRegistry().backendFactories.keys()];
   for (const provider of compactionBackendProviders()) {
@@ -244,7 +197,6 @@ function allowedBackendIds(spec: BackendOwnerSpec): string[] {
   return ids.filter((id) => isBackendAllowed(spec, id));
 }
 
-/** Instantiate one registered backend for this owner; failures are reported, not thrown. */
 async function addBackend(
   spec: BackendOwnerSpec,
   id: string,
@@ -286,26 +238,19 @@ export async function selectBackendId(
   spec: BackendOwnerSpec,
   backends: ReadonlyMap<string, Backend>,
 ): Promise<string | undefined> {
-  // A Codex-owned model is summarized by Codex's own handler, which would
-  // replace any other backend's result; only Codex's backend applies there.
   if (resolveOwner({ model: spec.model }, spec.codexCompaction) === "codex-native") {
     return backends.has(CODEX_BACKEND_SETTING_ID) ? CODEX_BACKEND_SETTING_ID : undefined;
   }
-  // xAI server-side owns this model: its foreground handler compacts, and a
-  // background text candidate adopted over an opaque xAI checkpoint would
-  // summarize only the checkpoint's placeholder.
   if (spec.xaiServerSide === true) return undefined;
   const anthropic = backends.get(ANTHROPIC_BACKEND_ID);
   if (anthropic !== undefined) {
     try {
-      // The backend's own local capability check (allow-list, no I/O).
       const verdict = await anthropic.capability(spec.scope);
       if (verdict.supported) return ANTHROPIC_BACKEND_ID;
     } catch (cause) {
       spec.report(`anthropic capability check failed: ${errorText(cause)}`);
     }
   }
-  // A registered provider lane whose own capability check supports this scope.
   for (const provider of compactionBackendProviders()) {
     const backend = backends.get(provider.id);
     if (backend === undefined || provider.backendFactory === undefined) continue;

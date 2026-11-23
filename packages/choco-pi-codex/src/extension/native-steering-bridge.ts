@@ -14,7 +14,6 @@ interface NativeSteeringRegistry {
   [NATIVE_STEERING_SYMBOL]?: NativeSteeringCandidate | null;
 }
 
-/** Publish a stateless process-global bridge for native-steering consumers. */
 export function registerNativeSteeringBridge(): NativeSteeringCandidate {
   // SAFETY: This extension owns the symbol-keyed slot and accepts only its callable seam shape.
   const registry = globalThis as typeof globalThis & NativeSteeringRegistry;

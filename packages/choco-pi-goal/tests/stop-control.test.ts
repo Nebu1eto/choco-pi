@@ -92,7 +92,6 @@ async function activate() {
     hasPendingMessages: () => false,
     getContextUsage: () => undefined,
   };
-  // Tools read only the members the fake context defines; the host context has no lighter test double.
   const toolContext: ExtensionToolContext = Object.assign(Object.create(null), ctx);
   const fire = async (name: string, event: LifecycleEvent): Promise<void> => {
     for (const handler of extension.handlers.get(name) ?? []) await handler(event, ctx);
@@ -156,7 +155,6 @@ test("revoke(all) pauses an active goal, stops continuation and reopening never 
     assert.match(await goal.callTool("get_goal", {}), /active/);
 
     revoke(goal.bus, "all");
-    // Both reports are emitted synchronously inside the handler.
     assert.deepEqual(
       goal.reports.map((report) => [report.participant, report.phase, report.detail]),
       [
@@ -166,12 +164,10 @@ test("revoke(all) pauses an active goal, stops continuation and reopening never 
     );
     assert.match(await goal.callTool("get_goal", {}), /paused/);
 
-    // An agent_end after the stop schedules no continuation.
     await goal.fire("agent_start", { type: "agent_start" });
     await goal.fire("agent_end", { type: "agent_end", messages: [] });
     assert.equal(await until(() => goal.continuations() > 0, 600), false);
 
-    // Reopening admission is a registry change only; the goal stays paused.
     Object.defineProperty(globalThis, STOP_CONTROL_REGISTRY_KEY, {
       configurable: true,
       value: { protocol: STOP_CONTROL_PROTOCOL, state: () => ({ epoch: 2, closed: false }) },
@@ -179,7 +175,6 @@ test("revoke(all) pauses an active goal, stops continuation and reopening never 
     assert.match(await goal.callTool("get_goal", {}), /paused/);
     assert.equal(goal.continuations(), 0);
 
-    // A repeated revoke is harmless and reports "not active".
     goal.reports.length = 0;
     revoke(goal.bus, "all");
     assert.deepEqual(

@@ -1,4 +1,3 @@
-// Shared test harness for tests/stream-*.test.ts (fake fetch adapters, models, collectors).
 import { readFile } from "node:fs/promises";
 import type {
   AssistantMessage,
@@ -35,7 +34,6 @@ const isJsonObject = compile(map(JsonValueSchema)).check;
 const isJsonArray = compile(arr(JsonValueSchema)).check;
 const isString = compile(str()).check;
 
-/** The value at a key/index path, or undefined when any step is missing. */
 export function at(
   value: JsonValue | undefined,
   ...path: (string | number)[]
@@ -49,20 +47,17 @@ export function at(
   return current;
 }
 
-/** The string at a path; throws when it is not a string. */
 export function stringAt(value: JsonValue | undefined, ...path: (string | number)[]): string {
   const found = at(value, ...path);
   if (!isString(found)) throw new Error(`no string at ${path.join(".")}`);
   return found;
 }
 
-/** The keys of the object at a path, sorted. */
 export function keysAt(value: JsonValue | undefined, ...path: (string | number)[]): string[] {
   const found = at(value, ...path);
   return isJsonObject(found) ? Object.keys(found).sort() : [];
 }
 
-/** JSON.parse validated to a JsonValue. */
 export function parseJson(text: string): JsonValue {
   const value: unknown = JSON.parse(text);
   if (!isJsonValue(value)) throw new Error("not JSON");
@@ -72,7 +67,6 @@ export function parseJson(text: string): JsonValue {
 export const PROJECT_ID = "aicode-consumers";
 export const FAKE_TOKEN = "fake-access-token";
 export const API_KEY = JSON.stringify({ token: FAKE_TOKEN, project_id: PROJECT_ID });
-/** Obviously fake base64 thought signatures (length a multiple of 4). */
 export const SIG_A = "RkFLRS1TSUctQQ==";
 export const SIG_B = "RkFLRS1TSUctQg==";
 export const CAPTURE_SIGNATURE = "RkFLRS1USE9VR0hULVNJR05BVFVSRS0wMDE=";
@@ -87,7 +81,6 @@ function catalogModel(id: string): CatalogModel {
   return model;
 }
 
-/** A Pi model for a fallback-catalog base id, as the provider registers it. */
 export function testModel(id = "gemini-3.8-flash"): Model<"google-generative-ai"> {
   const model = catalogModel(id);
   const levels = new Set(model.variants.map((variant) => variant.level));
@@ -120,13 +113,11 @@ export function transcript(context: Context): TranscriptContext {
   return normalizeContext(context);
 }
 
-/** Adapts the package FakeFetch to the fetch signature Pi's options carry. */
 export function piFetch(fake: FakeFetch): typeof globalThis.fetch {
   return (input, init) =>
     fake.fetch(input instanceof Request ? input.url : String(input), init ?? {});
 }
 
-/** An SSE response whose body is delivered in the given string pieces. */
 export function sseResponse(pieces: readonly string[], status = 200): Response {
   const encoder = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({
@@ -138,12 +129,10 @@ export function sseResponse(pieces: readonly string[], status = 200): Response {
   return new Response(body, { status, headers: { "Content-Type": "text/event-stream" } });
 }
 
-/** One SSE event line pair for a wrapped v1internal response. */
 export function sseEvent(response: StreamResponse): string {
   return `data: ${JSON.stringify({ response })}\r\n\r\n`;
 }
 
-/** An SSE response that sends `first` and then stays open until the request is aborted. */
 export function hangingSseResponse(
   first: string,
   signal: AbortSignal | null | undefined,
@@ -173,12 +162,10 @@ export function terminalEvents(events: readonly AssistantMessageEvent[]): Assist
   return events.filter((event) => event.type === "done" || event.type === "error");
 }
 
-/** The request bodies a fake fetch received, parsed. */
 export function sentBodies(fake: FakeFetch): JsonValue[] {
   return fake.calls.map((call) => parseJson(call.body));
 }
 
-/** Sorted key paths of a JSON value down to `depth` levels (arrays contribute their first item). */
 export function keyPaths(value: JsonValue | undefined, depth: number, prefix = ""): string[] {
   if (depth === 0 || value === null || value === undefined) return [];
   if (Array.isArray(value)) return keyPaths(value[0], depth, `${prefix}[]`);

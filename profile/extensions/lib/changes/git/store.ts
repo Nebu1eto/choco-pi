@@ -22,7 +22,6 @@ export type DiffStoreOptions = {
   clock?: DiffClock;
   limits?: Partial<DiffLimits>;
   checkpoints?: TurnTreeProvider;
-  /** The source before the first `setSource`; "uncommitted" when omitted. */
   source?: DiffSource;
 };
 
@@ -38,7 +37,6 @@ type Run = {
 
 type Applied = {
   snapshot: DiffSnapshot;
-  /** What bodies of this snapshot are computed against (`SnapshotRead.compareBase/compareHead`). */
   compareBase: string;
   compareHead?: string;
   files: Map<string, ListedFile>;
@@ -49,20 +47,17 @@ type Applied = {
 
 type CachedBody = {
   key: string;
-  /** The comparison the body was read for; see `comparisonOf`. */
   comparison: string;
   generation: number;
   read: Promise<BodyRead>;
 };
 
-/** Identity of what a body is computed against: resolved base, and a range's resolved head. */
 function comparisonOf(target: { compareBase: string; compareHead?: string }): string {
   return JSON.stringify([target.compareBase, target.compareHead ?? null]);
 }
 
 type Outcome = RefreshOutcome | { kind: "error"; message: string } | { kind: "superseded" };
 
-/** Excerpts kept at once; each is at most MAX_EXCERPT_LINES short lines. */
 const MAX_CACHED_EXCERPTS = 64;
 
 type CachedExcerpt = { revision: number; generation: number; read: Promise<FileExcerpt> };
@@ -78,15 +73,6 @@ function sameSource(left: DiffSource, right: DiffSource): boolean {
   return sourceKey(left) === sourceKey(right);
 }
 
-/**
- * Create the data store behind the /diff pane.
- *
- * Nothing runs until the first `requestRefresh`, `refreshNow`, or
- * `setVisible(true)`. Afterwards at most one refresh for the current source
- * runs at a time; a request during a refresh schedules exactly one follow-up.
- * Each refresh carries a generation, and results from a superseded generation
- * (source changed, store disposed, or a newer refresh applied) are discarded.
- */
 export function createDiffStore(options: DiffStoreOptions): DiffStore {
   const cwd = options.cwd;
   const clock = options.clock ?? createSystemClock();
@@ -119,7 +105,6 @@ export function createDiffStore(options: DiffStoreOptions): DiffStore {
   let applied: Applied | undefined;
   let lastRevision = 0;
   const bodies = new Map<string, CachedBody>();
-  /** By revision, path and range; only the current revision's are kept. */
   const excerpts = new Map<string, CachedExcerpt>();
 
   function setState(next: DiffStoreState): void {
@@ -127,9 +112,7 @@ export function createDiffStore(options: DiffStoreOptions): DiffStore {
     for (const listener of Array.from(listeners)) {
       try {
         listener(state);
-      } catch {
-        // A failing subscriber must not break refresh scheduling or other subscribers.
-      }
+      } catch {}
     }
   }
 
@@ -211,7 +194,6 @@ export function createDiffStore(options: DiffStoreOptions): DiffStore {
   }
 
   async function execute(run: Run): Promise<void> {
-    // Snapshot everything the refresh reads before its first await.
     const runSource = source;
     const previous = applied && applied.generation === run.generation ? applied : undefined;
     let outcome: Outcome;
@@ -279,7 +261,6 @@ export function createDiffStore(options: DiffStoreOptions): DiffStore {
       case "superseded":
         return;
       case "error":
-        // Forget the fingerprint so the next probe rereads instead of reporting "unchanged".
         if (applied) applied = { ...applied, fingerprint: "" };
         setState({ kind: "error", message: outcome.message });
         return;
@@ -302,13 +283,11 @@ export function createDiffStore(options: DiffStoreOptions): DiffStore {
       applied.generation === run.generation &&
       applied.contentKey === read.contentKey
     ) {
-      // An equal content key includes equal comparison ids, so cached bodies stay valid.
       applied = { ...applied, fingerprint: read.fingerprint, files };
       setState({ kind: "ready", snapshot: applied.snapshot, refreshing: false });
       return;
     }
     lastRevision += 1;
-    // Excerpts belong to one snapshot: the working tree they quote may have changed since.
     excerpts.clear();
     const snapshot: DiffSnapshot = {
       revision: lastRevision,
@@ -411,7 +390,6 @@ export function createDiffStore(options: DiffStoreOptions): DiffStore {
         base: current.compareBase,
         limits,
       };
-      // A range reads both sides at the ids its listing used, never at a ref that moved since.
       if (current.compareHead !== undefined) context.head = current.compareHead;
       const entry: CachedBody = {
         key: listed.key,
@@ -436,7 +414,6 @@ export function createDiffStore(options: DiffStoreOptions): DiffStore {
         };
       }
       const revision = current.snapshot.revision;
-      // Only a listed file is read: a recorded path never reaches the file system unchecked.
       if (!current.files.has(path)) {
         return { revision, excerpt: { kind: "unavailable", reason: "Not in this diff." } };
       }
@@ -465,7 +442,6 @@ export function createDiffStore(options: DiffStoreOptions): DiffStore {
         excerpts.delete(stale);
       }
       const excerpt = await entry.read;
-      // A failure may pass (a timeout); it is read again next time.
       if (excerpt.kind === "unavailable" && excerpts.get(key) === entry) excerpts.delete(key);
       return { revision, excerpt };
     },
@@ -476,8 +452,6 @@ export function createDiffStore(options: DiffStoreOptions): DiffStore {
       generation += 1;
       bodies.clear();
       excerpts.clear();
-      // The refresh in flight belongs to the old source: it is discarded when
-      // it settles, and the new source does not wait for it.
       const superseded = running;
       running = undefined;
       if (superseded) {

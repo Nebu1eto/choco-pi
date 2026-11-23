@@ -4,7 +4,6 @@ import { isFunction } from "@choco-pi/code-mode/value-guards";
 
 export const TRANSPORT_PROBE_SYMBOL: unique symbol = Symbol.for("choco-pi.transport-probe");
 
-// Counters are in-process numbers: bound them so NaN and Infinity stay rejected.
 const finiteNumber = () => num({ minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE });
 const transportProbeRecordSchema = obj(
   {
@@ -26,14 +25,12 @@ const transportProbeRecordValidator = compile(transportProbeRecordSchema);
 
 export type TransportProbeRecord = Static<typeof transportProbeRecordSchema>;
 
-// The registry is a live process-global object; its function member may be inherited.
 function hasPublish<Value>(
   value: Value,
 ): value is Value & { publish(record: TransportProbeRecord): void } {
   return isJsonObject(value) && isFunction(value["publish"]);
 }
 
-/** Validate at the process-global boundary and keep probe failures off the request path. */
 export function publishTransportProbe(record: TransportProbeRecord): void {
   if (!transportProbeRecordValidator.check(record)) return;
   const candidate: unknown = Object.getOwnPropertyDescriptor(
@@ -43,7 +40,5 @@ export function publishTransportProbe(record: TransportProbeRecord): void {
   if (!hasPublish(candidate)) return;
   try {
     candidate.publish(record);
-  } catch {
-    // The optional observer must never affect transport.
-  }
+  } catch {}
 }

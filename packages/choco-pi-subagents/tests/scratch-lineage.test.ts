@@ -12,7 +12,6 @@ import { unregisterChildSessionId } from "../src/child-context.ts";
 import type { AgentConfig } from "../src/types.ts";
 import { createSdkFixture } from "./sdk-fixture.ts";
 
-// Run free of the ambient lineage: a Pi session running these tests exports its own scratch root.
 const SCRATCH_ENV_KEYS = ["PI_ROOT_SESSION_ID", "PI_SCRATCH_DIR", "PI_PREVIOUS_SCRATCH_DIR"];
 const ambientScratchEnv = new Map<string, string>();
 before(() => {
@@ -104,7 +103,6 @@ test("children and nested children share the root's scratch directory and learn 
         nested.dispose();
       }
 
-      // Persist the child, then resume its file under a different root.
       child.sessionManager.appendMessage({
         role: "user",
         content: [{ type: "text", text: "first message" }],

@@ -14,7 +14,6 @@ import {
 import type { ExecutionMode } from "../../adapter/activation/execution-mode.ts";
 import { buildConfigSettings, type ConfigSetting } from "./config-items.ts";
 
-/** Registry key the choco-pi profile reads to host Codex rows in its preferences panel. */
 export const CODEX_PREFERENCES_PROVIDER_SYMBOL = Symbol.for("choco-pi.codex-preferences-provider");
 export const CODEX_SECTION_ID = "codex";
 export const CODEX_OUTCOME_PREFIX = "codex:";
@@ -23,7 +22,6 @@ export const CODEX_EDIT_CONFIG_OUTCOME = `${CODEX_OUTCOME_PREFIX}edit-config`;
 const EXECUTION_MODE_ITEM_ID = "executionMode";
 const OPEN_LABEL = "Open";
 
-/** What the host panel does after a Codex row changed. Mirrors the panel's own section contract. */
 export type CodexSectionChange =
   | { kind: "update" }
   | { kind: "rebuild" }
@@ -38,7 +36,6 @@ export interface CodexPreferencesSection {
 
 export interface CodexPreferencesProvider {
   buildSections: (ctx: ExtensionContext) => CodexPreferencesSection[];
-  /** Runs a follow-up flow while the dialog is closed; `undefined` means the outcome is not ours. */
   runOutcome: (
     outcome: string,
     ctx: ExtensionContext,
@@ -46,25 +43,16 @@ export interface CodexPreferencesProvider {
 }
 
 export interface CodexPreferencesDeps {
-  /** Config the adapter is currently running with, layered over the project scope. */
   effectiveConfig: (ctx: ExtensionContext) => CodexConversionConfig;
-  /** Persists a config in the given scope and re-applies the adapter; false when the write failed. */
   saveAndApply: (
     ctx: ExtensionContext,
     scope: CodexConversionConfigScope,
     nextConfig: CodexConversionConfig,
   ) => boolean;
-  /** Re-reads the effective config and re-applies the adapter without writing. */
   applyEffectiveConfig: (ctx: ExtensionContext, previousConfig: CodexConversionConfig) => void;
-  /** The adapter's live config, used as the previous value when re-applying. */
   getRunningConfig: () => CodexConversionConfig;
 }
 
-/**
- * Dim heading rows `/codex` draws between its own groups. The host panel
- * places Codex rows into its own headed groups, so these would only repeat
- * them as focusable blank rows.
- */
 const SCREEN_HEADER_ROW_IDS: ReadonlySet<string> = new Set([
   "transportHeader",
   "compactionHeader",
@@ -72,11 +60,6 @@ const SCREEN_HEADER_ROW_IDS: ReadonlySet<string> = new Set([
   "activateOnlyHeader",
 ]);
 
-/**
- * Restates the Edit config row for this panel. `/codex` handed the file to
- * `$EDITOR` and reported when none was configured; here the document opens in
- * Pi's own editor, so the row is always available and never asks for a reload.
- */
 function withInPlaceEditor(setting: ConfigSetting, path: string): ConfigSetting {
   return {
     ...setting,
@@ -89,25 +72,10 @@ function withInPlaceEditor(setting: ConfigSetting, path: string): ConfigSetting 
   };
 }
 
-/**
- * Every row `/codex` shows across its General, Tools, OpenAI, Display, and
- * About tabs, as one source section. The host layout places each row by id
- * into its own tabs; a row it neither places nor hides keeps a Codex tab, so
- * an upgrade never hides a setting. All rows share one draft and one scope,
- * so a change made on any tab writes the same document.
- *
- * The Usage tab is deliberately left out: the host dialog already reports Codex
- * usage on its own Usage tab.
- */
 export function buildCodexPreferencesSections(
   ctx: ExtensionContext,
   deps: CodexPreferencesDeps,
 ): CodexPreferencesSection[] {
-  /**
-   * Rows write to the project document when the project already has one, and to
-   * the global defaults otherwise. The panel offers no scope switch: a project
-   * that wants its own file creates it, and every other project stays global.
-   */
   const scope: CodexConversionConfigScope = hasFolderCodexConversionConfig(
     ctx.cwd,
     ctx.isProjectTrusted(),
@@ -120,12 +88,6 @@ export function buildCodexPreferencesSections(
       ? getProjectCodexConversionConfigPath(ctx.cwd)
       : getCodexConversionConfigPath();
 
-  /**
-   * The config the rows edit. The folder scope is read layered so a project file
-   * that overrides only a few keys still shows complete rows, while the runtime
-   * value of `cacheKeepalive` always comes from the effective config because it
-   * is stored per project rather than in the edited document.
-   */
   const readDraft = (): CodexConversionConfig => {
     const selected =
       scope === "folder"
@@ -202,11 +164,6 @@ export function buildCodexPreferencesSections(
   return [{ id: CODEX_SECTION_ID, label: "Codex", buildItems: rows, handleChange }];
 }
 
-/**
- * Edits the active Codex config document in Pi's own multi-line editor. This
- * replaces the `$EDITOR` hand-off `/codex` used, which cannot run while the host
- * dialog owns the terminal.
- */
 async function runEditConfigOutcome(
   ctx: ExtensionContext,
   deps: CodexPreferencesDeps,
@@ -255,18 +212,12 @@ async function runEditConfigOutcome(
   }
 }
 
-/**
- * Publishes the Codex rows on the global registry so the choco-pi profile can host
- * them as a section of its settings dialog. The package registers no command for
- * them; without the profile host the sections are simply unused.
- */
 export function registerCodexPreferencesProvider(deps: CodexPreferencesDeps): void {
   const provider: CodexPreferencesProvider = {
     buildSections: (ctx) => buildCodexPreferencesSections(ctx, deps),
     runOutcome: async (outcome, ctx) => {
       if (outcome !== CODEX_EDIT_CONFIG_OUTCOME) return undefined;
       await runEditConfigOutcome(ctx, deps);
-      // The host panel resolves the tab from the focused row.
       return { section: CODEX_SECTION_ID, focusId: "editConfig" };
     },
   };

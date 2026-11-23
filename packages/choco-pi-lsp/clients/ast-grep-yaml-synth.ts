@@ -1,23 +1,6 @@
-/**
- * YAML rule synthesis for ast_grep_search / ast_grep_replace (Issue #125 Phase 3).
- *
- * Takes a pattern + structural-intent parameters and produces a valid
- * ast-grep YAML rule that routes through `sg scan --config`.
- *
- * This lets agents express cross-context queries without writing raw YAML:
- *   insideKind: "function_declaration"   → rule.inside: { kind, stopBy: "end" }
- *   hasKind: "await_expression"          → rule.has: { kind }
- *   follows: "return $X"                 → rule.follows: { pattern }
- *   precedes: "return $X"                → rule.precedes: { pattern }
- *
- * Multiple constraints are combined directly on the rule object — ast-grep
- * evaluates all of them as an implicit AND.
- */
-
 import { dump } from "./deps/js-yaml.ts";
 
 export interface StructuralIntent {
-  /** A code pattern to match. Omit when using nodeKind for a kind-only search. */
   pattern?: string;
   lang: string;
   nodeKind?: string;
@@ -32,9 +15,6 @@ const MAX_SYNTHESIZED_PATTERN_CHARS = 4_000;
 const MAX_NODE_KIND_CHARS = 80;
 const NODE_KIND_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-/**
- * Returns true when at least one structural-intent field is present.
- */
 export function hasStructuralIntent(intent: Omit<StructuralIntent, "pattern" | "lang">): boolean {
   return !!(
     intent.nodeKind ||
@@ -46,27 +26,11 @@ export function hasStructuralIntent(intent: Omit<StructuralIntent, "pattern" | "
   );
 }
 
-/**
- * Synthesize an ast-grep YAML rule for replace operations.
- * Adds a `fix:` field so `sg scan --update-all` applies the rewrite.
- */
 export function synthesizeReplaceRule(intent: StructuralIntent & { rewrite: string }): string {
   const base = synthesizeRule(intent);
-  // js-yaml dump ends with \n; append fix field
   return `${base}fix: ${JSON.stringify(intent.rewrite)}\n`;
 }
 
-/**
- * Synthesize an ast-grep YAML rule from a pattern (or node kind) and
- * structural constraints.
- *
- * The generated rule uses `stopBy: end` on `inside` and
- * `hasDescendantKind`, so those two explicit recursive forms climb all
- * ancestors/descendants. `hasKind` intentionally retains ast-grep's default
- * immediate-child semantics for compatibility.
- *
- * @throws if neither pattern nor nodeKind is supplied, or both are supplied
- */
 interface SynthesizedRelation {
   kind?: string;
   pattern?: string;
@@ -94,7 +58,6 @@ export function synthesizeRule(intent: StructuralIntent): string {
     throw new Error("has_kind and has_descendant_kind are mutually exclusive");
   }
 
-  // Canonical language name for the YAML header (ast-grep is case-sensitive here).
   const language = canonicalLanguage(intent.lang);
 
   const rule: SynthesizedRule = hasNodeKind
@@ -157,10 +120,6 @@ function assertSafeNodeKind(value: string, field: string): string {
   return kind;
 }
 
-/**
- * Map a user-supplied lang value (e.g. "typescript", "TypeScript") to the
- * capitalisation ast-grep expects in the YAML `language:` field.
- */
 function canonicalLanguage(lang: string): string {
   const map = {
     typescript: "TypeScript",

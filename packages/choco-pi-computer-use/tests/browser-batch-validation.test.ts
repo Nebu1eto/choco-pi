@@ -21,8 +21,6 @@ import {
   type FakeCdpOptions,
 } from "./helpers/fake-cdp.ts";
 
-// Outline refs of this tree: @e2 button "Go" (backend 11), @e3 textbox "Name"
-// (12), @e4 heading "Title" (in the outline, not actionable), @e5 link "Next" (14).
 const AX_NODES: JsonObject[] = [
   {
     nodeId: "1",
@@ -109,14 +107,12 @@ async function withBrowser(
   }
 }
 
-/** A browser act_ui result (successor or terminal). */
 function browserDetails(result: ActResult) {
   const details = result.details;
   assert.ok(details && "kind" in details && details.kind === "browser_page", "browser details");
   return details;
 }
 
-/** A browser act_ui result with a successor state. */
 function successor(result: ActResult) {
   const details = browserDetails(result);
   assert.ok("stateId" in details, "a successor state");
@@ -133,14 +129,12 @@ function insertedTexts(commands: FakeCdpCommand[]): string[] {
     .map((command) => (isString(command.params.text) ? command.params.text : ""));
 }
 
-/** The stateId is still current: a following act on it is accepted and delivered. */
 async function assertUsable(browser: Browser, stateId: string): Promise<void> {
   const start = browser.fake.commands.length;
   await browser.act(stateId, [{ action: "typeText", text: "still-usable" }]);
   assert.deepEqual(insertedTexts(browser.fake.commands.slice(start)), ["still-usable"]);
 }
 
-/** The stateId was invalidated: the next act is refused before delivery. */
 async function assertStale(browser: Browser, stateId: string): Promise<void> {
   const start = browser.fake.commands.length;
   await assert.rejects(
@@ -151,7 +145,6 @@ async function assertStale(browser: Browser, stateId: string): Promise<void> {
   assert.deepEqual(browser.fake.inputCommands(start), []);
 }
 
-/** An assert.rejects validator that matches the error message itself. */
 function messageMatches(pattern: RegExp): (error: Error) => boolean {
   return (error) => {
     assert.match(error.message, pattern);
@@ -277,7 +270,6 @@ test("browser batches are validated before anything is sent and keep the state u
       assert.deepEqual(browser.fake.inputCommands(start), [], "nothing was sent");
       await assertUsable(browser, stateId);
     }
-    // A single action keeps its original message.
     const stateId = await browser.observe();
     await assert.rejects(
       browser.act(stateId, [{ action: "moveMouse", ref: "@e2" }]),
@@ -340,7 +332,6 @@ test("the read-only preflight refuses stale refs and a missing page before sendi
     browser.fake.pages = [{ id: "fixture", title: "Fixture", url: "about:blank" }];
     await assertUsable(browser, stateId);
 
-    // An abort during the preflight sends nothing and leaves the state current.
     stateId = await browser.observe();
     const controller = new AbortController();
     browser.fake.hold = (command) => {
@@ -362,7 +353,6 @@ test("the read-only preflight refuses stale refs and a missing page before sendi
 test("a mid-batch failure returns a partial successor and invalidates the base state", async () => {
   await withBrowser({}, async (browser) => {
     const stateId = await browser.observe();
-    // The preflight resolves node 12; the delivery-time resolve fails.
     let resolves = 0;
     browser.fake.respond = (command) => {
       if (command.method !== "DOM.resolveNode" || command.params.backendNodeId !== 12)
@@ -413,7 +403,6 @@ test("a mid-batch failure returns a partial successor and invalidates the base s
 
 test("a failure after input was sent is reported as a possible effect", async () => {
   await withBrowser({}, async (browser) => {
-    // A protocol error on keyDown: the key-up still goes out.
     let stateId = await browser.observe();
     browser.fake.respond = (command) =>
       command.method === "Input.dispatchKeyEvent" && command.params.type === "keyDown"
@@ -439,7 +428,6 @@ test("a failure after input was sent is reported as a possible effect", async ()
     );
     await assertStale(browser, stateId);
 
-    // The connection closes after the text was sent.
     stateId = await browser.observe();
     browser.fake.respond = (command) =>
       command.method === "Input.insertText" && command.params.text === "boom" ? "close" : undefined;
@@ -455,7 +443,6 @@ test("a failure after input was sent is reported as a possible effect", async ()
       effectPossible: true,
     });
 
-    // A page script that throws is a failed step, not a delivered one.
     stateId = await browser.observe();
     browser.fake.respond = (command) =>
       command.method === "Runtime.callFunctionOn" &&
@@ -624,7 +611,6 @@ test("browser keypress with a ref focuses the node first; keyboard input without
       ],
     );
 
-    // A node that does not take focus gets no keys.
     stateId = await browser.observe();
     browser.fake.respond = (command) =>
       command.method === "Runtime.callFunctionOn" &&
@@ -695,7 +681,6 @@ test("an abort after delivered actions still rejects and invalidates the base st
   });
 });
 
-/** Key events sent from \`start\`: [type, key, code, windowsVirtualKeyCode, text, modifiers]. */
 function keyEvents(fake: FakeCdp, start: number) {
   return fake
     .inputCommands(start)
@@ -774,7 +759,6 @@ test("browser keypress sends the virtual key code and code that default editing 
   });
 });
 
-/** Answers the connectivity probe for \`backendNodeId\` with "removed" once \`detached()\` is true. */
 function detachAfter(backendNodeId: number, detached: () => boolean) {
   return (command: FakeCdpCommand) =>
     isConnectedProbe(command) &&
@@ -784,7 +768,6 @@ function detachAfter(backendNodeId: number, detached: () => boolean) {
       : undefined;
 }
 
-/** Whether a command is the page-side click of a ref action. */
 function isRefClick(command: FakeCdpCommand): boolean {
   return (
     command.method === "Runtime.callFunctionOn" &&
@@ -795,8 +778,6 @@ function isRefClick(command: FakeCdpCommand): boolean {
 
 test("a ref whose element was removed mid-batch returns partial instead of a silent click", async () => {
   await withBrowser({}, async (browser) => {
-    // The first click removes the element; the second click of the same ref
-    // must not report success.
     let stateId = await browser.observe();
     let clicks = 0;
     browser.fake.respond = (command) => {
@@ -830,7 +811,6 @@ test("a ref whose element was removed mid-batch returns partial instead of a sil
     );
     await assertStale(browser, stateId);
 
-    // A double press whose element vanishes after its first click may have taken effect.
     stateId = await browser.observe();
     clicks = 0;
     start = browser.fake.commands.length;
@@ -871,7 +851,6 @@ test("the preflight refuses a ref whose element was removed from the page", asyn
   });
 });
 
-/** Runs a page-script declaration the bridge sent against a fake element; returns the calls it made. */
 function runOnFakeElement(declaration: string): string[] {
   const calls: string[] = [];
   const element = {
@@ -880,7 +859,6 @@ function runOnFakeElement(declaration: string): string[] {
       calls.push(options?.preventScroll ? "focus(preventScroll)" : "focus"),
     click: () => calls.push("click"),
   };
-  // The page calls the declaration with the element as `this`; do the same in a sandbox.
   runInNewContext(`(${declaration}).call(element)`, { element });
   return calls;
 }
@@ -909,7 +887,6 @@ test("a ref click or press focuses its target before clicking, as a real click d
 test("a partial browser result leads with the stopped summary and never says completed", async () => {
   await withBrowser({}, async (browser) => {
     const stateId = await browser.observe();
-    // The element is removed once action 1 has been sent (after the preflight).
     let typed = false;
     browser.fake.respond = (command) => {
       if (command.method === "Input.insertText") typed = true;

@@ -29,7 +29,6 @@ async function readManifest(path: string): Promise<Manifest> {
   return parsed;
 }
 
-/** Top-level YAML block keys of pnpm-workspace.yaml mapped to their indented lines. */
 function workspaceBlocks(text: string): Map<string, string[]> {
   const blocks = new Map<string, string[]>();
   let current: string[] | undefined;
@@ -58,10 +57,6 @@ async function members(): Promise<string[]> {
   return names.sort();
 }
 
-/**
- * `key = "value"` pairs of one TOML table. Strict mode rejects any other line in it, which is
- * the whole of mise.toml's [tools]; mise.lock tables also hold arrays, which are skipped.
- */
 function tomlTable(text: string, table: string, strict: boolean): Map<string, string> {
   const values = new Map<string, string>();
   let inside = false;
@@ -81,17 +76,10 @@ function tomlTable(text: string, table: string, strict: boolean): Map<string, st
   return values;
 }
 
-/** The tools mise.toml pins, by tool name. */
 async function miseTools(): Promise<Map<string, string>> {
   return tomlTable(await readText("mise.toml"), "tools", true);
 }
 
-/**
- * Lines of a mise.toml outside the tools-only grammar: comments and blank lines, then one
- * `[tools]` header, then `name = "x.y.z"` pins. Every other line is reported, however it is
- * indented: another table, a dotted key, an inline table, or a template can make mise run
- * code or require `mise trust`.
- */
 function miseConfigViolations(text: string): string[] {
   const violations: string[] = [];
   let tools = false;
@@ -105,7 +93,6 @@ function miseConfigViolations(text: string): string[] {
   return violations;
 }
 
-/** `key value` pairs of scripts/standalone/runtime-pins.txt. */
 async function runtimePins(): Promise<Map<string, string>> {
   const pins = new Map<string, string>();
   for (const line of (await readText("scripts/standalone/runtime-pins.txt")).split("\n")) {
@@ -115,13 +102,11 @@ async function runtimePins(): Promise<Map<string, string>> {
   return pins;
 }
 
-/** The lockfile's first YAML document: the self-lock pnpm 12 writes for packageManager. */
 function selfLock(lockfile: string): string | undefined {
   const documents = lockfile.split(/^---$/m);
   return documents[0]?.trim() === "" ? documents[1] : undefined;
 }
 
-/** Whether a self-lock packages or snapshots key names pnpm or a pnpm platform binary at `version`. */
 function isPnpmEntry(line: string, version: string): boolean {
   const key = /^  (?:'([^']+)'|([^'\s]+)):$/.exec(line);
   const name = key?.[1] ?? key?.[2] ?? "";
@@ -130,7 +115,6 @@ function isPnpmEntry(line: string, version: string): boolean {
   return bare === "pnpm" || /^@pnpm\/exe\.[a-z0-9-]+$/.test(bare);
 }
 
-/** The field lines pnpm 12 writes under its own packages and snapshots entries. */
 const SELF_LOCK_FIELDS = [
   /^    resolution: \{integrity: sha512-[A-Za-z0-9+/]{86}==\}$/,
   /^    engines: \{node: '>=\d+'\}$/,
@@ -139,22 +123,12 @@ const SELF_LOCK_FIELDS = [
   /^    optionalDependencies:$/,
 ];
 
-/** Whether a self-lock line is allowed below a packages or snapshots key at `version`. */
 function isPnpmField(line: string, version: string): boolean {
   if (SELF_LOCK_FIELDS.some((field) => field.test(line))) return true;
   const binary = /^      '@pnpm\/exe\.[a-z0-9-]+': (\S+)$/.exec(line);
   return binary?.[1] === version;
 }
 
-/**
- * Why a lockfile's self-lock differs from the one pnpm 12 writes when it locks only itself at
- * `version`, or undefined when it matches. The top-level lines and the importers block must be
- * that output byte for byte, and packageManagerDependencies may appear only once. Every
- * packages or snapshots line must be a pnpm or pnpm platform binary key, or a field pnpm 12
- * writes for them. Any other dependency, importer, document, or placement fails instead of
- * being parsed around; YAML that pnpm itself refuses, such as a duplicated key, is left to
- * its frozen install.
- */
 function selfLockMismatch(lockfile: string, version: string): string | undefined {
   if (lockfile.split(/^---$/m).length !== 3) return "the lockfile must hold exactly two documents";
   const text = selfLock(lockfile);
@@ -296,11 +270,7 @@ test("mise, package.json, the lockfile, and the runtime pins name one toolchain"
   assert.ok(pnpm, "mise.toml pins pnpm");
   const manifest = await readManifest("package.json");
   assert.equal(manifest.packageManager, `pnpm@${pnpm}`);
-  // pnpm 12 locks only itself here. An older pnpm that switches to the pinned
-  // version adds @pnpm/exe, which pnpm 12 then keeps: revert that change.
   assert.equal(selfLockMismatch(await readText("pnpm-lock.yaml"), pnpm), undefined);
-  // Development runs on the newest Node.js; the runtime pins hold the floor
-  // the standalone installer ships, which development must not be older than.
   const node = tools.get("node");
   const floor = (await runtimePins()).get("node_version");
   assert.ok(

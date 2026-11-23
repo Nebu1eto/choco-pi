@@ -20,12 +20,9 @@ import { enrichApplyPatchContextFailure } from "../packages/choco-pi-code-mode/s
 import { touchedPatchPaths } from "../packages/choco-pi-code-mode/src/tools/apply-patch/execute.ts";
 import { executePatchWithRust } from "../packages/choco-pi-code-mode/src/tools/apply-patch/executor.ts";
 
-// Fixed seed and run count keep the suite deterministic; fast-check prints the
-// seed, path, and shrunk counterexample when a property fails.
 const RUNS = { seed: 0x5eed_5a7c, numRuns: 300 };
 const CWD = "/workspace/project";
 
-// A path with no character the header boundary alters.
 const cleanPath = fc
   .array(fc.stringMatching(/^[A-Za-z0-9_][A-Za-z0-9._-]{0,7}$/), { minLength: 1, maxLength: 3 })
   .map((segments) => segments.join("/"));
@@ -58,18 +55,10 @@ function decorate(value: string, kind: Decoration): string {
   }
 }
 
-/**
- * The path the bundled apply_patch binary reads from a decorated header,
- * as observed by running it: "@" and quotes are kept, leading spaces are kept,
- * and the trailing tab is dropped. The differential properties below check the
- * TypeScript boundary against the binary itself.
- */
 function headerPath(value: string, kind: Decoration): string {
   return kind === "padded" ? `  ${value}` : decorate(value, kind);
 }
 
-// A single line that the parser treats as plain content: no newline and no
-// "*** " control prefix.
 const contentLine = fc
   .string({ maxLength: 12 })
   .filter((line) => !line.includes("\n") && !line.startsWith("***"));
@@ -155,7 +144,6 @@ test("normalizePatchPath keeps @, quotes, and leading spaces and drops trailing 
   );
 });
 
-// Nested decorations such as '"@0"' are where a stripping boundary loses idempotence.
 const doublyDecorated = fc
   .tuple(cleanPath, decoration, decoration)
   .map(([value, inner, outer]) => decorate(decorate(value, inner), outer));
@@ -180,8 +168,6 @@ test("parsePatchActions reports every well-formed action with the path the heade
   );
 });
 
-// Header spellings the binary reads as the same file: tabs and carriage returns
-// are removed and trailing whitespace is trimmed.
 type Spelling = "plain" | "trailingSpaces" | "trailingTab" | "leadingTab" | "carriageReturn";
 
 const spelling = fc.constantFrom<Spelling>(
@@ -227,8 +213,6 @@ test("parsePatchActions rejects two update headers that name the same file", () 
   );
 });
 
-// Arbitrary text built from patch-like fragments, so most inputs reach the
-// parser's header and body handling rather than failing the envelope check.
 const patchFragment = fc.oneof(
   fc.constantFrom(
     "*** Begin Patch",
@@ -249,7 +233,6 @@ const patchFragment = fc.oneof(
 
 const fragmentText = fc.array(patchFragment, { maxLength: 24 }).map((parts) => parts.join(""));
 
-// Half the inputs carry a valid envelope so the body parser is reached often.
 const patchLikeText = fc.oneof(
   fragmentText,
   fragmentText.map((body) =>
@@ -270,8 +253,6 @@ test("parsePatchActions fails only with DiffError", () => {
   );
 });
 
-// execute.ts locks touchedPatchPaths(), and context-preflight.ts resolves the
-// parser-reported path, so both must name that path resolved against cwd.
 test("the lock key for a parsed path is that path resolved against cwd", () => {
   fc.assert(
     fc.property(cleanPath, decoration, decoration, (value, inner, outer) => {
@@ -287,16 +268,12 @@ test("the lock key for a parsed path is that path resolved against cwd", () => {
   );
 });
 
-// Differential properties: the bundled Rust binary is the only applier, so it
-// is the reference for which file a header names.
 const BINARY = getBundledApplyPatchBinaryPath();
 const BINARY_SKIP = BINARY
   ? false
   : `no bundled apply_patch binary for ${process.platform}-${process.arch}`;
 const NATIVE_RUNS = { seed: 0x5eed_5a7c, numRuns: 40 };
 
-// Fragments around a required alphanumeric core, so every segment names a real
-// entry (never "", ".", or "..") and no header starts with "/".
 const segmentCore = fc.stringMatching(/^[A-Za-z0-9][A-Za-z0-9_-]{0,4}$/);
 const segmentFragment = fc.constantFrom(
   "@",
@@ -324,7 +301,6 @@ const headerSegment = fc
 const nativeHeader = fc
   .array(headerSegment, { minLength: 1, maxLength: 3 })
   .map((segments) => segments.join("/"));
-// Shapes that distinguish a stripping boundary from the binary's reading.
 const NATIVE_EXAMPLES: [string][] = [
   ["@0"],
   ['"@0"'],

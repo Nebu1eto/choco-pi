@@ -1,10 +1,3 @@
-/**
- * model-tiers.ts — Flagship-tier model list read from profile/model-fallbacks.json.
- *
- * The JSON mirrors profile/model-guidance.md. A missing or malformed file yields an
- * empty set so the tier guard fails open instead of blocking every spawn.
- */
-
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,7 +17,6 @@ const fallbacksValidator = compile(
   ),
 );
 
-/** packages/choco-pi-subagents/src -> profile/model-fallbacks.json */
 function defaultFallbacksPath(): string {
   return join(
     dirname(fileURLToPath(import.meta.url)),
@@ -36,7 +28,6 @@ function defaultFallbacksPath(): string {
   );
 }
 
-/** `openai/<id>` belongs to the tier of `openai-codex/<id>`. */
 export function normalizeTierModel(model: string): string {
   const trimmed = model.trim();
   return trimmed.startsWith("openai/")
@@ -57,7 +48,6 @@ async function readFlagship(path: string): Promise<ReadonlySet<string>> {
   }
 }
 
-/** Flagship model ids (normalized), cached per path for the process. */
 export function loadFlagshipModels(
   path: string = defaultFallbacksPath(),
 ): Promise<ReadonlySet<string>> {
@@ -83,10 +73,6 @@ async function readVariants(path: string): Promise<ReadonlyMap<string, string>> 
   }
 }
 
-/**
- * `preferWhenAvailable` from model-fallbacks.json: `provider/id` -> the same
- * model behind an access program. Cached per path; fails open to no variants.
- */
 export function loadPreferredVariants(
   path: string = defaultFallbacksPath(),
 ): Promise<ReadonlyMap<string, string>> {
@@ -110,15 +96,6 @@ export interface VariantRegistry<M extends ModelRef> {
 
 export type VariantChoice<M extends ModelRef> = { model: M; replaced?: string };
 
-/**
- * The access-program variant of `model` when the account can use it, else
- * `model`. Availability comes from the registry, whose Anthropic entitlement
- * filter hides Mythos until the account's `GET /v1/models` lists it, so an
- * unverified or denied account keeps the original. `inScope` keeps a variant
- * the user's model allowlist excludes from being chosen. A variant on another
- * provider is ignored: entitlement belongs to the provider account, and
- * provider-keyed availability checks run on the original model.
- */
 export function chooseVariant<M extends ModelRef>(
   model: M,
   variants: ReadonlyMap<string, string>,
@@ -142,7 +119,6 @@ export function chooseVariant<M extends ModelRef>(
   return { model: variant, replaced: key };
 }
 
-/** Result-note line for a variant choice; empty when nothing changed. */
 export function variantNote(choice: VariantChoice<ModelRef>): string {
   if (choice.replaced === undefined) return "";
   return (

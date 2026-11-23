@@ -351,7 +351,6 @@ function observeProviderEvents<TApi extends Api>(
       try {
         await observer(structuredClone(event), capturedModel);
       } catch {
-        // An advisory observer cannot corrupt provider-owned events or fail foreground generation.
         signal?.throwIfAborted();
       }
       signal?.throwIfAborted();
@@ -370,7 +369,6 @@ export async function processMappedCodexResponsesStream<TApi extends Api>(
   const events = observeProviderEvents(sourceEvents, model, options);
   await processResponsesStream(
     // SAFETY: mapCodexEvents validates the discriminator and normalizes Codex terminal events to
-    // the Responses event names consumed by processResponsesStream before this adapter runs.
     events as AsyncIterable<never>,
     output,
     stream,

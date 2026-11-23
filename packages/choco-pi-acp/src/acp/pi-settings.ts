@@ -17,8 +17,6 @@ function readJsonFile(path: string): BoundaryRecord {
   try {
     if (!existsSync(path)) return {};
     const raw = readFileSync(path, "utf-8");
-    // `parseJsonLine` reports malformed settings JSON as undefined, which fails the
-    // record check below and yields the same empty result as the legacy throw path.
     const data = parseJsonLine(raw);
     return isBoundaryRecord(data) ? data : {};
   } catch {
@@ -39,17 +37,12 @@ export function getAgentDir(): string {
   return resolve(piAgentDir(process.env));
 }
 
-/**
- * Mirror pi settings semantics (global + project merge, project overrides global).
- * Only returns the bits we currently need.
- */
 export function getEnableSkillCommands(cwd: string): boolean {
   const merged = getMergedSettings(cwd);
 
   const direct = merged.enableSkillCommands;
   if (isBoolean(direct)) return direct;
 
-  // Back-compat: some versions used skills.enableSkillCommands
   const skills = merged.skills;
   const nested = isBoundaryRecord(skills) ? skills.enableSkillCommands : undefined;
   if (isBoolean(nested)) return nested;
@@ -57,11 +50,6 @@ export function getEnableSkillCommands(cwd: string): boolean {
   return true;
 }
 
-/**
- * Mirror pi's quietStartup setting: `true` or `"header"` (Pi 1.0.4+) hide Pi's startup
- * details (loaded context, skills, extensions). The adapter's startup info is that detail
- * block, so both values suppress it; any other value, including `false`, keeps it.
- */
 export function getQuietStartup(cwd: string): boolean {
   const merged = getMergedSettings(cwd);
 
@@ -69,7 +57,6 @@ export function getQuietStartup(cwd: string): boolean {
   if (direct === "header") return true;
   if (isBoolean(direct)) return direct;
 
-  // Back-compat: some versions used quietStart
   const legacy = merged.quietStart;
   if (isBoolean(legacy)) return legacy;
 

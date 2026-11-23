@@ -213,7 +213,6 @@ export function normalizeColors(record: BoundaryRecord): Partial<PolishedTuiConf
   });
 }
 
-/** Clamp hashLength to Git's valid abbreviation range [4, 40]. */
 export function normalizeGitHashLength(value: BoundaryValue): number {
   const parsed = isNumber(value) ? value : Number(value);
   if (!Number.isFinite(parsed)) return defaultConfig.gitCommit.hashLength;

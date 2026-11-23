@@ -1,7 +1,3 @@
-// Structural equality of JSON-shaped values, replacing TypeBox `Value.Equal`.
-// Arrays compare in order, objects by own enumerable keys regardless of order,
-// primitives by `===` (so NaN differs from itself and +0 equals -0, as before).
-
 import type { RuntimeValue } from "../guards.ts";
 
 function isObjectValue(value: RuntimeValue): value is {} {

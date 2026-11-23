@@ -68,7 +68,6 @@ const output = (callId: string): ResponsesInputItem => ({
   output: `result-${callId}`,
 });
 
-/** N completed turns: user, tool call/output, assistant reply. */
 function turns(count: number): ResponsesInputItem[] {
   return Array.from({ length: count }, (_, index) => [
     user(`turn ${index}`),
@@ -92,7 +91,6 @@ function requestBody(input: ResponsesInputItem[]): ResponsesBody {
   };
 }
 
-/** Records a latest request (history plus a new user turn) and its response items. */
 function recordState(
   history: ResponsesInputItem[],
   responseItems: ResponsesInputItem[],
@@ -109,7 +107,6 @@ function recordState(
   return { input, materialized: [...input, ...responseItems] };
 }
 
-/** Re-serialize as the frozen-cut hook would: fresh objects, no shared identity. */
 function serialized(items: readonly ResponsesInputItem[]): ResponsesInputItem[] {
   return items.map((item) => structuredClone(item));
 }
@@ -128,7 +125,6 @@ const latestResponse = [call("latest-call"), output("latest-call"), assistant("l
 test("a cut k turns before the latest response is captured as the canonical prefix", () => {
   const history = turns(6);
   const { materialized } = recordState(history, latestResponse);
-  // Cut ends two turns before the latest request: 4 completed turns.
   const cutLength = 4 * 4;
   const result = capture(serialized(materialized.slice(0, cutLength)));
   assert.ok(result.ok, result.ok ? "" : `refused: ${result.refusal}`);
@@ -156,7 +152,6 @@ test("a cut inside the latest request, before its response, is accepted", () => 
   const result = capture(serialized(input));
   assert.ok(result.ok, result.ok ? "" : `refused: ${result.refusal}`);
   assert.deepEqual(result.capture.body.input, input);
-  // Partway into the latest response, on a closed tool group.
   const partial = materialized.slice(0, input.length + 2);
   const inResponse = capture(serialized(partial));
   assert.ok(inResponse.ok, inResponse.ok ? "" : `refused: ${inResponse.refusal}`);
@@ -166,7 +161,6 @@ test("a cut inside the latest request, before its response, is accepted", () => 
 test("the captured input is the canonical items, not the re-serialized ones", () => {
   const { materialized } = recordState(turns(3), latestResponse);
   const prepared = serialized(materialized.slice(0, 4));
-  // Equality ignores passthrough metadata; the canonical item must win byte-for-byte.
   assert.deepEqual(materialized[3], assistant("msg-0", "reply 0"));
   prepared[3] = {
     type: "message",
@@ -201,7 +195,6 @@ test("a prefix that diverges from the canonical items is refused", () => {
   const responseDiverged = serialized(materialized.slice(0, input.length + 2));
   responseDiverged[input.length] = call("other-call");
   assert.deepEqual(capture(responseDiverged), { ok: false, refusal: "response_prefix_mismatch" });
-  // A cut that skips an item misaligns every later index.
   const skipped = serialized([...materialized.slice(0, 3), ...materialized.slice(4, 8)]);
   assert.deepEqual(capture(skipped), { ok: false, refusal: "request_prefix_mismatch" });
 });
@@ -242,7 +235,6 @@ test("a full-baseline cut keeps the foreground replay, including trailing items"
 
 test("a prefix ending inside an open function_call group is captured but never prepared", async () => {
   const { materialized } = recordState(turns(3), latestResponse);
-  // Ends right after turn 1's function_call, before its output.
   const openCut = serialized(materialized.slice(0, 6));
   const result = capture(openCut);
   assert.ok(result.ok, result.ok ? "" : `refused: ${result.refusal}`);

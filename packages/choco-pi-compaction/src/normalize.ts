@@ -1,6 +1,4 @@
-/** Text used for an empty "## Next Steps" section. */
 export const EMPTY_NEXT_STEPS = "None; awaiting a new request";
-/** Text used for an empty subsection under "## Progress". */
 export const EMPTY_SUBSECTION_ITEM = "- None";
 
 const REQUIRED_HEADINGS = [
@@ -26,17 +24,6 @@ function headingIndex(lines: readonly string[], heading: string): number {
   return lines.findIndex((line) => line.trim() === heading);
 }
 
-/**
- * Fill empty sections of a summary that already uses the host's headings.
- *
- * A model that has nothing to put under a heading often leaves it blank, and a
- * blank "In Progress" reads as missing information rather than as "nothing is
- * in progress". Filling those blanks states the absence explicitly.
- *
- * This is deliberately the only edit made here. It never adds, reorders, or
- * rewrites an item, and a summary that does not carry every host heading is
- * returned untouched, because there is then no reliable structure to edit.
- */
 export function normalizeSummary(summary: string): string {
   const lines = summary.split("\n");
   const missing = REQUIRED_HEADINGS.some((heading) => headingIndex(lines, heading) < 0);

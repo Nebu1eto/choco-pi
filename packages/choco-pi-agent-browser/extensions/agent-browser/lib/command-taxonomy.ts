@@ -403,7 +403,6 @@ export function isSessionTabPostCommandCorrectionExcludedCommand(
   return hasCommandCapability(command, "excludedFromPostCommandCorrection");
 }
 
-/** Upstream 0.33.2 record start swaps to a fresh active page before its already-active check, so even a failed start can replace the page; record restart navigates the current page only when a URL operand (any fourth token, mirroring upstream's positional slot) is present. */
 export function isRecordPageTransitionCommand(tokens: readonly string[]): boolean {
   if (tokens[0] !== "record") return false;
   if (tokens[1] === "start") return true;

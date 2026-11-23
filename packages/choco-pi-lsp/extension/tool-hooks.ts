@@ -1,9 +1,3 @@
-/**
- * tool_call and tool_result hooks.
- *
- * Extracted from `runtime-extension.ts` `activateExtension`; behavior is unchanged.
- */
-
 import { loadBootstrapClients } from "../clients/bootstrap.ts";
 import { resetLSPService } from "../clients/lsp/index.ts";
 import { codeModeMutationToolResults } from "../clients/code-mode-tool-results.ts";
@@ -15,7 +9,6 @@ import type { ExtensionActivation } from "./activation.ts";
 import { ensureLSPConfigInitialized } from "./process-state.ts";
 import { dbg, getStableSessionId } from "./shared.ts";
 
-/** Register tool_call and tool_result. */
 export function registerToolHooks(activation: ExtensionActivation): void {
   const {
     pi,
@@ -45,15 +38,11 @@ export function registerToolHooks(activation: ExtensionActivation): void {
     });
   });
 
-  // Real-time feedback on file writes/edits
-  // biome-ignore lint/suspicious/noExplicitAny: pi.on overload mismatch for tool_result event type
   // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
   (pi as any).on("tool_result", async (event: any, ctx: any) => {
     rememberOwnEventCtx(ctx);
     if (!activationState.lensEnabled) return;
     updateRuntimeIdentityFromCtx(ctx);
-    // Publish this turn's abort signal so the dispatch's linter/type-check
-    // child processes are killed if the agent is interrupted (#197 ctx.signal).
     setAmbientAbortSignal(ctx?.signal);
     const nestedMutations = codeModeMutationToolResults(
       event,
@@ -67,9 +56,6 @@ export function registerToolHooks(activation: ExtensionActivation): void {
       const nestedContent: Array<{ type: string; text?: string }> = [];
       let nestedIsError = false;
       for (const [index, dispatchEvent] of dispatchEvents.entries()) {
-        // Earliest possible marker for the edit pipeline: code mode emits the
-        // actual edit as a nested trace inside an outer `exec` result, so log
-        // each expanded mutation rather than inspecting only the outer event.
         if (dispatchEvent.toolName === "edit" || dispatchEvent.toolName === "write") {
           logLatency({
             type: "phase",
@@ -99,10 +85,6 @@ export function registerToolHooks(activation: ExtensionActivation): void {
             agentBehaviorClient.recordToolCall(toolName, filePath),
           // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
           formatBehaviorWarnings: (warnings) => agentBehaviorClient.formatWarnings(warnings as any),
-          // #791: tags any deferred-format record queued from this tool_result
-          // with the STABLE session id of the ctx that produced it, so a
-          // later agent_end can tell its own queued work apart from a
-          // concurrent in-process secondary session's.
           sessionId: getStableSessionId(ctx),
         });
         if (index === 0) {

@@ -1,22 +1,3 @@
-/**
- * Process-global registry of provider prompt token counters for background
- * compaction admission.
- *
- * A provider package registers a counter for its Pi provider id on extension
- * activation and unregisters it on `session_shutdown`; compaction looks the
- * counter up by the owner model's provider when it sizes a prompt, so it never
- * imports provider internals. The table lives on
- * `Symbol.for("choco-pi:compaction-token-counters/v1")` because every
- * extension loads through its own module instance; this module keeps no state
- * of its own.
- *
- * Slot protocol (v1), shared with providers that write the slot without
- * importing this package: the value is a `Map` from provider id to an array
- * of counters, newest registration last. A counter is an object with a
- * `countTokens(request)` method and an optional `optInEnv` string. A
- * registration appends its own counter object; its unregister removes that
- * exact object (never a newer one) and deletes an emptied provider entry.
- */
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 
 import {
@@ -34,11 +15,6 @@ import { compile } from "@earendil-works/pi-schema";
 
 export const COMPACTION_TOKEN_COUNTERS_SYMBOL = Symbol.for("choco-pi:compaction-token-counters/v1");
 
-/**
- * One count request. Compaction has already resolved the owner model's
- * request auth: `apiKey` is trimmed and non-empty, and `baseUrl` is the
- * registry's base URL or else the model's own.
- */
 export interface CompactionTokenCountRequest {
   readonly model: Model<Api>;
   readonly system: string;
@@ -51,12 +27,6 @@ export interface CompactionTokenCountRequest {
   readonly timeoutMs: number;
 }
 
-/**
- * A count, a failure, or a skip. A failure is reported as
- * `count-tokens: <code>[ <status>]`; `cache` overrides whether it suppresses
- * further requests for the model (by default `auth`, `malformed`, and an
- * `http` 5xx do). A skip leaves the prompt uncounted without a diagnostic.
- */
 export type CompactionTokenCountOutcome =
   | { readonly ok: true; readonly inputTokens: number }
   | {
@@ -68,12 +38,7 @@ export type CompactionTokenCountOutcome =
   | { readonly skipped: true };
 
 export interface CompactionTokenCounter {
-  /**
-   * Environment variable that must be `1` for this counter to run; read once
-   * when compaction creates its counter. Absent: always enabled.
-   */
   readonly optInEnv?: string;
-  /** Count the prompt; a throw is contained and reported as `count-tokens: error`. */
   countTokens(request: CompactionTokenCountRequest): Promise<CompactionTokenCountOutcome>;
 }
 
@@ -109,11 +74,6 @@ function counterTable(): CounterTable {
   return table;
 }
 
-/**
- * Register `counter` for owner models of `providerId`. The newest
- * registration answers; the returned unregister removes only this one, so an
- * older registration's cleanup never drops a newer one.
- */
 export function registerCompactionTokenCounter(
   providerId: string,
   counter: CompactionTokenCounter,
@@ -130,12 +90,10 @@ export function registerCompactionTokenCounter(
   };
 }
 
-/** The newest counter registered for `providerId`, if any. */
 export function registeredTokenCounter(providerId: string): CompactionTokenCounter | undefined {
   return counterTable().get(providerId)?.at(-1);
 }
 
-/** Opt-in variables of every registered counter (read when a compaction counter is created). */
 export function registeredOptInEnvs(): readonly string[] {
   const names = new Set<string>();
   for (const counters of counterTable().values()) {
@@ -146,7 +104,6 @@ export function registeredOptInEnvs(): readonly string[] {
 
 const isStatus = compile(finiteInt(0)).check;
 
-/** A counter's answer as compaction reads it; another module instance wrote it. */
 export function isTokenCountOutcome<T>(value: T): value is T & CompactionTokenCountOutcome {
   if (!isRecord(value)) return false;
   if (readProperty(value, "skipped") === true) return true;

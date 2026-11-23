@@ -21,7 +21,6 @@ export interface PreflightResult {
   baseline?: string;
 }
 
-/** Stable 1.6 patch releases, matching the package's `~1.6.0` SDK range. */
 function supportedPiVersion(version: string): boolean {
   return /^1\.6\.(0|[1-9]\d*)$/.test(version);
 }
@@ -87,7 +86,6 @@ export async function command(
 export async function socketBusy(socket: string): Promise<boolean> {
   return await new Promise((done) => {
     const client = connect(socket);
-    // A connect that neither succeeds nor fails means something holds the path: treat as busy.
     const timer = setTimeout(() => {
       client.destroy();
       done(true);
@@ -113,7 +111,6 @@ export async function preflight(options: {
   baseline?: string;
   requireBaseline: boolean;
   requestedWaivers: Map<GateName, string>;
-  /** Tier B: the dev helper app and its running daemon socket (never the main helper). */
   helper?: TierBHelper;
 }): Promise<PreflightResult> {
   const {
@@ -197,7 +194,6 @@ export async function preflight(options: {
       const app = helper.app;
       const signed = await command("codesign", ["--verify", "--strict", app]);
       if (signed.code !== 0) throw new GateError("HELPER_SIGNATURE", signed.stderr);
-      // The app must be built from the current checkout's Swift sources.
       const expected = await helperSourceHash("arm64", packagePath);
       const source = (await readFile(join(app, "Contents/Resources/source.sha256"), "utf8")).trim();
       if (source !== expected) throw new GateError("HELPER_PROVENANCE", "source hash mismatch");

@@ -22,11 +22,8 @@ export const ProfileMarkerSchema = obj({
     schema: lit(1),
     entryPrefix: lit("choco-pi:host-bridge"),
     statusKey: lit("choco-pi.host-bridge"),
-    // Optional so markers written before structured reports stay valid.
     reportStatusKey: opt(lit("choco-pi.report")),
   }),
-  // Names of the bundled packages this install offered; a reinstall adds only
-  // bundled packages missing here. Optional so earlier markers stay valid.
   bundledPackages: opt(arr(str())),
 });
 export type ProfileMarker = Static<typeof ProfileMarkerSchema>;
@@ -76,7 +73,6 @@ export async function launcherVersion(launcher: string): Promise<string | null> 
 }
 
 export async function resolvePiLauncher(override?: string): Promise<ProfileMarker["pi"]> {
-  // The standalone launcher names itself; otherwise search PATH for `pi`.
   const selected = override ?? (process.env.CHOCO_PI_LAUNCHER || undefined);
   if (selected !== undefined) {
     const launcher = path.resolve(selected);

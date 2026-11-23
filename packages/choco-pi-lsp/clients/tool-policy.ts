@@ -22,26 +22,6 @@ export interface FormatterPolicy {
   gate: ToolGate;
 }
 
-// Extension → formatter policy. This map, `FORMATTER_POLICY_BY_FILENAME`, and
-// `AUTO_INSTALLABLE_DEFAULT_FORMATTERS` are the inverse of the formatter
-// definitions in `clients/formatters.ts` (formatter → extensions). The two are
-// bound by `tests/clients/formatter-policy-consistency.test.ts` (#1135, the
-// #883/#209 single-source-of-truth class) so they cannot drift silently. All
-// three are re-exported (read-only intent) via a single `export {}` below —
-// deliberately NOT inline on these declarations, to keep the pre-existing,
-// structural lookup-table duplication out of the PR's "new code" (SonarCloud).
-//
-// Two deliberate #1135 decisions live in the entries below, documented here so
-// the rationale sits outside the duplicated run:
-//   - `.sass` offers ["biome", "prettier"] only — NOT oxfmt: oxfmt is absent
-//     from OXFMT_SUPPORTED_EXTENSIONS (oxfmt/prettier handle .css/.scss/.less,
-//     not the indented `.sass` syntax). It was previously hand-listed here,
-//     diverging from the oxfmt definition (inert, because `matching` filtered
-//     it out); dropped to bind the two.
-//   - `.fish` intentionally has NO entry. `fish-indent` is a LINT runner
-//     (getLinterPolicyForFile), not a FormatterInfo — a formatter policy naming
-//     it was a dead, unsatisfiable entry; fish reformatting runs via the
-//     linter/autofix path. Removed to keep extension→formatter consistent.
 const FORMATTER_POLICY_BY_EXTENSION = new Map<string, FormatterPolicy>([
   [
     ".js",
@@ -172,7 +152,6 @@ const FORMATTER_POLICY_BY_EXTENSION = new Map<string, FormatterPolicy>([
   [
     ".sass",
     {
-      // #1135: no oxfmt (see map header comment).
       formatterNames: ["biome", "prettier"],
       defaultFormatter: "biome",
       defaultWhenUnconfigured: true,
@@ -229,8 +208,6 @@ const FORMATTER_POLICY_BY_EXTENSION = new Map<string, FormatterPolicy>([
     {
       formatterNames: ["prettier"],
       defaultFormatter: "prettier",
-      // Prettier's markdown defaults reflow lines, normalize emphasis (* -> _),
-      // and restyle lists. Opt-in via project prettier config; do not run by default.
       defaultWhenUnconfigured: false,
       gate: "smart-default",
     },
@@ -263,9 +240,6 @@ const FORMATTER_POLICY_BY_EXTENSION = new Map<string, FormatterPolicy>([
     },
   ],
   [
-    // ktfmt is offered alongside ktlint but only wins when the project opts in
-    // (hasExplicitFormatterConfig("ktfmt")); otherwise ktlint stays the
-    // smart-default. #129
     ".kt",
     {
       formatterNames: ["ktfmt", "ktlint"],
@@ -681,13 +655,6 @@ const FORMATTER_POLICY_BY_EXTENSION = new Map<string, FormatterPolicy>([
   ],
 ]);
 
-// oxfmt supports these extensions — registered as a candidate formatter for each.
-// Using a post-processing pass avoids repeating the same modification across
-// many map entries (and keeps SonarCloud's duplication gate happy).
-// This is the SINGLE SOURCE OF TRUTH for oxfmt's supported extensions — do not
-// hand-maintain a second copy; `clients/formatters.ts`'s `oxfmtFormatter.extensions`
-// imports and spreads this same Set (#1134; previously two parallel hand-maintained
-// lists, the #883 single-source-of-truth class).
 export const OXFMT_SUPPORTED_EXTENSIONS = new Set([
   ".js",
   ".jsx",
@@ -715,7 +682,6 @@ export const OXFMT_SUPPORTED_EXTENSIONS = new Set([
   ".toml",
 ]);
 
-// Add .vue entry (no prior formatter policy existed for this extension)
 FORMATTER_POLICY_BY_EXTENSION.set(".vue", {
   formatterNames: ["prettier"],
   defaultFormatter: "prettier",
@@ -723,16 +689,6 @@ FORMATTER_POLICY_BY_EXTENSION.set(".vue", {
   gate: "config-first",
 });
 
-// Add .svelte entry (no prior formatter policy existed for this extension —
-// docs/language-coverage.md previously listed no formatter). oxfmt is the only
-// candidate; the loop below appends it since ".svelte" is in
-// OXFMT_SUPPORTED_EXTENSIONS. Unlike the other oxfmt extensions, oxfmt's
-// .svelte support is conditional on more than "a config file exists" — see
-// `hasOxfmtSvelteConfig` below, gated in `formatters.ts`'s
-// `hasExplicitFormatterConfig` (verified empirically against the real oxfmt
-// npm binary; oxfmt exits non-zero on .svelte without BOTH the `svelte`
-// package installed and the config's `svelte` flag enabled — an unconditional
-// offer would guarantee a formatter failure, not a no-op).
 FORMATTER_POLICY_BY_EXTENSION.set(".svelte", {
   formatterNames: [],
   defaultFormatter: "oxfmt",
@@ -755,11 +711,6 @@ const AUTO_INSTALLABLE_DEFAULT_FORMATTERS = new Map<string, string>([
   ["ktlint", "ktlint"],
 ]);
 
-// `gate: "smart-default"` so a matched file is formatted only when nothing else
-// claims it. Misdetection edge: `root.hcl` is filename-detected as terragrunt, so
-// a non-terragrunt `root.hcl` gets smart-default formatted with `terragrunt hcl
-// fmt`'s generic HCL canonicalization — a soft outcome (canonical HCL, no config
-// semantics assumed), not a hard failure.
 const TERRAGRUNT_FORMATTER_POLICY: FormatterPolicy = {
   formatterNames: ["terragrunt-hcl"],
   defaultFormatter: "terragrunt-hcl",
@@ -771,10 +722,6 @@ const FORMATTER_POLICY_BY_FILENAME = new Map<string, FormatterPolicy>(
   TERRAGRUNT_FILENAMES.map((name) => [name, TERRAGRUNT_FORMATTER_POLICY]),
 );
 
-// Re-exported (read-only intent) for the #1135 drift guard. Kept as a single
-// separate statement — NOT inline on the declarations above — so the touched
-// lines don't fall at the head of the pre-existing lookup-table duplication and
-// get counted as new duplicated code. Bindings are live, so position is safe.
 export {
   AUTO_INSTALLABLE_DEFAULT_FORMATTERS,
   FORMATTER_POLICY_BY_EXTENSION,
@@ -813,7 +760,6 @@ export function getAutofixCapability(toolId: string): AutofixCapability | undefi
   return AUTOFIX_CAPABILITIES.get(toolId);
 }
 
-/** Tool ids declared as safe pipeline-autofix capable (for consistency guards). */
 export function listSafePipelineAutofixTools(): string[] {
   return [...AUTOFIX_CAPABILITIES.entries()]
     .filter(([, cap]) => cap.safePipelineAutofix)
@@ -886,14 +832,6 @@ export interface LinterPolicy {
   defaultRunner?: LintRunnerName;
   defaultWhenUnconfigured: boolean;
   gate: ToolGate;
-  /**
-   * Framework IDs that were detected for this project (via the cached
-   * `ProjectConventions` snapshot, populated by #118). Informational for
-   * downstream consumers — future PRs will use it to gate runner-specific
-   * rules (e.g. React-aware oxlint plugins, Next.js-specific tree-sitter
-   * rules). The field is undefined when no snapshot is available; consumers
-   * should treat undefined as "unknown" rather than "no frameworks".
-   */
   frameworkHints?: string[];
 }
 
@@ -904,7 +842,6 @@ export interface AutofixPolicy {
   defaultWhenUnconfigured: boolean;
   gate: ToolGate;
   safe: boolean;
-  /** Execution/deduplication boundary for mutating tools. */
   scope?: "file" | "cargo-project" | "dart-project";
 }
 
@@ -944,9 +881,6 @@ const AUTOFIX_CAPABILITIES = new Map<string, AutofixCapability>([
 ]);
 
 const TOOL_EXECUTION_POLICY = new Map<string, ToolExecutionPolicy>([
-  // Dispatch/LSP runners use the shared availability/install seam. These
-  // managed tools are missing-command repair candidates; probe failures still
-  // fail closed before this policy is consulted.
   ["pyright", { gate: "smart-default", autoInstall: true }],
   ["shellcheck", { gate: "smart-default", autoInstall: true }],
   ["shfmt", { gate: "smart-default", autoInstall: true }],
@@ -968,18 +902,9 @@ const TOOL_EXECUTION_POLICY = new Map<string, ToolExecutionPolicy>([
   ["helm", { gate: "smart-default", autoInstall: true }],
   ["htmlhint", { gate: "smart-default", autoInstall: true }],
   ["ktlint", { gate: "smart-default", autoInstall: true }],
-  // ktfmt is opt-in (a project's explicit formatting choice), so it only runs
-  // when its config marker is present — config-first, but auto-installable via
-  // the maven-JAR strategy once elected (#129).
   ["ktfmt", { gate: "config-first", autoInstall: true }],
   ["golangci-lint", { gate: "config-first", autoInstall: true }],
-  // SpotBugs is opt-in (lens-spotbugs flag) + config-first (needs a Java build
-  // descriptor + compiled .class files), auto-installed via the archive
-  // strategy when elected (#133).
   ["spotbugs", { gate: "config-first", autoInstall: true }],
-  // Opengrep is opt-in (lens-opengrep flag or a discovered rule file) and
-  // config-first, but auto-installable via the GitHub single-binary strategy
-  // once elected — no login/token required, unlike Semgrep (#111).
   ["opengrep", { gate: "config-first", autoInstall: true }],
   ["phpstan", { gate: "config-first", autoInstall: false }],
   ["eslint", { gate: "config-first", autoInstall: false }],
@@ -1187,8 +1112,6 @@ const YAMLLINT_CONFIGS = [
 ];
 
 const MARKDOWNLINT_CONFIGS = [
-  // markdownlint-cli2's built-in config names (keep this list in sync with
-  // the installed CLI's supported configuration file names).
   ".markdownlint-cli2.jsonc",
   ".markdownlint-cli2.yaml",
   ".markdownlint-cli2.yml",
@@ -1200,8 +1123,6 @@ const MARKDOWNLINT_CONFIGS = [
   ".markdownlint.yml",
   ".markdownlint.cjs",
   ".markdownlint.mjs",
-  // Retain the legacy detector name for compatibility with existing policy
-  // behavior, even though current markdownlint-cli2 versions do not prefer it.
   ".markdownlintrc",
 ];
 
@@ -1392,10 +1313,6 @@ export function getLinterPolicyForFile(
   }
 
   if ([".kt", ".kts"].includes(ext)) {
-    // When the project opts into ktfmt, ktfmt (a pure formatter wired as a safe
-    // autofix) owns Kotlin formatting; ktlint's lint steps aside so its style
-    // suggestions don't conflict with ktfmt's output. detekt's *semantic* lint
-    // still runs when configured. #129
     const preferredRunners: LintRunnerName[] = [];
     if (!context.hasKtfmtConfig) preferredRunners.push("ktlint");
     if (context.hasDetektConfig) preferredRunners.push("detekt");
@@ -1545,15 +1462,6 @@ export function getLinterPolicyForFile(
   return undefined;
 }
 
-/**
- * Returns the cached `ProjectConventions` for `cwd` if a project snapshot
- * exists, otherwise `undefined`. Reads from the snapshot file rather than
- * re-running the detector so the hot path (per-file dispatch) stays cheap.
- *
- * The snapshot is refreshed by `saveRuntimeProjectSnapshot` during the
- * normal runtime lifecycle, so consumers see a value updated at session-
- * start / project-seq bumps rather than on every read.
- */
 export function getCachedProjectConventions(cwd: string): ProjectConventions | undefined {
   const snapshot = loadProjectSnapshotWithoutWordIndex(cwd);
   return snapshot?.conventions;
@@ -1574,8 +1482,6 @@ export function getLinterPolicyForCwd(filePath: string, cwd: string): LinterPoli
     hasMypyConfig: hasMypyConfig(cwd),
     hasDetektConfig: hasDetektConfig(cwd),
     hasKtfmtConfig: hasKtfmtConfig(cwd),
-    // From the file's directory, not cwd: a `.tflint.hcl` in a terraform
-    // subdirectory is invisible to an upward walk that starts at the repo root.
     hasTflintConfig: hasTflintConfig(path.dirname(path.resolve(cwd, filePath))),
   };
   const policy = getLinterPolicyForFile(filePath, context);
@@ -1608,9 +1514,6 @@ export function getAutofixPolicyForFile(
   const ext = path.extname(filePath).toLowerCase();
 
   if ([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"].includes(ext)) {
-    // Mirror the JS/TS lint policy's precedence: eslint (config-first) →
-    // oxlint (config-first) → biome (smart-default). oxlint is config-gated so
-    // it never conflicts with the biome default.
     if (context.hasEslintConfig) {
       return {
         toolNames: ["eslint", "oxlint", "biome"],
@@ -1627,8 +1530,6 @@ export function getAutofixPolicyForFile(
         preferredTools: ["oxlint"],
         defaultTool: "oxlint",
         defaultWhenUnconfigured: false,
-        // Mirror the JS lint policy, which gates on eslint only (oxlint vs
-        // biome are both "smart-default" there).
         gate: "smart-default",
         safe: true,
       };
@@ -1713,8 +1614,6 @@ export function getAutofixPolicyForFile(
         safe: true,
       };
     }
-    // ktfmt is config-first and the project's explicit formatting choice, so it
-    // wins over both detekt and the ktlint smart-default when opted in (#129).
     if (context.hasKtfmtConfig) {
       return {
         toolNames: ["ktfmt", "detekt", "ktlint"],
@@ -1725,9 +1624,6 @@ export function getAutofixPolicyForFile(
         safe: true,
       };
     }
-    // detekt --auto-correct is config-first; with a detekt config present it
-    // wins over the ktlint smart-default (and is the autofix path on Windows,
-    // where ktlint's install is currently broken, #218).
     if (context.hasDetektConfig) {
       return {
         toolNames: ["detekt", "ktlint"],
@@ -1749,8 +1645,6 @@ export function getAutofixPolicyForFile(
   }
 
   if (ext === ".go") {
-    // golangci-lint run --fix is config-first: only apply when the project
-    // opted in with a .golangci.* config.
     return {
       toolNames: ["golangci-lint"],
       preferredTools: context.hasGolangciConfig ? ["golangci-lint"] : [],
@@ -1762,8 +1656,6 @@ export function getAutofixPolicyForFile(
   }
 
   if ([".md", ".mdx"].includes(ext)) {
-    // markdownlint --fix is a smart-default (deterministic MD### fixes run with
-    // built-in rules; config optional) — matches the markdownlint lint policy.
     return {
       toolNames: ["markdownlint"],
       preferredTools: ["markdownlint"],
@@ -1915,7 +1807,6 @@ export function hasOxfmtConfig(cwd: string): boolean {
           // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
           ...(pkg.devDependencies as Record<string, LspDictionaryValue> | undefined),
         };
-        // Published package is `oxfmt`; the scoped name does not exist on npm.
         if (deps["oxfmt"] || deps["@oxc-project/oxfmt"]) return true;
       } catch {}
     }
@@ -1923,41 +1814,9 @@ export function hasOxfmtConfig(cwd: string): boolean {
   return false;
 }
 
-// Empirically verified against the real `oxfmt` npm package (0.62.0), a
-// scratch fixture, and a plain `Component.svelte` — see PR body for the full
-// four-cell matrix. Both conditions are required; either alone always fails:
-//   - no `svelte` package, no config flag  -> exit 2 ("excluded by ignore rules")
-//   - no `svelte` package, config flag on  -> exit 2 ("Cannot find module 'svelte/compiler'")
-//   - `svelte` package installed, no flag  -> exit 2 ("excluded by ignore rules")
-//   - `svelte` package installed, flag on  -> exit 0, formats the file
-// Per https://oxc.rs/docs/guide/usage/formatter/language-support.html, oxfmt
-// also requires the npm-distributed binary (not the standalone GitHub-release
-// binary) for `.svelte` — choco-pi-lsp already resolves oxfmt via `findInNodeModules`/
-// `which`, which favors the npm-installed binary, so that requirement is not
-// separately re-checked here.
-//
-// Known limits of this line-match heuristic (#1134 P3 tail 1): it tolerates a
-// trailing `#`-comment after the value (`svelte = true  # enable`), but it is
-// NOT a real TOML parser — a `svelte = true` occurrence nested under a
-// `[table]` section, or one embedded inside a multi-line/triple-quoted string
-// value, would still match and false-positive. Both are considered acceptable
-// risk: an oxfmt.toml sectioning `svelte` under a table is not a realistic
-// config shape for this single top-level boolean key, and a false positive
-// here only causes oxfmt to be OFFERED (still gated by oxfmt actually running
-// and the `svelte` package check above), never a silent formatter failure.
 const OXFMT_SVELTE_TOML_TRUE = /(^|\n)\s*svelte\s*=\s*true\s*(\s*#.*)?(\r?\n|$)/;
 
 export function hasOxfmtSvelteConfig(cwd: string): boolean {
-  // Monorepo asymmetry (#1134 P3 tail 2): this dependency check stops at the
-  // NEAREST package.json (`hasNearestPackageJsonDependency`), while the
-  // config walk below (`walkUpDirs`) continues all the way to the repo root.
-  // A root-level `svelte` dependency combined with an oxfmt config at the
-  // root, but invoked with a sub-package `cwd` that has its own
-  // (svelte-less) package.json, under-offers oxfmt for that sub-package —
-  // the same nearest-vs-root-walk asymmetry as the `.tflint.hcl` note in
-  // `getLinterPolicyForCwd` above. This is untested/deliberately unfixed:
-  // failing to offer a valid formatter is safe (never mis-offers one that
-  // then fails at runtime), unlike the inverse.
   if (!hasNearestPackageJsonDependency(cwd, "svelte")) return false;
   for (const dir of walkUpDirs(cwd)) {
     const rcPath = path.join(dir, ".oxfmtrc.json");
@@ -1971,11 +1830,6 @@ export function hasOxfmtSvelteConfig(cwd: string): boolean {
         if (cfg.svelte === true) return true;
       } catch {}
     }
-    // oxfmt.toml is TOML; choco-pi-lsp has no TOML parser dependency, so this is
-    // a targeted line match for the single boolean key rather than a full
-    // parse (same pragmatic style as hasVitePlusConfig's content.includes
-    // check above) — presence of the file alone is NOT sufficient, since a
-    // TOML config can omit `svelte` or set it false.
     const tomlPath = path.join(dir, "oxfmt.toml");
     if (fs.existsSync(tomlPath)) {
       try {
@@ -2172,20 +2026,6 @@ export function hasRuffConfig(cwd: string): boolean {
   return false;
 }
 
-/**
- * Shared config-args seam for the markdownlint lint AND autofix surfaces
- * (#1247). The lint runner (`markdownlint.ts`) and the autofix path
- * (`pipeline.ts` `tryMarkdownlintFix`) MUST both consume this builder so the
- * package-owned sensible-defaults config (`config/markdownlint/core.json`) can
- * never drift apart from the bare `--fix` invocation again.
- */
-/**
- * Shared fallback shape for the config-args builders (#1247): when the
- * project has its own config the lint/autofix surfaces pass NO args (the
- * tool discovers it); otherwise both surfaces point at the package-owned
- * fallback so the tool never silently runs its default ruleset. One shape
- * here means the per-tool builders cannot drift from each other.
- */
 function configArgsWithFallback(
   hasConfig: boolean,
   toolArgs: string[],
@@ -2202,29 +2042,11 @@ export function markdownlintConfigArgs(cwd: string): string[] {
   );
 }
 
-/**
- * Shared config-args seam for the ruff lint AND autofix surfaces (#1247).
- * The lint runner (`ruff.ts`) and `ruffClient.fixFileAsync` MUST both consume
- * this builder so `config/ruff/core.toml` applies on `--fix` too.
- */
 export function ruffConfigArgs(cwd: string): string[] {
   return configArgsWithFallback(hasRuffConfig(cwd), ["--config"], "config/ruff/core.toml");
 }
 
-/**
- * Shared config-args seam for the biome lint AND autofix surfaces (#1247).
- * The lint runner (`biome-check.ts`) and `biomeClient.fixFileAsync` MUST both
- * consume this builder so the user's `biome.json(c)` — or the package-owned
- * `config/biome/core.jsonc` fallback — applies on `lint --write` too.
- */
 export function biomeConfigArgs(cwd: string): string[] {
-  // A project config wins outright (#1731, discipline A): passing
-  // `--config-path` even when the project ships `biome.json(c)` pinned
-  // biome's config resolution to that ONE file, so a monorepo package
-  // underneath `cwd` with its own `biome.json` never got to extend/override
-  // the root config the way biome's own nested-config resolution allows. No
-  // flag at all lets biome discover it unaided, exactly like the ruff/
-  // markdownlint fallbacks above skip `--config` under the same condition.
   if (getBiomeConfigPath(cwd)) return [];
   return ["--config-path=" + resolvePackagePath(import.meta.url, "config/biome/core.jsonc")];
 }
@@ -2233,12 +2055,6 @@ export function hasGolangciConfig(cwd: string): boolean {
   return findNearestContaining(cwd, GOLANGCI_CONFIGS) !== undefined;
 }
 
-// tflint ships built-in rules and runs without config, so `.tflint.hcl` is not
-// a prerequisite — it is the project electing tflint as its terraform linter,
-// which promotes the policy from smart-default to config-first. Takes a start
-// directory rather than the project cwd because tflint resolves config
-// per-directory: callers pass the EDITED FILE's directory so this agrees with
-// what the runner will actually hand tflint via `--config`.
 export function hasTflintConfig(startDir: string): boolean {
   return findNearestContaining(startDir, [".tflint.hcl"]) !== undefined;
 }
@@ -2260,8 +2076,6 @@ export function hasOcamlformatConfig(cwd: string): boolean {
 }
 
 export function hasGoogleJavaFormatConfig(cwd: string): boolean {
-  // google-java-format has no standard config file — gate on .editorconfig
-  // with indent_size defined (common Java project signal) or explicit opt-in marker.
   return findNearestContaining(cwd, [".google-java-format", ".editorconfig"]) !== undefined;
 }
 
@@ -2283,26 +2097,11 @@ export function hasCmakeFormatConfig(cwd: string): boolean {
   );
 }
 
-// PSScriptAnalyzerSettings.psd1 is the conventional settings file PowerShell
-// projects use to configure `Invoke-Formatter`/`Invoke-ScriptAnalyzer` (passed
-// via `-Settings`); `ScriptAnalyzerSettings.psd1` is the same convention minus
-// the "PS" prefix and shows up in some repos too. Either one opting a project
-// into explicit PSScriptAnalyzer config is enough to select the formatter
-// (#1572 — `psscriptanalyzer-format` had no case here at all, so it could
-// never be selected regardless of project config).
 const PSSCRIPTANALYZER_SETTINGS_FILES = [
   "PSScriptAnalyzerSettings.psd1",
   "ScriptAnalyzerSettings.psd1",
 ];
 
-/**
- * The nearest PSScriptAnalyzer settings file's full path, or `undefined`.
- * `formatters.ts`'s `resolveCommand` passes this straight to
- * `Invoke-Formatter -Settings` (#1572 review F2) — gating on the file's
- * PRESENCE without ever reading its RULES would run the project's file
- * through the stock `CodeFormatting` ruleset regardless of what it declared,
- * the same stock-style imposition #1144 banned for the other formatters.
- */
 export function findPSScriptAnalyzerConfigPath(cwd: string): string | undefined {
   for (const dir of walkUpDirs(cwd)) {
     for (const name of PSSCRIPTANALYZER_SETTINGS_FILES) {
@@ -2317,15 +2116,6 @@ export function hasPSScriptAnalyzerConfig(cwd: string): boolean {
   return findPSScriptAnalyzerConfigPath(cwd) !== undefined;
 }
 
-// #1595 sweep — 7 of the 8 formatters #1572 left unreachable (038cd1df flipped
-// defaultWhenUnconfigured to false for these without adding an explicit-config
-// check; see EXPLICIT_FORMATTER_CONFIG_CHECKS in formatters.ts). nixfmt is the
-// 8th and stays unreachable: it is deliberately unconfigurable (no rc file,
-// no CLI flag surface) and has no project-level manifest marker analogous to
-// `terraform init`'s lock file, so there is no honest "explicit opt-in" signal
-// to gate on — see the KNOWN_UNREACHABLE_FORMATTERS comment in
-// formatter-policy-consistency.test.ts.
-
 export function hasCsharpierConfig(cwd: string): boolean {
   return (
     findNearestContaining(cwd, [
@@ -2337,9 +2127,6 @@ export function hasCsharpierConfig(cwd: string): boolean {
   );
 }
 
-// Ormolu has no general settings file, but it does read a project `.ormolu`
-// file for custom operator fixity declarations (the only file-based config
-// surface Ormolu supports) — real, if narrow, per its own docs.
 export function hasOrmoluConfig(cwd: string): boolean {
   return findNearestContaining(cwd, [".ormolu"]) !== undefined;
 }
@@ -2348,13 +2135,6 @@ export function hasTaploConfig(cwd: string): boolean {
   return findNearestContaining(cwd, ["taplo.toml", ".taplo.toml"]) !== undefined;
 }
 
-// `terraform fmt` itself is deliberately unconfigurable (no rc file, no
-// per-project options — HashiCorp's own docs call this out). The nearest
-// thing to an explicit per-project opt-in is `.terraform.lock.hcl`, written
-// only by `terraform init`: it marks a directory the user has deliberately
-// set up as a Terraform root, as opposed to a stray `.tf`/`.tfvars` file
-// dropped into an unrelated repo. A manifest marker, per #1595's own guidance
-// for formatters with no dedicated config-file convention.
 export function hasTerraformConfig(cwd: string): boolean {
   return findNearestContaining(cwd, [".terraform.lock.hcl"]) !== undefined;
 }
@@ -2363,16 +2143,10 @@ export function hasSwiftformatConfig(cwd: string): boolean {
   return findNearestContaining(cwd, [".swiftformat"]) !== undefined;
 }
 
-// Fantomas has no dedicated rc file; its documented config surface is
-// `.editorconfig` (fsharp_*-prefixed keys) or a `.fantomasignore` file (the
-// one Fantomas-specific marker it does ship). Mirrors hasGoogleJavaFormatConfig's
-// precedent for formatters whose only config surface is .editorconfig.
 export function hasFantomasConfig(cwd: string): boolean {
   return findNearestContaining(cwd, [".fantomasignore", ".editorconfig"]) !== undefined;
 }
 
-// `.formatter.exs` is THE convention `mix format` reads project config from
-// (inputs, line_length, plugins) — universal in Elixir projects that use it.
 export function hasMixFormatConfig(cwd: string): boolean {
   return findNearestContaining(cwd, [".formatter.exs"]) !== undefined;
 }
@@ -2395,9 +2169,6 @@ export function hasDetektConfig(cwd: string): boolean {
   return false;
 }
 
-// ktfmt has no native config file format; these are choco-pi-lsp opt-in markers plus
-// the gradle-plugin signal, so a project that uses ktfmt elects it as its Kotlin
-// formatter instead of the ktlint smart-default (#129).
 const KTFMT_CONFIG_FILES = [".ktfmt", ".ktfmt.kts"];
 const KTFMT_GRADLE_FILES = [
   "build.gradle.kts",
@@ -2422,17 +2193,10 @@ interface SpotlessKotlinConfigCacheEntry {
 const spotlessKotlinConfigCache = new Map<string, SpotlessKotlinConfigCacheEntry>();
 let spotlessGradleReadCount = 0;
 
-/** Test-only observability for asserting the hot-path I/O bound. */
 export function _getSpotlessGradleReadCountForTests(): number {
   return spotlessGradleReadCount;
 }
 
-/**
- * Blank comments and quoted strings while preserving braces and newlines in
- * executable Gradle source. This is deliberately a small lexical pre-pass,
- * not a Groovy/Kotlin parser. In particular, statically disabled constructs
- * such as `if (false) { ktlint() }` remain a documented false-positive.
- */
 function stripGradleCommentsAndStrings(source: string): string {
   let result = "";
   let state: "code" | "line-comment" | "block-comment" | "string" = "code";
@@ -2516,10 +2280,6 @@ function namedGradleBlockBodies(source: string, name: string): string[] {
 
 export type SpotlessKotlinFormatter = "ktlint" | "ktfmt";
 
-/**
- * Resolve the formatter elected by a Spotless `kotlin { ... }` block.
- * ktlint is the deterministic tie-break if a malformed project names both.
- */
 export function getSpotlessKotlinFormatter(cwd: string): SpotlessKotlinFormatter | undefined {
   for (const dir of walkUpDirs(cwd)) {
     for (const gradle of KOTLIN_GRADLE_FILES) {
@@ -2562,7 +2322,6 @@ export function hasKtfmtConfig(cwd: string): boolean {
       const p = path.join(dir, gradle);
       if (fs.existsSync(p)) {
         try {
-          // Match the gradle plugin id / artifact, not a stray substring.
           if (/ktfmt|com\.facebook\.ktfmt/i.test(fs.readFileSync(p, "utf-8"))) return true;
         } catch {}
       }
@@ -2571,8 +2330,6 @@ export function hasKtfmtConfig(cwd: string): boolean {
   return false;
 }
 
-// SpotBugs (#133) analyzes compiled bytecode, so it needs BOTH a Java build
-// descriptor AND a compiled-classes dir. These two helpers gate the runner.
 const JAVA_BUILD_DESCRIPTORS = [
   "pom.xml",
   "build.gradle",
@@ -2581,8 +2338,6 @@ const JAVA_BUILD_DESCRIPTORS = [
   "settings.gradle.kts",
 ];
 
-// Common compiled-output dirs: Maven (target/classes), Gradle (build/classes),
-// IntelliJ (out/production), Eclipse (bin/main).
 const COMPILED_CLASSES_DIRS = [
   path.join("target", "classes"),
   path.join("build", "classes"),
@@ -2597,7 +2352,6 @@ export function hasJavaBuildDescriptor(cwd: string): boolean {
   return false;
 }
 
-/** First existing compiled-classes dir at/above cwd, or undefined. */
 export function findCompiledClassesDir(cwd: string): string | undefined {
   for (const dir of walkUpDirs(cwd)) {
     for (const rel of COMPILED_CLASSES_DIRS) {
@@ -2663,9 +2417,6 @@ export function hasVitePlusConfig(cwd: string): boolean {
   return false;
 }
 
-// Per https://oxc.rs/docs/guide/usage/linter/config.html, oxlint auto-discovers
-// `.oxlintrc.json`, `.oxlintrc.jsonc`, `oxlint.config.ts`, and `oxlint.config.mts`
-// (in addition to the legacy `oxlint.json` name choco-pi-lsp already recognized).
 const OXLINT_CONFIGS = [
   ".oxlintrc.json",
   ".oxlintrc.jsonc",

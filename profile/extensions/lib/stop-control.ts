@@ -1,6 +1,3 @@
-// Root /stop coordinator: session-scoped epoch latch, payload contracts, notices and fences.
-// The channel names, registry key and notice wording are the interface shared with the
-// subagents, shells, goal and hooks participants; participants keep their own contract copies.
 import { randomUUID } from "node:crypto";
 import {
   arr,
@@ -31,7 +28,6 @@ export const STOP_SHELLS_CHANNEL = STOP_CONTROL_STOP_SHELLS_CHANNEL;
 export const STOP_REPORT_CHANNEL = STOP_CONTROL_REPORT_CHANNEL;
 export const STOP_ENTRY_TYPE = "choco-pi:stop-control";
 
-/** The codex broker protocol (literal on purpose: no import from the codex package). */
 export const CODE_MODE_PREFLIGHT_PROTOCOL = "@howaboua/pi-codex-conversion/code-mode-preflight/v1";
 export const CODE_MODE_PREFLIGHT_REQUEST = `${CODE_MODE_PREFLIGHT_PROTOCOL}/request`;
 export const CODE_MODE_PREFLIGHT_AVAILABLE = `${CODE_MODE_PREFLIGHT_PROTOCOL}/available`;
@@ -91,10 +87,6 @@ const isProtocolRequest = compile(ProtocolOnlySchema).check;
 
 export type StopEventPayload = RevokePayload | StopShellsPayload;
 
-// ---------------------------------------------------------------------------
-// Process registry
-// ---------------------------------------------------------------------------
-
 const OPEN_STATE: StopState = { epoch: 0, closed: false };
 
 interface StopRegistry {
@@ -124,7 +116,6 @@ function installRegistry(): void {
   registryInstalled = true;
 }
 
-/** Publish one root session's latch state; reopening wakes in-process holders. */
 export function publishStopState(rootSessionId: string, state: StopState): void {
   installRegistry();
   const previous = states.get(rootSessionId);
@@ -138,7 +129,6 @@ export function removeStopState(rootSessionId: string): void {
   states.delete(rootSessionId);
 }
 
-/** Local in-process signal: fires when a closed latch reopens (or a holder should re-check). */
 export function onStopReopen(listener: (rootSessionId: string) => void): () => void {
   reopenListeners.add(listener);
   return () => {
@@ -151,7 +141,6 @@ interface RegistryCandidate {
   state?: unknown;
 }
 
-/** Validate-by-shape read of the process registry; absent or malformed means open epoch 0. */
 export function readStopState(rootSessionId: string): StopState {
   const entry: unknown = Object.getOwnPropertyDescriptor(globalThis, STOP_REGISTRY_KEY)?.value;
   const candidate: RegistryCandidate = Object(entry);
@@ -177,7 +166,6 @@ interface ChildRegistryCandidate {
   isChildSessionId?: unknown;
 }
 
-/** True when the subagents registry says this session id is a live child session. */
 export function isRegisteredChildSession(sessionId: string): boolean {
   const entry: unknown = Object.getOwnPropertyDescriptor(globalThis, SUBAGENTS_MANAGER_KEY)?.value;
   const candidate: ChildRegistryCandidate = Object(entry);
@@ -188,17 +176,12 @@ export function isRegisteredChildSession(sessionId: string): boolean {
   return probe.call(candidate, sessionId) === true;
 }
 
-// ---------------------------------------------------------------------------
-// Persisted latch state
-// ---------------------------------------------------------------------------
-
 export interface BranchEntryView {
   type: string;
   customType?: string;
   data?: unknown;
 }
 
-/** Latest valid `choco-pi:stop-control` custom entry; invalid or absent means open epoch 0. */
 export function reconstructStopState(entries: readonly BranchEntryView[]): StopState {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
@@ -210,21 +193,15 @@ export function reconstructStopState(entries: readonly BranchEntryView[]): StopS
   return { ...OPEN_STATE };
 }
 
-/** `/stop` all: closed latch keeps its epoch (idempotent), an open latch advances and closes. */
 export function closedStateFor(state: StopState): StopState {
   return state.closed
     ? { epoch: state.epoch, closed: true }
     : { epoch: state.epoch + 1, closed: true };
 }
 
-/** `/resume-work`: advances the epoch and opens; undefined when work is not stopped. */
 export function reopenedStateFor(state: StopState): StopState | undefined {
   return state.closed ? { epoch: state.epoch + 1, closed: false } : undefined;
 }
-
-// ---------------------------------------------------------------------------
-// Command parsing
-// ---------------------------------------------------------------------------
 
 export type StopCommand = { kind: "all" } | { kind: "agent"; ref: string } | { kind: "usage" };
 
@@ -235,10 +212,6 @@ export function parseStopArguments(args: string): StopCommand {
   if (match?.[1]) return { kind: "agent", ref: match[1].trim() };
   return { kind: "usage" };
 }
-
-// ---------------------------------------------------------------------------
-// Tool fence
-// ---------------------------------------------------------------------------
 
 const INSPECTION_ALLOWLIST: ReadonlySet<string> = new Set([
   "read",
@@ -255,7 +228,6 @@ const INSPECTION_ALLOWLIST: ReadonlySet<string> = new Set([
 ]);
 const CODE_MODE_TOOLS: ReadonlySet<string> = new Set(["exec", "wait"]);
 
-/** Allowlist predicate; exec/wait pass only while a code-mode preflight registration is active. */
 export function isToolAllowedWhileStopped(
   toolName: string,
   options: { codeModeFenced: boolean },
@@ -293,10 +265,6 @@ export function fenceNestedToolCall(
   }
   return { block: true, reason: blockedReason(state.epoch) };
 }
-
-// ---------------------------------------------------------------------------
-// Code-mode preflight registration (literal codex protocol)
-// ---------------------------------------------------------------------------
 
 export interface PreflightCall {
   toolName: string;
@@ -384,14 +352,9 @@ export function registerStopPreflight(
   };
 }
 
-/** True when a value is a broker request; exported for fakes that emulate the codex broker. */
 export function isPreflightRequest(value: RuntimeValue): boolean {
   return isProtocolRequest(value);
 }
-
-// ---------------------------------------------------------------------------
-// Request tracking and notices
-// ---------------------------------------------------------------------------
 
 interface ParticipantRecord {
   phase: ParticipantReport["phase"];
@@ -428,7 +391,6 @@ export function createStopRequest(input: {
   };
 }
 
-/** Fold one validated report into the request; terminal phases never revert. */
 export function applyParticipantReport(request: StopRequest, report: ParticipantReport): void {
   let record = request.participants.get(report.participant);
   if (!record) {
@@ -461,14 +423,12 @@ export function subagentOwnerSessionIds(request: StopRequest): string[] {
   return request.participants.get("subagents")?.ownerSessionIds ?? [];
 }
 
-/** Owner ids for the shells stop: root first (all scope only), deduplicated. */
 export function shellOwnerSessionIds(request: StopRequest, rootSessionId: string): string[] {
   const owners = request.scope === "all" ? [rootSessionId] : [];
   for (const id of subagentOwnerSessionIds(request)) if (!owners.includes(id)) owners.push(id);
   return owners;
 }
 
-/** A synchronous subagents failure during an agent-scope revoke (unknown ref and similar). */
 export function agentScopeFailure(request: StopRequest): string | undefined {
   const record = request.participants.get("subagents");
   return record?.phase === "failed" ? record.failedDetail : undefined;
@@ -521,10 +481,6 @@ export function formatResumeNotice(epoch: number): string {
 export function formatHeldMessageNotice(fromSessionId: string): string {
   return `Session bridge: message from ${fromSessionId} held while this session is stopped; it will be delivered after /resume-work.`;
 }
-
-// ---------------------------------------------------------------------------
-// Controller (host-agnostic; the extension supplies the adapters)
-// ---------------------------------------------------------------------------
 
 export interface StopControlHost {
   events: PreflightEvents;

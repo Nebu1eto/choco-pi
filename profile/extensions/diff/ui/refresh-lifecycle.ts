@@ -1,4 +1,3 @@
-/** Refresh requests and automatic opening: when the pane opens by itself, and what happens when it cannot. */
 import type { RefreshReason } from "../../lib/changes/git/model.ts";
 import { sanitizeTerminalText } from "../../lib/changes/terminal-text.ts";
 import { isStaleContextError } from "../../lib/lifecycle.ts";
@@ -21,8 +20,6 @@ export function requestRefresh(pane: DiffPaneController, reason: RefreshReason):
   }
 }
 
-/* --------------------------------------------------- automatic opening */
-
 export function autoEligible(pane: DiffPaneController, session: Session): boolean {
   return (
     session.alive &&
@@ -44,11 +41,6 @@ export function autoHint(pane: DiffPaneController, session: Session, reason: str
   );
 }
 
-/**
- * After a tool call that may have changed files: read the session source
- * and dock the pane when it lists a change. Coalesces triggers that arrive
- * while a read runs into one more read.
- */
 export async function maybeAutoOpen(pane: DiffPaneController, session: Session): Promise<void> {
   if (session.prefsPending) {
     await session.prefsPending;
@@ -59,7 +51,6 @@ export async function maybeAutoOpen(pane: DiffPaneController, session: Session):
     session.autoCheck = "again";
     return;
   }
-  // Docking is impossible and the user was told once: reading git would change nothing.
   if (session.autoHinted && dockBlocker(pane, session) !== undefined) return;
   session.autoCheck = "running";
   try {
@@ -89,19 +80,12 @@ export async function maybeAutoOpen(pane: DiffPaneController, session: Session):
   }
 }
 
-/** Whether a trigger arrived during the last read; if so, the check reads once more. */
 export function rearmCheck(pane: DiffPaneController, session: Session): boolean {
   if (session.autoCheck !== "again") return false;
   session.autoCheck = "running";
   return true;
 }
 
-/**
- * Start the automatic opening check without anyone awaiting it. Any failure
- * (a git read, the TUI probe, docking into Pi's layout, a stale context)
- * turns automatic opening off for the rest of this session and is told once;
- * `/diff` still opens the pane by hand.
- */
 export function autoOpenInBackground(pane: DiffPaneController): void {
   const session = pane.current;
   if (!session) return;
@@ -110,18 +94,6 @@ export function autoOpenInBackground(pane: DiffPaneController): void {
   );
 }
 
-/**
- * A host contained a throw from the view (guard.ts). Never throws: it runs
- * in a microtask, where nothing above would catch it.
- *
- * Render: the pane closes (a failure that comes from the data repeats on
- * every frame, and a pane that cannot draw only takes room), focus returns
- * to the editor, the user is told once, and the pane does not open by
- * itself again in this session; `/diff` by hand tries again.
- * Input: focus returns to the editor and the failure is shown on the
- * pane's message line; the pane stays, and the toggle shortcut and
- * `/diff close` (handled here, not by the view) still close it.
- */
 export function paneFailed(
   pane: DiffPaneController,
   session: Session,
@@ -140,7 +112,6 @@ export function paneFailed(
     session.autoFailed = true;
     closePane(pane, session);
   } catch (failure) {
-    // Closing touched a stale or broken host; the notice below still says what happened.
     if (isStaleContextError(failure)) return;
   }
   if (kind !== "render") return;
@@ -151,12 +122,9 @@ export function paneFailed(
       ),
       "warning",
     );
-  } catch {
-    // A stale context: the session ended, nothing to tell.
-  }
+  } catch {}
 }
 
-/** Never throws: it is the last handler of the background check. */
 export function autoOpenFailed(
   pane: DiffPaneController,
   session: Session,
@@ -172,7 +140,5 @@ export function autoOpenFailed(
       ),
       "warning",
     );
-  } catch {
-    // A notice is the only place to say it; when that fails too, automatic opening just stays off.
-  }
+  } catch {}
 }

@@ -1,60 +1,4 @@
 #!/bin/sh
-# choco-pi: run the workspace-pinned Pi with the choco-pi profile, fully
-# separated from a user-installed pi (~/.pi is never used).
-#
-# Environment contract (set unconditionally before Pi starts):
-#   CHOCO_PI_HOME          absolute install home: $CHOCO_PI_HOME, else the parent
-#                          of the app when it holds install.json (or, after a
-#                          failed install, .install-provenance), else ~/.choco-pi
-#   CHOCO_PI_STANDALONE    1
-#   CHOCO_PI_LAUNCHER      real path of this script
-#   PI_CODING_AGENT_DIR    $CHOCO_PI_HOME/agent
-#   CHOCO_PI_LSP_HOME      $CHOCO_PI_HOME/lsp
-#   PI_ACP_PI_COMMAND      real path of this script
-#   CHOCO_PI_HOOKS_PI_BIN  real path of this script (choco-pi-hooks evaluators)
-#   CHOCO_PI_NODE          the qualifying Node (also under Bun: children that
-#                          need Node semantics run it)
-#   PI_SKIP_VERSION_CHECK  1 unless already set (Pi is pinned by the lockfile)
-# PATH is unchanged, except that the selected Node's directory is appended when
-# PATH has no node. Every other variable passes through untouched (REX_*,
-# PI_PROGRAM_STATUS, ...). No PI_* wildcard is ever used.
-#
-# Runtime of Pi itself, highest first: CHOCO_PI_RUNTIME (node|bun), the
-# "runtime" recorded in install.json (install.sh --runtime, choco-pi self
-# runtime), then node. Node stays required in both: installs, every "self"
-# verb and "self acp" run on Node. Bun: the recorded "bun_path", then
-# $CHOCO_PI_HOME/runtime/bun/bin/bun, then a PATH bun at least
-# bun_minimum_version of runtime-pins.txt. Bun selected but missing is an
-# error, never a silent fallback to Node. Bun runs with --no-env-file,
-# --no-install and the app's empty bunfig.toml, so a project's .env,
-# bunfig.toml preloads or Bun auto-install never reach Pi's process.
-#
-# Every PI_* variable Pi 1.6.0 reads (pi-coding-agent, pi-ai, pi-tui,
-# pi-agent-core dist), classified:
-#   unset (Pi state or Pi install location):
-#     PI_CODING_AGENT_SESSION_DIR  session storage directory
-#     PI_PACKAGE_DIR               Pi package/install directory override
-#     PI_MANAGED_INSTALL_ROOT      managed-install root used by `pi update`
-#     PI_SELF_UPDATE_COMMAND       command `pi update` runs to replace Pi
-#     PI_INSTALLER_API_BASE        installer endpoint of managed self-update
-#     PI_SESSION_FILE              session file a parent Pi exports to its tools
-#   set by the contract:
-#     PI_CODING_AGENT_DIR, PI_SKIP_VERSION_CHECK
-#   pass through (behavior toggles, endpoints, or a parent session's labels):
-#     PI_OFFLINE PI_TELEMETRY PI_EXPERIMENTAL PI_TIMING PI_STARTUP_BENCHMARK
-#     PI_CACHE_RETENTION PI_OAUTH_CALLBACK_HOST PI_RADIUS_GATEWAY
-#     PI_SHARE_VIEWER_URL PI_CODEMODE_MAX_WORKERS PI_CLIPBOARD_OSC52
-#     PI_CLEAR_ON_SHRINK PI_HARDWARE_CURSOR PI_HYPERLINKS PI_IMAGE_PROTOCOL
-#     PI_TRUE_COLOR PI_PROGRAM_STATUS PI_TUI_DEBUG PI_TUI_DEBUG_REDRAW
-#     PI_TUI_ESC_TIMEOUT PI_TUI_WRITE_LOG PI_SESSION_ID PI_MODEL PI_PROVIDER
-#     PI_REASONING_LEVEL PI_CODING_AGENT (Pi overwrites it itself)
-#   not environment reads (bundle constants): PI_BUNDLED_NODE PI_AI_VERSION
-#     PI_ATTRIBUTION PI_CLIENT PI_CLIENT_METADATA_DOCUMENTS PI_LOGO_* PI_BY_TWO
-#
-# Dispatch: "self <verb>" with a known verb is management; everything else
-# ends in a plain exec of node (or bun) on Pi's CLI, so the foreground process
-# is Pi itself (Rex and terminals see node with title "pi"). Keep it that way:
-# no subshell, pipeline, trap, "exec -a" or title change on that path.
 set -eu
 
 PI_CLI_RELATIVE=node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js
@@ -66,7 +10,6 @@ die() {
   exit 1
 }
 
-# manifest_value KEY: the string value of KEY in install.json, or empty.
 manifest_value() {
   [ -f "$home/install.json" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
@@ -80,8 +23,6 @@ manifest_value() {
   done <"$home/install.json"
 }
 
-# version_at_least ACTUAL MINIMUM: numeric x.y.z comparison; suffixes after
-# "-" or "+" are ignored.
 version_at_least() {
   actual=${1%%[-+]*}.0.0.0
   minimum=${2%%[-+]*}.0.0.0
@@ -98,7 +39,6 @@ version_at_least() {
   return 0
 }
 
-# pinned_bun_minimum: bun_minimum_version from the app's pins, or empty.
 pinned_bun_minimum() {
   [ -f "$APP/$PINS_RELATIVE" ] || return 0
   while read -r key value rest; do
@@ -109,7 +49,6 @@ pinned_bun_minimum() {
   done <"$APP/$PINS_RELATIVE"
 }
 
-# 1. Own real path, through symlinks.
 self=$0
 case $self in
   */*) ;;
@@ -135,7 +74,6 @@ bin_dir=$(cd -P -- "${self%/*}" && pwd -P) || die "cannot resolve ${self%/*}"
 LAUNCHER=$bin_dir/${self##*/}
 APP=${bin_dir%/*}
 
-# 2. Install home.
 if [ -n "${CHOCO_PI_HOME:-}" ]; then
   home=$CHOCO_PI_HOME
 elif [ -f "${APP%/*}/install.json" ] || [ -f "${APP%/*}/.install-provenance" ]; then
@@ -152,7 +90,6 @@ if [ -d "$home" ]; then
   home=$(cd -P -- "$home" && pwd -P) || die "cannot resolve $home"
 fi
 
-# 3. Node: recorded path, private runtime, then PATH node >= 24.
 NODE=
 recorded=$(manifest_value node_path)
 if [ -n "$recorded" ] && [ -x "$recorded" ]; then
@@ -174,7 +111,6 @@ if [ -z "$NODE" ]; then
   exit 1
 fi
 
-# 3b. Runtime of Pi: CHOCO_PI_RUNTIME, install.json, then node.
 if [ -n "${CHOCO_PI_RUNTIME:-}" ]; then
   runtime=$CHOCO_PI_RUNTIME
   runtime_source=env
@@ -208,7 +144,6 @@ if [ "$runtime" = bun ]; then
   fi
 fi
 
-# 4. Environment contract.
 CHOCO_PI_HOME=$home
 CHOCO_PI_STANDALONE=1
 CHOCO_PI_LAUNCHER=$LAUNCHER
@@ -226,7 +161,6 @@ if ! command -v node >/dev/null 2>&1; then
   export PATH
 fi
 
-# 5. Dispatch.
 if [ "$#" -ge 2 ] && [ "$1" = self ]; then
   case $2 in
     exec)
@@ -237,7 +171,6 @@ if [ "$#" -ge 2 ] && [ "$1" = self ]; then
       shift 2
       exec "$NODE" "$APP/packages/choco-pi-acp/bin/choco-pi-acp.ts" "$@" ;;
     setup | update | uninstall | env | runtime | help)
-      # The resolved runtime, for self env and self runtime.
       CHOCO_PI_RUNTIME=$runtime
       CHOCO_PI_RUNTIME_SOURCE=$runtime_source
       CHOCO_PI_BUN=$BUN
@@ -247,7 +180,6 @@ if [ "$#" -ge 2 ] && [ "$1" = self ]; then
 fi
 
 if [ ! -f "$home/agent/choco-pi/profile.json" ]; then
-  # --version alone needs no profile; self setup uses it to record the launcher.
   case "$#:${1:-}" in
     1:--version | 1:-v) ;;
     *) die "no choco-pi profile in $home/agent; run choco-pi self setup" ;;

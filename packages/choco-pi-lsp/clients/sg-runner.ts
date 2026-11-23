@@ -1,10 +1,3 @@
-/**
- * SgRunner - encapsulates ast-grep subprocess management
- *
- * Extracted from AstGrepClient to simplify the main client.
- * Handles: spawn, spawnSync, temp dir management, JSON parsing.
- */
-
 import { assignOptionalProperties } from "./optional-properties.ts";
 import { finite } from "./runtime-guards.ts";
 import { arr, compile, obj, str } from "@earendil-works/pi-schema";
@@ -32,17 +25,6 @@ type PrepareTempScanResultContract = {
   configFile: string;
 };
 
-/**
- * Build the `bash -c` argv that runs `cmd` with `allArgs` as POSITIONAL
- * parameters. The script is the constant `"$0" "$@"`, so bash re-emits the
- * command and every arg verbatim — no parameter expansion, no word-splitting.
- *
- * Two properties this guarantees, neither of which string-interpolation could:
- *  - ast-grep `$METAVAR` patterns reach the binary literally (not shell-expanded).
- *  - an environment-derived command path (PATH-resolved `ast-grep`/`sg`/`npx`)
- *    cannot inject shell — it's argv[0], never part of the script string
- *    (CodeQL js/shell-command-injection-from-environment).
- */
 export function buildBashRunArgs(cmd: string, allArgs: string[]): string[] {
   return ["-c", '"$0" "$@"', cmd, ...allArgs];
 }
@@ -69,9 +51,6 @@ export interface SgMatch {
   lines?: string;
   language?: string;
   replacement?: string;
-  // Present when the match came from a `scan` against a rule config (not a raw
-  // `run -p` pattern): the matched rule's id and its `severity`. Real fields of
-  // `sg scan --json` output.
   ruleId?: string;
   severity?: string;
   metaVariables?: {
@@ -104,7 +83,6 @@ export type SgFailureKind = "cli-failure" | "unavailable" | "timeout" | "aborted
 
 export interface SgExecutionOptions {
   signal?: AbortSignal;
-  /** Absolute wall-clock deadline shared by a multi-path search. */
   deadlineAt?: number;
 }
 
@@ -117,9 +95,6 @@ export interface SgRawResult {
   outputTruncated?: boolean;
 }
 
-/** Detailed result for generated-rule scans. An empty match list is only a
- * no-match when `failure` is absent; callers that need backwards compatibility
- * can continue using `tempScanAsync`, which returns just `matches`. */
 export interface SgScanResult {
   matches: SgMatch[];
   status: number | null;
@@ -128,16 +103,9 @@ export interface SgScanResult {
 }
 
 const DEFAULT_EXEC_TIMEOUT_MS = 30_000;
-/** Budget for a single `--version` candidate probe, ms. */
 const PROBE_TIMEOUT_MS = 5_000;
 const MAX_SG_OUTPUT_BYTES = 8 * 1024 * 1024;
 
-/**
- * Format metavariable captures for display below a match line.
- * Single captures: $VAR=x  $NAME=foo
- * Multi captures:  $$$ARGS=a,b,c
- * Returns undefined when there are no meaningful captures.
- */
 function formatMetaVarCaptures(mv: SgMatch["metaVariables"]): string | undefined {
   if (!mv) return undefined;
   const parts: string[] = [];
@@ -159,13 +127,6 @@ function formatMetaVarCaptures(mv: SgMatch["metaVariables"]): string | undefined
   return `  ${parts.join("  ")}`;
 }
 
-/**
- * Parse ast-grep `--json` stdout into a match array, or return `null` when the
- * text is not a match payload. ast-grep emits either a JSON array or (rarely) a
- * single object; both are normalized to an array. A JSON scalar/`null` is
- * rejected (returns `null`) so a hypothetical error-report scalar on stdout can
- * never be misread as a phantom match.
- */
 function tryParseSgMatches(stdout: string): SgMatch[] | null {
   try {
     const parsed = JSON.parse(stdout);
@@ -182,8 +143,6 @@ function tryParseNonZeroSgMatches(
   result: Pick<SpawnResult, "stdout" | "outputTruncated">,
 ): SgMatch[] | null {
   if (result.outputTruncated || !result.stdout.trim()) return null;
-  // Trimmed on purpose: a leading BOM survives JSON.parse's whitespace
-  // tolerance but String.trim() strips it (matches the pre-refactor guard).
   return tryParseSgMatches(result.stdout.trim());
 }
 
@@ -191,76 +150,21 @@ export class SgRunner {
   private log: (msg: string) => void;
   private sgPath: string | null = null;
   private sgArgsPrefix: string[] = [];
-  /**
-   * Availability memo, backed by the shared transient-aware latch (#1476).
-   *
-   * Before this, one failed sweep over every candidate — timeouts included —
-   * latched `false` for the life of the process AND ran a full auto-install
-   * first. A host stall during warm-up therefore both disabled ast-grep until
-   * restart and paid for an install nobody needed.
-   */
   private readonly availabilityLatch = createAvailabilityLatch();
-  /**
-   * At-most-one sweep in flight, via the shared primitive (#1753). One
-   * instance owns one question, so the key is a constant.
-   */
   private readonly ensureFlight = createSingleFlight<boolean>();
-  /**
-   * Whether a DIRECT candidate — one that would have been ast-grep itself —
-   * failed for a transient reason in the current sweep. Only these block the
-   * install: a slow `npx` says nothing about whether ast-grep is on this
-   * machine, and letting it block turned "ast-grep is genuinely absent on a
-   * slow host" into "ast-grep is never installed and npx is re-spawned every
-   * sweep, forever".
-   */
   private sweepSawTransient = false;
   private sweepTransientCause: AvailabilityCause = "probe-timeout";
-  /**
-   * The DIRECT candidates that were unreachable, in ask order (#1568).
-   *
-   * The sweep returns at the first candidate that answers, so at the moment of
-   * a win this is exactly the set of preferred tiers the winner did not beat on
-   * the merits. Fallbacks are excluded on purpose: `npx` is asked before the
-   * global-bin and platform-package tiers, and a slow `npx` says nothing about
-   * a winner that is a real binary.
-   *
-   * Basenames, because a candidate can be an absolute global-bin or
-   * platform-package path and this list is written to latency.log (#1568
-   * review F3).
-   */
   private sweepUnreachable: string[] = [];
-  /** A transient on the npx fallback: not evidence, but not nothing either. */
   private sweepFallbackTransient = false;
   private sweepFallbackCause: AvailabilityCause = "probe-timeout";
-  /** Host stall summed over every probe of the current sweep, ms. */
   private sweepHostStallMs = 0;
-  /**
-   * Candidates — direct or fallback — that this sweep probed and found
-   * DURABLY missing (real ENOENT/non-installable, not a stall) (#1593). The
-   * retained-arm fallback below only sees whether SOME candidate stalled; this
-   * list lets it also check whether the memoized winner itself is one of the
-   * candidates this very sweep just disproved, rather than re-serving a
-   * command that ENOENTed a moment ago because an unrelated sibling stalled.
-   */
   private sweepDurablyMissing: string[] = [];
 
   constructor(verbose = false) {
     this.log = verbose ? createSubsystemLogger("sg-runner") : () => {};
   }
 
-  /**
-   * Check if ast-grep CLI is available, auto-install if not.
-   *
-   * Re-entrancy safe: concurrent first-time callers share one flight, so
-   * probing/auto-install isn't duplicated across session-start tasks. The
-   * share and the clear-in-finally belong to `singleFlight` (#1753); this
-   * method owns only the latch short-circuit above it. The sweep-local
-   * bookkeeping `doEnsureAvailable` resets on entry is untouched — it is
-   * per-sweep state, not concurrency state.
-   */
   async ensureAvailable(): Promise<boolean> {
-    // Fast path: already decided. `read()` returns null when the last verdict
-    // was transient and its cooldown expired, which re-enters the sweep.
     const memo = this.availabilityLatch.read();
     if (memo !== null) return memo;
     return this.ensureFlight.run("ast-grep", () => this.doEnsureAvailable());
@@ -276,14 +180,9 @@ export class SgRunner {
     this.sweepHostStallMs = 0;
     this.sweepDurablyMissing = [];
 
-    // Step 1: PATH — canonical binary names + npx fallback.
-    // Prefer ast-grep over sg on Linux: /usr/bin/sg is util-linux, not ast-grep.
     const pathCommand = await this.probeCommandCandidates([
       { cmd: "ast-grep", argsPrefix: [] },
       { cmd: "sg", argsPrefix: [] },
-      // `npx --no -- ast-grep` starts a Node process before it can answer, so
-      // it is the candidate most likely to blow a 5 s budget on a cold or busy
-      // box. Marked a fallback so its timeout cannot veto the install.
       { cmd: "npx", argsPrefix: ["--no", "--", "ast-grep"], fallback: true },
     ]);
     if (pathCommand) {
@@ -293,10 +192,6 @@ export class SgRunner {
       return true;
     }
 
-    // Step 1b: any package manager's global bin dir (npm/pnpm/yarn/bun).
-    // Catches a `pnpm add -g @ast-grep/cli` shim whose bin dir is off PATH (so
-    // Step 1 misses) and which is a global — not a local node_modules platform
-    // package — so Step 2 misses it too (#375).
     for (const name of ["ast-grep", "sg"]) {
       const globalBin = await findGlobalBinary(name);
       if (globalBin && (await this.probeCommand(globalBin, []))) {
@@ -307,9 +202,6 @@ export class SgRunner {
       }
     }
 
-    // Step 2: platform-specific npm package binaries.
-    // Covers setups where @ast-grep/cli-{os}-{arch} is installed but the binary
-    // directory is not on PATH (common with pnpm, Yarn PnP, or isolated installs).
     const platformBinary = await this.probePlatformPackageBinary();
     if (platformBinary) {
       this.sgPath = platformBinary;
@@ -318,7 +210,6 @@ export class SgRunner {
       return true;
     }
 
-    // Step 3: Homebrew (macOS only).
     if (process.platform === "darwin") {
       const brewBinary = await this.probeHomebrew();
       if (brewBinary) {
@@ -329,24 +220,7 @@ export class SgRunner {
       }
     }
 
-    // A timeout on a DIRECT candidate means the machine answered, not the tool
-    // (#1476). Installing ast-grep because the host event loop stalled is a
-    // heavyweight reaction to a hiccup, and latching the result disabled the
-    // tool until restart. Retry the sweep later instead.
-    //
-    // The npx fallback is deliberately NOT part of this test. Gating the
-    // install on it regressed the very host this change targets: a slow box
-    // with no ast-grep timed out `npx --no -- ast-grep` every sweep, so the
-    // install below was never reached and the slow npx was re-spawned on each
-    // escalating retry instead — worse than the latch it replaced.
     if (this.sweepSawTransient) {
-      // Nothing answered, transiently, while we are still holding a command a
-      // previous provisional sweep proved working. Discarding it here would
-      // run #1476 backwards — a timeout erasing a positive result — and it
-      // would send the sweep on to Step 4 to install a tool that is already
-      // runnable. Keep the winner and re-arm the cooldown (#1568 review F1).
-      // #1593: a sibling tier stalling this sweep is not license to re-serve
-      // a winner that THIS SAME sweep just proved durably missing.
       if (
         this.availabilityLatch.isProvisional() &&
         this.sgPath &&
@@ -361,8 +235,6 @@ export class SgRunner {
       return this.noteUnavailable(startedAt, "transient", this.sweepTransientCause);
     }
 
-    // Step 4: install via the typed shared seam, then validate the returned
-    // absolute binary before publishing it.
     const { resolveManagedToolClient } = await import("./dispatch/runners/utils/runner-helpers.ts");
     const installed = await resolveManagedToolClient({
       toolId: "ast-grep",
@@ -379,17 +251,9 @@ export class SgRunner {
       return true;
     }
 
-    // The install failed AND the npx fallback never got a fair hearing, so
-    // "ast-grep is not installed" is not a fact yet. Expire the verdict.
     if (this.sweepFallbackTransient) {
       return this.noteUnavailable(startedAt, "transient", this.sweepFallbackCause);
     }
-    // #1500: ASSERTED, not derived — and justified, because every candidate
-    // probe answered "not found", so the absence is real. What the install did
-    // is recorded as evidence rather than folded into the verdict: it is the one
-    // fact separating "never installable here" from "the download failed", and
-    // from "no install was attempted at all" (auto-install off, trust denied,
-    // or an attempt already suppressed this session).
     const { getInstallAttempt } = await import("./installer/index.ts");
     return this.noteUnavailable(
       startedAt,
@@ -402,25 +266,6 @@ export class SgRunner {
     );
   }
 
-  /**
-   * Record a successful sweep, with one decision record.
-   *
-   * The win is latched for the session UNLESS a direct candidate ahead of it
-   * was unreachable (#1568). `sweepSawTransient` is set only by candidates the
-   * sweep already asked, and the sweep returns at the first one that answers,
-   * so at this point the flag means "a tier the winner is supposed to lose to
-   * never got a fair hearing". Latching that pinned the session to
-   * `npx --no -- ast-grep` — a Node start per invocation — over a healthy
-   * ast-grep on PATH, until the next restart. Provisional instead: served now,
-   * re-swept once the stalled tier's cooldown expires.
-   *
-   * The install arm cannot reach here provisionally: `doEnsureAvailable`
-   * returns before Step 4 whenever `sweepSawTransient` is set.
-   *
-   * `retained` marks the other provisional case (#1568 review F1): no candidate
-   * answered at all, and the winner being reported is the one the previous
-   * sweep found, kept rather than discarded on a timeout.
-   */
   private noteAvailable(
     startedAt: number,
     message: string,
@@ -452,25 +297,11 @@ export class SgRunner {
     });
   }
 
-  /**
-   * Record a failed sweep. A `transient` outcome expires after a bounded
-   * cooldown; anything else is remembered for the session, as before. The
-   * elapsed/stall numbers describe the WHOLE sweep, because the verdict is
-   * about the sweep rather than any single candidate — reporting zero here
-   * would erase the evidence that cracked #1467.
-   */
   private noteUnavailable(
     startedAt: number,
     outcome: "missing" | "transient",
     cause: AvailabilityCause,
     evidence?: ProbeEvidence,
-    /**
-     * How this arm reached its verdict. Per arm on purpose (#1500 review): the
-     * sweep's own transient/missing conclusions ARE derived from candidate
-     * probes, but the post-install assertion is not, and hardcoding `"probe"`
-     * here labelled an assertion as a derivation — the exact confusion the
-     * field was added to remove.
-     */
     classifiedBy: "probe" | "caller" = "probe",
   ): false {
     const retryAfterMs = this.availabilityLatch.noteUnavailable(outcome, cause);
@@ -490,15 +321,10 @@ export class SgRunner {
     return false;
   }
 
-  /**
-   * Probe platform-specific @ast-grep/cli-{os}-{arch} npm packages.
-   * These ship the binary at the package root (sg / sg.exe).
-   */
   private async probePlatformPackageBinary(): Promise<string | undefined> {
     const { platform, arch } = process;
     const exeName = platform === "win32" ? "sg.exe" : "sg";
 
-    // Map Node.js platform/arch to @ast-grep/cli package suffix.
     const pkgSuffixes: string[] = [];
     if (platform === "linux" && arch === "x64") pkgSuffixes.push("linux-x64-gnu");
     if (platform === "linux" && arch === "arm64") pkgSuffixes.push("linux-arm64-gnu");
@@ -507,7 +333,6 @@ export class SgRunner {
     if (platform === "win32" && arch === "x64") pkgSuffixes.push("win32-x64-msvc");
     if (platform === "win32" && arch === "arm64") pkgSuffixes.push("win32-arm64-msvc");
 
-    // Search roots: local node_modules and any parent node_modules directories.
     const searchRoots: string[] = [];
     let dir = process.cwd();
     for (let depth = 0; depth < 5; depth++) {
@@ -525,18 +350,12 @@ export class SgRunner {
           if (fs.existsSync(candidate) && (await this.probeCommand(candidate, []))) {
             return candidate;
           }
-        } catch {
-          // not found or not executable — try next
-        }
+        } catch {}
       }
     }
     return undefined;
   }
 
-  /**
-   * Probe Homebrew installation (macOS only).
-   * Runs `brew --prefix ast-grep` and checks the resulting bin directory.
-   */
   private async probeHomebrew(): Promise<string | undefined> {
     try {
       const result = await safeSpawnAsync("brew", ["--prefix", "ast-grep"], {
@@ -551,9 +370,7 @@ export class SgRunner {
           return candidate;
         }
       }
-    } catch {
-      // brew not installed or timed out
-    }
+    } catch {}
     return undefined;
   }
 
@@ -561,19 +378,11 @@ export class SgRunner {
     return /\bast[- ]grep\b/i.test(output);
   }
 
-  /**
-   * Probe one candidate. A failure is CLASSIFIED, not merely counted: a
-   * timeout/abort marks the whole sweep transient so the caller retries later
-   * instead of installing and latching. A command that answers but is not
-   * ast-grep (Linux `/usr/bin/sg` is util-linux) is a durable no.
-   */
   private async probeCommand(
     cmd: string,
     argsPrefix: string[],
     fallback = false,
   ): Promise<boolean> {
-    // Host-side budget: measure the loop stall that overlapped the window so
-    // the classifier can tell "the tool is slow" from "the host was busy".
     const sampler = startHostStallSampler();
     let result: Awaited<ReturnType<typeof safeSpawnAsync>>;
     let hostStallMs: number;
@@ -624,9 +433,6 @@ export class SgRunner {
     return undefined;
   }
 
-  /**
-   * Get the ast-grep command to use, plus any npx prefix arguments.
-   */
   private getSgCommand(): GetSgCommandResultContract {
     return {
       cmd: this.sgPath || "ast-grep",
@@ -705,12 +511,6 @@ export class SgRunner {
     );
   }
 
-  /**
-   * Run ast-grep asynchronously, return parsed matches. The Windows Git
-   * Bash/MSYS path deliberately remains positional-argument based, but the
-   * child itself now goes through safeSpawnAsync so cancellation, deadlines,
-   * tree-kill, and output caps are shared with every other CLI runner.
-   */
   async exec(args: string[], options: SgExecutionOptions = {}): Promise<SgResult> {
     const command = this.getSgCommand();
     const allArgs = [...command.argsPrefix, ...args];
@@ -745,12 +545,6 @@ export class SgRunner {
     if (result.status !== 0) {
       const stdout = result.stdout.trim();
       const stderr = result.stderr.trim();
-      // ast-grep's linter-style contract: a rule with `severity: error`
-      // that MATCHES exits 1 with valid JSON matches on stdout (stderr
-      // carries "Scan succeeded and found error level diagnostics"). An
-      // exit code that means "scan succeeded with findings" must never be
-      // classified as a CLI failure — parse the matches. Only fall through
-      // to failure when the JSON isn't parseable (a real diagnostic).
       if (result.status === 1 && stdout) {
         const matches = tryParseNonZeroSgMatches(result);
         if (matches) {
@@ -761,9 +555,6 @@ export class SgRunner {
           };
         }
       }
-      // ast-grep uses status 1 with no output for a genuine no-match in
-      // some CLI versions. Preserve that historical empty-result behavior;
-      // any stderr (including an invalid kind/YAML diagnostic) is a failure.
       if (result.status === 1 && !stdout && !stderr) return empty();
       return {
         ...empty(),
@@ -792,8 +583,6 @@ export class SgRunner {
       return { ...empty(), error: "Failed to parse output" };
     }
   }
-
-  // --- Shared helpers for temp-dir rule scans ---
 
   private prepareTempScan(ruleId: string, ruleYaml: string): PrepareTempScanResultContract {
     const sessionDir = path.join(os.tmpdir(), `choco-pi-lsp-temp-${ruleId}-${Date.now()}`);
@@ -827,20 +616,12 @@ export class SgRunner {
     if (result.status !== 0) {
       const stdout = result.stdout.trim();
       const stderr = result.stderr.trim();
-      // ast-grep's linter-style contract: a rule with `severity: error`
-      // that MATCHES exits 1 with valid JSON matches on stdout (stderr
-      // carries "Scan succeeded and found error level diagnostics"). An
-      // exit code that means "scan succeeded with findings" must never be
-      // classified as a CLI failure — parse the matches. Only fall through
-      // to failure when the JSON isn't parseable (a real diagnostic).
       if (result.status === 1 && stdout) {
         const matches = tryParseNonZeroSgMatches(result);
         if (matches) {
           return { matches, status: result.status };
         }
       }
-      // Preserve ast-grep's status-1/no-output no-match convention. A
-      // diagnostic on stderr is never treated as a no-match.
       if (result.status === 1 && !stdout && !stderr) {
         return { matches: [], status: result.status };
       }
@@ -904,7 +685,6 @@ export class SgRunner {
     }
   }
 
-  /** Backwards-compatible match-only wrapper for existing session scanners. */
   async tempScanAsync(
     dir: string,
     ruleId: string,
@@ -916,11 +696,6 @@ export class SgRunner {
     return result.matches;
   }
 
-  /**
-   * Run a rule scan with optional fix application.
-   * Dry-run: --json (returns matches for preview).
-   * Apply:   --update-all (writes fixes defined in the YAML `fix:` field).
-   */
   async tempScanWithFixAsync(
     dir: string,
     ruleId: string,
@@ -955,9 +730,6 @@ export class SgRunner {
           ? { matches: [], error: scan.error }
           : { matches: scan.matches };
       }
-      // Apply: capture matches BEFORE writing — once --update-all applies
-      // the fix the rule no longer matches, so a post-apply json pass would
-      // report zero even on a successful apply. Count first, then write.
       const jsonResult = await safeSpawnAsync(sgCmd, scanArgs, spawnOptions);
       const scan = this.interpretScanResult(jsonResult, ["scan"]);
       if (scan.failure || scan.error) {
@@ -992,9 +764,6 @@ export class SgRunner {
     }
   }
 
-  /**
-   * Format matches for display
-   */
   formatMatches(
     matches: SgMatch[],
     isDryRun = false,

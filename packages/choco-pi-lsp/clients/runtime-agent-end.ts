@@ -35,21 +35,12 @@ import {
   hasStylelintConfig,
 } from "./tool-policy.ts";
 
-/**
- * A queued file is claimed by any flush once it has sat unclaimed by its own
- * owning session for this long — recovery for an orphaned record whose
- * owner (e.g. a primary session that crashed mid-run) will never flush it
- * itself. Generous on purpose: normal same-session flushes never hit this
- * path at all (they match on `ownerSessionId`), so this only trades a little
- * extra staleness for guaranteed eventual formatting. (#791)
- */
 export const DEFERRED_FORMAT_STALE_AFTER_MS = 10 * 60_000;
 const DEFERRED_FORMAT_CONCURRENCY = 3;
 
 interface AgentEndDeps {
   ctxCwd?: string;
   getFlag: (name: string, filePath?: string) => boolean | string | undefined;
-  /** Optional: provenance for dbg/skip logs — see `PipelineContext["getFlagSource"]` (#792). */
   getFlagSource?: (name: string, filePath?: string) => PiLensFlagSource;
   notify: (msg: string, level: "info" | "warning" | "error") => void;
   dbg: (msg: string) => void;
@@ -59,14 +50,7 @@ interface AgentEndDeps {
   biomeClient?: BiomeClient;
   ruffClient?: RuffClient;
   getAutofixClients?: () => Promise<{ biomeClient: BiomeClient; ruffClient: RuffClient }>;
-  /**
-   * The STABLE pi session id for the ctx this `agent_end` fired on. Used to
-   * scope the deferred-format drain to records this session actually
-   * queued (#791) — omit (or leave `undefined`, e.g. in existing tests) to
-   * fall back to today's "claim everything" behavior.
-   */
   currentSessionId?: string;
-  /** Test/override hook for {@link DEFERRED_FORMAT_STALE_AFTER_MS}. */
   staleAfterMs?: number;
 }
 
@@ -119,10 +103,6 @@ export async function handleAgentEnd({
   currentSessionId,
   staleAfterMs = DEFERRED_FORMAT_STALE_AFTER_MS,
 }: AgentEndDeps): Promise<AgentEndFormatSummary | undefined> {
-  // #791: ownership-filtered drain — records queued by a DIFFERENT known
-  // session (e.g. a concurrent in-process secondary/subagent) stay queued
-  // for their owner's own agent_end, unless they've been stale long enough
-  // to fall back to "claim as orphaned" (see claimDeferredFormatFiles).
   const { claimed, staleClaimed, deferredToOwner, droppedOrphans } = runtime.claimDeferredMutations(
     currentSessionId,
     Date.now(),
@@ -131,13 +111,6 @@ export async function handleAgentEnd({
   );
   const records = [...claimed, ...staleClaimed];
   const requeuedKinds = new Set<"autofix" | "format">();
-  // S2d (gap 4, #1432 review): the aggregate `agent_end_deferred_mutation_drain`
-  // row only carried a coalesced `requeuedKinds` set with no reason, per-call
-  // file count, or tool provenance — every requeue (abort mid-drain, missing
-  // autofix clients, an autofix/format failure) collapsed into one
-  // indistinguishable bucket. Log one bounded record PER requeue call instead,
-  // so a real incident can tell "aborted with N files still queued" apart
-  // from "M files failed to format".
   const requeue = (
     pending: Parameters<RuntimeCoordinator["requeueDeferredMutations"]>[0],
     reason: "abort" | "autofix-failed" | "format-failed" | "clients-unavailable",
@@ -168,54 +141,17 @@ export async function handleAgentEnd({
     runtime.requeueDeferredMutations(pending);
   };
   const rootActionableAutofixEnabled = !!getFlag("lens-actionable-warning-autofix");
-  // The actionable-warnings cache is only ever written when the
-  // "lens-actionable-warnings" writer flag is on (clients/runtime-turn.ts).
-  // A reader that ignores this gate always misses in a host where the
-  // writer is off and logs "cache missing or expired" at every agent_end,
-  // misdirecting the debug log toward a bogus cache problem instead of the
-  // real cause: the feature that populates the cache is disabled (#1607).
   const actionableWarningsWriterEnabled = !!getFlag("lens-actionable-warnings");
-  // A path-aware source resolver signals that nested configs may re-enable
-  // actionable autofix even when the root default is off. Legacy/test hosts
-  // without that resolver keep the old fast exit and avoid a cache read.
   const inspectActionableReport =
     actionableWarningsWriterEnabled &&
     isFunction(cacheManager.readCache) &&
     (rootActionableAutofixEnabled || getFlagSource !== undefined);
   if (droppedOrphans.length > 0) {
-    // #1642 F3: a stale/foreign record whose origin (the cwd/worktree it
-    // was actually queued under) does NOT match this flush's own
-    // workspace/worktree is left queued and NEVER formatted by this
-    // flush — claiming it would be the same worktree→parent
-    // re-attribution the reported incident hit, just via the orphan
-    // fallback instead of tool_result's path resolution. It stays in
-    // `_pendingDeferredMutations` (not deleted) so a flush whose origin
-    // actually matches can still claim it later; a genuinely abandoned
-    // origin will keep surfacing this record on every subsequent
-    // agent_end, which is the deliberately safer trade-off over silently
-    // losing it forever.
     dbg(
       `agent_end deferred_format: left ${droppedOrphans.length} orphaned file(s) queued due to a mismatched origin (unclaimed >${staleAfterMs}ms, not formatted by this flush): ${droppedOrphans
         .map((r) => `${r.filePath} origin=${r.originCwd}`)
         .join(", ")}`,
     );
-    // #1678 item 1: a genuinely abandoned origin re-surfaces the SAME
-    // record on every subsequent agent_end for as long as the queued
-    // entry lives — by design (see the comment above), but the repo
-    // invariant is that a repeated degradation goes through the ledger's
-    // counting path instead of accumulating as unbounded raw log lines.
-    // The ledger is the single source of truth for whether THIS is a
-    // record's first appearance (its return value): the detailed forensic
-    // record below names only the orphans on that rising edge, with file
-    // identity/origin/age. Every later repeat of
-    // the same record is counted ONLY by the ledger's running count —
-    // no second raw event, no parallel "already logged" latch to
-    // maintain here.
-    // #1743: `admitBounded` IS that ledger call, plus the registry
-    // membership the bounded-telemetry sweep checks. This site admits PER
-    // ORPHAN and then writes ONE batched record naming the admitted ones,
-    // which is why it uses `admitBounded` directly instead of a per-record
-    // `emitBounded` — the per-call form would turn one log line into N.
     const firstSeenOrphans: typeof droppedOrphans = [];
     for (const record of droppedOrphans) {
       const isFirstOccurrence = admitBounded(
@@ -230,9 +166,6 @@ export async function handleAgentEnd({
       if (isFirstOccurrence) firstSeenOrphans.push(record);
     }
     if (firstSeenOrphans.length > 0) {
-      // Already admitted above, one orphan at a time — hence no bounding
-      // options here. The batch's own identity is the origin this flush ran
-      // under; per-file identity rides in `metadata.files`.
       emitBounded(
         "agent_end_deferred_format_orphan_origin_mismatch",
         ctxCwd ?? runtime.projectRoot,
@@ -296,10 +229,6 @@ export async function handleAgentEnd({
     failed: [],
     skipped: [],
   };
-  // #502 fix provenance: per-path {tool, kind} entries accumulated across the
-  // deferred-format loop below, passed as `fixes` on the batch
-  // publishFilesTouched call so consumers can tell "choco-pi-lsp formatted this"
-  // from an agent edit.
   const deferredFormatFixes: Array<{
     path: string;
     tool: string;
@@ -312,8 +241,6 @@ export async function handleAgentEnd({
   }> = [];
   const deferredAutofixChanged = new Set<string>();
 
-  // Mutation ordering is intentional: lint --write may disturb wrapping, so
-  // autofix reaches the final edited state first and formatting stabilizes it.
   const ambientSignal = getAmbientAbortSignal();
   const executedAutofixScopes = new Set<string>();
   const autofixRecords = records.filter((candidate) => candidate.kinds.has("autofix"));
@@ -427,9 +354,6 @@ export async function handleAgentEnd({
     metadata: {
       fileCount: records.length,
       currentSessionId,
-      // #791: per-record provenance so a future incident can be diagnosed
-      // straight from latency.log — which session/turn queued each file,
-      // and whether it was claimed via the staleness fallback.
       records: records.map((r) => ({
         filePath: r.filePath,
         queuedTurnIndex: r.queuedTurnIndex,
@@ -439,9 +363,6 @@ export async function handleAgentEnd({
       deferredToOwnerCount: deferredToOwner.length,
     },
   });
-  // #673: same moment as the latency phase above — a same-process listener
-  // (e.g. a review/snapshot controller) can use this to know the deferred-
-  // format phase is starting and these specific paths may still be mutated.
   if (records.length > 0) {
     publishFormatStart({
       cwd: ctxCwd ?? runtime.projectRoot,
@@ -469,9 +390,6 @@ export async function handleAgentEnd({
     });
 
   if (formatRecords.length > 0) {
-    // Formatter subprocesses are independent across files, so retain bounded
-    // overlap here. Result application stays admission-ordered below because
-    // its synchronous file reads/bookkeeping are observable shared state.
     type FormatWork = {
       record: (typeof formatRecords)[number];
       filePath: string;
@@ -571,9 +489,6 @@ export async function handleAgentEnd({
         for (const tool of result.formattersUsed) {
           deferredFormatFixes.push({ path: filePath, tool, kind: "format" });
         }
-        // turnStateCwd is required on DeferredFormatRecord (PR #114) — the
-        // previous fallback chain through ctxCwd / projectRoot / record.cwd
-        // could silently regress the monorepo cwd-mismatch fix from PR #105.
         const bookkeepingCwd = record.turnStateCwd;
         recordProjectChange({
           runtime,
@@ -601,10 +516,6 @@ export async function handleAgentEnd({
           dbg(`agent_end deferred_format modified-range tracking failed for ${filePath}: ${err}`);
         }
 
-        // #484: opt-in per-turn summary — deferred format is the OTHER
-        // half of the format signal (immediate-mode is recorded at the
-        // runtime-tool-result.ts seam); same result.formattersUsed the
-        // latency phase below already logs, no new plumbing.
         if (getFlag("lens-turn-summary")) {
           for (const tool of result.formattersUsed) {
             runtime.turnSummary.recordFormat(filePath, { tool });
@@ -644,8 +555,6 @@ export async function handleAgentEnd({
     }
   }
 
-  // LSP sees only authoritative content after both mutation phases. In
-  // particular, never publish the autofix intermediate state before format.
   for (const changedPath of deferredAutofixChanged) {
     if (!nodeFs.existsSync(changedPath)) continue;
     const content = nodeFs.readFileSync(changedPath, "utf-8");
@@ -661,10 +570,6 @@ export async function handleAgentEnd({
       actionableWarningsMaxAgeMs,
     );
     if (!actionReport?.data) {
-      // Distinguish "no cache file was ever written" from "a cache file
-      // exists but its TTL elapsed" (#1607) — both used to collapse into
-      // one "cache missing or expired" line, which doesn't tell a reader
-      // whether the writer ran and produced a stale file, or never ran.
       const inspection = isFunction(cacheManager.inspectCache)
         ? cacheManager.inspectCache("actionable-warnings", actionCwd, actionableWarningsMaxAgeMs)
         : undefined;
@@ -679,10 +584,6 @@ export async function handleAgentEnd({
       }
     } else {
       const enabledFiles = actionReport.data.files.filter((file) => {
-        // #1247: the per-edit dispatch surface gates ignored files before
-        // running; the turn-end autofix must apply the same filter or a
-        // `.choco-pi-lsp.json` `ignore` entry cannot protect a prose file
-        // (CHANGELOG.md / AGENTS.md) from being rewritten here.
         if (isPathIgnoredByProject(file.filePath, ctxCwd ?? runtime.projectRoot)) {
           dbg(
             `agent_end actionable_warnings_autofix: skipped ${file.filePath} (ignored by project)`,
@@ -730,10 +631,6 @@ export async function handleAgentEnd({
           `agent_end actionable_warnings_autofix: stale report (${freshness.reason}; reportProjectSeqEnd=${freshness.reportProjectSeqEnd ?? "missing"}; currentProjectSeq=${freshness.currentProjectSeq}${freshness.filePath ? `; file=${freshness.filePath}; reportFileSeq=${freshness.reportFileSeq}; currentFileSeq=${freshness.currentFileSeq}` : ""}), skipping fixes`,
         );
       } else if (eligibleReport.summary.autoFixEligible > 0) {
-        // #684: same "genuine work about to happen" gate as
-        // publishFormatStart — only fires when the report is fresh AND
-        // has at least one autofix-eligible warning, right before
-        // applyConservativeActionableWarningFixes actually starts.
         publishAutofixStart({
           cwd: ctxCwd ?? runtime.projectRoot,
           paths: eligibleReport.files
@@ -859,9 +756,6 @@ export async function handleAgentEnd({
       "warning",
     );
   } else if (summary.changed.length > 0 && !getFlag("lens-turn-summary")) {
-    // The info-level success toast is redundant once the turn-summary entry
-    // (#484) is opted in — it would repeat the same "N reformatted" fact the
-    // transcript entry already carries. Failures above stay untouched either way.
     const names = summary.changed.map((f) => path.basename(f)).join(", ");
     notify(
       `choco-pi-lsp deferred format applied to ${summary.changed.length} file(s): ${names}`,

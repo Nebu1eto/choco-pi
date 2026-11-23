@@ -76,23 +76,10 @@ const taploRunner: RunnerDefinition = {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
 
-    // #233: the `toml` LSP server IS `taplo lsp` (same binary). When that LSP
-    // covers this file, the warm server already produces these diagnostics —
-    // skip the redundant CLI scan to avoid double-reporting. Stays active when
-    // the LSP is disabled/unavailable so TOML coverage never regresses.
     if (lspPrimaryCoversFile(ctx, "toml") && (await ctx.hasTool("taplo"))) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
 
-    // Project binary first (#1731, discipline B): `taplo.isAvailableAsync`
-    // resolves through `findManagedNodeToolBinary`, choco-pi-lsp's own managed
-    // shim — checked BEFORE any project-local candidate, so a project's own
-    // `node_modules/.bin/taplo` (npm `@taplo/cli`) never won once the managed
-    // copy answered. `findLocalBinUpwards` defaults to `.cmd` on Windows,
-    // matching that npm shim; the availability checker's `.exe` extension is
-    // correct for choco-pi-lsp's OWN managed install (a GitHub-release binary,
-    // `clients/installer/index.ts` taplo entry), a different artifact with a
-    // different extension, so it stays as the checker's fallback only.
     let cmd: string | null = findLocalBinUpwards("taplo", cwd) ?? null;
     if (!cmd) {
       if (await taplo.isAvailableAsync(cwd)) {

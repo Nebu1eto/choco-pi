@@ -9,35 +9,16 @@ export interface TryCatchSummary {
   isEmpty: boolean;
   hasRethrow: boolean;
   hasLogging: boolean;
-  /** Catch body only logs the error — no other side effects */
   catchLogsOnly: boolean;
-  /** Catch body returns a fallback/default value (null, [], {}, false, 0, "") */
   catchReturnsDefault: boolean;
-  /** Catch body returns a structured error object ({ success: false, error }) */
   catchReturnsStructuredError: boolean;
-  /** Catch body is a documented intentional local fallback (has explaining comment) */
   isDocumentedLocalFallback: boolean;
-  /**
-   * Catch body mutates state (an assignment to an existing binding, e.g.
-   * `tokenExpiresAt = Date.now() + FALLBACK_TTL`) as its fallback, rather
-   * than rethrowing/logging/returning. This is a THIRD legitimate way a
-   * catch clause can address "the exception is handled" — recognized
-   * separately from `hasRethrow`/`hasLogging`/an explicit `return` because
-   * none of those match a catch whose whole job is to fall back to a
-   * degraded-but-working state via assignment (#969).
-   */
   catchHasFallbackAssignment: boolean;
-  /** Try body only reads/resolves local values — no async IO or side effects */
   tryResolvesLocalValues: boolean;
-  /** Pattern: try { existsSync / statSync / readFileSync } catch { return default } */
   isFilesystemExistenceProbe: boolean;
-  /** Broad boundary category of the IO/network calls in the try block */
   boundaryCategory: "db" | "network" | "fs" | "process" | "unknown" | "none";
 }
 
-// --- Helpers ---
-
-/** Does `node`'s subtree contain an `assignment_expression` (`x = ...`, `x += ...`, …)? */
 function hasAssignmentExpression(node: TsNode | undefined): boolean {
   if (!node) return false;
   let found = false;
@@ -58,8 +39,6 @@ const DEFAULT_VALUE_PATTERN =
 
 const STRUCTURED_ERROR_PATTERN = /\breturn\s+\{[^}]*(?:success\s*:\s*false|error\s*:)/;
 
-// Any non-trivial comment (≥ 4 non-space chars) counts as documented intent.
-// This covers patterns like: // continue, /* not found */, // best-effort, etc.
 const EXPLAINING_COMMENT_PATTERN = /(?:\/\/\s*\S.{3,}|\/\*\s*\S[\s\S]{3,}?\*\/)/;
 
 const FS_PROBE_PATTERN = /\b(?:existsSync|statSync|lstatSync|readFileSync|accessSync)\b/;
@@ -80,7 +59,6 @@ function detectBoundaryCategory(tryText: string): TryCatchSummary["boundaryCateg
 }
 
 function detectTryResolvesLocalValues(tryText: string): boolean {
-  // Heuristic: no await, no IO calls, no mutations via known side-effectful APIs
   const hasAwait = /\bawait\b/.test(tryText);
   const hasIO =
     DB_PATTERN.test(tryText) ||
@@ -89,8 +67,6 @@ function detectTryResolvesLocalValues(tryText: string): boolean {
     PROCESS_PATTERN.test(tryText);
   return !hasAwait && !hasIO;
 }
-
-// --- Provider ---
 
 export const tryCatchFactProvider: FactProvider = {
   id: "tryCatchFacts",
@@ -105,8 +81,6 @@ export const tryCatchFactProvider: FactProvider = {
 
       walk(root, (node) => {
         if (node.type !== "try_statement") return;
-        // The direct `statement_block` child is the try body; the catch/finally
-        // blocks are nested inside their own clauses (not direct children).
         const tryBlock = firstChildOfType(node, "statement_block");
         const catchClause = firstChildOfType(node, "catch_clause");
         if (!tryBlock || !catchClause) return;
@@ -115,8 +89,6 @@ export const tryCatchFactProvider: FactProvider = {
         const tryResolvesLocalValues = detectTryResolvesLocalValues(tryText);
         const boundaryCategory = detectBoundaryCategory(tryText);
 
-        // Catch binding: `catch (e)` → identifier param; `catch {}` or a destructuring
-        // pattern → null (matching the old `ts.isIdentifier` gate).
         const paramNode = firstChildOfType(catchClause, "identifier");
         const catchParam = paramNode ? paramNode.text : null;
 
@@ -130,7 +102,6 @@ export const tryCatchFactProvider: FactProvider = {
         const hasLogging =
           /\bconsole\.(log|warn|error)\b/.test(bodyText) || /\blogger\./.test(bodyText);
 
-        // Derived enrichment fields
         const catchReturnsDefault = DEFAULT_VALUE_PATTERN.test(bodyText);
         const catchReturnsStructuredError = STRUCTURED_ERROR_PATTERN.test(bodyText);
         const isDocumentedLocalFallback = EXPLAINING_COMMENT_PATTERN.test(bodyText);
@@ -143,7 +114,6 @@ export const tryCatchFactProvider: FactProvider = {
           !catchReturnsStructuredError &&
           !/\b(?:set|update|notify|emit|dispatch|resolve|reject)\b/.test(bodyText);
 
-        // Filesystem existence probe: try reads a file/path, catch returns a default
         const isFilesystemExistenceProbe =
           boundaryCategory === "fs" && FS_PROBE_PATTERN.test(tryText) && catchReturnsDefault;
 

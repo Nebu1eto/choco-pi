@@ -1,12 +1,3 @@
-/**
- * Purpose: Define the canonical upstream agent-browser capability baseline targeted by this package.
- * Responsibilities: Combine the canonical target from extensions/agent-browser/lib/upstream-version.ts with sampled help commands and verifier/doc token expectations.
- * Scope: Versioned capability metadata only; it does not execute agent-browser or validate documentation by itself.
- * Usage: Imported by command-reference verifier, generated docs checker, and tests when upstream agent-browser is re-baselined; runtime imports compatibility-contract.ts.
- * Invariants/Assumptions: This package targets the current installed upstream agent-browser only and does not keep compatibility shims for older versions.
- * Related: `docs/SUPPORT_MATRIX.md` maps `CAPABILITY_BASELINE.inventorySections` to human docs, runtime behavior, tests, and verification gates; refresh that matrix whenever this baseline changes.
- */
-
 import { TARGET_AGENT_BROWSER_VERSION } from "../extensions/agent-browser/lib/upstream-version.ts";
 
 export const CAPABILITY_BASELINE_SOURCE = "scripts/agent-browser-capability-baseline.ts";

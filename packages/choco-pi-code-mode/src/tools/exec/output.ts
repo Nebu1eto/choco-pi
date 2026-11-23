@@ -1,7 +1,6 @@
 import { randomBytes } from "node:crypto";
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 10_000;
-/** Upper bound of one exec_bridge output chunk, in bytes (observed 8193). */
 const BRIDGE_CHUNK_BYTES = 8 * 1024;
 const ESCAPE = String.fromCodePoint(0x1b);
 const BELL = String.fromCodePoint(0x07);
@@ -10,10 +9,6 @@ const DCS_SEQUENCE = new RegExp(`${ESCAPE}[P_X^][\\s\\S]*?${ESCAPE}\\\\`, "g");
 const CSI_SEQUENCE = new RegExp(`${ESCAPE}\\[[0-?]*[ -/]*[@-~]`, "g");
 const TWO_BYTE_ESCAPE = new RegExp(`${ESCAPE}[@-_]`, "g");
 
-/**
- * Transcript line for output the bridge discarded before the host read it.
- * Chunk count is exact; the byte figure is an upper bound.
- */
 export function formatDroppedOutputNotice(droppedChunks: number): string {
   const kib = Math.ceil((droppedChunks * BRIDGE_CHUNK_BYTES) / 1024);
   return `\n[exec_bridge discarded ${droppedChunks} unread output chunk${droppedChunks === 1 ? "" : "s"} (up to ${kib} KiB) while the host was busy; this output is incomplete]\n`;
@@ -53,19 +48,10 @@ function stripTerminalControlSequences(text: string): string {
     .replaceAll(ESCAPE, "");
 }
 
-// C0 controls except tab, newline and carriage return, plus the interlinear
-// annotation characters U+FFF9..U+FFFB. Built like the escape patterns above
-// so no control character appears in a regex literal.
 const BINARY_OUTPUT_CLASS = `[${String.fromCodePoint(0)}-${String.fromCodePoint(8)}${String.fromCodePoint(0x0b)}${String.fromCodePoint(0x0c)}${String.fromCodePoint(0x0e)}-${String.fromCodePoint(0x1f)}\\ufff9-\\ufffb]`;
 const BINARY_OUTPUT_CHARS = new RegExp(BINARY_OUTPUT_CLASS, "u");
 const BINARY_OUTPUT_CHARS_GLOBAL = new RegExp(BINARY_OUTPUT_CLASS, "gu");
 
-/**
- * Drop control characters that corrupt a transcript. One regex pass: the
- * former `Array.from(text).filter(...)` built an array of one-char strings per
- * chunk, ~250 MB of transient heap for an 8 MB read, and that stall let the
- * bridge's bounded unread window overflow.
- */
 function sanitizeBinaryOutput(text: string): string {
   if (!BINARY_OUTPUT_CHARS.test(text)) return text;
   return text.replace(BINARY_OUTPUT_CHARS_GLOBAL, "");

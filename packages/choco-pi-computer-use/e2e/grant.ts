@@ -4,19 +4,11 @@ function get(value: JsonField, key: string): JsonField {
   return isJsonObject(value) ? value[key] : undefined;
 }
 
-/** Executed trace entries: each step, or the trace itself when it has no steps. */
 export function traceEntries(trace: JsonObject): JsonField[] {
   const steps = get(trace, "steps");
   return Array.isArray(steps) && steps.length ? steps : [trace];
 }
 
-/**
- * S6, both tiers: cross-checks the granted foreground act's wire reply against the execution
- * trace. Exactly one executed trace entry carries the act's `requestId`; it must report
- * `escalatedToForeground:true`, `deliveryPolicy:"foreground"`, `foregroundGrant:true`, and the
- * reply's `outcome`, and the trace containing it must report that outcome too. Any mismatch is an
- * error, so a wire `unknown` is never scored against a trace that claims `worked` or no grant.
- */
 export function grantTraceErrors(granted: JsonObject, traces: JsonObject[]): string[] {
   const id = granted.requestId;
   if (!isString(id)) return ["granted foreground act has no requestId to match a trace step"];

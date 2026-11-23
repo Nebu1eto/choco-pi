@@ -17,8 +17,6 @@ import {
   SOURCE_LOOKUP_MAX_WORKSPACE_FILES,
 } from "./types.ts";
 
-// Keep descriptions terse: Pi sends this schema every turn; workflows belong in prompt guidance and docs.
-
 export function createAgentBrowserParamsSchema(describe: SchemaDescribe = compactDescription) {
   return obj(
     {
@@ -285,5 +283,4 @@ export function createAgentBrowserParamsSchema(describe: SchemaDescribe = compac
 
 export const AGENT_BROWSER_PARAMS = createAgentBrowserParamsSchema();
 
-/** Registration form: Pi 1.6 still requires a TypeBox-shaped parameter schema. */
 export const AGENT_BROWSER_HOST_PARAMS = hostParams(AGENT_BROWSER_PARAMS);

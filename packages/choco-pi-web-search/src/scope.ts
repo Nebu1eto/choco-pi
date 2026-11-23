@@ -20,16 +20,13 @@ import { isObjectValue, isSharedSearchErrorSnapshot } from "./schema.ts";
 
 const SHARED_DIRECTORY_VERSION = 1 as const;
 
-/** Any non-array, non-function object shared across loaders of the same process. */
 type ProcessObject = Record<never, never>;
-/** Anything a host may hand to a shared-directory or rendezvous callback. */
 type ProcessValue = {} | null | undefined;
 
 function isProcessObject<Value>(value: Value): value is Value & ProcessObject {
   return isObjectValue(value);
 }
 
-/** True when `value` has a function-valued member `key` (functions are not JSON). */
 function hasFunctionMember<Value extends ProcessObject, Key extends string>(
   value: Value,
   key: Key,
@@ -38,7 +35,6 @@ function hasFunctionMember<Value extends ProcessObject, Key extends string>(
   return member instanceof Function;
 }
 
-/** Reads member `key` (own or inherited, enumerable or not) without throwing for absent members. */
 function memberOf<Owner extends ProcessObject>(owner: Owner, key: string): ProcessValue {
   return key in owner ? Object(owner)[key] : undefined;
 }
@@ -72,7 +68,6 @@ const SHARED_DIRECTORY_METHODS = [
   "isError",
 ] as const;
 
-/** Closed object: `version` plus exactly the listed function members (functions are not JSON). */
 function isSharedSearchDirectory<Value>(value: Value): value is Value & SharedSearchDirectory {
   if (!isProcessObject(value)) return false;
   if (Object.keys(value).length !== SHARED_DIRECTORY_METHODS.length + 1) return false;
@@ -189,7 +184,6 @@ export interface SearchAdapter {
   transport: string;
   priority?: number;
   billing?: SearchBilling;
-  /** Never selected by `auto` default order or `all`; only when a caller names the family. */
   explicitOnly?: boolean;
   capabilities: SearchCapabilities;
   availability(context: SearchAdapterContext): SearchAvailability | Promise<SearchAvailability>;
@@ -261,10 +255,6 @@ interface SearchErrorFields {
   readonly attempts: ProcessValue;
 }
 
-/**
- * pi-schema reads only enumerable properties, so an Error's own non-enumerable `message` would look
- * missing. Snapshot the known fields by plain property reads and validate the snapshot.
- */
 function hasSharedSearchErrorFields(value: ProcessObject): boolean {
   const snapshot: SearchErrorFields = {
     name: memberOf(value, "name"),

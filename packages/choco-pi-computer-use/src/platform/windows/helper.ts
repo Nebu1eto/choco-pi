@@ -14,7 +14,6 @@ const HELPER_SETUP_TIMEOUT_MS = 60_000;
 const COMMAND_TIMEOUT_MS = 15_000;
 
 export const WINDOWS_HELPER_PROTOCOL_VERSION = 4;
-/** The Windows helper path: the explicit override, else `<agent dir>/helpers/pi-computer-use/windows-bridge.exe`. */
 export function windowsHelperPath(
   env: Readonly<Record<string, string | undefined>> = process.env,
   home: string = os.homedir(),
@@ -122,7 +121,6 @@ export class WindowsHelperClient {
 
   async ensureInstalled(signal?: AbortSignal): Promise<void> {
     if ((await isExecutable(WINDOWS_HELPER_PATH)) && this.installChecked) return;
-    // Re-enter Electron and Bun standalone hosts as their JavaScript runtimes.
     await runProcess(
       process.execPath,
       [SETUP_HELPER_SCRIPT, "--platform", "windows", "--runtime"],

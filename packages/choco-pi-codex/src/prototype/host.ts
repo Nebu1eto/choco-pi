@@ -9,7 +9,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { prototypeExtension, prototypeProvider } from "./extension.ts";
 
-/** Fresh SDK host with no installed extensions, project context, settings, or session writes. */
 export async function createPrototypeHost(options: Parameters<typeof prototypeExtension>[0]) {
   await mkdir("/tmp/choco-pi", { recursive: true });
   const scratch = await mkdtemp("/tmp/choco-pi/codex-prototype-");

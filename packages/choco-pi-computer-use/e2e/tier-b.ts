@@ -3,7 +3,6 @@ import type { RecordValue } from "./assertions.ts";
 import { grantTraceErrors } from "./grant.ts";
 import type { ScenarioId } from "./scenarios/index.ts";
 
-/** Fixture evidence for one tier-B scenario; `start`/`end` bracket the Pi process. */
 export interface FixtureEvidence {
   target: RecordValue[];
   holder: RecordValue[];
@@ -12,31 +11,22 @@ export interface FixtureEvidence {
   targetPid?: number;
 }
 
-/** Informational tier-B evidence recorded in `summary.json`; never a verdict on its own. */
 export interface TierBNotes {
   finalField?: { length: number; value?: string };
   increments?: number;
   customHits?: number;
   holderDisturbances: string[];
-  /** S3: whether the single typeText worked in the background or was reported as didnt. */
   typingPath?: "worked" | "didnt";
-  /** Acts before the scored typeText (S3), for example a click on the field. */
   priorActs?: number;
-  /** S4: who sent the cancel (`pi` transport or the harness proxy) and the helper's ack. */
   cancel?: { origin: string; state: string; ackAt?: number; typedBeforeAck: number };
-  /** S5: which layer refused the stale action. */
   staleRefusal?: "stale_look";
-  /** act_ui "Effect not verified for action N (<action>: <outcome>)" entries, in result order. */
   unverifiedEffects?: { index: number; action: string; outcome: string }[];
-  /** S6: the granted foreground act's outcome (`worked`, or `unknown` for HID delivery). */
   grantedOutcome?: string;
 }
 
 export interface TierBInput {
-  /** Every proxy row (Pi requests and harness cancels) in arrival order. */
   requests: RecordValue[];
   traces: JsonObject[];
-  /** Persisted act_ui toolResult messages. */
   results: JsonField[];
   fixture?: FixtureEvidence;
   intervention?: RecordValue;
@@ -51,11 +41,8 @@ export interface TierBScore {
 export type Inconclusive = "no_dispatch" | "no_effect_observed";
 
 const EXPECTED_TEXT = "hello-e2e";
-/** S4: field changes this long after the cancel ack count as input after cancellation. */
 const ACK_SLACK_MS = 50;
-/** S5: the helper's window-frame staleness refusal (bridge.swift `act`, before target resolution). */
 const FRAME_STALE_TEXT = /^Window frame changed since look \S+; observe again$/;
-/** act_ui text for executed actions whose effect the helper could not verify (src/bridge.ts). */
 const UNVERIFIED_TEXT = /Effect not verified for (.+?); confirm it in the returned state/;
 const UNVERIFIED_ENTRY = /^action (\d+) \((\w+): (\w+)\)$/;
 
@@ -88,10 +75,6 @@ function resultText(message: JsonField): string {
     : "";
 }
 
-/**
- * Parses every "Effect not verified" entry from the act_ui results. Returns undefined when a
- * matching sentence has an entry this parser does not understand, so callers fail closed.
- */
 export function unverifiedEffects(results: JsonField[]): TierBNotes["unverifiedEffects"] {
   const entries: NonNullable<TierBNotes["unverifiedEffects"]> = [];
   for (const message of results) {
@@ -106,7 +89,6 @@ export function unverifiedEffects(results: JsonField[]): TierBNotes["unverifiedE
   return entries;
 }
 
-/** Holder focus loss, keystrokes, or another app becoming frontmost inside [from, to]. */
 export function holderDisturbances(fixture: FixtureEvidence, from: number, to: number): string[] {
   return fixture.holder
     .filter((row) => inWindow(row, from, to))
@@ -119,7 +101,6 @@ export function holderDisturbances(fixture: FixtureEvidence, from: number, to: n
     });
 }
 
-/** The target's final state from its `quitting` row. */
 export function finalState(
   fixture: FixtureEvidence,
 ): Pick<TierBNotes, "finalField" | "increments" | "customHits"> {
@@ -229,7 +210,6 @@ function scoreS4(input: TierBInput, notes: TierBNotes, errors: string[]): Inconc
     errors.push(
       `fixture changed ${late.length} time(s) after the cancel ack (+${ACK_SLACK_MS} ms)`,
     );
-  // Nothing typed before the ack makes "no input after the ack" vacuous.
   return typedBeforeAck === 0 ? "no_effect_observed" : undefined;
 }
 
@@ -245,8 +225,6 @@ function scoreS5(input: TierBInput, notes: TierBNotes, errors: string[]): void {
   if (acts.some((row) => (num(row.at) ?? 0) < requestedAt))
     errors.push("act before the fixture mutation (harness race)");
   const after = acts.filter((row) => (num(row.at) ?? 0) >= requestedAt);
-  // The resize is out of band: only the helper's frame check can see it, so exactly one act
-  // follows the mutation and the helper refuses it before delivery as a frame change.
   const error = get(after[0]?.response, "error");
   const message = get(error, "message");
   const staleLook =
@@ -280,7 +258,6 @@ function scoreS6(input: TierBInput, notes: TierBNotes, errors: string[]): void {
     return;
   }
   const [granted] = foreground;
-  // Exactly: one ungranted background act refused before delivery, then the granted retry.
   const refused = acts[acts.indexOf(granted) - 1];
   const refusal = get(refused?.response, "error");
   if (
@@ -300,18 +277,13 @@ function scoreS6(input: TierBInput, notes: TierBNotes, errors: string[]): void {
   const result = get(granted.response, "result");
   const outcome = get(result, "outcome");
   if (isString(outcome)) notes.grantedOutcome = outcome;
-  // HID delivery cannot attest its effect (`unknown`); the fixture's customHits is the proof.
   if (get(granted.response, "ok") !== true || (outcome !== "worked" && outcome !== "unknown"))
     errors.push(`granted foreground act answered ${String(outcome)}`);
-  // The execution trace must agree with the wire: escalated, granted, foreground, same outcome.
   errors.push(...grantTraceErrors(granted, input.traces));
   const pid = input.fixture?.targetPid;
   if (pid === undefined || num(get(result, "frontmostAfter")) !== pid)
     errors.push(`frontmostAfter ${String(get(result, "frontmostAfter"))} is not the target ${pid}`);
   if (notes.customHits !== 1) errors.push(`custom-view hits ${String(notes.customHits)} != 1`);
-  // The refused background act must have had no effect and must not have disturbed the holder:
-  // every custom-view hit and holder focus loss comes at or after the granted act. The holder
-  // never receives input in S6: a keyDown or fieldValue on it at any time fails.
   const grantedAt = num(granted.at);
   if (grantedAt === undefined) errors.push("granted foreground act has no timestamp");
   const early = (rows: RecordValue[] | undefined, events: string[]): RecordValue[] =>
@@ -342,10 +314,6 @@ function scoreS6(input: TierBInput, notes: TierBNotes, errors: string[]): void {
     errors.push("foreground path ran but the holder never resigned active");
 }
 
-/**
- * Tier-B assertions over the proxy request log and the fixture logs. The tier-agnostic checks in
- * `verify` (dispatch attribution, headless config, S1 per-step delivery, S2 refusal) still apply.
- */
 export function scoreTierB(scenario: ScenarioId, input: TierBInput): TierBScore {
   const errors: string[] = [];
   const fixture = input.fixture;
@@ -374,9 +342,6 @@ export function scoreTierB(scenario: ScenarioId, input: TierBInput): TierBScore 
       errors.push(`field is ${JSON.stringify(notes.finalField)}, expected ${EXPECTED_TEXT}`);
     if (notes.increments !== 1) errors.push(`increments ${String(notes.increments)} != 1`);
     if (notes.customHits !== 0) errors.push(`custom-view hits ${String(notes.customHits)} != 0`);
-    // The helper cannot attest an AXPress effect, so the Increment press (or a click on it) may
-    // be reported as "Effect not verified (press: unknown)"; the fixture's field and counter are
-    // the proof. Any other unverified entry (a didnt, or unverified typing) fails.
     const unverified = unverifiedEffects(input.results);
     if (unverified === undefined) errors.push("unparseable 'Effect not verified' text");
     else {

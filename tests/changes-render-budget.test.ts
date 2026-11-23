@@ -1,6 +1,3 @@
-// One work budget covers a whole body render of the changes view: split view does
-// not render a file twice, every expanded file in a frame shares the budget, and a warm cache
-// spends nothing.
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { FileBody, FileSummary } from "../profile/extensions/lib/changes/git/model.ts";
@@ -21,7 +18,6 @@ import { plainPaneStyler } from "../profile/extensions/lib/changes/view/rows.ts"
 import type { DiffHunk } from "../profile/extensions/lib/changes/types.ts";
 import { file, flush, hunk, snapshot, textBody } from "./diff-actions-fakes.ts";
 
-/** Hunks where each pair costs 65 x 65 cells with no common prefix or suffix. */
 function heavyHunks(path: string, count: number): DiffHunk[] {
   return Array.from({ length: count }, (_, index) =>
     hunk(`${path}-${index}`, 1 + index * 10, [`-${"a,".repeat(32)}`, `+${"b;".repeat(32)}`]),
@@ -145,7 +141,6 @@ test("renderHunkRows divides one render by the given row counts", () => {
 });
 
 test("syntax highlighting in one frame is bounded across files", async () => {
-  // 10 files of 2,000 lines of 100 characters: 2 MB of text, twice the frame's highlighting.
   const files = Array.from({ length: 10 }, (_, index) => file(`h${index}.ts`));
   const bodies = new Map(
     files.map(

@@ -335,7 +335,6 @@ test("speed rows split a model by Fast state, carry estimates, and keep Fast row
 });
 
 test("period starts are local calendar days: Asia/Seoul boundaries", async () => {
-  // The zone is process-wide, so the check runs in a child with TZ set.
   const script = [
     "import { dayKey, filterRecords, periodStart } from './profile/extensions/lib/stats/aggregate.ts';",
     "const now = Date.parse('2026-10-28T03:00:00+09:00');",
@@ -428,7 +427,6 @@ test("zero-cost calls reprice at the tier list rate, times the Fast multiple whe
 });
 
 test("hour buckets keep both occurrences of a DST fall-back hour: America/New_York and Asia/Kathmandu", async () => {
-  // The zone is process-wide, so the check runs in a child with TZ set.
   const script = [
     "import { hourStart, timelineOf } from './profile/extensions/lib/stats/aggregate.ts';",
     "const first = Date.parse('2026-11-01T01:30:00-04:00');",

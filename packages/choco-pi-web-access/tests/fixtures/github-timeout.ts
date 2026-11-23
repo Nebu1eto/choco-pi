@@ -16,7 +16,6 @@ function notifyRunner(message: string): void {
 
 if (mode === "runner") {
   const { compile, int, obj, str } = await import("@earendil-works/pi-schema");
-  // server.address() is a TCP address object here (open: extra keys allowed), never a pipe string or null.
   const isTcpAddress = compile(
     obj(
       {
@@ -60,14 +59,11 @@ if (mode === "runner") {
   assert.ok(isTcpAddress(address));
   process.env.CLONE_READY_PORT = String(address.port);
 
-  // Keep the configured 500 ms deadline, but start advancing time only after
-  // both fake processes resist SIGTERM and the helper has flushed its PID file.
   mock.timers.enable({ apis: ["setTimeout"] });
   try {
     const extraction = extractGitHub("https://github.com/test/repo");
     await ready;
     mock.timers.tick(500);
-    // Both handlers must actually receive and survive SIGTERM before escalation.
     await resistant;
     mock.timers.tick(3000);
     console.log(JSON.stringify(await extraction));
@@ -86,7 +82,6 @@ if (mode === "runner") {
   process.on("SIGTERM", () => notifyRunner("helper"));
   await writeFile(pidFile, JSON.stringify({ rootPid: process.ppid, helperPid: process.pid }));
   notifyRunner("ready");
-  // The open interval models a stuck credential helper without polling readiness.
   setInterval(() => {}, 1000);
 } else {
   assert.equal(mode, "clone");

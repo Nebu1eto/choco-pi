@@ -34,10 +34,8 @@ import {
 
 export const GOOGLE_ANTIGRAVITY_USAGE_NAME = "Google";
 const GOOGLE_ANTIGRAVITY_PROVIDER = "google";
-/** Status of an account whose tier has no quota summary (403 SUBSCRIPTION_REQUIRED). */
 export const GOOGLE_ANTIGRAVITY_NO_QUOTA_STATUS = "no quota summary for this plan";
 
-/** Fixed lengths of the bucket windows the quota summary names. */
 const ANTIGRAVITY_WINDOW_SECONDS = recordOf<string, number>()({
   weekly: 7 * DAY_SECONDS,
   "5h": 5 * HOUR_SECONDS,
@@ -54,14 +52,6 @@ function antigravityWindowRank(windowName: string): number {
   return 2;
 }
 
-/**
- * Converts the `retrieveUserQuotaSummary` reading (or the stored copy of one)
- * into a Usage row: one window per enabled bucket of every model group,
- * labelled `<group> <window>`. Google reports the share remaining; the row
- * shows the share used, as every other provider does, so pace and exhaustion
- * read the same way. A bucket reporting only an absolute amount has no share
- * and is skipped. A tier without a quota summary yields a status-only row.
- */
 export function normalizeGoogleAntigravityUsage(payload: RuntimeValue): ProviderUsage {
   if (isRecord(payload) && payload.kind === "no_quota_for_tier") {
     return {
@@ -94,7 +84,6 @@ export function normalizeGoogleAntigravityUsage(payload: RuntimeValue): Provider
       };
       const windowSeconds = ANTIGRAVITY_WINDOW_SECONDS[windowName];
       if (windowSeconds !== undefined) window.windowSeconds = windowSeconds;
-      // Each group's buckets limit only the models of that group.
       if (groupName !== undefined) window.scope = groupName;
       groupWindows.push({ rank: antigravityWindowRank(windowName), window });
     }
@@ -111,10 +100,8 @@ export function normalizeGoogleAntigravityUsage(payload: RuntimeValue): Provider
   return { name: GOOGLE_ANTIGRAVITY_USAGE_NAME, windows };
 }
 
-/** Plan label and AI credit balance of a Google Antigravity account. */
 export type GoogleAntigravityPlan = { plan?: string; credits?: string };
 
-/** Reads {@link GoogleAntigravityPlan} from the stored `loadCodeAssist` summary. */
 export function googleAntigravityPlan(payload: RuntimeValue): GoogleAntigravityPlan {
   if (!isRecord(payload)) return {};
   const result: GoogleAntigravityPlan = {};
@@ -129,10 +116,6 @@ export function googleAntigravityPlan(payload: RuntimeValue): GoogleAntigravityP
   return result;
 }
 
-/**
- * The client's error carries Google's sanitized detail; the cache keeps only a
- * status (so a 401 is not retried with backoff) or the error kind.
- */
 async function antigravityRequest<T>(read: () => Promise<T>): Promise<T> {
   try {
     return await read();
@@ -169,7 +152,6 @@ export async function googleAntigravityUsage(
       () =>
         antigravityRequest(async () => {
           const summary = await readQuotaSummary({ token, projectId });
-          // The no-quota detail is backend text; the store keeps only the verdict.
           return summary.kind === "summary" ? summary : { kind: summary.kind };
         }),
       USAGE_POLICY,
@@ -191,7 +173,6 @@ export async function googleAntigravityUsage(
   ]);
   if (usage.status === "rejected") throw usage.reason;
   const reading = normalizeGoogleAntigravityUsage(usage.value.payload);
-  // Best effort: a failed `loadCodeAssist` read only omits the plan and credits.
   const { plan, credits } =
     tier.status === "fulfilled" ? googleAntigravityPlan(tier.value.payload) : {};
   const status = [reading.status, credits].filter(Boolean).join(" · ");

@@ -168,8 +168,6 @@ test("a resumed session keeps its earlier checkpoints reachable", async (t) => {
   await writeFile(path.join(root, "tracked.txt"), "turn two\n");
   const second = await capture(root, first);
 
-  // Restarting Pi and resuming drops the in-memory chain, but the session's own
-  // entries still point at both commits above.
   await writeFile(path.join(root, "tracked.txt"), "turn three\n");
   const resumed = await capture(root);
 
@@ -247,7 +245,6 @@ test("a fork can still roll back after the parent session's ref is gone", async 
   await writeFile(path.join(root, "tracked.txt"), "after the fork\n");
   const parentLatest = await capture(root, parentTurn);
 
-  // The forked session inherits both entries and opens its own ref.
   const forkRef = sessionCheckpointRef("forked-session");
   await adoptCheckpoints(root, {
     ref: forkRef,
@@ -261,7 +258,6 @@ test("a fork can still roll back after the parent session's ref is gone", async 
     "the fork's ref holds the inherited checkpoints on its own",
   );
 
-  // The rollback the picker would run for the inherited turn still works.
   await writeFile(path.join(root, "tracked.txt"), "diverged in the fork\n");
   const live = await captureGitSnapshot(root, { ref: forkRef, message: "fork turn" });
   await restoreSnapshotFiles(root, parentTurn, live);

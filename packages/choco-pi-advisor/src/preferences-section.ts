@@ -41,11 +41,6 @@ function choiceKey(model: AdvisorModelChoice): string {
   return `${model.provider}/${model.id}`.toLowerCase();
 }
 
-/**
- * Picker choices: the current model, then each authenticated model, narrowed to
- * the session's scoped models when a scope is active (the same source the
- * session naming model picker uses).
- */
 export function listAdvisorModelChoices(
   available: readonly AdvisorModelChoice[],
   current: string,
@@ -149,7 +144,6 @@ export function buildAdvisorPreferencesSection(
                 const separator = value.indexOf("/");
                 return { provider: value.slice(0, separator), id: value.slice(separator + 1) };
               }),
-              // Let the host's change handler retain ownership of the serialized write queue.
               onPick: done,
             })(current, (value) => {
               if (value === undefined) done();
@@ -209,9 +203,6 @@ export function registerAdvisorPreferencesProvider(
   const provider: AdvisorPreferencesProvider = {
     buildSections: (ctx) => {
       if (!isActive()) return [];
-      // The host calls buildSections synchronously; until session_start has
-      // loaded this cwd's advisor settings the section is omitted rather than
-      // rendered with defaults a later load would overwrite.
       const settings = settingsByCwd.get(ctx.cwd);
       if (settings === undefined) return [];
       surfaceAdvisorWriteError(ctx);

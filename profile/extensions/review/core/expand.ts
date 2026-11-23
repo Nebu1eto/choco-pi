@@ -1,9 +1,7 @@
 import { readFileAtRevision } from "./git.ts";
 import type { DiffFile, DiffHunk, DiffLine, DiffModel, ExecRunner } from "./types.ts";
 
-/** Each expand or collapse action changes at most this many context rows. */
 export const EXPANSION_STEP = 10;
-/** A single hunk edge can reveal at most this many context rows. */
 export const EXPANSION_LIMIT = 100;
 
 export type ExpansionEdge = "above" | "below";
@@ -20,7 +18,6 @@ export type ExpandHunkContextOptions = {
   hunk: DiffHunk;
   edge: ExpansionEdge;
   expansion?: HunkExpansion;
-  /** Other visible overlays, used to stop before context revealed from an adjacent hunk. */
   expandedContext?: ReadonlyMap<string, HunkExpansion>;
   runner?: ExecRunner;
 };
@@ -34,7 +31,6 @@ export function emptyHunkExpansion(): HunkExpansion {
   return { above: [], below: [] };
 }
 
-/** Build a display-only hunk without changing its persisted identity or ranges. */
 export function hunkWithExpandedContext(
   hunk: DiffHunk,
   expansion: HunkExpansion | undefined,
@@ -100,11 +96,6 @@ function contextLine(text: string, oldLine: number, newLine: number): DiffLine {
   return { kind: "context", oldLine, newLine, text };
 }
 
-/**
- * Reveal context from the pinned base revision. Expansion stops before another
- * hunk rather than merging hunk displays. Added, deleted, and binary files have
- * no lines unchanged on both sides, so they return an unchanged overlay.
- */
 export async function expandHunkContext(
   options: ExpandHunkContextOptions,
 ): Promise<ExpandHunkContextResult> {
@@ -162,7 +153,6 @@ export async function expandHunkContext(
   };
 }
 
-/** Hide the outermost step from one edge, preserving context nearest the hunk. */
 export function collapseHunkContext(expansion: HunkExpansion, edge: ExpansionEdge): HunkExpansion {
   if (edge === "above") {
     return { above: expansion.above.slice(EXPANSION_STEP), below: expansion.below };

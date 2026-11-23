@@ -94,7 +94,6 @@ test("active-owner completion is delivered normally and never redelivered after 
   old.close();
   const successor = createGate(manager, delivered);
   try {
-    // Even a stale persisted pending entry must not replay an acknowledged result.
     successor.gate.sessionStart("owner", [
       {
         type: "custom",

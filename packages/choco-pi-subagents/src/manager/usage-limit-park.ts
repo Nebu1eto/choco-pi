@@ -1,7 +1,3 @@
-/**
- * usage-limit-park.ts — Internal AgentManager module extracted from agent-manager.ts.
- */
-
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { checkModelScope } from "../model-scope.ts";
 import {
@@ -58,7 +54,6 @@ import { accountFor, providerBlock } from "./provider-recheck.ts";
 import { scheduleJournal } from "./revival-journal.ts";
 import { stopQueuedRecord, queueBackgroundResume } from "./admission-queue.ts";
 
-/** Observe usage-limit transitions (reported, parked, resumed, exhausted). */
 export function setUsageLimitListener(
   mgr: ManagerState,
   listener: UsageLimitListener | undefined,
@@ -70,20 +65,9 @@ export function notifyUsageLimit(mgr: ManagerState, record: AgentRecord): void {
   if (mgr.disposed || record.usageLimit === undefined) return;
   try {
     mgr.usageLimitListener?.(record);
-  } catch {
-    /* ignore observer errors */
-  }
+  } catch {}
 }
 
-// ---- Durable revival journal (writer side) ----
-
-/**
- * Classify a terminal failure through the owner's usage-limit policy. Only
- * `quota`/`billing` results count, and only a confirmed exhaustion parks
- * (`corroborationVerdict`). Closures are keyed by owner, provider and
- * account. `eligible` is rechecked after every await, before any closure
- * read or write. Never switches the child's model.
- */
 export async function evaluateUsageLimit(
   mgr: ManagerState,
   record: AgentRecord,
@@ -114,17 +98,12 @@ export async function evaluateUsageLimit(
   const preference = await preferenceFromPolicy(policy);
   if (!eligible()) return undefined;
   const corroboration = await corroborateWithPolicy(policy, initial);
-  // A cancelled or superseded evaluation reads and writes no closure.
   if (!eligible()) return undefined;
   const verdict = corroborationVerdict(initial, corroboration);
   if (verdict === "transient") return undefined;
-  // The child's session stays attached whatever the policy answered.
   const corroborated = withSessionId(corroboration?.classification ?? initial, sessionId);
-  // Billing stays billing whatever corroboration answered: reported, never parked.
   const billed: UsageLimitClassification =
     initial.kind === "billing" ? { ...corroborated, kind: "billing" } : corroborated;
-  // A model-scoped limit (corroboration set `scope`) closes only the models it
-  // covers, and a limit nothing confirmed (no usage data) only the failed model.
   const limitScope = closureScopeFor(billed, verdict === "confirmed");
   const classification: UsageLimitClassification =
     limitScope === undefined ? billed : { ...billed, scope: limitScope };
@@ -133,8 +112,6 @@ export async function evaluateUsageLimit(
   if (limitedAccount !== undefined) {
     mgr.classifiedAccounts.set(accountKey(owner, providerKey.toLowerCase()), limitedAccount);
   }
-  // The key availability checks use; the limited account is closed too when
-  // the policy's current account differs (as the root controller does).
   const accountId = accountFor(mgr, owner, providerKey, policy);
   const accountIds =
     limitedAccount === undefined || limitedAccount === accountId
@@ -183,7 +160,6 @@ export async function evaluateUsageLimit(
   };
 }
 
-/** Policy suggestion re-validated against availability and the parent's scope. */
 export function suggestFallback(
   mgr: ManagerState,
   policy: UsageLimitPolicy,
@@ -205,8 +181,6 @@ export function suggestFallback(
   const pick = pickFallbackWithPolicy(policy, current, {
     available,
     scoped: scope.scoped,
-    // With the candidate's model id, a model-scoped limit (such as Fable)
-    // leaves the provider's other models eligible.
     isClosed: (providerKey, accountId, modelId) => {
       const key = providerKey.toLowerCase();
       return (
@@ -240,7 +214,6 @@ export function suggestFallback(
   return key;
 }
 
-/** Whether this generation may still settle normally (not stopped, cancelled, forced, or superseded). */
 export function usageEvaluationEligible(
   mgr: ManagerState,
   record: AgentRecord,
@@ -256,11 +229,6 @@ export function usageEvaluationEligible(
   );
 }
 
-/**
- * Evaluate only while this generation may still settle normally. Callers
- * pass the result through `currentUsageDecision` after their await: a stop
- * can land between this function's last check and the caller's resumption.
- */
 export async function evaluateRunUsageLimit(
   mgr: ManagerState,
   record: AgentRecord,
@@ -294,7 +262,6 @@ export async function evaluateRunUsageLimit(
   return decision !== undefined && eligible() ? decision : undefined;
 }
 
-/** Recheck after the caller's await: a stop in that gap discards the decision, so it never parks. */
 export function currentUsageDecision(
   mgr: ManagerState,
   record: AgentRecord,
@@ -307,10 +274,6 @@ export function currentUsageDecision(
     : undefined;
 }
 
-/**
- * Park a failed run: the generation stays unpublished and holds no pool slot.
- * Callers release their slot, detach signals, and mark their run settled.
- */
 export function parkForReset(
   mgr: ManagerState,
   record: AgentRecord,
@@ -325,8 +288,6 @@ export function parkForReset(
     release = resolve;
   });
   transition(mgr, record, "waiting_for_reset");
-  // A parked foreground child has already answered its caller; from here it
-  // behaves as background and reports through the completion notification.
   record.isBackground = true;
   record.usageLimit = { ...decision.usageLimit, status: "waiting_for_reset" };
   record.promise = parkedPromise;
@@ -410,8 +371,6 @@ export async function wakeUsageLimited(
   if (!isCurrentWait(mgr, record, wait)) return;
   const policy = readUsageLimitPolicy(wait.owner);
   if (policy === undefined && wait.revived === true) {
-    // A re-armed wait can wake before the extension that registers the
-    // policy has started; give it a bounded chance to appear.
     const now = Date.now();
     wait.policyRetryUntil ??= now + REARM_POLICY_RETRY_MS;
     if (now < wait.policyRetryUntil) {
@@ -442,17 +401,13 @@ export async function wakeUsageLimited(
     if (record.usageLimit !== undefined) {
       record.usageLimit = { ...record.usageLimit, resetAt: nextReset };
     }
-    // A new reset estimate re-parks the task on a different timer.
     scheduleJournal(mgr, record);
   }
   armUsageWake(mgr, record, wait, nextReset);
 }
 
-/** Resume the parked record on the same model as a new background generation. */
 export function resumeAfterReset(mgr: ManagerState, record: AgentRecord, wait: UsageWait): void {
   mgr.usageWaits.delete(record.id);
-  // The owner's policy confirmed the model has capacity: reopen, on every
-  // account the limit closed, each closure that blocked this model.
   const policy = readUsageLimitPolicy(wait.owner);
   const modelId = wait.classification.modelId;
   for (const accountId of wait.accountIds) {
@@ -470,8 +425,6 @@ export function resumeAfterReset(mgr: ManagerState, record: AgentRecord, wait: U
       }
     }
   }
-  // Steering accepted since the last park joins what an earlier, re-parked
-  // continuation carried; the wait holds it until a dispatch starts.
   wait.continuation = [...wait.continuation, ...(record.pendingSteers ?? [])];
   record.pendingSteers = undefined;
   const prompt = [USAGE_LIMIT_RESUME_PROMPT, ...wait.continuation].join("\n\n");
@@ -480,12 +433,8 @@ export function resumeAfterReset(mgr: ManagerState, record: AgentRecord, wait: U
   }
   const generation = (record.resultGeneration ?? 1) + 1;
   mgr.wakeRuns.set(record.id, generation);
-  // Settlement of the parked promise stays with this wait until the
-  // continuation actually starts; a queued continuation that never starts
-  // (stop, shutdown, session switch) settles it through `finalize`.
   queueBackgroundResume(mgr, record.id, record, prompt, undefined, wait.resumeOptions, {
     onRunStarted: (promise) => {
-      // Delivered in this run's prompt; never again.
       wait.continuation = [];
       if (promise !== wait.parkedPromise) wait.release(promise);
     },
@@ -493,16 +442,9 @@ export function resumeAfterReset(mgr: ManagerState, record: AgentRecord, wait: U
     repark: () => reparkQueuedWake(mgr, record, wait, generation),
     wait,
   });
-  // After the status leaves waiting_for_reset, so observers never mistake
-  // the resume for a second park.
   notifyUsageLimit(mgr, record);
 }
 
-/**
- * A queued post-reset continuation whose provider account was closed again
- * by a usage limit before a slot freed: return it to `waiting_for_reset` on
- * the new closure's reset, keeping the parked promise and its finalizer.
- */
 export function reparkQueuedWake(
   mgr: ManagerState,
   record: AgentRecord,
@@ -514,7 +456,6 @@ export function reparkQueuedWake(
   const modelId = wait.classification.modelId;
   const block = providerBlock(mgr, key, wait.owner, modelId);
   const resetAt = block?.closure?.until;
-  // The account this re-closure is keyed under reopens with the others.
   const account = accountFor(mgr, wait.owner, key);
   if (!wait.accountIds.includes(account)) wait.accountIds.push(account);
   wait.generation = record.resultGeneration ?? generation;
@@ -535,12 +476,6 @@ export function reparkQueuedWake(
   armUsageWake(mgr, record, wait, resetAt);
 }
 
-/**
- * Final outcome of a post-reset continuation that was queued and never
- * started. The caller has already set the terminal status but not published
- * it: publication waits for the deferred worktree cleanup, which may append
- * its note to `record.result` (as in `settleParked`).
- */
 export function settleDroppedWake(
   mgr: ManagerState,
   record: AgentRecord,
@@ -560,13 +495,10 @@ export function settleDroppedWake(
     notifyUsageLimit(mgr, record);
     try {
       mgr.onComplete?.(record);
-    } catch {
-      /* ignore completion side-effect errors */
-    }
+    } catch {}
   });
 }
 
-/** Settle a parked record without running it again. */
 export function settleParked(
   mgr: ManagerState,
   record: AgentRecord,
@@ -603,9 +535,7 @@ export function settleParked(
   if (record.outputCleanup) {
     try {
       record.outputCleanup();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     record.outputCleanup = undefined;
   }
   finishDeferredWorktreeThen(mgr, record, () => {
@@ -615,20 +545,12 @@ export function settleParked(
     notifyUsageLimit(mgr, record);
     try {
       mgr.onComplete?.(record);
-    } catch {
-      /* ignore completion side-effect errors */
-    }
+    } catch {}
   });
 }
 
-/**
- * Cancel every usage-limit wait (session switch), including post-reset
- * continuations still queued. They settle as `stopped` (usage status
- * `exhausted`) without a notification into the next session. Returns the count.
- */
 export function cancelUsageLimitWaits(mgr: ManagerState, reason: string): number {
   let count = 0;
-  // settleParked never removes records, so iterating the live map is safe.
   for (const record of mgr.agents.values()) {
     if (record.status !== "waiting_for_reset") continue;
     settleParked(mgr, record, mgr.usageWaits.get(record.id), {
@@ -645,7 +567,6 @@ export function cancelUsageLimitWaits(mgr: ManagerState, reason: string): number
   for (const entry of continuations) {
     const record = mgr.agents.get(entry.id);
     if (record === undefined || record.status !== "queued") continue;
-    // The finalizer publishes once the deferred worktree cleanup settled.
     stopQueuedRecord(mgr, record, "shutdown", reason);
     entry.finalize?.(false);
     count++;

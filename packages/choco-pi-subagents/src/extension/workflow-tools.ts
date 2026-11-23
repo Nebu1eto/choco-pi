@@ -1,6 +1,3 @@
-/**
- * Workflow tool registrations.
- */
 import { getAvailableTypes, getAgentConfig } from "../agent-types.ts";
 import {
   type AgentSession,
@@ -39,10 +36,7 @@ import { abortable } from "../abortable.ts";
 import { splitGateKey, createActivityTracker, errorResult, textResult } from "./helpers.ts";
 import type { SubagentsRuntime } from "./runtime.ts";
 
-/** Registers the workflow tools and the workflow step runner. */
 export function installWorkflowTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
-  // ---- dynamic workflow tools ----
-
   const resolveWorkflowType = (requested: string): string | undefined => {
     const available = getAvailableTypes();
     if (available.includes(requested)) return requested;
@@ -76,8 +70,6 @@ export function installWorkflowTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
     ctx: ExtensionContext,
     workTask: string | undefined,
   ): WorkflowStepRunner => {
-    // Workflow steps are spawned under this root session; its usage-limit
-    // policy and closures govern their availability.
     let owner: string | undefined;
     try {
       owner = ctx.sessionManager.getSessionId();
@@ -85,8 +77,6 @@ export function installWorkflowTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
       owner = undefined;
     }
     return {
-      // Gate key `<provider>/<model id>`: a model-scoped usage limit holds only
-      // the steps on the models it covers.
       providerKey: (step) => {
         try {
           const model = resolveWorkflowStepModel(ctx, step).model;
@@ -110,7 +100,6 @@ export function installWorkflowTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
       run: async (step, prompt, workflowContext) => {
         const resolved = resolveWorkflowStepModel(ctx, step);
         const { config, resolvedConfig } = resolved;
-        // Same-provider only, so `providerKey` above still names this step's provider.
         const model =
           resolved.fromInput && resolved.model
             ? chooseVariant(
@@ -163,7 +152,6 @@ export function installWorkflowTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
           }
         };
 
-        // A refused review step errors on its own; other steps are unaffected.
         const admission = await rt.registry.admitReviewRound(
           ctx,
           step.subagent_type,
@@ -259,7 +247,6 @@ export function installWorkflowTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
       promptSnippet: "Launch a dynamic DAG workflow of subagents",
       parameters: hostParams(WorkflowDefinitionSchema),
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
-        // Snapshot the root before the first await; admission is rechecked after it.
         let runRoot: string | undefined;
         try {
           runRoot = ctx.sessionManager.getSessionId();

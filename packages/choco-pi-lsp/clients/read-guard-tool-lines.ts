@@ -25,22 +25,13 @@ import { isToolCallEventType } from "./tool-event.ts";
 
 export interface GuardLineResult {
   touchedLines: [number, number] | undefined;
-  // Individual ranges for multi-edit calls (e.g. rename at 4 scattered spots).
-  // When set, read-guard checks each range independently instead of the bounding box.
   editRanges?: [number, number][];
   preflightError?: string;
-  // Edits that resolved successfully when only a subset failed preflight.
-  // Caller can apply these directly and return a ⚠️ PARTIAL APPLY message.
-  // Shares the host-pinned edit shape with applyPartiallyApplicableEdits.
   partiallyApplicable?: PartiallyApplicableEdit[];
-  /** Canonical bounded edit-batch telemetry, also reused by partial apply. */
   editBatchSummary?: ReadGuardEditBatchSummary;
-  // All edits were resolved by exact content match — range snapshot staleness
-  // is irrelevant since the content IS the edit target.
   contentMatchValidated?: boolean;
 }
 
-// Track repeated oldtext_not_found failures per (filePath, preview) to escalate messages.
 const recentOldTextFailures = new Map<string, { count: number; lastTs: number }>();
 const REPEAT_FAILURE_TTL_MS = 300_000;
 const MAX_FAILURE_TRACKER_SIZE = 200;
@@ -72,7 +63,6 @@ function tokenizeForSimilarity(text: string): string[] {
   return text.toLowerCase().match(/[a-z0-9_]+/g) ?? [];
 }
 
-/** Jaccard similarity over identifier/number tokens (whitespace + punctuation insensitive). */
 function tokenSimilarity(a: string, b: string): number {
   const ta = new Set(tokenizeForSimilarity(a));
   const tb = new Set(tokenizeForSimilarity(b));
@@ -82,22 +72,6 @@ function tokenSimilarity(a: string, b: string): number {
   return intersection / (ta.size + tb.size - intersection);
 }
 
-/**
- * "Did you mean?" recovery: when an oldText line can't be found, surface the
- * closest *current* file lines (by token similarity) so the model can rebuild
- * its edit from verbatim text in one turn instead of re-reading blind. Scans a
- * ±window around `nearLine` when known (the first-line locator), else the whole
- * file. Returns the top matches above `minScore`, with their real line numbers.
- *
- * Scores in normalized space but returns only `{ line, score }` — the caller
- * renders the text from a structurally-aligned RAW view so a suggestion can
- * never quote the normalized projection (#1050). NFKC folds CJK full-width
- * punctuation (`：`→`:`, `，`→`,`, `；`→`;`) and HOST_UNICODE_DASHES folds
- * `—`→`-`, so a suggestion rendered from normalized content told the agent to
- * copy bytes the file does not contain; the host's edit tool then fuzzy-matched
- * it and wrote the folded form onto the touched line. Normalization here is
- * comparison-only, exactly as everywhere else in this file.
- */
 function findSimilarLines(
   content: string,
   target: string,
@@ -120,17 +94,6 @@ function findSimilarLines(
   return scored.slice(0, max);
 }
 
-/**
- * Render did-you-mean rows from the file's real characters rather than the
- * normalized match space the line numbers were scored in. Taking only
- * `{ line }` from the scan makes quoting normalized text structurally
- * impossible (#1050).
- *
- * `rawLineAligned` must be `normalizeToLF(stripBom(raw).text)`: the same
- * STRUCTURAL normalization `normalizeForGuardMatch` applies (so line indices
- * cross-index 1:1 even for lone-CR or BOM files) but none of its CHARACTER
- * folding, so full-width punctuation, smart quotes, and NBSP survive.
- */
 function formatSimilarLines(suggestions: Array<{ line: number }>, rawLineAligned: string): string {
   const rawLines = rawLineAligned.split("\n");
   const pad = (n: number) => String(n).padStart(4, " ");
@@ -150,19 +113,6 @@ export function countFileLines(filePath: string): number {
   }
 }
 
-// Match the host edit tool's fuzzy-match space (NFKC + smart quotes/dashes/
-// spaces + BOM + lone-CR), so the guard resolves oldText -> range exactly where
-// the host would apply it instead of false-blocking valid edits (#257).
-//
-// This is also where #505's "confusable-hyphen normalization" bundled item
-// lives: normalizeForGuardMatch folds HOST_UNICODE_DASHES (U+2010, U+2011,
-// U+2012, U+2013, U+2014, U+2015, U+2212 -> ASCII '-') before either side of
-// the comparison below, so it runs on the PRIMARY match here, before any of
-// the Tier A/B/C fallbacks in tryCorrectIndentationMismatchFromContent are
-// even reached. Comparison-only, same as every tier below it — the bytes
-// actually written on a successful edit are always the caller's original
-// oldText/newText (see resolveOldTextEdits / applyPartiallyApplicableEdits),
-// never this normalized form.
 function normalizeContent(text: string): string {
   return normalizeForGuardMatch(text);
 }
@@ -281,8 +231,6 @@ function resolveHashlineEditInput(
         metadata: { tool: "edit", editBatchSummary },
       });
     }
-    // Every blocking verdict ends with a single concrete next-action line so
-    // the agent recovers in one turn (#328 — uniform recovery-hint discipline).
     const target = filePath ? `\`${filePath}\`` : "the file";
     const retryHint = `Re-read ${target} to get current #line anchors, then retry using set_line / replace_lines with those anchors — or use a native ranged edit.`;
     return {
@@ -483,7 +431,6 @@ function resolveOldTextEdits(
       const failCount = trackOldTextFailure(filePath, preview);
       if (failCount > maxFailCount) maxFailCount = failCount;
       let errorMsg = `edits[${editIndex}].oldText ("${preview}") was not found in the current file content.`;
-      // Quote-style hint: if swapping " ↔ ' gives exactly one match, tell the agent why it failed.
       const quoteSwapCandidates: string[] = [];
       if (needle.includes('"')) quoteSwapCandidates.push(needle.replace(/"/g, "'"));
       if (needle.includes("'")) quoteSwapCandidates.push(needle.replace(/'/g, '"'));
@@ -497,9 +444,6 @@ function resolveOldTextEdits(
         const offsetHint =
           lineHint !== undefined ? `\`offset=${Math.max(1, lineHint - 2)} limit=20\`` : undefined;
         if (lineHint !== undefined) {
-          // First line content exists in the file — the surrounding block has drifted.
-          // Indentation autopatch already ran before this point and did not fix it,
-          // so this is a content-drift failure, not a whitespace issue.
           if (failCount >= 2) {
             errorMsg +=
               ` This is attempt #${failCount} — the first line of your oldText appears near line ${lineHint}` +
@@ -513,7 +457,6 @@ function resolveOldTextEdits(
               ` Re-read ${offsetHint} and rebuild oldText from the verbatim file content.`;
           }
         } else {
-          // First line not found anywhere in the file, even ignoring whitespace.
           if (failCount >= 2) {
             errorMsg +=
               ` This is attempt #${failCount} — this text does not appear anywhere in the file,` +
@@ -526,14 +469,6 @@ function resolveOldTextEdits(
           }
         }
       }
-      // "Did you mean?" — surface the closest current lines (token
-      // similarity) so the model can rebuild oldText verbatim in one turn
-      // instead of re-reading blind. Skipped on the quote-style path, which
-      // already names the precise fix. Anchored near the first-line locator
-      // when known, else scans the whole file. Scored against `content`
-      // (normalized) but RENDERED from a structurally-aligned raw view —
-      // quoting the normalized projection told the agent to copy bytes the
-      // file does not contain (#1050).
       if (!errorMsg.includes("quote style")) {
         const similarLines = findSimilarLines(
           content,
@@ -545,10 +480,6 @@ function resolveOldTextEdits(
         }
       }
       errors.push(errorMsg);
-      // Counterfactual: would the host's edit tool have applied this oldText
-      // anyway? hostWouldApply=true => this block is a false-block (choco-pi-lsp
-      // friction the host wouldn't have); false => a genuine miss. This is the
-      // measurement that tells us whether the guard earns its keep (#257).
       const hostMatch = hostWouldApplyOldText(rawContent, oldText);
       logBatchEvent({
         event: "oldtext_not_found",
@@ -738,12 +669,6 @@ function resolveOldTextEdits(
   };
 }
 
-/**
- * Normalises an oldText string for whitespace-only differences that editors routinely
- * introduce: trailing spaces/tabs on each line are stripped, and any trailing blank
- * lines (lines that are empty after trimming) are removed from the end. CRLF is
- * normalised to LF. Returns the same string if no change was needed.
- */
 export function stripOldTextTrailingWhitespace(value: string): string {
   const lines = value
     .replace(/\r\n/g, "\n")
@@ -753,11 +678,6 @@ export function stripOldTextTrailingWhitespace(value: string): string {
   return lines.join("\n");
 }
 
-/**
- * Tries to fix a tab/space indentation mismatch between the model's oldText and the
- * actual file. Returns the corrected oldText if a matching variant is found, or
- * undefined if the text already matches or no indentation conversion fixes it.
- */
 export function tryCorrectIndentationMismatchFromContent(
   oldText: string,
   content: string,
@@ -766,25 +686,21 @@ export function tryCorrectIndentationMismatchFromContent(
   if (content.includes(normalized)) return undefined;
 
   const conversions = [
-    // tabs → 2 spaces
     (s: string) =>
       s
         .split("\n")
         .map((l) => l.replace(/^\t+/, (m) => "  ".repeat(m.length)))
         .join("\n"),
-    // tabs → 4 spaces
     (s: string) =>
       s
         .split("\n")
         .map((l) => l.replace(/^\t+/, (m) => "    ".repeat(m.length)))
         .join("\n"),
-    // 2 spaces → tabs
     (s: string) =>
       s
         .split("\n")
         .map((l) => l.replace(/^( {2})+/, (m) => "\t".repeat(m.length / 2)))
         .join("\n"),
-    // 4 spaces → tabs
     (s: string) =>
       s
         .split("\n")
@@ -802,34 +718,16 @@ export function tryCorrectIndentationMismatchFromContent(
     return indentationInsensitiveCandidate;
   }
 
-  // Tier A (#200): the fixed-length matchers above can't bridge a mid-block
-  // blank-line difference; fall back to a blank-line-insensitive match that
-  // recovers the real file span (unique-match guarded).
   const blankLineCandidate = findBlankLineInsensitiveCandidate(content, normalized);
   if (blankLineCandidate !== undefined) {
     return blankLineCandidate;
   }
 
-  // Tier B: interior-whitespace drift the earlier tiers can't bridge — the
-  // indentation- and blank-line-insensitive tiers both still require each
-  // non-blank line to match character-for-character after trimming only the
-  // OUTER edges. When whitespace drifts INSIDE a line (a formatter collapsed
-  // `a  +  b` → `a + b`, re-spaced operators/args, etc.) those tiers miss.
-  // Matching on a fully-whitespace-collapsed signature catches it. Same
-  // safety contract as Tier A: unique-match guarded, ≥2 anchors, recovers the
-  // verbatim file span.
   const whitespaceCandidate = findWhitespaceInsensitiveCandidate(content, normalized);
   if (whitespaceCandidate !== undefined) {
     return whitespaceCandidate;
   }
 
-  // Tier C: Unicode-punctuation drift the whitespace tiers can't bridge — the
-  // model emitted smart quotes / em-dashes / NBSP where the file has straight
-  // quotes / hyphens / regular spaces (or vice versa), common when text is
-  // pasted from rendered Markdown or the model "tidies" punctuation. Folding
-  // those to their ASCII equivalents (on top of whitespace collapse) catches it.
-  // Same safety contract as Tier B: signature-matched, unique-match guarded, ≥2
-  // anchors, recovers the verbatim file span (the file's real characters).
   const unicodeCandidate = findUnicodePunctuationInsensitiveCandidate(content, normalized);
   if (unicodeCandidate !== undefined) {
     return unicodeCandidate;
@@ -875,21 +773,6 @@ function findIndentationInsensitiveCandidate(content: string, oldText: string): 
   return undefined;
 }
 
-/**
- * Tier A of the blank-line autopatch (#200): tolerate mid-block blank-line
- * divergence — a blank line added or removed *inside* the block — which the
- * fixed-length window in {@link findIndentationInsensitiveCandidate} can't (any
- * interior blank-line delta breaks its 1:1 alignment). Blank lines are
- * semantically insignificant in every supported language, so matching the
- * oldText's non-blank lines (indentation-insensitive) against consecutive
- * content while skipping interior blanks on the content side is safe.
- *
- * Safety: matches by the non-blank "signature" but **recovers and returns the
- * real file span** (first→last matched non-blank line, real interior blanks
- * included) so the applied oldText is verbatim file bytes; requires the
- * signature to match **exactly once** (returns undefined on 0 or ≥2). Anchored
- * on ≥2 non-blank lines to avoid trivial single-line collisions.
- */
 function findBlankLineInsensitiveCandidate(content: string, oldText: string): string | undefined {
   const stripIndent = (line: string) => line.replace(/^[\t ]+/, "").trimEnd();
   const isBlank = (line: string) => stripIndent(line) === "";
@@ -899,8 +782,6 @@ function findBlankLineInsensitiveCandidate(content: string, oldText: string): st
     .split("\n")
     .map(stripIndent)
     .filter((line) => line !== "");
-  // Need ≥2 anchors to be meaningful and collision-resistant; single-line
-  // drift has no interior to differ and is handled by other tiers.
   if (oldNonBlank.length < 2) return undefined;
 
   const spans: Array<[number, number]> = [];
@@ -932,23 +813,6 @@ function findBlankLineInsensitiveCandidate(content: string, oldText: string): st
   return candidate === oldText ? undefined : candidate;
 }
 
-/**
- * Tier B of the whitespace autopatch: tolerate INTERIOR whitespace divergence
- * that {@link findBlankLineInsensitiveCandidate} (outer-trim only) and the
- * fixed-width converters can't bridge. The signature is each non-blank line
- * with **all** whitespace removed (`/\s+/g` → ""), so re-spacing inside a line
- * — `a  +  b` ↔ `a + b`, `foo( x )` ↔ `foo(x)`, tab/space mixes mid-line — no
- * longer breaks the match. This mirrors the content-hash normalization the
- * read-guard already uses for staleness (`lineContentHash`), so a span that
- * passes here is a span the guard considers semantically identical.
- *
- * Safety mirrors Tier A exactly: matches by the collapsed signature but
- * **recovers and returns the real file span** (verbatim bytes, interior blanks
- * included) so the applied oldText is exact; requires the signature to match
- * **exactly once** (0 or ≥2 → undefined); anchored on ≥2 non-blank lines to
- * resist single-line collisions (collapsing whitespace makes single-line
- * collisions more likely, so the ≥2 floor matters more here than in Tier A).
- */
 function findWhitespaceInsensitiveCandidate(content: string, oldText: string): string | undefined {
   const collapse = (line: string) => line.replace(/\s+/g, "");
   const isBlank = (line: string) => collapse(line) === "";
@@ -989,13 +853,6 @@ function findWhitespaceInsensitiveCandidate(content: string, oldText: string): s
   return candidate === oldText ? undefined : candidate;
 }
 
-/**
- * Fold the Unicode punctuation that models and rendered text routinely swap for
- * ASCII (and back) to a canonical ASCII form: smart single/double quotes →
- * `'`/`"`, the dash family (hyphen, figure/en/em dash, horizontal bar, minus) →
- * `-`, and non-breaking / typographic spaces → a regular space. Used only to
- * build a match signature — never to rewrite file content.
- */
 function normalizeUnicodePunctuation(text: string): string {
   return text
     .replace(/[‘’‚‛]/g, "'")
@@ -1004,16 +861,6 @@ function normalizeUnicodePunctuation(text: string): string {
     .replace(/[  -   　]/g, " ");
 }
 
-/**
- * Tier C of the autopatch ladder: tolerate Unicode-punctuation divergence the
- * whitespace tiers can't bridge (smart quotes ↔ straight, em/en-dash ↔ hyphen,
- * NBSP ↔ space). The signature folds Unicode punctuation to ASCII and then
- * collapses all whitespace (so it subsumes Tier B and additionally absorbs the
- * punctuation swap). Safety mirrors Tier B exactly: matches by the folded
- * signature but **recovers and returns the verbatim file span** (the file's real
- * characters), requires the signature to match **exactly once**, and anchors on
- * ≥2 non-blank lines to resist single-line collisions.
- */
 function findUnicodePunctuationInsensitiveCandidate(
   content: string,
   oldText: string,
@@ -1057,18 +904,6 @@ function findUnicodePunctuationInsensitiveCandidate(
   return candidate === oldText ? undefined : candidate;
 }
 
-/**
- * Shift a native range edit's line numbers, in place, by the relocation delta.
- * Returns true when a range matching `from` was found and rewritten. Powers the
- * content-verified range-stale auto-apply: the lines the agent meant to edit
- * moved (proven by read-time line hashes uniquely matching the new location),
- * so we re-target the positional edit to where the content now lives.
- *
- * Shifts by a constant line delta (`to[0] - from[0]`) applied to both the start
- * and end lines, so inclusive/exclusive end conventions and any character
- * offsets are preserved untouched — only the line position moves. Matches both
- * the single `oldRange` shape and `edits[].range` entries.
- */
 export function relocateEditRange(
   input: LspBoundaryValue,
   from: [number, number],
@@ -1124,13 +959,6 @@ export function getTouchedLinesForGuard(
 ): GuardLineResult {
   // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
   if (isToolCallEventType("edit", event as any)) {
-    // The host standard-edit fields (path, edits[].oldText/newText) are pinned
-    // to the SDK's EditToolInput, so a host edit-schema change is a compile
-    // error instead of silently falling through to `unknown_edit_schema`. The
-    // remaining keys are choco-pi-lsp's own extensions for native-ranged + hashline
-    // edit tools; oldText/newText are probed as optional because range-only
-    // edits omit them (refs #3).
-
     // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
     const editInput = (event as { input?: unknown }).input as Partial<
       Pick<EditToolInput, "path">

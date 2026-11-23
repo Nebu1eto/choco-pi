@@ -16,12 +16,6 @@ import type { CheckEvidence, Observation } from "../checks.ts";
 import { replyPrompt } from "./prompts.ts";
 import { evidence, type Host, type Scenario } from "./types.ts";
 
-/**
- * Expected figures, written out from the documented policy (soft cap; headroom
- * 15% of the cap clamped to [reserve + 8,000, 100,000]; point = min(preset,
- * cap - headroom)) rather than recomputed, so the production code is the
- * subject, not the oracle.
- */
 interface Expected {
   readonly window: number;
   readonly point: number;
@@ -31,7 +25,6 @@ interface Phase {
   readonly softCap: ContextPreset;
   readonly compactionPoint: ContextPreset;
 }
-/** First phase of every subject: the agent `settings.json` presets the run starts from. */
 const STANDARD: Phase = {
   name: "standard-standard",
   softCap: "standard",
@@ -42,32 +35,23 @@ const PHASES: readonly Phase[] = [
   { name: "strict-cap", softCap: "strict", compactionPoint: "standard" },
   { name: "strictest-point", softCap: "standard", compactionPoint: "strictest" },
 ];
-/** Mid-size natives: every preset pair the user named, one in-session change each. */
 const MID_PHASES: readonly Phase[] = [
   STANDARD,
   { name: "permissive-permissive", softCap: "permissive", compactionPoint: "permissive" },
   { name: "unlimited-unlimited", softCap: "unlimited", compactionPoint: "unlimited" },
   { name: "strict-strict", softCap: "strict", compactionPoint: "strict" },
 ];
-/** Natives at or above 600K: Standard caps them; Strict caps at 400K. */
 const LARGE: ReadonlyMap<string, Expected> = new Map([
   ["standard-standard", { window: 600_000, point: 450_000 }],
   ["strict-cap", { window: 400_000, point: 340_000 }],
   ["strictest-point", { window: 600_000, point: 200_000 }],
 ]);
-/** A 200K native: no preset caps it; the point is window - 30K headroom. */
 const SMALL: ReadonlyMap<string, Expected> = new Map([
   ["standard-standard", { window: 200_000, point: 170_000 }],
   ["strict-cap", { window: 200_000, point: 170_000 }],
   ["strictest-point", { window: 200_000, point: 170_000 }],
 ]);
 
-/**
- * A 524,288 native (Kimi-K3): Standard (600K) and Permissive (800K) exceed it,
- * so the window stays native and the point is the ceiling 524,288 - 78,643
- * (15%, rounded) = 445,645 (the 450K and 600K presets clamp to it). Strict caps
- * at 400K: headroom 60,000, ceiling 340,000, point 300,000.
- */
 const MID: ReadonlyMap<string, Expected> = new Map([
   ["standard-standard", { window: 524_288, point: 445_645 }],
   ["permissive-permissive", { window: 524_288, point: 445_645 }],
@@ -90,11 +74,6 @@ const SUBJECTS: ReadonlyMap<string, Subject> = new Map([
   ["harness-offline/luna-window-mirror", { native: 1_050_000, phases: PHASES, expected: LARGE }],
   ["harness-offline/kimi-window-mirror", { native: 524_288, phases: MID_PHASES, expected: MID }],
 ]);
-/**
- * Catalog entries seeded in every run, recorded (not asserted): the registry is
- * no display surface, and a provider that re-registers (choco-pi-codex's
- * openai-codex) hands out fresh, uncapped objects there.
- */
 const REGISTRY_SUBJECTS = [
   "anthropic/claude-haiku-5-5",
   "openai-codex/gpt-6-luna",
@@ -104,7 +83,6 @@ const REGISTRY_SUBJECTS = [
 function mirror(id: string, contextWindow: number): Model<"anthropic-messages"> {
   return { ...FAKE_MODEL, id, name: `Harness window mirror ${id}`, contextWindow };
 }
-/** Offline subjects on the harness-offline provider; only their windows mirror the live models. */
 export const OFFLINE_MODELS: ReadonlyMap<string, Model<"anthropic-messages">> = new Map([
   ["haiku-window-mirror", mirror("haiku-window-mirror", 1_000_000)],
   ["luna-window-mirror", mirror("luna-window-mirror", 1_050_000)],
@@ -130,7 +108,6 @@ const ContextFrameSchema = obj(
   { open: true },
 );
 
-/** Records every `session_before_compact` the host emits (no handler result). */
 export const compactProbe: ExtensionFactory = (pi) => {
   pi.on("session_before_compact", (_event, ctx) => {
     const usage = ctx.getContextUsage();
@@ -162,7 +139,6 @@ interface Frames {
   contextRef: number;
 }
 
-/** Runs the real `/status` and `/context` commands and keeps their report frames. */
 async function reportFrames(host: Host, phase: Phase): Promise<Frames> {
   const ui = host.session.extensionRunner.getUIContext();
   const original = ui.setStatus;
@@ -199,7 +175,6 @@ async function reportFrames(host: Host, phase: Phase): Promise<Frames> {
   return { status, context, statusRef, contextRef };
 }
 
-/** Leading token count of a `/status` "Context window" value ("600,000 tokens ..."). */
 function statusTokens(value: string | undefined): number | null {
   const match = value === undefined ? null : /^([\d,.\s]+) tokens/u.exec(value);
   return match?.[1] === undefined ? null : Number(match[1].replace(/[^\d]/gu, ""));
@@ -212,11 +187,9 @@ interface Displayed {
   readonly registry: Record<string, number | null>;
 }
 
-/** Every in-host place the window is read, evaluated with the host's own context. */
 function displayed(ctx: ExtensionContext): Displayed {
   const registry: Record<string, number | null> = {};
   for (const key of REGISTRY_SUBJECTS) {
-    // Model ids may contain "/" (hf:moonshotai/Kimi-K3): split at the first one only.
     const slash = key.indexOf("/");
     registry[key] =
       ctx.modelRegistry.find(key.slice(0, slash), key.slice(slash + 1))?.contextWindow ?? null;
@@ -224,7 +197,6 @@ function displayed(ctx: ExtensionContext): Displayed {
   return {
     modelWindow: ctx.model?.contextWindow ?? null,
     usageWindow: ctx.getContextUsage()?.contextWindow ?? null,
-    // footer.ts and zentui/index.ts: ctx.model?.contextWindow ?? getContextUsage()?.contextWindow
     footerWindow: ctx.model?.contextWindow ?? ctx.getContextUsage()?.contextWindow ?? null,
     registry,
   };
@@ -280,7 +252,6 @@ function windowObservations(host: Host, phase: Phase, expected: Expected): Promi
   });
 }
 
-/** Foreground answers carry this input-token count (offline boundary turns). */
 let reportedInput = 10;
 
 function boundaryResponse(index: number): Response {
@@ -312,11 +283,6 @@ function boundaryResponse(index: number): Response {
   ]);
 }
 
-/**
- * Offline: one turn whose context lands exactly on the point (input + 1 output
- * = point) must not request compaction; one token more must. The cap's
- * agent_settled handler is the only compaction trigger (host auto-compaction off).
- */
 async function boundary(host: Host, phase: Phase, expected: Expected): Promise<Observation[]> {
   const requested: (number | null)[] = [];
   probeSink = (tokens) => requested.push(tokens);
@@ -354,10 +320,6 @@ async function boundary(host: Host, phase: Phase, expected: Expected): Promise<O
   ];
 }
 
-/**
- * Live: the point cannot be reached in one short turn, so it is read from the
- * production resolver in-host (live budget hook included). Not behavioral.
- */
 function computedPoint(host: Host, phase: Phase, expected: Expected): Observation[] {
   const model = host.parent().ctx.model;
   const policy = model
@@ -382,11 +344,6 @@ function computedPoint(host: Host, phase: Phase, expected: Expected): Observatio
   ];
 }
 
-/**
- * Live non-Anthropic turns: Codex rides choco-pi-codex's WebSocket (outside the
- * fetch ledger); Synthetic rides fetch, but the ledger parses only Anthropic
- * SSE usage. Record the turn's own outcome and usage.
- */
 function recordProviderTurn(host: Host): void {
   const last = host.session.messages.findLast((message) => message.role === "assistant");
   if (!last || last.role !== "assistant" || last.api === "anthropic-messages") return;

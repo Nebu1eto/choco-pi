@@ -2,12 +2,6 @@ import * as path from "node:path";
 import type { OpengrepFinding, OpengrepResult } from "../../opengrep-client.ts";
 import type { ProjectDiagnostic, ProjectDiagnosticSeverity } from "../types.ts";
 
-/**
- * opengrep's `extra.severity` is semgrep-compatible: `ERROR` / `WARNING` /
- * `INFO` (verified against the real installed 1.25.0 binary's `--json`
- * output). `ERROR` is treated as blocking — the same convention gitleaks
- * secrets and knip's "unlisted dependency" findings use.
- */
 interface OpengrepSeverity {
   severity: ProjectDiagnosticSeverity;
   blocking: boolean;

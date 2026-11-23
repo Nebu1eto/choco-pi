@@ -7,7 +7,6 @@ import { PiAcpAgent, type SessionStoreLike } from "../src/acp/agent.ts";
 import type { StoredSession } from "../src/acp/session-store.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 
-/** A session index holding at most one entry and recording deletions. */
 class RecordingSessionStore implements SessionStoreLike {
   readonly deletes: string[] = [];
 
@@ -29,10 +28,7 @@ class RecordingSessionStore implements SessionStoreLike {
   upsert(): void {}
 }
 
-/** Install a fake session index on an agent. */
 function withStore(agent: PiAcpAgent, store: SessionStoreLike): void {
-  // `store` is a private implementation detail of `PiAcpAgent`; `Object.assign`
-  // installs the fake through the same property without weakening any declared type.
   Object.assign(agent, { store });
 }
 
@@ -55,7 +51,6 @@ test("PiAcpAgent: deleteSession removes stored session and session file", async 
 
   const storedSessionId = "stored-session";
 
-  // Inject a SessionStore that tracks calls.
   const store = new RecordingSessionStore({
     sessionId: storedSessionId,
     cwd: "/tmp/delete-project",
@@ -123,8 +118,6 @@ test("PiAcpAgent: deleteSession succeeds idempotently for unknown sessionId", as
   const conn = new FakeAgentSideConnection();
   const agent = new PiAcpAgent(asAgentConn(conn));
 
-  // Per ACP session/delete semantics, deleting a non-existent session
-  // should succeed idempotently (return {} without error).
   const store = new RecordingSessionStore(null);
   withStore(agent, store);
 

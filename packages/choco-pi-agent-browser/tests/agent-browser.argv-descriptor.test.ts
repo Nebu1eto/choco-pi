@@ -1,9 +1,3 @@
-/**
- * Purpose: Verify argv descriptor parsing for current agent-browser command shapes.
- * Responsibilities: Assert command/subcommand extraction across representative command families and flag edge cases.
- * Scope: Unit-style Node test-runner coverage for pure argv-descriptor helpers.
- */
-
 import assert from "node:assert/strict";
 import test from "node:test";
 

@@ -1,8 +1,3 @@
-/**
- * No-progress suppression: a lane attempt that ended with no legal cut is not
- * repeated while the cut fingerprint is unchanged (no time-based cooldown), and
- * lane records carry the additive attempt / fingerprint / trigger fields.
- */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -23,7 +18,6 @@ import type { SchedulerClock } from "../src/background/scheduler.ts";
 import { cutFingerprint, fingerprintEntries } from "../src/background/snapshot.ts";
 import { buildSnapshot, FakeBackend, seededToolPairs } from "./background-fakes.ts";
 
-/** A fresh clock per fixture: coordinator cooldowns are keyed by clock. */
 function frozenClock(): SchedulerClock {
   return { now: () => 0, setTimer: () => () => {} };
 }
@@ -105,7 +99,6 @@ test("cutFingerprint is stable for the same entries and salt, and changes with e
 test("no-legal-cut is suppressed once per fingerprint, re-armed by a change, bypassed by manual", async () => {
   const f = fixture();
 
-  // Attempt 1 runs and ends with no legal cut.
   assert.deepEqual(await f.coordinator.requestPreparation({ trigger: "threshold" }), {
     accepted: true,
     candidateId: "candidate-1",
@@ -115,7 +108,6 @@ test("no-legal-cut is suppressed once per fingerprint, re-armed by a change, byp
   assert.equal(f.backend.calls.length, 1);
   assert.equal(f.failures[0]?.attempt, 1);
 
-  // Same fingerprint: not started; reported exactly once.
   for (let repeat = 0; repeat < 3; repeat++) {
     assert.deepEqual(
       await f.coordinator.requestPreparation({ trigger: "threshold", tokensAtTrigger: 900 }),
@@ -129,7 +121,6 @@ test("no-legal-cut is suppressed once per fingerprint, re-armed by a change, byp
   assert.equal(f.suppressed[0]?.tokensAtTrigger, 900);
   assert.equal(f.suppressed[0]?.cutFingerprint, f.failures[0]?.cutFingerprint);
 
-  // Manual and forced triggers bypass suppression, and count as the next attempt.
   const manual = await f.coordinator.requestPreparation({ trigger: "manual" });
   assert.equal(manual.accepted, true);
   await settle(f.coordinator);
@@ -137,7 +128,6 @@ test("no-legal-cut is suppressed once per fingerprint, re-armed by a change, byp
   assert.equal(f.failures[1]?.attempt, 2);
   assert.equal(f.failures[1]?.trigger, "manual");
 
-  // A new entry changes the fingerprint: the lane is re-armed at attempt 1.
   f.appendEntry();
   const rearmed = await f.coordinator.requestPreparation({ trigger: "threshold" });
   assert.equal(rearmed.accepted, true);
@@ -146,13 +136,11 @@ test("no-legal-cut is suppressed once per fingerprint, re-armed by a change, byp
   assert.equal(f.failures[2]?.attempt, 1);
   assert.notEqual(f.failures[2]?.cutFingerprint, f.failures[0]?.cutFingerprint);
 
-  // ...and is suppressed again, with a fresh single report, for the new fingerprint.
   assert.equal((await f.coordinator.requestPreparation({ trigger: "idle" })).accepted, false);
   assert.equal((await f.coordinator.requestPreparation({ trigger: "idle" })).accepted, false);
   assert.equal(f.suppressed.length, 2);
   assert.equal(f.suppressed[1]?.trigger, "idle");
 
-  // A change of the non-branch cut inputs (a new wire capture, say) re-arms as well.
   f.salt.value = "capture=2";
   assert.equal((await f.coordinator.requestPreparation({ trigger: "threshold" })).accepted, true);
   await settle(f.coordinator);
@@ -166,8 +154,6 @@ test("only a no-legal-cut attempt suppresses; other failures keep the existing b
   await f.coordinator.requestPreparation({ trigger: "threshold" });
   await settle(f.coordinator);
   assert.equal(f.coordinator.status().reason, "malformed");
-  // Nothing was remembered as no-progress: the next request is not suppressed
-  // (it may still be refused by the scope cooldown, which is a separate mechanism).
   await f.coordinator.requestPreparation({ trigger: "threshold" });
   await settle(f.coordinator);
   assert.equal(f.suppressed.length, 0);

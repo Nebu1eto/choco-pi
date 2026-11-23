@@ -4,8 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 
-// The config path is captured when the modules load, so every case shares one agent dir,
-// set before the imports below. Each case rewrites web-search.json in place.
 const ENV_KEYS = ["PI_CODING_AGENT_DIR", "XDG_CONFIG_HOME"] as const;
 const savedEnv = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
 const root = await mkdtemp(join(tmpdir(), "pi-ssrf-config-"));
@@ -24,8 +22,6 @@ after(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-// The parsed config is cached by mtime and size, so every write gets a distinct mtime:
-// two same-size writes inside one clock tick must never read as the cached file.
 let mtimeSeconds = Math.floor(Date.now() / 1000);
 async function writeConfig(content: string): Promise<void> {
   await writeFile(configPath, content, "utf8");
@@ -89,8 +85,6 @@ test("loadSsrfConfig rejects a non-boolean trustEnvProxy value", async () => {
 });
 
 test("loadSsrfConfig().allowRanges throws when ssrf.allowRanges is not an array", async () => {
-  // Regression: a mistyped non-array value (bare string, object, number) must
-  // fail loudly instead of being silently ignored as "no exemptions".
   for (const allowRanges of ["198.18.0.0/15", { "198.18.0.0/15": true }, 42]) {
     await writeConfig(JSON.stringify({ ssrf: { allowRanges } }));
     assert.match(

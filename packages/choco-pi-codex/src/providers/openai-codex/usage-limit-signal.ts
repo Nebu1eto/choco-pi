@@ -1,9 +1,3 @@
-/**
- * Per-session handoff of structured Codex usage-limit data from the provider stream to the
- * extension's `message_end` handler. The provider records a signal just before it emits the
- * terminal error event; the extension drains it for the same session id and persists it as a
- * custom session entry. `resetAt` and `observedAt` are epoch milliseconds.
- */
 export type UsageLimitSignal = {
   resetAt?: number;
   planType?: string;
@@ -41,7 +35,6 @@ export function recordUsageLimitSignal(
   signals.set(sessionId, signal);
 }
 
-/** Drain the signal for `sessionId`; stale signals are discarded instead of returned. */
 export function takeUsageLimitSignal(
   sessionId: string,
   now: number = Date.now(),

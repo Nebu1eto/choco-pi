@@ -17,13 +17,6 @@ import {
   type UsageWindowReport,
 } from "./host-bridge/report-schema.ts";
 
-/**
- * The structured `/usage` report for RPC hosts (docs/rpc-host-bridge.md,
- * "Structured reports"). It carries what the Usage tab prints — provider name,
- * plan, status, cache note, and quota windows — and nothing that identifies an
- * account: no account ID, token, or credential reaches ProviderUsage.
- */
-
 function windowReport(window: UsageWindow): UsageWindowReport {
   const report: UsageWindowReport = {
     label: window.label,
@@ -63,7 +56,6 @@ function providerReport(usage: ProviderUsage): UsageProviderReport {
   return report;
 }
 
-/** One section per provider, so a host without the typed renderer still shows a table. */
 function providerSection(usage: ProviderUsage, now: number): ReportSection {
   const rows: ReportRow[] = [];
   if (usage.plan !== undefined) rows.push({ label: "Plan", value: usage.plan });
@@ -81,7 +73,6 @@ function providerSection(usage: ProviderUsage, now: number): ReportSection {
   return { title: usage.name, rows };
 }
 
-/** True when at least one provider reported a quota window, the bar a host would draw. */
 export function hasUsageWindows(report: ProviderUsageReport): boolean {
   return report.providers.some((reading) => reading.ok && reading.usage.windows.length > 0);
 }
@@ -107,7 +98,6 @@ export function usageReportFrame(
   };
 }
 
-/** Queries the providers once and builds the report for the session that asked. */
 export async function buildUsageReport(ctx: ExtensionContext): Promise<ReportFrame> {
   const sessionId = ctx.sessionManager.getSessionId();
   return usageReportFrame(sessionId, await readProviderUsages(ctx));

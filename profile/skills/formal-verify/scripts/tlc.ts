@@ -1,14 +1,4 @@
 #!/usr/bin/env node
-// Runs the TLC model checker on one spec and config and prints per-rule verdicts
-// with counterexample traces as one JSON document (see tlc-result.ts).
-//
-//   node tlc.ts check --spec <file.tla> --config <file.cfg> [--jar <path>]
-//     [--tools-dir <dir>] [--max-states <n>] [--timeout-ms <n>] [--workers <n>]
-//     [--heap-mb <n>] [--out <dir>] [--no-deadlock]
-//
-// Exit codes: 0 pass, 3 violated, 4 inconclusive (bound or timeout), 2 error.
-// It fails closed: output it cannot parse, an unknown TLC exit, or a run that
-// did not finish is an error or inconclusive, never a pass.
 
 import {
   copyFile,
@@ -60,13 +50,7 @@ import {
 
 const DEFAULT_MAX_STATES = 1_000_000;
 const DEFAULT_TIMEOUT_MS = 120_000;
-// TLC's JVM heap. Without a cap the JVM reserves a quarter of physical memory
-// and TLC sizes its fingerprint set from it; 2 GiB ran the 1.5M-state model as
-// fast as an uncapped heap at half the resident memory. Larger state spaces
-// spill to disk under the cap rather than fail.
 const DEFAULT_HEAP_MB = 2048;
-// Garbage-collector threads. ParallelGC otherwise starts one per core; two kept
-// a single-worker run's speed unchanged.
 const GC_THREADS = 2;
 const MAX_OUTPUT_BYTES = 64 << 20;
 const MAX_SPEC_FILES = 200;
@@ -140,9 +124,6 @@ function readOptions(argv: string[]): Options {
   };
 }
 
-// ---------------------------------------------------------------------------
-// One TLC run
-
 type RunOutcome =
   | { kind: "complete"; stats: TlcStats }
   | { kind: "violation"; broke: TlcBreak; trace: TlcTrace; stats: TlcStats }
@@ -153,7 +134,6 @@ const NO_STATS: TlcStats = { generated: undefined, distinct: undefined, depth: u
 
 const tail = (text: string) => text.trim().split("\n").slice(-20).join("\n");
 
-/** Classifies a finished TLC process. Anything not positively recognised is an error. */
 function classifyRun(
   result: ProcessResult,
 ): RunOutcome & { version: string | undefined; warnings: { code: number; text: string }[] } {
@@ -228,9 +208,6 @@ function classifyRun(
     return fail("TLC reported a liveness violation without a loop");
   return { ...extra, kind: "violation", broke, trace, stats };
 }
-
-// ---------------------------------------------------------------------------
-// The check
 
 type Group = { invariants: string[]; properties: string[]; deadlock: boolean };
 
@@ -631,9 +608,6 @@ async function writeArtifacts(
     flag: "wx",
   });
 }
-
-// ---------------------------------------------------------------------------
-// CLI
 
 function usageResult(message: string): CheckResult {
   return {

@@ -95,11 +95,6 @@ for (const adapter of BUILTIN_ADAPTERS) {
   registerUsageProvider(adapter);
 }
 
-/**
- * Reads the quota windows of `provider` via its registered adapter. Resolves
- * `undefined` when the provider is unknown or not connected, or when no
- * reading can be obtained; it never rejects.
- */
 export async function providerUsageSnapshot(
   ctx: ExtensionContext,
   provider: string,
@@ -118,7 +113,6 @@ export async function providerUsageSnapshot(
   }
 }
 
-/** Quota windows of `provider`, or `undefined` when none can be read. Never rejects. */
 export async function providerUsageWindows(
   ctx: ExtensionContext,
   provider: string,
@@ -126,11 +120,6 @@ export async function providerUsageWindows(
   return (await providerUsageSnapshot(ctx, provider))?.windows;
 }
 
-/**
- * Stable account identity for closing a provider per account via its
- * registered adapter. Resolves `undefined` when it cannot be derived; never
- * rejects.
- */
 export async function providerAccountId(
   ctx: ExtensionContext,
   provider: string,
@@ -144,12 +133,6 @@ export async function providerAccountId(
   }
 }
 
-/**
- * Queries every registered usage provider adapter in display order once.
- * A provider without a credential is listed in `absent` instead of producing
- * a reading; a signed-in provider that fails becomes a reading with its
- * failure message, so this never rejects.
- */
 export async function readProviderUsages(
   ctx: ExtensionContext,
   options: { cache?: UsageCache } = {},
@@ -182,6 +165,4 @@ export async function usageReport(ctx: ExtensionContext, style?: UsageStyle): Pr
   return formatUsageReport(await readProviderUsages(ctx), style);
 }
 
-// Command registration lives in status-commands.ts; this module only fetches
-// and formats the Usage tab body.
 export default function providerUsage(): void {}

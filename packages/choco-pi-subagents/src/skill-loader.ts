@@ -1,23 +1,3 @@
-/**
- * skill-loader.ts — Preload named skills.
- *
- * Roots, in precedence order:
- *   - <cwd>/.pi/skills           (project, Pi's standard)
- *   - <cwd>/.agents/skills       (project, cross-tool Agent Skills spec — https://agentskills.io)
- *   - getAgentDir()/skills       (user, default ~/.pi/agent/skills — Pi's standard)
- *   - ~/.agents/skills           (user, cross-tool Agent Skills spec)
- *   - ~/.pi/skills               (legacy global, pre-Pi; skipped in standalone choco-pi)
- *
- * Layout per root:
- *   - <root>/<name>.md            (flat file at the top level)
- *   - <root>/.../<name>/SKILL.md  (directory skill, may be nested — Pi's standard)
- *
- * Recursion skips dotfile entries and node_modules. A directory that itself contains
- * SKILL.md is a skill — we don't descend into it (Pi: skills don't nest).
- *
- * Symlinks are rejected for security (deviation from Pi, which follows them).
- */
-
 import type { Dirent } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -32,7 +12,6 @@ export interface PreloadedSkill {
   content: string;
 }
 
-/** Load every named skill concurrently; the result keeps `skillNames` order. */
 export function preloadSkills(skillNames: string[], cwd: string): Promise<PreloadedSkill[]> {
   return Promise.all(
     skillNames.map(async (name) => ({ name, content: await loadSkillContent(name, cwd) })),
@@ -44,7 +23,6 @@ async function loadSkillContent(name: string, cwd: string): Promise<string> {
     return `(Skill "${name}" skipped: name contains path traversal characters)`;
   }
   const roots = skillRoots(cwd);
-  // Sequential on purpose: roots are in precedence order and the first hit wins.
   for (const root of roots) {
     const content = await findInRoot(root, name);
     if (content !== undefined) return content;
@@ -52,25 +30,23 @@ async function loadSkillContent(name: string, cwd: string): Promise<string> {
   return `(Skill "${name}" not found in .pi/skills/, .agents/skills/, or global skill locations)`;
 }
 
-/** Skill roots in precedence order; the pre-Pi `~/.pi/skills` root appears only in legacy mode. */
 export function skillRoots(cwd: string): string[] {
   return [
-    join(cwd, ".pi", "skills"), // project — Pi standard
-    join(cwd, ".agents", "skills"), // project — Agent Skills spec
-    join(getAgentDir(), "skills"), // user — Pi standard
-    join(homedir(), ".agents", "skills"), // user — Agent Skills spec
-    ...legacyPiFallbacks(process.env, homedir()).map((root) => join(root, "skills")), // legacy global, pre-Pi
+    join(cwd, ".pi", "skills"),
+    join(cwd, ".agents", "skills"),
+    join(getAgentDir(), "skills"),
+    join(homedir(), ".agents", "skills"),
+    ...legacyPiFallbacks(process.env, homedir()).map((root) => join(root, "skills")),
   ];
 }
 
 async function findInRoot(root: string, name: string): Promise<string | undefined> {
-  if (await isSymlink(root)) return undefined; // reject symlinked roots entirely
+  if (await isSymlink(root)) return undefined;
   const flat = (await safeReadFile(join(root, `${name}.md`)))?.trim();
   if (flat !== undefined) return flat;
   return findSkillDirectory(root, name);
 }
 
-/** BFS under `root` for a directory named `name` containing `SKILL.md`. Pi-conforming filters. */
 async function findSkillDirectory(root: string, name: string): Promise<string | undefined> {
   if (!(await pathExists(root))) return undefined;
   const queue: string[] = [root];
@@ -86,16 +62,12 @@ async function findSkillDirectory(root: string, name: string): Promise<string | 
       continue;
     }
 
-    // Deterministic byte-order traversal — locale-independent.
     entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
-    // Symlinked dirs already filtered by entry.isDirectory() — Dirent uses lstat semantics.
     const directories = entries.filter(
       (entry) =>
         entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules",
     );
-    // Probe every child's SKILL.md concurrently, then walk the results in the
-    // same byte order as before so the first match and queue order are unchanged.
     const probed = await Promise.all(
       directories.map(async (entry) => {
         const path = join(current, entry.name);
@@ -109,7 +81,7 @@ async function findSkillDirectory(root: string, name: string): Promise<string | 
           const content = (await safeReadFile(skillMd))?.trim();
           if (content !== undefined) return content;
         }
-        continue; // Pi rule: skills don't nest — don't descend into a skill dir
+        continue;
       }
 
       queue.push(path);

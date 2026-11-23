@@ -7,7 +7,6 @@ import {
   type SpeedSample,
 } from "../profile/extensions/lib/stats/estimate.ts";
 
-/** Deterministic pseudo-random numbers so the fixture is stable across runs. */
 function lcg(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
@@ -42,7 +41,6 @@ test("the fit recovers a known TTFT and tok/s within tolerance", () => {
 
 test("outliers do not drag the fit", () => {
   const samples = synthetic(120, 1000, 100, 50);
-  // A fifth of the calls stalled for minutes (tool-heavy turns, rate limits).
   const polluted = samples.map((sample, index) =>
     index % 5 === 0 ? { ...sample, durationMs: sample.durationMs + 120_000 } : sample,
   );

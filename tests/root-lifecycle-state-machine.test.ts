@@ -55,8 +55,6 @@ function deferred<Value>(): Deferred<Value> {
   return { promise, resolve, reject };
 }
 
-// The shared change layer resolves revisions that are not full object ids with
-// `git rev-parse`, which this runner does not answer: checkpoint trees are ids.
 const TREE_1 = "1".repeat(40);
 const TREE_2 = "2".repeat(40);
 
@@ -140,7 +138,6 @@ function context(waitForIdle: () => Promise<void> = async () => undefined) {
 function runner(): ExecRunner {
   return async (_command, args) => {
     if (args.includes("--show-toplevel")) return { stdout: `${root}\n`, stderr: "", code: 0 };
-    // The change list of a turn range: empty, since these tests follow ownership only.
     if (args.includes("diff-tree")) return { stdout: "", stderr: "", code: 0 };
     if (args.includes("diff")) return { stdout: patch, stderr: "", code: 0 };
     throw new Error(`Unexpected runner arguments: ${args.join(" ")}`);

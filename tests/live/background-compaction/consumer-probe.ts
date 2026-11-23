@@ -92,7 +92,6 @@ function restoreSet(
   if (previous) Object.defineProperty(map, "set", previous);
   else Reflect.deleteProperty(map, "set");
 }
-/** Observe public registration; preserve the callback's exact result/promise. */
 export function installConsumerProbe(recorder: Recorder) {
   const map = getRegistry().coordinators;
   const previous = Object.getOwnPropertyDescriptor(map, "set");

@@ -699,7 +699,6 @@ test("audit ignores boundary data whose fields are hostile objects instead of th
   context.after(() => rm(directory, { recursive: true, force: true }));
   const rootFile = path.join(directory, "root.jsonl");
   await writeSession(rootFile, "root-session", undefined, []);
-  // JSON objects with own toString/valueOf make String(value) and Number(value) throw.
   const hostile = JSON.parse('{"toString":1,"valueOf":2}');
   await appendFile(
     rootFile,
@@ -715,7 +714,6 @@ test("audit ignores boundary data whose fields are hostile objects instead of th
       .map(jsonLine)
       .join(""),
   );
-  // The hostile record is skipped as malformed: a typed operational error, never a TypeError from coercion.
   await assert.rejects(
     auditTaskLineage({
       projectSessionDirectory: directory,

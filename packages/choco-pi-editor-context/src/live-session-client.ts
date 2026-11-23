@@ -237,10 +237,6 @@ async function canonicalCwd(cwd: string): Promise<string | undefined> {
   }
 }
 
-/**
- * Compares canonical workspace roots for exact equality. A subdirectory is not the same root.
- * Both roots must resolve through the filesystem. Missing or inaccessible roots never match.
- */
 export async function canonicalCwdMatches(left: string, right: string): Promise<boolean> {
   const [canonicalLeft, canonicalRight] = await Promise.all([
     canonicalCwd(left),

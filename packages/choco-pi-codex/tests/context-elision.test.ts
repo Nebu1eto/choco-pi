@@ -211,7 +211,6 @@ function harness(manager = SessionManager.inMemory()) {
     }),
     fixture({ applyConfig() {} }),
   );
-  /** Runs every handler registered for the event in order; returns the last handler's result. */
   const invoke = (name: string, event: FixtureValue = {}) => {
     const registered = handlers.get(name);
     assert.ok(registered?.length);
@@ -443,7 +442,6 @@ test("a cancelled session switch keeps the legacy request rewrite while backgrou
     });
     const expected = await rewriteCodexProviderRequest(payload(), host.ctx, host.runtime.state);
     assert.notEqual(expected, undefined);
-    // A later handler or a failing SessionManager.open leaves this instance serving the session.
     host.invoke("session_before_switch", { reason: "new" });
     const actual = await host.invoke("before_provider_request", { payload: payload() });
     assert.deepEqual(actual, expected);

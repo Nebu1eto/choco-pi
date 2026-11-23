@@ -1,77 +1,20 @@
 import { type LspDictionaryValue } from "./runtime-guards.ts";
 import { idleEvictionTimersSuspended, registerIdleTimerRelease } from "./idle-timer-release.ts";
-/**
- * Shared, memoized workspace-topology snapshot service (#806).
- *
- * Several subsystems each performed their own independent per-directory
- * marker walk (`.choco-pi-lsp.json` discovery in `project-lsp-config.ts`,
- * governing-tsconfig discovery in `review-graph/tsconfig-paths.ts`,
- * workspace-manifest presence checks in `review-graph/workspace-modules.ts`)
- * — each with its own probe pattern and its own (or no) invalidation. In a
- * large monorepo the same directory chain got re-walked and re-stat'ed by
- * several subsystems per edit.
- *
- * This module is the single seam: `getDirectoryMarkers(dir)` collects ALL
- * markers a directory can carry in ONE `readdir` pass (not N `existsSync`
- * probes), cached per directory and invalidated by the directory's own
- * mtime (the pattern `project-lsp-config.ts`'s `inDirDiscoveryCache`
- * established for #804). `findNearestDirWithMarker` layers the shared
- * upward-walk discipline (`walkUpDirs` + `isAtOrAboveHomeDir` ceiling, an
- * explicit depth cap with cap-trip latency logging — no silent truncation)
- * on top of that per-directory cache.
- *
- * `resetWorkspaceTopology()` is wired into the session-reset path
- * (`runtime-session.ts`'s `handleSessionStart`) so a directory's markers
- * (and every consumer's own downstream cache layered on top) are re-read
- * fresh on the next session, without a full process restart.
- *
- * #807 (second wave): `language-profile.ts`'s `resolveLanguageRootForFile`
- * and `startup-scan.ts`'s `findNearestProjectRoot` route their per-directory
- * marker checks through this module too — `findNearestDirWithAnyBasename`
- * for the former (a home-guarded, depth-capped, walk-cached generalization of
- * `findNearestDirWithMarker` for marker lists that aren't typed
- * `DirectoryMarkers` fields), and a direct `getDirectoryMarkers(dir)`
- * `entryNames` read for the latter (walk loop kept hand-written and
- * NOT home-guarded — see that function's docstring for why). This module
- * still only indexes per-directory MARKER PRESENCE; it does not decide what
- * "the project root" is — that policy (which markers count, what wins when
- * several qualify, whether a found root gets clamped back to the workspace)
- * stays with each resolver.
- */
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { logLatency } from "./latency-logger.ts";
 import { isAtOrAboveHomeDir, nameMatchesMarkerGlob, walkUpDirs } from "./path-utils.ts";
 
-/** Depth cap on any upward marker walk — mirrors `findNearestMarkerRoot`'s bound. */
 const MAX_WALK_DEPTH = 64;
 
 const CHOCO_PI_LSP_CONFIG_BASENAMES = [".choco-pi-lsp.json", "choco-pi-lsp.json"] as const;
 
-/**
- * Every marker choco-pi-lsp subsystems currently probe for, keyed by the basename
- * on disk. Add a new marker here (not a private probe elsewhere) when a
- * consumer needs another per-directory file presence check.
- */
 export interface DirectoryMarkers {
   dir: string;
-  /** mtime of the directory itself at scan time — the cache's invalidation key. */
   dirMtimeMs: number;
-  /**
-   * Raw immediate-child entry names from this directory's single `readdir`
-   * pass (#807) — type-agnostic (file OR directory dirents), unlike the
-   * stat-confirmed `*Path` fields below. For callers doing a plain
-   * `existsSync`-style basename-presence check (e.g. `.git`, which is a
-   * directory for a normal clone but a file for a worktree, or a marker set
-   * that isn't one of the typed fields yet) — see `findNearestDirWithAnyBasename`.
-   * Not a substitute for the typed fields where the caller specifically
-   * needs "and it's a file" confirmed.
-   */
   entryNames: ReadonlySet<string>;
-  /** Immediate-child file/symlink names, used for glob marker matching. */
   entryFileNames: ReadonlySet<string>;
-  /** Resolved path of `.choco-pi-lsp.json`, preferred over the no-dot fallback. */
   piLensConfigPath: string | undefined;
   tsconfigPath: string | undefined;
   packageJsonPath: string | undefined;
@@ -88,10 +31,8 @@ interface DirCacheEntry {
   idleTimer?: ReturnType<typeof setTimeout>;
 }
 
-/** Per-directory marker cache — the shared seam every consumer reads through. */
 const dirMarkerCache = new Map<string, DirCacheEntry>();
 
-/** Cache for upward marker-walk results, keyed by `${startDir}\0${markerKey}`. */
 type WalkCacheEntry = {
   dir: string | undefined;
   dirMtimes: Array<{ dir: string; mtimeMs: number }>;
@@ -152,11 +93,6 @@ export function resetWorkspaceTopology(): void {
   for (const key of walkCache.keys()) deleteWalk(key);
 }
 
-/**
- * Release cache eviction handles without discarding reusable entries.
- * One-shot cascades call this after marker discovery so cache residency does
- * not leave a process-liveness tail; the next cache use re-arms its timer.
- */
 registerIdleTimerRelease(() => releaseWorkspaceTopologyIdleTimers());
 
 export function releaseWorkspaceTopologyIdleTimers(): void {
@@ -186,13 +122,6 @@ function safeIsFile(filePath: string): boolean {
   }
 }
 
-/**
- * Single-pass marker scan for one directory: one `readdir` collects ALL
- * markers choco-pi-lsp subsystems care about, cached and invalidated by the
- * directory's own mtime (so an add/remove/rename inside `dir` — which bumps
- * the directory's mtime on every platform choco-pi-lsp supports — drops the
- * cached entry without a session restart).
- */
 export function getDirectoryMarkers(dir: string): DirectoryMarkers {
   const resolvedDir = path.resolve(dir);
   const dirMtimeMs = safeDirMtimeMs(resolvedDir);
@@ -208,11 +137,6 @@ export function getDirectoryMarkers(dir: string): DirectoryMarkers {
   } catch {
     entries = [];
   }
-  // `readdir`'s Dirent type does not follow symlinks (lstat semantics), so a
-  // symlinked marker file reports as neither file nor directory here. Track
-  // candidate names that exist as *some* dirent and resolve the handful of
-  // markers we actually care about with one confirming `stat` each — still
-  // a single directory listing, not N blind `existsSync` probes.
   const present = new Set(entries.map((e) => e.name));
   const fileNames = new Set(
     entries.filter((entry) => entry.isFile() || entry.isSymbolicLink()).map((entry) => entry.name),
@@ -262,15 +186,6 @@ function walkStillFresh(dirMtimes: Array<{ dir: string; mtimeMs: number }>): boo
   return dirMtimes.every(({ dir, mtimeMs }) => safeDirMtimeMs(dir) === mtimeMs);
 }
 
-/**
- * Shared core of the two nearest-marker walkers below: the cache check, the
- * home-guarded/depth-capped upward loop, per-directory mtime recording, and
- * the cache store live HERE once — callers supply only their cache-key
- * suffix, their match predicate over a directory's marker index, and the
- * identifying metadata for the cap-trip latency log. (Extracted for #812's
- * Sonar new-code duplication gate: the two walkers previously each carried
- * this skeleton verbatim.)
- */
 function walkToNearestMatch(
   startDir: string,
   cacheSuffix: string,
@@ -321,19 +236,6 @@ function walkToNearestMatch(
   return found;
 }
 
-/**
- * Walk up from `startDir` looking for the nearest directory whose marker
- * index has `markerKey` set (e.g. `"tsconfigPath"`, `"piLensConfigPath"`).
- * Shared walk discipline (AGENTS.md invariants):
- *   - Uses `walkUpDirs`, the single upward-climb primitive.
- *   - Never resolves at or above `$HOME` via `isAtOrAboveHomeDir`.
- *   - Depth-capped at `MAX_WALK_DEPTH`; a cap trip is logged as a latency
- *     phase (not silently truncated) so a pathological deep tree is visible.
- *
- * Cached per `(startDir, markerKey)`, invalidated when any visited
- * directory's mtime changes (the same "revalidate every dir on the path"
- * pattern `project-lsp-config.ts`'s `discoveryCache` established).
- */
 export function findNearestDirWithMarker(
   startDir: string,
   markerKey: keyof Omit<DirectoryMarkers, "dir" | "dirMtimeMs" | "entryNames" | "entryFileNames">,
@@ -348,24 +250,11 @@ export function findNearestDirWithMarker(
   );
 }
 
-/**
- * Type-agnostic (file OR directory) `existsSync`-style presence check for
- * `basename` inside the directory `markers` describes. Single-segment names
- * (the common case) resolve against the shared per-directory `entryNames`
- * set — no extra `stat`. A multi-segment name (e.g. `"prisma/schema.prisma"`,
- * a nested path some `resolveLanguageRootForFile` marker lists use) falls
- * back to one confirming `existsSync` — the directory's own readdir doesn't
- * cover a grandchild, so this still costs one syscall for that shape, same
- * as the pre-#807 hand-rolled loops it replaces.
- */
 function hasBasenameMarker(markers: DirectoryMarkers, basename: string): boolean {
   if (basename.includes("/") || basename.includes("\\")) {
     return fs.existsSync(path.join(markers.dir, basename));
   }
   if (basename.includes("*")) {
-    // `entryFileNames` is already files/symlinks-only, so matching the cached
-    // names via the shared marker-glob helper preserves the same semantics as
-    // the Dirent-filtering probes without re-reading the directory.
     return [...markers.entryFileNames].some((entryName) =>
       nameMatchesMarkerGlob(entryName, basename),
     );
@@ -373,21 +262,6 @@ function hasBasenameMarker(markers: DirectoryMarkers, basename: string): boolean
   return markers.entryNames.has(basename);
 }
 
-/**
- * Walk up from `startDir` looking for the nearest directory containing ANY of
- * `basenames` (`existsSync`-style, type-agnostic presence — see
- * `hasBasenameMarker`). The generalized counterpart of
- * `findNearestDirWithMarker` for callers whose marker set is a per-call list
- * rather than one of `DirectoryMarkers`' typed fields (#807) — e.g.
- * `resolveLanguageRootForFile`'s per-language-kind root-marker lists. Shares
- * the exact same walk discipline (`walkUpDirs`, `isAtOrAboveHomeDir` ceiling,
- * `MAX_WALK_DEPTH` cap with the same cap-trip latency log) and is backed by
- * the same per-directory `getDirectoryMarkers` cache, so a directory chain
- * already visited for one marker set isn't re-`readdir`'d for another.
- *
- * Cached per `(startDir, basenames)`, invalidated the same way as
- * `findNearestDirWithMarker`.
- */
 export function findNearestDirWithAnyBasename(
   startDir: string,
   basenames: readonly string[],
@@ -407,22 +281,9 @@ export interface PiLensConfigMarker {
   path: string;
   dir: string;
   mtimeMs: number;
-  /**
-   * Byte size of the config file at stat time (#1105). The config caches gate
-   * reuse on this alongside `mtimeMs` — the free second axis of the review-graph
-   * `size:mtimeMs` signature — so an in-place edit that PRESERVES mtime (git
-   * checkout timestamp restoration, a same-second rewrite) but changes length no
-   * longer replays a stale parsed config. The stat that yields `mtimeMs` already
-   * reads `size`, so carrying it costs nothing.
-   */
   size: number;
 }
 
-/**
- * `.choco-pi-lsp.json`/`choco-pi-lsp.json` directly IN `dir` — no upward walk. The
- * shared-index equivalent of `project-lsp-config.ts`'s old private
- * `findPiLensConfigInDir` probe loop.
- */
 export function findPiLensConfigMarkerInDir(dir: string): PiLensConfigMarker | undefined {
   const markers = getDirectoryMarkers(dir);
   if (!markers.piLensConfigPath) return undefined;
@@ -442,12 +303,6 @@ export function findPiLensConfigMarkerInDir(dir: string): PiLensConfigMarker | u
   };
 }
 
-/**
- * Nearest directory (at or above `startDir`, home-guarded) that carries a
- * `tsconfig.json` marker. The shared-index equivalent of
- * `review-graph/tsconfig-paths.ts`'s old `findNearestContaining(key,
- * ["tsconfig.json"])` call.
- */
 export function findGoverningTsconfigDir(
   startDir: string,
   homeDir: string = os.homedir(),
@@ -462,14 +317,6 @@ export interface WorkspaceManifestMarkers {
   hasPackageJson: boolean;
 }
 
-/**
- * Presence-only workspace manifest markers for `dir` — the shared-index
- * equivalent of `workspace-modules.ts`'s old `detectWorkspaceType` probe
- * (`pnpm-workspace.yaml` / `go.work` / `Cargo.toml` / `package.json`
- * `existsSync` calls). Callers still read + parse the manifest CONTENT
- * themselves (workspace globs, `[workspace]` section, `workspaces` field) —
- * this only answers "is the marker file present".
- */
 export function getWorkspaceManifestMarkers(dir: string): WorkspaceManifestMarkers {
   const markers = getDirectoryMarkers(dir);
   return {

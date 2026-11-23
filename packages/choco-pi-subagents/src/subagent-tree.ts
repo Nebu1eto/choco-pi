@@ -1,12 +1,3 @@
-/**
- * Read-only views of the whole subagent tree for the root orchestrator.
- *
- * `get_subagent_result` stays direct-children-only because it consumes a
- * result. These helpers never touch read claims, consumption flags, status, or
- * steering: they only describe records the manager already holds, so a root
- * can see grandchild failures without reading transcript files.
- */
-
 import type { AgentRecord } from "./types.ts";
 import { getLifetimeTotal } from "./usage.ts";
 
@@ -48,7 +39,6 @@ export function isTerminalStatus(status: AgentRecord["status"]): boolean {
   return !NON_TERMINAL_STATUSES.has(status);
 }
 
-/** Terminal outcomes that represent a failed run, not a user/parent stop or success. */
 export function isTerminalFailureStatus(status: AgentRecord["status"]): boolean {
   return FAILURE_STATUSES.has(status);
 }
@@ -98,7 +88,6 @@ export function describeSubagent(record: AgentRecord, now = Date.now()): Subagen
   return entry;
 }
 
-/** Resolve an id, assigned name, or handle across every record, nested included. */
 export function resolveSubagentRecord(
   records: readonly AgentRecord[],
   ref: string,
@@ -135,11 +124,6 @@ export type SubagentTreeView =
   | { kind: "ok"; text: string; entries: SubagentTreeEntry[] }
   | { kind: "unknown-root"; ref: string };
 
-/**
- * Indented tree of every record (or one subtree). A filtered-out ancestor is
- * still printed when it has matching descendants so their placement stays
- * readable; `entries` holds only the matching records.
- */
 export function buildSubagentTree(
   records: readonly AgentRecord[],
   options: { status?: TreeStatusFilter; root?: string; now?: number } = {},
@@ -232,7 +216,6 @@ export function buildSubagentStatusBatch(
   return { text: lines.join("\n"), entries, unknown };
 }
 
-/** Failed nested records, for the fleet status line. */
 export function countFailedDescendants(records: readonly AgentRecord[]): number {
   return records.filter(
     (record) => record.parentAgentId !== undefined && isTerminalFailureStatus(record.status),
@@ -252,11 +235,6 @@ export function formatDescendantFailure(
   return `Descendant ${displayName(record)} (owner ${owner}, depth ${record.depth ?? 1}) failed: ${reason}`;
 }
 
-/**
- * Emits one root-visible line per failed nested generation. Returns undefined
- * for non-failures, top-level records, and repeats of an already reported
- * generation.
- */
 export class DescendantFailureReporter {
   private readonly reported = new Set<string>();
 

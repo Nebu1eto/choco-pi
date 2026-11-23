@@ -1,15 +1,3 @@
-/**
- * LSP Client for choco-pi-lsp
- *
- * Handles JSON-RPC communication with language servers:
- * - Initialize/shutdown lifecycle
- * - Document synchronization (didOpen, didChange)
- * - Diagnostics with debouncing
- * - Request/response handling
- *
- * This module is a facade: the implementation lives in `./client/`, and this file
- * re-exports the public surface unchanged.
- */
 export type {
   LSPDiagnostic,
   LSPPullFailure,

@@ -1,8 +1,3 @@
-// Work the review interface starts without awaiting it (refreshes, findings
-// reads, chat commands and questions, key actions) never rejects unhandled,
-// even when the host cannot show a notice. While the review is open every
-// message is on its message line; errors also go to Pi's notifications, and a
-// host that cannot take them (stale or broken) changes nothing else.
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
@@ -137,7 +132,6 @@ class FailingChat implements ReviewChat {
   dispose(): void {}
 }
 
-/** The host can be told to throw from notify, with a stale-context error or another one. */
 type HostFailure = { notify?: Error; input?: Error };
 
 async function mount(options: Partial<OpenReviewViewOptions> = {}) {
@@ -363,8 +357,6 @@ test("a chat command that settles after the review closed reports nothing", asyn
     false,
   );
 });
-
-/* ------------------------------------------- Finish exports every non-PR target */
 
 test("Finish puts the comments of an earlier turn into the editor, saying they refer to that comparison", async (t) => {
   const noRejections = watchRejections(t);

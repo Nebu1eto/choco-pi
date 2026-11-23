@@ -131,46 +131,12 @@ export {
   writeGlobalBackgroundEnabled,
 } from "./background/settings.ts";
 
-/** Registration options. Production registers with none of them. */
 export interface RegisterCompactionOptions {
-  /**
-   * Retry policy to use instead of the session's settings. Tests inject one so
-   * they never read the developer's real settings; production leaves it unset
-   * and the policy comes from the host settings at `session_start`.
-   */
   readonly retryPolicy?: RetryPolicy;
-  /**
-   * Host compaction cut policy to use instead of the session's settings
-   * (tests). Only consulted when `retryPolicy` is injected too, so injected
-   * registrations never read real settings.
-   */
   readonly compactionPolicy?: HostCompactionPolicyReader;
-  /** Background-compaction seams (tests). */
   readonly background?: BackgroundCompactionOptions;
 }
 
-/**
- * Compaction reconciliation extension.
- *
- * Pi's default summarizer only receives the messages compaction is about to
- * discard, so evidence of completed work that lives in the retained recent
- * tail never reaches it and the checkpoint can report finished work as still
- * pending. This extension takes over `session_before_compact` for locally
- * summarized models and feeds the summarizer the tail as current-state
- * evidence alongside the discarded history.
- *
- * The generation counter is per registration, not per process: a session
- * start or shutdown invalidates any compaction still awaiting a provider
- * response, so a late result can never be committed onto a different session.
- *
- * `session_start` also resolves the two configuration snapshots the handler
- * needs — the summarization retry policy and codex's native-compaction
- * settings — so no configuration file is read on the compaction path.
- *
- * Background compaction (on by default) is wired by
- * `registerBackgroundCompaction`; a ready background candidate answers
- * `session_before_compact` before the summarizer runs.
- */
 export default function registerCompaction(
   pi: ExtensionAPI,
   options: RegisterCompactionOptions = {},
@@ -197,7 +163,6 @@ export default function registerCompaction(
       compactionPolicy: injectedCompactionPolicy ?? host?.compactionPolicy,
     };
     const codexCompaction = await readCodexCompactionSnapshot(cwd, projectTrusted);
-    // A later start or a shutdown superseded this one while the config was read.
     if (state.generation !== generation) return;
     state = { ...state, codexCompaction };
   });
@@ -206,19 +171,14 @@ export default function registerCompaction(
   });
   const backgroundOptions = injectedBackgroundOptions(options);
   const background = registerBackgroundCompaction(pi, readState, backgroundOptions);
-  // The summarizer honors the same loss authorization as the guard (setting or consent).
   const summarize = createBeforeCompactHandler(readState, {
     lossAuthorized: (sessionId, entryId) =>
       opaqueLossAuthorized(background.modes(), sessionId, entryId),
   });
   const announceGuard = guardAnnouncer(pi);
-  // Registered after the background handlers, so the overlay wraps the capture transports
-  // that a session start registers; every `context` event re-checks it before a request.
   installOpaqueBlockProvider(pi, { modes: () => background.modes(), announce: announceGuard });
   pi.on("session_before_compact", async (event, ctx) => {
     const answer = await answerBeforeCompact(event, ctx);
-    // Every checkpoint this extension answers carries what started it; a
-    // producer that set its own trigger (a background adoption) keeps it.
     return answer?.compaction === undefined
       ? answer
       : { ...answer, compaction: withTrigger(answer.compaction, hostTriggerOf(event)) };
@@ -228,18 +188,11 @@ export default function registerCompaction(
     event: SessionBeforeCompactEvent,
     ctx: ExtensionContext,
   ): Promise<SessionBeforeCompactResult | undefined> {
-    // A ready, still-valid background candidate replaces the summarizer.
     const adopted = await background.beforeCompact(event, ctx);
     if (adopted !== undefined) return adopted;
-    // A child's runner bridge commits its own adoption after this handler.
     if (await background.childAdopts(event, ctx)) return undefined;
-    // Anthropic or xAI server-side compaction (main and child sessions). Unconfigured,
-    // unadmitted or failed attempts fall through to the summarizer; a cancelled or
-    // auth-failed one answers { cancel: true } so the host reports the failure.
-    // The summarizer is the last resort, so precedence stays: background, child, native, local.
     const native = await background.foregroundCompact(event, ctx);
     if (native !== undefined) return native;
-    // Over an opaque checkpoint no summarizer may answer without authorized loss (D2).
     const modes = background.modes();
     const owner = resolveOwner(ctx, readState().codexCompaction, {
       anthropicServerSide: modes.anthropic === "server-side",
@@ -252,7 +205,6 @@ export default function registerCompaction(
   }
 }
 
-/** Journal a guard record on the session and show its notice; only stale contexts are contained. */
 function guardAnnouncer(pi: ExtensionAPI): OpaqueGuardAnnounce {
   const show = (ctx: ExtensionContext, text: string): void => {
     try {
@@ -271,11 +223,6 @@ function guardAnnouncer(pi: ExtensionAPI): OpaqueGuardAnnounce {
   };
 }
 
-/**
- * Injected registrations (tests) never read real background settings or the
- * real Anthropic or xAI compaction mode: unless a test supplies its own
- * reader, each mode is the local summarizer ("choco-pi").
- */
 function injectedBackgroundOptions(
   options: RegisterCompactionOptions,
 ): BackgroundCompactionOptions | undefined {
@@ -289,7 +236,6 @@ function injectedBackgroundOptions(
     background.xai?.readMode === undefined
       ? { ...background.xai, readMode: async () => "choco-pi" as const }
       : background.xai;
-  // Nor the real opaque-history setting: tests get the default unless they inject a reader.
   const readOpaqueHistoryMode =
     background.readOpaqueHistoryMode ?? (async () => "preserve" as const);
   return { ...background, anthropic, xai, readOpaqueHistoryMode };

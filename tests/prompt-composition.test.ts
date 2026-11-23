@@ -43,7 +43,6 @@ test("skill index groups skills under their root and bounds descriptions", () =>
   assert.doesNotMatch(prompt, /second sentence/);
   assert.doesNotMatch(prompt, /\/profile\/skills\/example\/SKILL\.md/);
   assert.equal(prompt.match(/Skill files:/g)?.length, 2);
-  // A skill is listed directly under the root that contains it.
   const packagedRootIndex = prompt.indexOf(
     "Skill files: /project/packages/example/skills/<name>/SKILL.md",
   );

@@ -1,12 +1,3 @@
-/**
- * Metrics History Tracker for choco-pi-lsp
- *
- * Persists complexity metrics per commit to track trends over time.
- * Captures snapshots passively (session start) and explicitly (/lens-metrics).
- *
- * Storage: <project-data>/metrics-history.json
- */
-
 import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -20,8 +11,6 @@ type GetTrendSummaryResultContract = {
   worstRegressions: Array<{ file: string; miDelta: number }>;
 };
 
-// --- Types ---
-
 export interface MetricSnapshot {
   commit: string;
   timestamp: string;
@@ -29,8 +18,8 @@ export interface MetricSnapshot {
   cognitive: number;
   nesting: number;
   lines: number;
-  maxCyclomatic: number; // NEW: worst function complexity
-  entropy: number; // NEW: code unpredictability in bits
+  maxCyclomatic: number;
+  entropy: number;
 }
 
 export interface FileHistory {
@@ -47,16 +36,9 @@ export interface MetricsHistory {
 
 export type TrendDirection = "improving" | "stable" | "regressing";
 
-// --- Constants ---
-
 const HISTORY_FILE = "metrics-history.json";
 const MAX_HISTORY_PER_FILE = 20;
 
-// --- Git Helpers ---
-
-/**
- * Check whether cwd is inside a Git worktree.
- */
 function isInsideGitRepo(startDir: string): boolean {
   let dir = path.resolve(startDir);
   while (true) {
@@ -70,9 +52,6 @@ function isInsideGitRepo(startDir: string): boolean {
   return false;
 }
 
-/**
- * Get current git commit hash (short)
- */
 function getCurrentCommit(): string {
   if (!isInsideGitRepo(process.cwd())) {
     return "unknown";
@@ -88,11 +67,6 @@ function getCurrentCommit(): string {
   }
 }
 
-// --- History Management ---
-
-/**
- * Load history from disk (or return empty)
- */
 export function loadHistory(): MetricsHistory {
   const historyPath = path.join(getProjectDataDir(process.cwd()), HISTORY_FILE);
 
@@ -116,9 +90,6 @@ export function loadHistory(): MetricsHistory {
   }
 }
 
-/**
- * Save history to disk
- */
 export function saveHistory(history: MetricsHistory): void {
   const historyDir = getProjectDataDir(process.cwd());
   if (!fs.existsSync(historyDir)) {
@@ -130,15 +101,10 @@ export function saveHistory(history: MetricsHistory): void {
   writeFileAtomic(historyPath, JSON.stringify(history, null, 2));
 }
 
-// In-memory cache to avoid loading/saving on every capture
 let pendingHistory: MetricsHistory | null = null;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
-const SAVE_DEBOUNCE_MS = 5000; // Save at most every 5 seconds
+const SAVE_DEBOUNCE_MS = 5000;
 
-/**
- * Capture a snapshot for a file's current metrics
- * Auto-saves to disk (debounced) for passive tracking
- */
 export function captureSnapshot(
   filePath: string,
   metrics: {
@@ -150,7 +116,6 @@ export function captureSnapshot(
     entropy: number;
   },
 ): void {
-  // Use in-memory cache if available, otherwise load from disk
   if (!pendingHistory) {
     pendingHistory = loadHistory();
   }
@@ -172,12 +137,10 @@ export function captureSnapshot(
   const existing = pendingHistory.files[relativePath];
 
   if (existing) {
-    // Skip if same commit + same MI (no change worth recording)
     const latest = existing.latest;
     if (latest.commit === commit && latest.mi === snapshot.mi) {
       return;
     }
-    // Append to history (cap at MAX_HISTORY_PER_FILE)
     existing.history.push(snapshot);
     if (existing.history.length > MAX_HISTORY_PER_FILE) {
       existing.history = existing.history.slice(-MAX_HISTORY_PER_FILE);
@@ -185,7 +148,6 @@ export function captureSnapshot(
     existing.latest = snapshot;
     existing.trend = computeTrend(existing.history);
   } else {
-    // New file
     pendingHistory.files[relativePath] = {
       latest: snapshot,
       history: [snapshot],
@@ -193,7 +155,6 @@ export function captureSnapshot(
     };
   }
 
-  // Debounced save to disk
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     if (pendingHistory) {
@@ -204,10 +165,6 @@ export function captureSnapshot(
   saveTimer.unref?.();
 }
 
-/**
- * Capture snapshots for multiple files (explicit, immediate save)
- * Used by /lens-metrics for batch capture
- */
 export function captureSnapshots(
   files: Array<{
     filePath: string;
@@ -260,12 +217,6 @@ export function captureSnapshots(
   return history;
 }
 
-// --- Trend Analysis ---
-
-/**
- * Compute trend direction from history snapshots
- * Uses last 3 snapshots for stability (or 2 if only 2 available)
- */
 export function computeTrend(history: MetricSnapshot[]): TrendDirection {
   if (history.length < 2) return "stable";
 
@@ -273,24 +224,18 @@ export function computeTrend(history: MetricSnapshot[]): TrendDirection {
   const first = recent[0];
   const last = recent[recent.length - 1];
 
-  // Use MI as primary indicator, cognitive as secondary
   const miDelta = last.mi - first.mi;
   const cogDelta = last.cognitive - first.cognitive;
 
-  // Thresholds (MI changes < 2 are noise)
   if (miDelta > 2) return "improving";
   if (miDelta < -2) return "regressing";
 
-  // If MI is stable, check cognitive
   if (cogDelta < -10) return "improving";
   if (cogDelta > 10) return "regressing";
 
   return "stable";
 }
 
-/**
- * Get delta between current snapshot and previous
- */
 export function getDelta(history: FileHistory | null): {
   mi: number;
   cognitive: number;
@@ -308,9 +253,6 @@ export function getDelta(history: FileHistory | null): {
   };
 }
 
-/**
- * Get trend emoji for display
- */
 export function getTrendEmoji(trend: TrendDirection): string {
   switch (trend) {
     case "improving":
@@ -322,9 +264,6 @@ export function getTrendEmoji(trend: TrendDirection): string {
   }
 }
 
-/**
- * Get trend summary across all files
- */
 export function getTrendSummary(history: MetricsHistory): GetTrendSummaryResultContract {
   let improving = 0;
   let regressing = 0;
@@ -349,7 +288,6 @@ export function getTrendSummary(history: MetricsHistory): GetTrendSummaryResultC
     }
   }
 
-  // Sort regressions by MI delta (worst first)
   regressions.sort((a, b) => a.miDelta - b.miDelta);
 
   return {
@@ -360,15 +298,12 @@ export function getTrendSummary(history: MetricsHistory): GetTrendSummaryResultC
   };
 }
 
-/**
- * Format trend for metrics table
- */
 export function formatTrendCell(filePath: string, history: MetricsHistory): string {
   const relativePath = path.relative(process.cwd(), filePath);
   const fileHistory = history.files[relativePath];
 
   if (!fileHistory || fileHistory.history.length < 2) {
-    return "—"; // No history
+    return "—";
   }
 
   const delta = getDelta(fileHistory);
@@ -381,28 +316,22 @@ export function formatTrendCell(filePath: string, history: MetricsHistory): stri
   return `${emoji} ${miColor}${miSign}${delta.mi}`;
 }
 
-// --- Technical Debt Index (TDI) ---
-
 export interface ProjectTDI {
-  score: number; // 0-100, higher = more debt
-  grade: string; // A-F
+  score: number;
+  grade: string;
   avgMI: number;
   totalCognitive: number;
   filesAnalyzed: number;
   filesWithDebt: number;
   byCategory: {
-    maintainability: number; // 45% - MI-based
-    cognitive: number; // 30%
-    nesting: number; // 10%
-    maxCyclomatic: number; // 10% - NEW
-    entropy: number; // 5% - NEW
+    maintainability: number;
+    cognitive: number;
+    nesting: number;
+    maxCyclomatic: number;
+    entropy: number;
   };
 }
 
-/**
- * Calculate Technical Debt Index for the project.
- * Score: 0 = perfect, 100 = maximum debt.
- */
 export function computeTDI(history: MetricsHistory): ProjectTDI {
   const files = Object.values(history.files);
   if (files.length === 0) {
@@ -430,8 +359,8 @@ export function computeTDI(history: MetricsHistory): ProjectTDI {
   let debtFromMI = 0;
   let debtFromCognitive = 0;
   let debtFromNesting = 0;
-  let debtFromMaxCyclomatic = 0; // NEW
-  let debtFromEntropy = 0; // NEW
+  let debtFromMaxCyclomatic = 0;
+  let debtFromEntropy = 0;
 
   for (const file of files) {
     const snap = file.latest;
@@ -439,48 +368,39 @@ export function computeTDI(history: MetricsHistory): ProjectTDI {
     totalCognitive += snap.cognitive;
     _totalNesting += snap.nesting;
 
-    // Accumulate debt points
     let fileDebt = 0;
 
-    // MI debt: 0 at MI=100, max at MI=0
     const miDebt = Math.max(0, (100 - snap.mi) / 100);
     debtFromMI += miDebt;
 
-    // Cognitive debt: 0 at 0, max at 500+
     const cogDebt = Math.min(1, snap.cognitive / 200);
     debtFromCognitive += cogDebt;
 
-    // Nesting debt: 0 at 1-3, max at 10+
     const nestDebt = Math.min(1, Math.max(0, snap.nesting - 3) / 7);
     debtFromNesting += nestDebt;
 
-    // Max Cyclomatic debt: 0 at max<=10, 1 at max>=30
     const maxCycDebt = Math.min(1, Math.max(0, snap.maxCyclomatic - 10) / 20);
     debtFromMaxCyclomatic += maxCycDebt;
 
-    // Entropy debt: 0 at entropy<=4.0, 1 at entropy>=7.0
     const entropyDebt = Math.min(1, Math.max(0, snap.entropy - 4.0) / 3.0);
     debtFromEntropy += entropyDebt;
 
     fileDebt = miDebt + cogDebt + nestDebt + maxCycDebt + entropyDebt;
-    if (fileDebt > 0.5) filesWithDebt++; // Lowered threshold since we have more factors
+    if (fileDebt > 0.5) filesWithDebt++;
   }
 
   const avgMI = totalMI / files.length;
 
-  // Normalize to 0-100 scale
-  const avgMIDebt = debtFromMI / files.length; // 0-1
-  const avgCogDebt = debtFromCognitive / files.length; // 0-1
-  const avgNestDebt = debtFromNesting / files.length; // 0-1
-  const avgMaxCycDebt = debtFromMaxCyclomatic / files.length; // NEW
-  const avgEntropyDebt = debtFromEntropy / files.length; // NEW
+  const avgMIDebt = debtFromMI / files.length;
+  const avgCogDebt = debtFromCognitive / files.length;
+  const avgNestDebt = debtFromNesting / files.length;
+  const avgMaxCycDebt = debtFromMaxCyclomatic / files.length;
+  const avgEntropyDebt = debtFromEntropy / files.length;
 
-  // Weighted: MI (45%), cognitive (30%), nesting (10%), maxCyc (10%), entropy (5%)
   const rawScore =
     avgMIDebt * 45 + avgCogDebt * 30 + avgNestDebt * 10 + avgMaxCycDebt * 10 + avgEntropyDebt * 5;
   const score = Math.round(rawScore * 100) / 100;
 
-  // Grade
   let grade: string;
   if (score <= 15) grade = "A";
   else if (score <= 30) grade = "B";

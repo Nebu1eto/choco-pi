@@ -6,7 +6,6 @@ import {
 import { int, obj, opt } from "@earendil-works/pi-schema";
 import { hostParams } from "./schema-bridge.ts";
 
-/** Persisted settings and runtime setters never exceed these safety bounds. */
 export const MAX_CONCURRENT_SANITY_CAP = 1024;
 export const SUBAGENT_DEPTH_CEILING = 16;
 
@@ -32,14 +31,12 @@ export interface SubagentLimitUpdate {
   maxSubagentDepth?: number;
 }
 
-/** Preserve 0 as the unlimited sentinel while bounding its real scheduler fan-out. */
 export function normalizeMaxConcurrent(value: number): number {
   if (value === 0) return 0;
   if (!Number.isFinite(value)) return 1;
   return Math.min(MAX_CONCURRENT_SANITY_CAP, Math.max(1, Math.floor(value)));
 }
 
-/** Concrete scheduler limit for a configured value; unlimited still has a machine-safety cap. */
 export function schedulingMaxConcurrent(value: number): number {
   return value === 0 ? MAX_CONCURRENT_SANITY_CAP : value;
 }
@@ -52,7 +49,6 @@ function formatActivityCounts(scheduled: number, tree: number, maxConcurrent: nu
   return `${scheduled} scheduled / cap ${formatConcurrencyCap(maxConcurrent)}; ${tree} in tree`;
 }
 
-/** Compact result shared by the root-only tool and pure tests. */
 export function formatSubagentLimits(controller: SubagentLimitController): string {
   const maxConcurrent = controller.getMaxConcurrent();
   const concurrency =
@@ -70,7 +66,6 @@ export function formatSubagentLimits(controller: SubagentLimitController): strin
   );
 }
 
-/** Apply an optional runtime-only update, then report the effective values. */
 export function applySubagentLimits(
   update: SubagentLimitUpdate,
   controller: SubagentLimitController,
@@ -84,7 +79,6 @@ export function applySubagentLimits(
   return formatSubagentLimits(controller);
 }
 
-/** One-line turn-start snapshot; no active agents means no persisted message. */
 export function buildSubagentReminder(source: SubagentReminderSource): string | undefined {
   const tree = source.getActiveCount();
   if (tree === 0) return undefined;
@@ -100,7 +94,6 @@ export function buildSubagentReminder(source: SubagentReminderSource): string | 
   );
 }
 
-/** Persist one hidden status message at each active agent-run start. */
 export function registerSubagentStatusMessage(
   pi: Pick<ExtensionAPI, "on">,
   source: SubagentReminderSource,
@@ -118,7 +111,6 @@ export function registerSubagentStatusMessage(
   });
 }
 
-/** Build the root-only LLM-callable runtime limit control. */
 export function createSubagentLimitsTool(controller: SubagentLimitController): ToolDefinition {
   return defineTool({
     name: "subagent_limits",

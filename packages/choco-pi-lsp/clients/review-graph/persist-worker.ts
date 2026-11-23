@@ -14,8 +14,6 @@ export interface ReviewGraphPersistWorkerResult extends GzipStageWorkerResult {
   elements: number;
 }
 
-// Streamed gzip stage write runs off the main thread via the shared core (see
-// clients/gzip-stage-write.ts); this worker only echoes its routing fields.
 serveGzipStageWorker<ReviewGraphPersistWorkerRequest, ReviewGraphPersistWorkerResult>(
   (request) => ({
     id: request.id,

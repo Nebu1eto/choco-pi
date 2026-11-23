@@ -52,16 +52,12 @@ async function acquireSummaryLock(lockDirectory: string): Promise<void> {
       await mkdir(stableLockDirectory, { mode: 0o700 });
       await chmod(stableLockDirectory, 0o700);
       return;
-    } catch {
-      // A competing writer owns the per-task lock unless it is stale.
-    }
+    } catch {}
     try {
       const metadata = await stat(stableLockDirectory);
       if (Date.now() - metadata.mtimeMs > LOCK_STALE_MS)
         await rm(stableLockDirectory, { recursive: true, force: true });
-    } catch {
-      // The owner may have released the lock between mkdir and stat.
-    }
+    } catch {}
     await delay(LOCK_RETRY_MS);
   }
   throw new TaskLineageOperationalError(
@@ -124,19 +120,13 @@ export async function writeTaskSummary(
   } finally {
     try {
       await handle?.close();
-    } catch {
-      // The rename path already closed the file; cleanup remains best effort.
-    }
+    } catch {}
     try {
       await rm(temporary, { force: true });
-    } catch {
-      // A successful rename removes the temporary path.
-    }
+    } catch {}
     try {
       await rm(lockDirectory, { recursive: true, force: true });
-    } catch {
-      // Stale recovery handles an interrupted release on the next write.
-    }
+    } catch {}
   }
   return destination;
 }

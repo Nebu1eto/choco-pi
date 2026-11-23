@@ -30,66 +30,42 @@ import {
   type CallRecord,
 } from "./records.ts";
 
-/** Marker entry choco-pi-subagents writes into every persisted child session. */
 export const SUBAGENT_MARKER_TYPE = "choco-pi:subagent";
-/** Custom entry the Statistics timing recorder writes before each assistant message. */
 export const TIMING_ENTRY_TYPE = "choco-pi:stats/timing";
-/** Custom entry the Fast mode extension writes with the requested state (lib/fast-mode-state.ts). */
 export const FAST_MODE_ENTRY_TYPE = "choco-pi-fast-mode";
 
-/** Everything the scanner keeps per session file, including what a tail read needs. */
 export type SessionScan = {
   path: string;
   size: number;
   mtimeMs: number;
-  /** Byte offset just past the last complete line already parsed. */
   offset: number;
-  /**
-   * The header line's bytes as written, so a rewrite that grew the file is told
-   * from an append. An owned copy: a string slice of the read would keep the
-   * whole decoded chunk alive for as long as the scan is cached.
-   */
   headerBytes: Buffer;
   sessionId: string;
   cwd: string;
   parentSession: string | undefined;
-  /** Header timestamp in epoch ms; orders parents before their forks. */
   startedAt: number;
   isSubagent: boolean;
   records: CallRecord[];
-  /** Tool-result entries by id, so an assistant entry can find what it answered. */
   parents: Map<string, TriggerTool>;
-  /** TTFT by provider|model|requestStart, normally written ahead of the message they time. */
   timings: Map<string, number>;
-  /** Assistant records still waiting for a timing entry, by the same key. */
   untimed: Map<string, CallRecord>;
-  /** Provider/model of the last assistant call, used for summaries that record none. */
   lastModel: { provider: string; model: string } | undefined;
-  /** Fast mode requested, as of the last choco-pi-fast-mode entry; undefined before the first. */
   fastRequested: boolean | undefined;
-  /** Lines that failed to parse; a truncated final line is not one of them. */
   malformedLines: number;
-  /** Committed compaction checkpoints, in file order. */
   compactions: CompactionEvent[];
-  /** Compaction lane transitions (fallbacks, cancels, cooldowns). */
   laneEvents: LaneEvent[];
-  /** Provider by candidate id, from choco-compaction-candidate entries. */
   candidates: Map<string, string>;
-  /** Last journaled route by candidate id, from lane records. */
   laneRoutes: Map<string, string>;
 };
 
 export type ScanCache = Map<string, SessionScan>;
 
 export type ScanResult = {
-  /** Every parsed session, parents before forks (header timestamp order). */
   sessions: SessionScan[];
-  /** Files seen, including ones without a header yet. */
   files: number;
 };
 
 const READ_CONCURRENCY = 8;
-/** Bytes read per call; a file is parsed one chunk of lines at a time, never loaded whole. */
 const READ_CHUNK_BYTES = 1 << 20;
 
 export function timingKey(provider: string, model: string, at: number): string {
@@ -137,11 +113,6 @@ function nestedMcpServers(message: RuntimeValue): string[] {
   return servers;
 }
 
-/**
- * The nested calls a code-mode tool result records: `details.traces[]` with a
- * tool `name` and the result's text content. Only code-mode results carry
- * traces; anything else yields an empty list.
- */
 function nestedCallsOf(message: RuntimeValue): NestedCall[] {
   if (!isJsonRecord(message)) return [];
   const details = message["details"];
@@ -319,7 +290,6 @@ function applyUsageEntry(scan: SessionScan, entry: RuntimeValue): void {
   });
 }
 
-/** A compaction checkpoint entry becomes an event; its provider resolves through the candidate map. */
 function applyCompactionEvent(scan: SessionScan, entry: RuntimeValue): void {
   if (!isJsonRecord(entry)) return;
   const id = stringField(entry, "id");
@@ -412,7 +382,6 @@ function applyCustom(scan: SessionScan, entry: RuntimeValue): void {
   if (provider === undefined || model === undefined || at === undefined || ttftMs === undefined)
     return;
   const key = timingKey(provider, model, at);
-  // The recorder writes the entry before the message, but join in either order.
   const waiting = scan.untimed.get(key);
   if (waiting !== undefined) {
     waiting.ttftMs = ttftMs;
@@ -422,7 +391,6 @@ function applyCustom(scan: SessionScan, entry: RuntimeValue): void {
   scan.timings.set(key, ttftMs);
 }
 
-/** Apply the header line; false when the line is not a header. */
 function applyHeader(scan: SessionScan, entry: RuntimeValue): boolean {
   if (!isJsonRecord(entry) || entry["type"] !== "session") return false;
   const id = stringField(entry, "id");
@@ -434,11 +402,6 @@ function applyHeader(scan: SessionScan, entry: RuntimeValue): boolean {
   return true;
 }
 
-/**
- * Parse complete lines into the scan. Returns false when a second header
- * appears, which means the file was rewritten rather than appended and the
- * caller must start over.
- */
 export function applyLines(scan: SessionScan, lines: readonly string[]): boolean {
   for (const line of lines) {
     if (line.length === 0) continue;
@@ -471,7 +434,6 @@ export function applyLines(scan: SessionScan, lines: readonly string[]): boolean
   return true;
 }
 
-/** True when the file still starts with the header the scan was built from. */
 async function headerUnchanged(path: string, expected: Buffer): Promise<boolean> {
   if (expected.length === 0) return false;
   const handle = await open(path, "r");
@@ -484,16 +446,6 @@ async function headerUnchanged(path: string, expected: Buffer): Promise<boolean>
   }
 }
 
-/**
- * Parse the complete lines between `offset` and `size` into the scan, one
- * chunk at a time, so memory stays near one chunk plus the longest line.
- * Lines split on the newline byte, which never occurs inside a UTF-8
- * sequence. A trailing line without its newline is left for a later read.
- *
- * When a second header appears, `stopOnRewrite` returns at once so the
- * caller can start over; otherwise the rest of the file is skipped unparsed,
- * as a fresh scan has nothing to start over from.
- */
 async function parseCompleteLines(
   scan: SessionScan,
   path: string,
@@ -505,7 +457,6 @@ async function parseCompleteLines(
   const handle = await open(path, "r");
   try {
     const chunk = Buffer.allocUnsafe(Math.min(READ_CHUNK_BYTES, size - offset));
-    /** Owned copies of a line's leading bytes from earlier chunks. */
     let carry: Buffer[] = [];
     let position = offset;
     let nextOffset = offset;
@@ -565,11 +516,6 @@ async function scanFile(path: string, previous: SessionScan | undefined): Promis
   return scan;
 }
 
-/**
- * Session files directly under a root and one directory level below it: Pi's
- * default root holds one directory per project, a configured session
- * directory holds the files themselves.
- */
 async function listSessionFiles(roots: readonly string[]): Promise<string[]> {
   const files = new Set<string>();
   for (const root of roots) {
@@ -619,12 +565,6 @@ async function mapWithConcurrency<Item, Result>(
   return results;
 }
 
-/**
- * Scan every session file under `roots`, reusing `cache` for files that did
- * not change and reading only the appended tail of files that grew. Files
- * without a header (not flushed yet) are counted but contribute nothing; a
- * file that cannot be read is skipped and dropped from the cache.
- */
 export async function scanSessions(
   roots: readonly string[],
   cache: ScanCache,

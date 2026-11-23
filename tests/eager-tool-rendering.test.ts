@@ -117,7 +117,6 @@ test(
       content: [{ type: "text", text }],
       details,
     });
-    // Shape captured from a real session: query "create_goal" loaded eight unrelated tools.
     const loaded = [
       "mcp__slack__slack_create_list",
       "mcp__slack__slack_create_canvas",

@@ -16,7 +16,6 @@ export interface LifecycleOwner<Owner> {
   current(): Owner | undefined;
 }
 
-/** Track one host-owned context and invalidate every earlier lease synchronously. */
 export function createLifecycleOwner<Owner extends object>(): LifecycleOwner<Owner> {
   let generation = 0;
   let owner: Owner | undefined;
@@ -51,7 +50,6 @@ export function isStaleContextError(error: RuntimeValue): boolean {
   );
 }
 
-/** Contain only the host's canonical stale-context failure. */
 export function rethrowUnlessStaleContext(error: RuntimeValue): void {
   if (isStaleContextError(error)) return;
   throw error;

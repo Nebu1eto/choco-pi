@@ -1,5 +1,3 @@
-// Lines are cut for display on grapheme-cluster boundaries by display width:
-// text that fits is kept whole, nothing is split inside a cluster, and no row is too wide.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { stripVTControlCharacters } from "node:util";
@@ -27,7 +25,6 @@ const CLUSTERS = [
   "a\u0300\u0301\u0302\u0303\u0304",
 ];
 
-/** Changed spans drawn inverted with real ANSI codes, as the theme does. */
 const styler: DiffStyler = {
   fg: (_color, text) => text,
   inverse: (text) => `\u001b[7m${text}\u001b[27m`,
@@ -100,7 +97,6 @@ test("generated lines: width respected, clusters whole, and text that fits kept"
 });
 
 test("a line whose clusters outlast the scan cap ends in an ellipsis", () => {
-  // Zalgo text: one base letter with thousands of combining marks is one narrow cluster.
   const zalgo = `a${"\u0301".repeat(DISPLAY_SCAN_UNITS + 10)}`;
   const rows = render("x", zalgo, 40);
   const added = rows[1] ?? "";
@@ -139,9 +135,7 @@ test("a change inside a cluster emphasises the whole cluster", () => {
       brackets,
     ).slice(2);
   };
-  // An accent added to a letter: the letter with its accent is the change.
   assert.equal(marked("cafe ok", "cafe\u0301 ok")[1], "  1 │ + «cafe\u0301» ok");
-  // One flag for another: whole flags, never one regional indicator.
   const flags = marked("go \u{1F1EF}\u{1F1F5} now", "go \u{1F1EF}\u{1F1F2} now");
   assert.equal(flags[0], "1   │ - go «\u{1F1EF}\u{1F1F5}» now");
   assert.equal(flags[1], "  1 │ + go «\u{1F1EF}\u{1F1F2}» now");

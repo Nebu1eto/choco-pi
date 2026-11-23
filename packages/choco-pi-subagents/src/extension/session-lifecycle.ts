@@ -1,6 +1,3 @@
-/**
- * Session lifecycle hooks.
- */
 import { inChildSessionContext, isChildSessionId } from "../child-context.ts";
 import { describeScratchChange, setPreviousScratchDir } from "@choco-pi/shared/scratch-path";
 import { ensureEnabledModels } from "../enabled-models.ts";
@@ -26,16 +23,11 @@ import { createMainCompactionActivity } from "../compaction-activity.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { SubagentsRuntime } from "./runtime.ts";
 
-/** Binds the activation to a root session on session_start. */
 export function installSessionStart(pi: ExtensionAPI, rt: SubagentsRuntime) {
-  // Capture ctx from session_start for RPC spawn handler + start the scheduler.
-  // This also wires the RPC handlers and broadcasts readiness — on the first
-  // bound session_start, so a filtered-out activation never advertises (#142).
   pi.on("session_start", async (event, ctx) => {
     rt.state.activeMentionCloneGeneration = ++rt.state.nextMentionCloneGeneration;
     const generation = ++rt.state.revivalGeneration;
     rt.state.currentCtx = ctx;
-    // Forked or resumed root: the scratch directory follows the session id, so name the old one once.
     const startedSessionId = ctx.sessionManager.getSessionId();
     if (rt.registry.ownsManagerRegistry) {
       rt.state.activeRootSessionId = startedSessionId;
@@ -55,8 +47,6 @@ export function installSessionStart(pi: ExtensionAPI, rt: SubagentsRuntime) {
         );
       }
     }
-    // Background preload for this session's cwd (never rejects); the spawn
-    // entry points still await it before their first Model Scope check.
     void ensureEnabledModels(ctx.cwd);
     rt.sessionLifecycle.mainCompaction.bind(ctx.sessionManager.getSessionId());
     rt.state.journalActive = rt.revival.journalEligible(ctx);
@@ -71,12 +61,9 @@ export function installSessionStart(pi: ExtensionAPI, rt: SubagentsRuntime) {
             `[choco-pi-subagents] Subagent journal write failed for ${agentId}: ${error.message}`,
           ),
       });
-      // Dormant fallback for anything the in-memory map no longer holds.
       rt.core.manager.setJournalLookup(
         (id) => reduceJournal(sessionManager.getEntries(), rootSessionId).get(id)?.agent,
       );
-      // Every journaled agent is addressable (id, @handle) right away, also
-      // before the deferred revival pass; live records always take precedence.
       rt.core.manager.hydrateDormant(
         [...reduceJournal(sessionManager.getEntries(), rootSessionId).values()].map(
           (snapshot) => snapshot.agent,
@@ -98,7 +85,6 @@ export function installSessionStart(pi: ExtensionAPI, rt: SubagentsRuntime) {
       pendingKeys.filter((key) => {
         const record = rt.core.manager.getRecord(key);
         if (record !== undefined) return !record.resultConsumed;
-        // After a restart the record is dormant; its unread result still counts.
         const dormant = rt.core.manager.getDormant(key);
         return (
           dormant !== undefined &&
@@ -127,7 +113,6 @@ export function installSessionStart(pi: ExtensionAPI, rt: SubagentsRuntime) {
           try {
             return statusCtx.isIdle() && !statusCtx.hasPendingMessages();
           } catch {
-            // A replaced session's context is stale; its successor owns the status.
             return false;
           }
         },
@@ -150,16 +135,10 @@ export function installSessionStart(pi: ExtensionAPI, rt: SubagentsRuntime) {
         );
       });
     }
-    // A new/resumed/forked session never inherits a parked usage-limit wait;
-    // the no-op case is the first start of this activation. A journaling
-    // session keeps its records: they are suspended at shutdown and revived
-    // or kept dormant from the journal instead.
     if (!rt.state.journalActive) {
       rt.core.manager.cancelUsageLimitWaits("Session switched; usage-limit wait cancelled.");
       rt.core.manager.clearCompleted(true);
     }
-    // Guard mirrors the `!scheduler.isActive()` pattern below: session_start
-    // fires once per activation, but a double-bind must not leak listeners.
     if (!rt.state.rpcHandle) {
       rt.state.rpcHandle = registerRpcHandlers({
         events: pi.events,
@@ -174,24 +153,15 @@ export function installSessionStart(pi: ExtensionAPI, rt: SubagentsRuntime) {
         },
         refreshAgents: () => rt.reloadCustomAgents(),
       });
-      // Broadcast readiness so extensions loaded alongside us can discover us.
-      // Emitting after all factories have run (rather than at factory time)
-      // also avoids the race where a consumer loaded after us misses the event.
       pi.events.emit("subagents:ready", {});
     }
     if (rt.preferences.isSchedulingEnabled() && !rt.scheduling.scheduler.isActive())
       rt.scheduling.startScheduler(ctx);
-    // Stack `@handle` suggestions on pi's built-in autocomplete. Registered at
-    // most once per activation: pi appends wrappers to a list it never prunes,
-    // so a second call would layer a duplicate provider on the first. TUI only
-    // — print mode has no such method, and RPC mode's is a no-op.
     if (ctx.mode === "tui" && !rt.state.mentionProviderRegistered) {
       rt.state.mentionProviderRegistered = true;
       ctx.ui.addAutocompleteProvider((current) =>
         createMentionProvider(
           current,
-          // Plain text, not renderAgentName: the same label FleetView and the
-          // widget show, but the autocomplete description cannot carry ANSI.
           () =>
             mentionRoster(
               rt.core.manager,
@@ -206,13 +176,8 @@ export function installSessionStart(pi: ExtensionAPI, rt: SubagentsRuntime) {
   });
 }
 
-/** Session switch, turn, settle, compaction, and shutdown handlers. */
 export function installSessionLifecycle(pi: ExtensionAPI, rt: SubagentsRuntime) {
   pi.on("session_before_switch", () => {
-    // Another extension can still cancel this switch, so nothing here may
-    // suspend agents or cancel usage waits: session_shutdown (emitted for
-    // new/resume/fork before the old session is disposed) suspends them, and
-    // a non-journaling session aborts them there as before.
     rt.views.sideConversations.dismiss();
     rt.views.focus.unfocus();
     rt.scheduling.stopScheduler();
@@ -225,8 +190,6 @@ export function installSessionLifecycle(pi: ExtensionAPI, rt: SubagentsRuntime) 
   pi.on("agent_end", () => rt.notifications.notificationGate.agentEnd());
   pi.on("turn_end", () => rt.notifications.notificationGate.turnEnd());
 
-  // Print and JSON mode exit when the last prompt settles; hold the settle until background
-  // agents and workflows deliver their completion so the announced follow-up turn can run.
   pi.on("agent_before_settle", async (_event, ctx) => {
     if (!rt.registry.ownsManagerRegistry || (ctx.mode !== "print" && ctx.mode !== "json")) return;
     const rootSessionId = rt.state.activeRootSessionId;
@@ -252,8 +215,6 @@ export function installSessionLifecycle(pi: ExtensionAPI, rt: SubagentsRuntime) 
     }
   });
 
-  // Main-session compaction for the fleet view's main row and status line.
-  // An earlier handler's cancel skips this one, but the failed event still ends it.
   const mainCompaction = createMainCompactionActivity();
   pi.on("session_before_compact", () => {
     mainCompaction.hostStarted();
@@ -261,17 +222,11 @@ export function installSessionLifecycle(pi: ExtensionAPI, rt: SubagentsRuntime) 
   pi.on("session_compact", () => mainCompaction.hostEnded());
   pi.on("session_compact_failed", () => mainCompaction.hostEnded());
 
-  // On shutdown, abort all agents immediately and clean up.
-  // If the session is going down, there's nothing left to consume agent results.
   pi.on("session_shutdown", async () => {
-    // Invalidate detached clone continuations before clearing their captured
-    // context and before any future cleanup step can introduce an await.
     rt.state.activeMentionCloneGeneration = undefined;
     mainCompaction.bind(undefined);
-    // Before agents are aborted: a held `done` is written only once nothing is pending.
     rt.state.programStatus?.dispose();
     rt.state.programStatus = undefined;
-    // Likewise for a revival that has not started or is still preparing.
     rt.state.revivalGeneration++;
     rt.agentReloader.invalidate();
     if (rt.state.revivalTimer !== undefined) clearTimeout(rt.state.revivalTimer);
@@ -293,11 +248,8 @@ export function installSessionLifecycle(pi: ExtensionAPI, rt: SubagentsRuntime) 
     rt.state.rpcHandle?.unsubPing();
     rt.state.rpcHandle = undefined;
     rt.state.currentCtx = undefined;
-    // Invalidated before any await: a stale settle must not report into a successor session.
     rt.stopControl.unsubscribeStopControl();
     rt.state.activeRootSessionId = undefined;
-    // Only release the global slot if this activation claimed it — a child
-    // session's shutdown must not delete the root session's registry entry.
     if (
       rt.registry.ownsManagerRegistry &&
       rt.registry.globalManagerRegistry[rt.registry.MANAGER_KEY] === rt.registry.registryEntry
@@ -308,9 +260,6 @@ export function installSessionLifecycle(pi: ExtensionAPI, rt: SubagentsRuntime) 
     rt.workflowRuntime.workflowManager.dispose();
     rt.workflowRuntime.workflowAdmissions.clear();
     if (suspend) {
-      // Journal every live run as interrupted (or still waiting) before it is
-      // aborted, then wait (bounded by the manager, 10 s) for the runs to
-      // settle and release their session files for the next runtime.
       rt.core.manager.flushJournal();
       await rt.core.manager.suspendAll();
     } else {

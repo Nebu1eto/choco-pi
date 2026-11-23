@@ -1,8 +1,3 @@
-/**
- * Subagent children select the same provider-native lanes as the main session
- * for the same model: owner keys, the child owner spec's lane switches, and
- * the backend a Codex child's coordinator selects. Offline.
- */
 import assert from "node:assert/strict";
 import test, { afterEach } from "node:test";
 
@@ -266,7 +261,6 @@ test("native refreshers run per session; only stale-context failures are contain
   await assert.rejects(refreshSessionNativeState("s-a", ctx), (cause) => cause === failure);
   assert.deepEqual(calls, ["a:one", "a:one"], "every contributor ran before the rethrow");
 
-  // A replaced contributor's old unregister never removes the newer one.
   const replacement = registerSessionNativeRefresher("s-a", "one", () => {
     calls.push("a:one-new");
   });
@@ -316,8 +310,6 @@ test("a Codex child whose Codex lane refuses the cut never prepares on the text 
     timestamp: 2,
   });
   child.appendMessage({ role: "user", content: "CHILD-C", timestamp: 3 });
-  // The child's Codex binding exists (the real factory, published under the child key),
-  // but no provider response was recorded for the child, so the Codex capture refuses.
   registerCodexBackgroundFactory(true);
   const integration = createCodexBackgroundIntegration({
     state: {},
@@ -374,7 +366,6 @@ test("a Codex child whose Codex lane refuses the cut never prepares on the text 
     const usage = { tokens: 190_000, contextWindow: 200_000, percent: 95 };
     const candidates = new Set<string | undefined>();
     for (let attempt = 0; attempt < 2; attempt++) {
-      // A refused lane is asked again only at a later context position.
       if (attempt > 0) child.appendMessage({ role: "user", content: "CHILD-D", timestamp: 4 });
       core.observeUsage(usage);
       await core.coordinator.waitForPreparation();

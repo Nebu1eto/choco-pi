@@ -2,9 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import type { Component, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
-// zentui ships TypeScript parameter properties that Node's strip-only mode
-// cannot parse, so tests load it through the repository's shared compile
-// helper rather than importing the source file directly.
 import { loadZentuiModule, SKIP_WITHOUT_ZENTUI } from "../../../tests/zentui-build.ts";
 import {
   reinterpretHostValue,
@@ -51,10 +48,6 @@ const noopTheme = {
 const ROW_COUNT = 14;
 const rowLabel = (index: number): string => `Row ${String(index).padStart(2, "0")}`;
 
-/**
- * A panel whose first tab holds two headed groups, the second long enough to
- * scroll the list, and a second tab with one row.
- */
 async function makePanel(submenu?: SettingItem["submenu"]) {
   const module = reinterpretHostValue<SettingsCommandModule>(
     await loadZentuiModule("settings-command.js"),
@@ -141,7 +134,6 @@ function mouse(
   };
 }
 
-/** The row and column of `text` in the panel's current frame. */
 function find(panel: PanelHandle, text: string) {
   const lines = panel.render(WIDTH).map((line) => stripVTControlCharacters(line));
   const y = lines.findIndex((line) => line.includes(text));
@@ -149,7 +141,6 @@ function find(panel: PanelHandle, text: string) {
   return { x: lines[y]?.indexOf(text) ?? -1, y };
 }
 
-/** The label on the row the list cursor marks. */
 function selected(panel: PanelHandle): string {
   const lines = panel.render(WIDTH).map((line) => stripVTControlCharacters(line));
   return (
@@ -161,7 +152,6 @@ function selected(panel: PanelHandle): string {
   );
 }
 
-/** A press and its click at one cell, with the frame Pi draws between them. */
 function click(panel: PanelHandle, at: ReturnType<typeof find>) {
   const press = panel.handleMouse(mouse("press", at.x, at.y));
   panel.render(WIDTH);
@@ -178,7 +168,6 @@ test("a click on a section in the strip shows it", { skip: SKIP_WITHOUT_ZENTUI }
     assert.deepEqual(result, { handled: true, render: true });
     assert.equal(panel.getActiveSection(), "beta");
     assert.equal(selected(panel), "Other row");
-    // Off any label the strip takes nothing, so Pi may select text there.
     const strip = find(panel, "Alpha");
     assert.equal(panel.handleMouse(mouse("press", strip.x - 1, strip.y)), undefined);
   } finally {
@@ -198,14 +187,12 @@ test(
       assert.deepEqual(changes, [["r2", "on"]]);
       assert.equal(selected(panel), rowLabel(2));
 
-      // Scroll the list well down, then click a row it now shows.
       for (let step = 0; step < 9; step += 1) panel.handleInput("\u001b[B");
       assert.equal(selected(panel), rowLabel(11));
       assert.ok(!panel.render(WIDTH).join("\n").includes("First group"), "the list scrolled");
       click(panel, find(panel, rowLabel(12)));
       assert.deepEqual(changes.at(-1), ["r12", "on"]);
       assert.equal(selected(panel), rowLabel(12));
-      // The keyboard carries on from the clicked row.
       panel.handleInput("\u001b[B");
       assert.equal(selected(panel), rowLabel(13));
     } finally {
@@ -232,7 +219,6 @@ test(
       panel.handleMouse(mouse("wheel", list.x, list.y, { wheelDelta: -3 }));
       assert.equal(selected(panel), rowLabel(2));
 
-      // Page Up from Row 02 lands on the First group heading; the panel moves on to Row 01.
       panel.handleInput("\u001b[5~");
       assert.equal(selected(panel), rowLabel(1));
       panel.handleInput("\u001b[6~");
@@ -265,7 +251,6 @@ test(
       const result = panel.handleMouse(mouse("press", choice.x, choice.y));
       assert.deepEqual(result, { handled: true }, "the host keeps keyboard focus");
       assert.equal(seen.at(-1)?.y, 1, "the submenu sees its own row");
-      // The strip stands down while the submenu owns the panel.
       const strip = find(panel, "Beta");
       assert.equal(panel.handleMouse(mouse("click", strip.x, strip.y)), undefined);
       assert.equal(panel.getActiveSection(), "alpha");
@@ -280,7 +265,6 @@ test(
   { skip: SKIP_WITHOUT_ZENTUI },
   async () => {
     const { panel } = await makePanel();
-    // The panel also lays out zentui's own sections as tabs after Alpha and Beta.
     const width = 40;
     const strip = (): string => stripVTControlCharacters(panel.render(width)[1] ?? "");
     const at = (text: string) => ({ x: strip().indexOf(text), y: 1 });
@@ -297,7 +281,6 @@ test(
     assert.ok(stripVTControlCharacters(panel.render(width).join("\n")).length > 0);
     clickStrip("Beta");
     assert.equal(panel.getActiveSection(), "beta");
-    // › picks the first hidden section, which brings ‹ in on the left.
     const hiddenAfter = panel.getActiveSection();
     clickStrip("›");
     assert.notEqual(panel.getActiveSection(), hiddenAfter);

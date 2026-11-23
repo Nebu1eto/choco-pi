@@ -18,15 +18,10 @@ export interface ContinuationSlice {
   limit: number;
 }
 
-/** Exact continuation call for one stored fetch URL slice. */
 export function continuationCall(slice: ContinuationSlice): string {
   return `${slice.toolName}({ response_id: ${JSON.stringify(slice.responseId)}, url_index: ${slice.urlIndex}, offset: ${slice.offset}, limit: ${slice.limit} })`;
 }
 
-/**
- * Multi-URL fetch summary. Content is not inlined; every successful URL lists its index,
- * stored length, and the exact call that reads its first slice, so one URL can be chosen.
- */
 export function formatMultiUrlFetchSummary(
   results: readonly FetchSummaryEntry[],
   retrieval: FetchSummaryRetrieval,

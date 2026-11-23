@@ -11,9 +11,6 @@ export class FactStore implements ReadonlyFactStore {
   private readonly fileFacts = new Map<string, Map<string, unknown>>();
   private readonly sessionFacts = new Map<string, unknown>();
 
-  // All file-keyed methods normalize the path internally via normalizeMapKey().
-  // Callers always pass raw/resolved paths — normalization is not their concern.
-
   getFileFact<T>(filePath: string, factId: string): T | undefined {
     // SAFETY: Fact IDs pair each producer with consumers that request the producer's stored type.
     return this.fileFacts.get(normalizeMapKey(filePath))?.get(factId) as T | undefined;
@@ -33,8 +30,6 @@ export class FactStore implements ReadonlyFactStore {
     return this.fileFacts.get(normalizeMapKey(filePath))?.has(factId) ?? false;
   }
 
-  /** Drop one file fact without disturbing the file's derived facts.
-   *  Removes the per-file entry too when the deleted fact was its last value. */
   deleteFileFact(filePath: string, factId: string): void {
     const key = normalizeMapKey(filePath);
     const facts = this.fileFacts.get(key);
@@ -43,15 +38,10 @@ export class FactStore implements ReadonlyFactStore {
     if (facts.size === 0) this.fileFacts.delete(key);
   }
 
-  /** Clear facts for one specific file only. Use at the start of each per-file dispatch call.
-   *  Preserves facts for other files computed in the same turn.
-   *  Normalizes filePath internally — callers pass raw paths. */
   clearFileFactsFor(filePath: string): void {
     this.fileFacts.delete(normalizeMapKey(filePath));
   }
 
-  /** Clear all file facts across all paths. Reserve for explicit full resets only —
-   *  do NOT use in the normal per-file dispatch path. */
   clearFileFacts(): void {
     this.fileFacts.clear();
   }
@@ -69,7 +59,6 @@ export class FactStore implements ReadonlyFactStore {
     return this.sessionFacts.has(factId);
   }
 
-  /** Call on session reset only. Clears everything including tool cache and baselines. */
   clearAll(): void {
     this.fileFacts.clear();
     this.sessionFacts.clear();

@@ -16,9 +16,7 @@ export interface ExecResultSessionState extends ExecOutputSessionState {
   startedAt: number;
   updatedAt: number;
   terminating: boolean;
-  /** Output chunks the bridge discarded unread; undefined for sessions that cannot know. */
   droppedChunks?: number | undefined;
-  /** `droppedChunks` already reported in a result; the rest is reported once more. */
   droppedChunksReported?: number | undefined;
 }
 
@@ -29,9 +27,6 @@ function fromSnapshot(
   consume = false,
 ): UnifiedExecResult {
   let output = snapshot.output;
-  // The in-stream notice can fall outside the returned tail, so repeat the
-  // not-yet-reported drops at the head of this result. Only a consuming
-  // result marks them reported; peeks and progress snapshots repeat them.
   const dropped = session.droppedChunks ?? 0;
   const reported = session.droppedChunksReported ?? 0;
   if (dropped > reported) {

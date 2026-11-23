@@ -26,8 +26,6 @@ function createContext(
 ): TestRefreshModelsContext {
   const written: WrittenModels = [];
 
-  // Provide both the 0.84 (stored/publish) and legacy (store) refresh-context
-  // shapes so the tests exercise the runtime shape-detection shim.
   // SAFETY: the mock supplies every RefreshModelsContext member used by the refresh implementation plus getWritten.
   return {
     credential: options.credential,

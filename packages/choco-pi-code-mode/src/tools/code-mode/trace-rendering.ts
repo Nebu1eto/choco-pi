@@ -105,9 +105,7 @@ function renderTrace(
         ),
       );
       customResultRendered = true;
-    } catch {
-      // A stale persisted trace must not break the whole transcript.
-    }
+    } catch {}
   }
   if (renderedTrace.result && !customResultRendered) {
     components.push(

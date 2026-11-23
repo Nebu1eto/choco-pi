@@ -58,7 +58,6 @@ test("inSubagentChildLoad accepts open registries and rejects malformed ones", (
   withRegistry({ isChildSessionContext: () => false }, () => {
     assert.equal(inSubagentChildLoad(), false);
   });
-  // Non-boolean result is "not a child".
   withRegistry({ isChildSessionContext: () => 1 }, () => {
     assert.equal(inSubagentChildLoad(), false);
   });

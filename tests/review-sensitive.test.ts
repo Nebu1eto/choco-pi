@@ -28,12 +28,6 @@ import { createTargetDiffReader, hideSensitiveFiles } from "../profile/extension
 import { HIDDEN_FILE_HINT } from "../profile/extensions/review/ui/review-view.ts";
 import { baseRecord, CONFIG, changedFile, mount, NOW } from "./review-safety-fakes.ts";
 
-/**
- * /review-assist and its headless output apply the shared sensitive-file rule:
- * a sensitive file is listed by name, its contents are never read, drawn,
- * exported, or sent until the user presses y on it in the interactive view.
- */
-
 const SECRET = "S3CRET-MARKER-7f9c2e";
 const execFileAsync = promisify(execFile);
 const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
@@ -49,7 +43,6 @@ async function put(root: string, path: string, content: string): Promise<void> {
 
 type Cleanup = { after(fn: () => void | Promise<void>): void };
 
-/** .env (modified), secrets/token.txt (untracked) and app.ts (modified), uncommitted. */
 async function repository(t: Cleanup): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "review-sensitive-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -117,7 +110,6 @@ test("the review reader lists sensitive files by name and never has git return t
     "no git call named a sensitive file",
   );
 
-  // Revealing reads exactly that file, through the same limits.
   const revealed = await loadDiffModel({
     cwd: root,
     source: { kind: "uncommitted" },
@@ -149,7 +141,6 @@ function secretComment(path: string, model: DiffModel): ReviewComment {
 
 test("headless review: sensitive files are named once and their text reaches no output channel", async (t) => {
   const root = await repository(t);
-  // A saved review whose comment quotes the secret line, as the TUI stores it once revealed.
   const full = changedFile(".env", "TOKEN=old", `TOKEN=${SECRET}`);
   const saved: ReviewRecord = baseRecord(
     { baseSha: "b", headSha: "h", files: [full] },
@@ -279,25 +270,20 @@ test("the review view hides a sensitive file until v, and nothing else reveals i
     },
   });
   const screen = () => view.render(120).join("\n");
-  // The view opens on the first unreviewed hunk (app.ts); ← moves to .env.
   await view.press("\u001b[D");
   let rendered = screen();
-  // The body draws the hint as the pane draws a body note: two-column indent after the marker column.
   assert.ok(rendered.includes(`\n   ${HIDDEN_FILE_HINT}`), "the body carries the hint");
   assert.match(HIDDEN_FILE_HINT, /Press v to show them/);
   assert.ok(rendered.includes("1 comment on this file, shown with its contents."));
   assert.equal(rendered.includes(SECRET), false);
   assert.equal(rendered.includes("rotate this key"), false, "comment text waits for the reveal");
 
-  // Keys that act on the current file; none of them may read or show it. Space
-  // twice collapses and expands the file row; y no longer reveals (v does).
   for (const key of ["x", "y", " ", " ", "c", "e", "+", "/"]) await view.press(key);
   assert.match(screen(), /❯[▾▸] M \.env/, "still on the hidden file");
   assert.deepEqual(reveals, []);
   assert.equal(edits, 0);
   rendered = screen();
   assert.equal(rendered.includes(SECRET), false);
-  // The body note and the message line from e: the hint is on screen twice, not behind the review.
   await view.press("e");
   rendered = screen();
   assert.ok(rendered.split(HIDDEN_FILE_HINT).length > 2, "e explains how to show the file");
@@ -314,7 +300,6 @@ test("the review view hides a sensitive file until v, and nothing else reveals i
 
   await view.press("q");
   await view.closed;
-  // Nothing about the reveal is saved: reopening hides the file again.
   assert.deepEqual(Object.keys(view.savedRecords[0] ?? {}).sort(), Object.keys(record).sort());
   assert.deepEqual(view.savedRecords[0]?.comments, record.comments);
 });

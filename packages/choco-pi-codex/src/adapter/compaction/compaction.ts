@@ -81,22 +81,13 @@ import { OPENAI_SIGN_IN_COMPACTION_REASON } from "../openai-sign-in.ts";
 
 const notifiedOpenAISignInCompactionSessions = new Set<string>();
 
-/**
- * A provider request that must not be sent: the latest Codex checkpoint cannot
- * be replayed for it and its loss is not authorized. Throwing from
- * `before_provider_request` does not stop the host from sending, so the
- * extension records the refusal and the Codex transport fails the request
- * before any network call (`events.ts` / `register.ts`).
- */
 export class CodexRequestRefusedError extends Error {
   override name = "CodexRequestRefusedError";
 }
 
-/** The lane-record fields a foreground Codex site chooses; the rest is fixed per site. */
 type CodexForegroundRecord = Pick<LaneRecordInput, "event" | "reason" | "noticeAttempted"> &
   Partial<Pick<LaneRecordInput, "to" | "detail" | "checkpointEntryId">>;
 
-/** Append one `codex-foreground` lane record through `pi.appendEntry`. */
 function journalCodexForeground(
   pi: Pick<ExtensionAPI, "appendEntry">,
   ctx: ExtensionContext,
@@ -117,7 +108,6 @@ function journalCodexForeground(
   );
 }
 
-/** The package-owned code of a failed native compaction. */
 function compactionFailureReason(
   result: Extract<RemoteCompactionV2Result, { ok: false }>,
 ): LaneReason {
@@ -130,12 +120,6 @@ function compactionFailureReason(
   return "provider-error";
 }
 
-/**
- * The background lane's account digest for this runtime, so a background
- * checkpoint is replayed only for the account that made it. A Codex runtime
- * whose credential names no account gets a value no digest equals (fail
- * closed); other runtimes are not account-scoped.
- */
 function runtimeAccountScope(runtime: {
   readonly codexTransport: boolean;
   readonly apiKey?: string | undefined;
@@ -149,7 +133,6 @@ function runtimeAccountScope(runtime: {
   }
 }
 
-/** Tell the user once per session that sign-in uses Pi's local compaction instead. */
 function notifyOpenAISignInCompactionFallback(ctx: ExtensionContext): void {
   const sessionId = ctx.sessionManager.getSessionId();
   if (notifiedOpenAISignInCompactionSessions.has(sessionId)) return;
@@ -270,12 +253,10 @@ function notifyNativeCompactionFallback(
   );
 }
 
-/** The `session_before_compact` answer that stops the host compaction. */
 interface CompactionCancel {
   readonly cancel: true;
 }
 
-/** Notice and journal one foreground cancel. */
 function cancelForeground(
   pi: Pick<ExtensionAPI, "appendEntry">,
   ctx: ExtensionContext,
@@ -644,11 +625,9 @@ async function handleCodexSessionBeforeCompactInner(
   }
 }
 
-/** Shown when the server rejected the `/compact` focus item and the compaction ran without it. */
 export const CODEX_FOCUS_IGNORED_NOTICE =
   "Codex compaction ignored the /compact focus (server rejected it)";
 
-/** Journal (and, when dropped, announce) what happened to `/compact <focus>`. */
 function journalCompactionFocus(
   pi: Pick<ExtensionAPI, "appendEntry">,
   ctx: ExtensionContext,
@@ -656,7 +635,6 @@ function journalCompactionFocus(
   result: RemoteCompactionV2Result,
 ): void {
   if (result.focus === "forwarded") {
-    // The focus went to the server with the compaction request; no lane changed.
     journalCodexForeground(pi, ctx, route, {
       event: "yield",
       to: "codex-foreground",
@@ -675,11 +653,6 @@ function journalCompactionFocus(
   });
 }
 
-/**
- * Refuse a request whose replay is impossible, unless the user authorized
- * losing that checkpoint's history: then the request goes out with the
- * placeholder, and the loss is announced and journaled.
- */
 function refuseOrLose(
   pi: Pick<ExtensionAPI, "appendEntry"> | undefined,
   ctx: ExtensionContext,
@@ -713,16 +686,6 @@ function refuseOrLose(
   throw new CodexRequestRefusedError(refusal.message);
 }
 
-/**
- * Replay the latest native checkpoint into a normal request. A background
- * checkpoint is replayed only for the account that made it (any model id of
- * that account, the foreground lenient path); another account, or a replay
- * that cannot be rebuilt, refuses the request with
- * {@link CodexRequestRefusedError} unless its loss is authorized.
- * So does a newest opaque Codex checkpoint this runtime cannot replay at all
- * (another provider, api or endpoint, or no native runtime): it is never sent
- * as its placeholder summary.
- */
 export async function rewriteCodexCompactedProviderRequest(
   payload: BoundaryValue,
   ctx: ExtensionContext,
@@ -732,7 +695,6 @@ export async function rewriteCodexCompactedProviderRequest(
   const plan = resolveCodexRuntimePlanForState(ctx, state);
   if (!plan.nativeCompaction || (!plan.effectiveOpenAICodex && !isResponsesContext(ctx)))
     return undefined;
-  // Snapshot before the first await: the request belongs to the branch as it is now.
   const opaque = opaqueCheckpointOf(ctx.sessionManager.getBranch());
   const unreplayable = (detail: string): undefined =>
     opaque?.owner === "codex-native"
@@ -759,7 +721,6 @@ export async function rewriteCodexCompactedProviderRequest(
   if (!runtime.payload) return unreplayable("payload");
   // SAFETY: findLatestNativeCompactionEntryIndex returns an in-bounds entry accepted by isNativeCompactionEntry.
   const compactionEntry = branchEntries[latestNativeCompactionIndex]! as NativeCompactionEntry;
-  // An older checkpoint of this endpoint is not the newest opaque one: that one cannot be replayed here.
   if (opaque?.owner === "codex-native" && compactionEntry.id !== opaque.entryId)
     return unreplayable("endpoint");
   const accountScope = runtimeAccountScope(runtime);

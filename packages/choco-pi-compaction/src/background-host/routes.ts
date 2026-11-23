@@ -29,14 +29,9 @@ import {
 } from "./runtime.ts";
 import { withTrigger } from "../trigger.ts";
 
-// ---------------------------------------------------------------------------
-// Adoption routes: host compaction arbitration, turn boundaries, idle input
-// ---------------------------------------------------------------------------
-
 const PROCEED: Decision = { action: "proceed" };
 const CANCEL: Decision = { action: "cancel" };
 
-/** Idle-route refusals the host reports without running any handler. */
 function isHostRefusal(message: string): boolean {
   return (
     message.startsWith("Nothing to compact") ||
@@ -45,7 +40,6 @@ function isHostRefusal(message: string): boolean {
   );
 }
 
-/** Whether this session_before_compact adopts a ready candidate (memoized per event). */
 export function decide(
   rt: HostRuntime,
   owner: MainOwner,
@@ -63,8 +57,6 @@ function hostTrigger(owner: MainOwner, event: SessionBeforeCompactEvent): HostCo
   const ownRoute =
     route !== undefined && event.reason === "manual" && event.customInstructions === undefined;
   const reason: HostCompactionTrigger["reason"] = ownRoute ? route.trigger : event.reason;
-  // An own route adopts the exact candidate it proposed, so it carries that
-  // candidate's instructions; a user request carries the user's.
   const customInstructions = ownRoute
     ? owner.core.coordinator.status().customInstructions
     : event.customInstructions;
@@ -84,7 +76,6 @@ async function arbitrate(
   const result = await owner.core.coordinator.arbitrateHostCompaction(trigger);
   if (!isCurrent(rt, owner)) return PROCEED;
   if (result.action !== "adopt") return deferManual(rt, owner, event);
-  // An aborted compaction fails and is reconciled back to ready afterwards.
   if (event.signal.aborted) return PROCEED;
   if (!owner.core.vet(result.draft, event.branchEntries)) {
     owner.core.coordinator.cancel("stale-prefix");
@@ -95,38 +86,22 @@ async function arbitrate(
     summary: result.compaction.summary,
     firstKeptEntryId: result.compaction.firstKeptEntryId,
     tokensBefore: event.preparation.tokensBefore,
-    // The adoption knows its own route; the host only saw "manual" for ctx.compact().
     details: withTrigger({ details: result.compaction.details }, trigger.reason).details,
   };
   if (result.compaction.usage !== undefined) compaction.usage = result.compaction.usage;
   return { action: "adopt", candidateId: result.candidateId, compaction };
 }
 
-/**
- * A ready `anthropic-native` candidate prepared before a replay rejection
- * turned the lane off for this session (D7) is never adopted: its checkpoint
- * would be replayed by a lane that is off. Cancelled (`disabled`) instead.
- */
 function refuseDisabledReady(owner: MainOwner): void {
   const status = owner.core.coordinator.status();
   if (status.state !== "ready" || status.backendId !== ANTHROPIC_BACKEND_ID) return;
   if (owner.core.anthropicDisabled()) owner.core.coordinator.cancel("disabled");
 }
 
-/** A `/compact` typed by the user (with or without instructions): not a route of ours. */
 function isUserManual(owner: MainOwner, event: SessionBeforeCompactEvent): boolean {
   return event.reason === "manual" && owner.pendingRoute === undefined && !event.signal.aborted;
 }
 
-/**
- * Manual route: a `/compact` with no ready candidate continues in the
- * background instead of blocking the session on the summarizer. The host
- * compaction is cancelled so input is accepted again; the candidate is adopted
- * as soon as it is ready (idle route when idle, otherwise the next boundary).
- * Custom instructions go to the lanes that apply them: the Anthropic lane
- * (as `compaction.instructions`) and the text lane. An owner without a
- * backend or a refused request keeps the foreground path.
- */
 async function deferManual(
   rt: HostRuntime,
   owner: MainOwner,
@@ -139,15 +114,6 @@ async function deferManual(
   return CANCEL;
 }
 
-/**
- * Start (or join) the background preparation a `/compact` stands for.
- * True when the request is now owned by the manual follower; false when the
- * foreground path has to run instead. Shared by the `session_before_compact`
- * hook and the TUI command bridge. The follower starts at once; on the hook
- * path its adoption waits for the next host boundary (`hostCompactUnwinding`).
- * A request the opaque-history guard would refuse is refused here, before any
- * candidate or progress notice: one refusal notice and one journal record.
- */
 export async function startManualPreparation(
   rt: HostRuntime,
   owner: MainOwner,
@@ -155,7 +121,6 @@ export async function startManualPreparation(
 ): Promise<boolean> {
   if (owner.pendingRoute !== undefined) return false;
   const lanes = manualLanes(owner.core, customInstructions);
-  // Joining the outstanding candidate keeps its follower; anything else supersedes it.
   const joining = joinableCandidate(owner, customInstructions);
   if (joining !== undefined && owner.manualCandidate === joining) return true;
   if (refusedOverOpaque(rt, owner, lanes[0])) return true;
@@ -173,12 +138,6 @@ export async function startManualPreparation(
   return true;
 }
 
-/**
- * The opaque-history guard for a manual request, evaluated before anything is
- * started: the freeze would refuse every lane a manual request may use over
- * this checkpoint (no lane offered here can replay an opaque record), so the
- * request is cancelled with the guard's exits notice and one `cancel` record.
- */
 function refusedOverOpaque(rt: HostRuntime, owner: MainOwner, lane: string | undefined): boolean {
   if (lane === undefined) return false;
   const opaque = owner.core.opaqueBlock(lane);
@@ -205,16 +164,10 @@ function refusedOverOpaque(rt: HostRuntime, owner: MainOwner, lane: string | und
   return true;
 }
 
-/** A host boundary reached: the cancelled host compaction, if any, has returned. */
 export function hostBoundaryReached(owner: MainOwner): void {
   owner.hostCompactUnwinding = false;
 }
 
-/**
- * Whether a typed `/compact` should bypass the host entirely. A ready candidate
- * is left to the host (its hook adopts it with no error line); otherwise the
- * owner must be current and able to start a preparation.
- */
 export function manualBypassesHost(
   rt: HostRuntime,
   owner: MainOwner,
@@ -222,7 +175,6 @@ export function manualBypassesHost(
 ): boolean {
   if (!isCurrent(rt, owner) || owner.pendingRoute !== undefined) return false;
   const status = owner.core.coordinator.status();
-  // A ready candidate is left to the host hook only when it answers this request.
   if (
     (status.state === "ready" || status.state === "adopting") &&
     status.customInstructions === customInstructions
@@ -231,24 +183,6 @@ export function manualBypassesHost(
   return manualLanes(owner.core, customInstructions).length > 0;
 }
 
-/**
- * Backend lanes a manual request may use, preferred first. The Anthropic lane
- * needs a usable wire capture (an answered request of this owner's scope);
- * right after a reload or resume there is none, so the text lane goes first
- * and the Anthropic lane is skipped rather than failing with `incompatible`.
- * It is skipped too once a replay rejection turned it off for the session.
- * Custom instructions are applied by both lanes (D9: the Anthropic lane sends
- * them as `compaction.instructions`); a lane that could not apply them is
- * never offered one.
- *
- * Any other native lane (Codex) owns its model's compaction: its own
- * foreground handler answers the host's compaction and would replace any
- * other lane's result, so a text checkpoint over that content is never
- * right. Such an owner gets no manual lane: the request falls through to the
- * host's compaction, which the native foreground handler answers (a ready
- * native candidate prepared at the threshold is still adopted first). Custom
- * instructions are then the native handler's to apply or report.
- */
 export function manualLanes(
   core: Pick<OwnerCore, "backendId" | "backendIds" | "sessionId" | "scope"> &
     Partial<Pick<OwnerCore, "anthropicDisabled">>,
@@ -268,10 +202,8 @@ export function manualLanes(
   return usable.filter((id) => INSTRUCTION_LANES.has(id));
 }
 
-/** Lanes that apply `/compact <instructions>` themselves. */
 const INSTRUCTION_LANES: ReadonlySet<string> = new Set([TEXT_BACKEND_ID, ANTHROPIC_BACKEND_ID]);
 
-/** The outstanding candidate a request with these instructions can wait on. */
 function joinableCandidate(owner: MainOwner, customInstructions?: string): string | undefined {
   const status = owner.core.coordinator.status();
   const outstanding = status.state === "queued" || status.state === "preparing";
@@ -280,7 +212,6 @@ function joinableCandidate(owner: MainOwner, customInstructions?: string): strin
     : undefined;
 }
 
-/** The outstanding preparation to wait on, or a newly requested one; undefined when none can run. */
 async function manualCandidate(
   rt: HostRuntime,
   owner: MainOwner,
@@ -290,9 +221,7 @@ async function manualCandidate(
   if (backendId === undefined) return undefined;
   const status = owner.core.coordinator.status();
   const outstanding = status.state === "queued" || status.state === "preparing";
-  // Joining: no await, so the caller's ownership check stays valid.
   if (outstanding && status.customInstructions === customInstructions) return status.candidateId;
-  // A request with different instructions supersedes the one in flight.
   if (outstanding) owner.core.coordinator.cancel("manual-instructions");
   if (status.state === "adopting") return undefined;
   const requested = await owner.core.coordinator.requestPreparation({
@@ -310,14 +239,6 @@ interface ManualFollow {
   readonly customInstructions: string | undefined;
 }
 
-/**
- * Wait for the manual candidate; adopt it while idle, otherwise leave it to
- * the next boundary. A candidate that did not produce a checkpoint is decided
- * by `manualFallbackPolicy` (D6): a cancellation stops silently, `auth`
- * stops with a warning, other failures retry once on the text lane when it is
- * enabled and the opaque-history guard allows it. The request gets one
- * outcome notice: a successful retry's is shown when its checkpoint installs.
- */
 async function followManual(
   rt: HostRuntime,
   owner: MainOwner,
@@ -341,13 +262,11 @@ async function followManual(
       await adoptManualIfIdle(rt, owner, ctx);
       return;
     }
-    // Already proposed or committed by a boundary that ran while we waited.
     if (status.state === "adopting" || status.state === "installed") {
       settleManual(owner);
       return;
     }
   } else if (failure === undefined) {
-    // A newer candidate (another request, the threshold route) took over: nothing to report.
     owner.manualCandidate = undefined;
     owner.manualNotice = undefined;
     return;
@@ -359,7 +278,6 @@ async function followManual(
     if (!live()) return;
     if (retried !== undefined) {
       owner.manualCandidate = retried;
-      // One notice per user action: shown once the text checkpoint installs.
       owner.manualNotice = outcome.notice;
       void followManual(rt, owner, { candidateId: retried, serial, customInstructions }, rest);
       return;
@@ -378,7 +296,6 @@ async function followManual(
   if (outcome.notice !== undefined) tell(ctx, outcome.notice, outcome.level);
 }
 
-/** The policy verdict for a manual candidate that produced no checkpoint. */
 function manualOutcome(
   owner: MainOwner,
   status: ReturnType<OwnerCore["coordinator"]["status"]>,
@@ -398,7 +315,6 @@ function manualOutcome(
   });
 }
 
-/** Adopt the manual candidate now when it is ready and the session is idle. */
 async function adoptManualIfIdle(
   rt: HostRuntime,
   owner: MainOwner,
@@ -411,7 +327,6 @@ async function adoptManualIfIdle(
     owner.manualCandidate = undefined;
     return;
   }
-  // The cancelled host compaction has not returned yet: adopt at the next boundary instead.
   if (owner.hostCompactUnwinding) return;
   if (idleCandidate(rt, owner, ctx) !== candidateId) return;
   const installed = await adoptIdle(rt, owner, ctx, { candidateId, trigger: "manual" });
@@ -421,7 +336,6 @@ async function adoptManualIfIdle(
     return;
   }
   if (owner.refusedIdle.has(candidateId)) {
-    // Fail closed like the idle route; the checkpoint stays available to a later boundary.
     owner.manualCandidate = undefined;
     tell(
       ctx,
@@ -431,7 +345,6 @@ async function adoptManualIfIdle(
   }
 }
 
-/** Clear the manual bookkeeping once its candidate is installed or gone; show its pending notice on install. */
 function settleManual(owner: MainOwner): void {
   const candidateId = owner.manualCandidate;
   if (candidateId === undefined) return;
@@ -451,7 +364,6 @@ function settleManual(owner: MainOwner): void {
   }
 }
 
-/** Whether the idle route may start now for the ready candidate. */
 function idleCandidate(
   rt: HostRuntime,
   owner: MainOwner,
@@ -462,12 +374,10 @@ function idleCandidate(
   const status = owner.core.coordinator.status();
   if (status.state !== "ready" || status.candidateId === undefined) return undefined;
   if (owner.refusedIdle.has(status.candidateId)) return undefined;
-  // ctx.compact() aborts an active run first; never call it unless idle.
   if (!ctx.isIdle()) return undefined;
   return status.candidateId;
 }
 
-/** Trigger a host compaction and resolve with its failure, or undefined on completion. */
 function runHostCompaction(ctx: ExtensionContext): Promise<Error | undefined> {
   return new Promise<Error | undefined>((resolve) => requestCompaction(ctx, resolve));
 }
@@ -477,7 +387,6 @@ function requestCompaction(
   settle: (failure: Error | undefined) => void,
 ): void {
   try {
-    // Pi's ctx.compact() awaits the session's compact() and calls exactly one callback.
     ctx.compact({
       onComplete: () => settle(undefined),
       onError: (error) => settle(error),
@@ -512,7 +421,6 @@ async function adoptIdle(
   return status.candidateId === candidateId && status.state === "installed";
 }
 
-/** Fail closed: no retry, no summarization; a later boundary may still adopt. */
 async function refuseIdle(
   rt: HostRuntime,
   owner: MainOwner,
@@ -525,7 +433,6 @@ async function refuseIdle(
   await reportHostRefused(rt, owner, ctx);
 }
 
-/** Return a refused or failed host compaction's candidate to its pre-adoption state. */
 export async function reportHostRefused(
   rt: HostRuntime,
   owner: MainOwner,
@@ -547,34 +454,16 @@ function adoptReadyForContextCap(
   const candidateId = idleCandidate(rt, owner, ctx);
   if (candidateId === undefined) return false;
   owner.lastCtx = ctx;
-  // Called from agent_settled: adopting now would start a host compaction that a
-  // prompt Pi deferred during this emission then hits ("compaction in progress").
   scheduleIdleCompaction(owner, { kind: "adopt", trigger: "context-cap", onSettled });
   return true;
 }
 
-// ---------------------------------------------------------------------------
-// Deferred host compaction: never start one inside agent_settled
-// ---------------------------------------------------------------------------
-
-/**
- * Queue an adoption for the next prompt instead of starting it inside
- * `agent_settled`. The request runs inside the next prompt's `input` hook,
- * which Pi awaits after its compaction check and before that prompt starts its
- * run; without a next prompt no further request needs the smaller context. A
- * newer request supersedes an older one still waiting.
- */
 export function scheduleIdleCompaction(owner: MainOwner, request: IdleRequest): void {
   const superseded = owner.idlePending;
   owner.idlePending = request;
   if (superseded !== undefined && superseded !== request) superseded.onSettled(false);
 }
 
-/**
- * Run the waiting request now if the session is idle; join the running one.
- * Every path settles: `runHostCompaction` resolves through Pi's
- * `ctx.compact()` callbacks, which fire once its `compact()` settles.
- */
 export async function runIdleCompaction(
   rt: HostRuntime,
   owner: MainOwner,
@@ -590,7 +479,6 @@ export async function runIdleCompaction(
   }
   if (!ctx.isIdle() || owner.pendingRoute !== undefined) return;
   owner.idlePending = undefined;
-  // Marked running before it starts, so a concurrent caller joins this run.
   let finished = (): void => undefined;
   const running = new Promise<void>((resolve) => {
     finished = resolve;
@@ -630,12 +518,6 @@ function isOwnAdoption(owner: MainOwner, entry: CompactionEntry): boolean {
   );
 }
 
-/**
- * The owner as the process-global adoption signal exposes it to consumers.
- * `willAdopt` is true whenever the background feature answers the request:
- * an adoption now, or a plain /compact deferred to a background preparation
- * (cancelled for the host, adopted later without further host hooks).
- */
 export function ownerApi(rt: HostRuntime, owner: MainOwner): BackgroundAdoptionOwner {
   return {
     willAdopt: async (event) => (await decide(rt, owner, event)).action !== "proceed",
@@ -644,7 +526,6 @@ export function ownerApi(rt: HostRuntime, owner: MainOwner): BackgroundAdoptionO
   };
 }
 
-/** turn_end / agent_before_settle: settle, observe usage, then offer a ready draft. */
 export async function adoptAtBoundary(
   rt: HostRuntime,
   event: TurnEndEvent | AgentBeforeSettleEvent,
@@ -666,12 +547,9 @@ export async function adoptAtBoundary(
     return undefined;
   }
   owner.core.proposals.set(result.candidateId, "boundary");
-  // A returned draft is a proposal; commit is acknowledged by branch scan
-  // after this boundary settles (a later handler may drop or replace it).
   return { entries: [...event.entries, boundaryDraft(result.draft)] };
 }
 
-/** agent_settled: settle, then observe usage. */
 export async function observeSettled(rt: HostRuntime, ctx: ExtensionContext): Promise<void> {
   const owner = touchCurrentOwner(rt, ctx);
   if (owner === undefined) return;
@@ -680,8 +558,6 @@ export async function observeSettled(rt: HostRuntime, ctx: ExtensionContext): Pr
   owner.core.observeUsage(ctx.getContextUsage());
   hostBoundaryReached(owner);
   settleManual(owner);
-  // A manual candidate that became ready late in the run is adopted before the next
-  // prompt: adopting inside this emission would race a prompt Pi defers meanwhile.
   const manual = owner.manualCandidate;
   if (manual !== undefined && owner.core.coordinator.status().state === "ready") {
     scheduleIdleCompaction(owner, {
@@ -692,7 +568,6 @@ export async function observeSettled(rt: HostRuntime, ctx: ExtensionContext): Pr
   }
 }
 
-/** input: adopt a ready candidate through ctx.compact while idle. */
 export async function adoptOnIdleInput(rt: HostRuntime, ctx: ExtensionContext): Promise<void> {
   const owner = touchCurrentOwner(rt, ctx);
   if (owner === undefined) return;
@@ -700,7 +575,6 @@ export async function adoptOnIdleInput(rt: HostRuntime, ctx: ExtensionContext): 
   if (!isCurrent(rt, owner)) return;
   hostBoundaryReached(owner);
   settleManual(owner);
-  // A compaction deferred from agent_settled runs before this prompt starts its run.
   await runIdleCompaction(rt, owner, ctx);
   if (!isCurrent(rt, owner)) return;
   const candidateId = idleCandidate(rt, owner, ctx);

@@ -8,52 +8,40 @@ import {
   isString,
 } from "../boundary.ts";
 
-/** Tool call arguments as Pi emits them: arbitrary JSON that only the tool owner interprets. */
 export type PiToolArguments = BoundaryValue;
 
-/** Tool results and partial results as Pi emits them: arbitrary JSON. */
 export type PiToolResult = BoundaryValue;
 
-// ---------------------------------------------------------------------------
-// Generic field decoders
-// ---------------------------------------------------------------------------
-
-/** Read `key` from an undecoded value when it holds an object with an object at `key`. */
 export function recordField(value: BoundaryValue, key: string): BoundaryRecord | undefined {
   if (!isBoundaryRecord(value)) return undefined;
   const field = value[key];
   return isBoundaryRecord(field) ? field : undefined;
 }
 
-/** Read `key` from an undecoded value when it holds an object with a string at `key`. */
 export function stringField(value: BoundaryValue, key: string): string | undefined {
   if (!isBoundaryRecord(value)) return undefined;
   const field = value[key];
   return isString(field) ? field : undefined;
 }
 
-/** Read `key` from an undecoded value when it holds an object with a finite number at `key`. */
 export function numberField(value: BoundaryValue, key: string): number | undefined {
   if (!isBoundaryRecord(value)) return undefined;
   const field = value[key];
   return isFiniteNumber(field) ? field : undefined;
 }
 
-/** Read `key` from an undecoded value when it holds an object with a boolean at `key`. */
 export function booleanField(value: BoundaryValue, key: string): boolean | undefined {
   if (!isBoundaryRecord(value)) return undefined;
   const field = value[key];
   return isBoolean(field) ? field : undefined;
 }
 
-/** Read `key` from an undecoded value when it holds an object with an array at `key`. */
 export function arrayField(value: BoundaryValue, key: string): BoundaryValue[] | undefined {
   if (!isBoundaryRecord(value)) return undefined;
   const field = value[key];
   return isBoundaryArray(field) ? field : undefined;
 }
 
-/** Concatenated text of a Pi tool result's `content` text blocks; empty when it has none. */
 export function toolResultText(result: PiToolResult): string {
   const content = arrayField(result, "content");
   if (!content) return "";
@@ -66,16 +54,10 @@ export function toolResultText(result: PiToolResult): string {
   return text;
 }
 
-/** A Pi tool result's `details` object, when it carries one. */
 export function toolResultDetails(result: PiToolResult): BoundaryRecord | undefined {
   return recordField(result, "details");
 }
 
-// ---------------------------------------------------------------------------
-// Response envelope
-// ---------------------------------------------------------------------------
-
-/** The NDJSON envelope Pi writes for every correlated RPC reply. */
 export type PiRpcResponse = {
   type: "response";
   id?: string;
@@ -85,7 +67,6 @@ export type PiRpcResponse = {
   error?: string;
 };
 
-/** Decode a stdout frame as an RPC reply envelope; `undefined` when it is not one. */
 export function decodePiRpcResponse(value: BoundaryValue): PiRpcResponse | undefined {
   if (!isBoundaryRecord(value) || value.type !== "response") return undefined;
   return {
@@ -98,36 +79,23 @@ export function decodePiRpcResponse(value: BoundaryValue): PiRpcResponse | undef
   };
 }
 
-// ---------------------------------------------------------------------------
-// Response payloads
-// ---------------------------------------------------------------------------
-
-/**
- * What Pi did with one submitted `prompt` input (Pi 1.0.4+ `data.disposition`).
- * - `started`: Pi started a run; completion arrives as `agent_settled`.
- * - `queued`: Pi queued the input behind an active run that later delivers it.
- * - `handled`: an extension command or input handler consumed it; no run follows.
- */
 export type PiPromptDisposition = "started" | "queued" | "handled";
 
 export function isPiPromptDisposition(value: BoundaryValue): value is PiPromptDisposition {
   return value === "started" || value === "queued" || value === "handled";
 }
 
-/** Decode a successful `prompt` payload; `undefined` when the disposition is missing or unknown. */
 export function decodePiPromptDisposition(value: BoundaryValue): PiPromptDisposition | undefined {
   if (!isBoundaryRecord(value)) return undefined;
   const disposition = value.disposition;
   return isPiPromptDisposition(disposition) ? disposition : undefined;
 }
 
-/** The provider/model pair Pi reports as currently selected. */
 export type PiModelSelection = {
   provider?: string;
   id?: string;
 };
 
-/** Decoded payload of `get_state`. */
 export type PiState = {
   sessionId?: string;
   sessionFile?: string;
@@ -159,14 +127,12 @@ export function decodePiState(value: BoundaryValue): PiState {
   };
 }
 
-/** One entry of Pi's advertised model list. */
 export type PiModel = {
   provider: string;
   id: string;
   name?: string;
 };
 
-/** Decoded payload of `get_available_models`. */
 export type PiAvailableModels = {
   models: PiModel[];
 };
@@ -185,13 +151,11 @@ export function decodePiAvailableModels(value: BoundaryValue): PiAvailableModels
   return { models };
 }
 
-/** Where Pi discovered a command, as reported by `get_commands`. */
 export type PiCommandOrigin = {
   location?: string;
   path?: string;
 };
 
-/** One entry of Pi's discovered command list. */
 export type PiCommandInfo = {
   name?: string;
   description?: string;
@@ -201,7 +165,6 @@ export type PiCommandInfo = {
   path?: string;
 };
 
-/** Decoded payload of `get_commands`; accepts both `{commands}` and `{data:{commands}}`. */
 export type PiCommands = {
   commands: PiCommandInfo[];
 };
@@ -231,21 +194,18 @@ export function decodePiCommands(value: BoundaryValue): PiCommands {
   return { commands };
 }
 
-/** A replayed user message. `content` is either a string or an array of content blocks. */
 export type PiUserMessage = {
   role: "user";
   content?: BoundaryValue;
   raw?: BoundaryValue;
 };
 
-/** A replayed assistant message; content is an array of blocks. */
 export type PiAssistantMessage = {
   role: "assistant";
   content?: BoundaryValue[];
   raw?: BoundaryValue;
 };
 
-/** A replayed tool result message. */
 export type PiToolResultMessage = {
   role: "toolResult";
   toolCallId?: string;
@@ -257,7 +217,6 @@ export type PiToolResultMessage = {
   raw?: BoundaryValue;
 };
 
-/** Any replayed message whose role this adapter does not render. */
 export type PiUnrecognizedMessage = {
   role: "other";
   raw?: BoundaryValue;
@@ -269,7 +228,6 @@ export type PiMessage =
   | PiToolResultMessage
   | PiUnrecognizedMessage;
 
-/** Decoded payload of `get_messages`. */
 export type PiMessages = {
   messages: PiMessage[];
 };
@@ -304,7 +262,6 @@ export function decodePiMessages(value: BoundaryValue): PiMessages {
   return { messages: rawMessages.map(decodePiMessage) };
 }
 
-/** Token counters reported by `get_session_stats`. */
 export type PiSessionTokens = {
   input?: number;
   output?: number;
@@ -313,7 +270,6 @@ export type PiSessionTokens = {
   total?: number;
 };
 
-/** Decoded payload of `get_session_stats`. */
 export type PiSessionStats = {
   sessionId?: string;
   sessionFile?: string;
@@ -345,7 +301,6 @@ export function decodePiSessionStats(value: BoundaryValue): PiSessionStats {
   };
 }
 
-/** Decoded payload of `export_html`. */
 export type PiExportHtml = {
   path: string;
 };
@@ -354,7 +309,6 @@ export function decodePiExportHtml(value: BoundaryValue): PiExportHtml {
   return { path: stringField(value, "path") ?? "" };
 }
 
-/** Decoded payload of `compact`. */
 export type PiCompactResult = {
   tokensBefore?: number;
   summary?: string;
@@ -367,30 +321,21 @@ export function decodePiCompactResult(value: BoundaryValue): PiCompactResult {
   };
 }
 
-/** Reasoning effort levels Pi accepts. */
 export type PiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
-/** Turn delivery modes Pi accepts for steering and follow-up. */
 export type PiTurnMode = "all" | "one-at-a-time";
 
-/** An image attachment sent with a prompt. */
 export type PiPromptImage = {
   type: "image";
   mimeType: string;
   data: string;
 };
 
-/** The extension UI reply this adapter writes back to Pi. */
 export type PiExtensionUiResponse =
   | { id: string; value: string }
   | { id: string; confirmed: boolean }
   | { id: string; cancelled: true };
 
-// ---------------------------------------------------------------------------
-// Events
-// ---------------------------------------------------------------------------
-
-/** A streamed tool call as Pi reports it inside an assistant message event. */
 export type PiAssistantToolCall = {
   id?: string;
   name?: string;
@@ -398,19 +343,16 @@ export type PiAssistantToolCall = {
   partialArgs?: string;
 };
 
-/** Streamed assistant text. */
 export type PiTextDeltaEvent = {
   type: "text_delta";
   delta: string;
 };
 
-/** Streamed assistant reasoning text. */
 export type PiThinkingDeltaEvent = {
   type: "thinking_delta";
   delta: string;
 };
 
-/** Streamed tool call lifecycle inside an assistant message. */
 export type PiToolCallStreamEvent = {
   type: "toolcall_start" | "toolcall_delta" | "toolcall_end";
   toolCall?: PiAssistantToolCall;
@@ -418,7 +360,6 @@ export type PiToolCallStreamEvent = {
   contentIndex?: number;
 };
 
-/** Any assistant message event this adapter does not render. */
 export type PiUnrecognizedAssistantEvent = {
   type: "other";
   eventType?: string;
@@ -466,13 +407,11 @@ function decodeAssistantMessageEvent(value: BoundaryValue): PiAssistantMessageEv
   return { type: "other", eventType, raw: value };
 }
 
-/** Streamed assistant output. */
 export type PiMessageUpdateEvent = {
   type: "message_update";
   assistantMessageEvent?: PiAssistantMessageEvent;
 };
 
-/** A tool started executing. */
 export type PiToolExecutionStartEvent = {
   type: "tool_execution_start";
   toolCallId?: string;
@@ -480,14 +419,12 @@ export type PiToolExecutionStartEvent = {
   args?: PiToolArguments;
 };
 
-/** A running tool produced intermediate output. */
 export type PiToolExecutionUpdateEvent = {
   type: "tool_execution_update";
   toolCallId?: string;
   partialResult?: PiToolResult;
 };
 
-/** A tool finished executing. */
 export type PiToolExecutionEndEvent = {
   type: "tool_execution_end";
   toolCallId?: string;
@@ -495,7 +432,6 @@ export type PiToolExecutionEndEvent = {
   isError?: boolean;
 };
 
-/** A Pi extension asked the client for interactive input. */
 export type PiExtensionUiRequestEvent = {
   type: "extension_ui_request";
   id?: string;
@@ -512,7 +448,6 @@ export type PiExtensionUiRequestEvent = {
   raw?: BoundaryValue;
 };
 
-/** Pi began an automatic retry of a failed request. */
 export type PiAutoRetryStartEvent = {
   type: "auto_retry_start";
   attempt?: number;
@@ -521,13 +456,11 @@ export type PiAutoRetryStartEvent = {
   errorMessage?: string;
 };
 
-/** One low-level agent run ended; Pi may still retry or continue. */
 export type PiAgentEndEvent = {
   type: "agent_end";
   willRetry?: boolean;
 };
 
-/** An uncorrelated RPC reply observed on the event stream. */
 export type PiResponseEvent = {
   type: "response";
   id?: string;
@@ -537,7 +470,6 @@ export type PiResponseEvent = {
   error?: string;
 };
 
-/** A Pi lifecycle event that carries no payload this adapter reads. */
 export type PiLifecycleEvent = {
   type:
     | "auto_retry_end"
@@ -548,7 +480,6 @@ export type PiLifecycleEvent = {
     | "agent_settled";
 };
 
-/** Any Pi event this adapter does not model; callers never observe raw `unknown`. */
 export type PiUnknownEvent = {
   type: "unknown_event";
   eventType?: string;
@@ -601,7 +532,6 @@ function decodeExtensionUiRequest(value: BoundaryValue): PiExtensionUiRequestEve
   };
 }
 
-/** Decode one Pi stdout frame into a typed event. Unmodelled frames become `unknown_event`. */
 export function decodePiRpcEvent(value: BoundaryValue): PiRpcEvent {
   const eventType = stringField(value, "type");
   if (eventType === undefined) return { type: "unknown_event", eventType: "", raw: value };

@@ -260,7 +260,6 @@ test("parseAgentFrontmatter falls back to deprecated default_* keys", () => {
     ),
     { model: "anthropic/claude-opus", thinking: "high" },
   );
-  // The current key wins over its deprecated alias regardless of order.
   assert.deepEqual(
     parseAgentFrontmatter(
       "---\ndefault_model: old/model\nmodel: new/model\nthinking: low\ndefault_thinking: high\n---\n",
@@ -348,12 +347,10 @@ test("context files report a count so the concise Status tab has a headline", as
 
 test("the context window label shows the soft cap from the model's recorded native window", () => {
   const model = { provider: "anthropic", id: "claude-opus-5-5", contextWindow: 800_000 };
-  // The cap writes to the registry entry too, so the registry cannot reveal the native window.
   const registry = { find: () => ({ contextWindow: 800_000 }) };
   assert.equal(contextWindowLabel(registry, model), "800,000 tokens");
   recordNativeContextWindow(model, 1_000_000);
   assert.equal(contextWindowLabel(registry, model), "800,000 tokens · soft cap (native 1,000,000)");
-  // An uncapped model prints its window alone.
   model.contextWindow = 1_000_000;
   assert.equal(contextWindowLabel(registry, model), "1,000,000 tokens");
 });

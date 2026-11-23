@@ -1,4 +1,3 @@
-/** A small, real \`openReviewView\` mount for the sensitive-file and control-character tests. */
 import assert from "node:assert/strict";
 import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import type { Theme } from "@earendil-works/pi-coding-agent";
@@ -111,7 +110,6 @@ export type Mounted = {
   selects: string[][];
   editorTexts: string[];
   savedRecords: ReviewRecord[];
-  /** The view's own result once it closes. */
   result: Promise<ReviewViewResult | undefined>;
   closed: Promise<RuntimeValue>;
   render(width: number): readonly string[];
@@ -214,10 +212,8 @@ export async function mount(options: {
   return mounted;
 }
 
-/** ESC colour, OSC 52 clipboard write ended by BEL, CR, LF, C1 CSI, right-to-left override. */
 export const NASTY = "a\u001b[31mred\u001b]52;c;SGVsbG8=\u0007b\rc\nd\u009be\u202ef";
 
-/** Independent of the production predicate: C0, DEL, C1 and the bidirectional controls. */
 function isUnsafe(codePoint: number): boolean {
   return (
     codePoint < 0x20 ||
@@ -230,20 +226,13 @@ function isUnsafe(codePoint: number): boolean {
   );
 }
 
-/**
- * The view's own escapes: SGR styling (theme colours, pi-tui's truncation
- * reset) and pi-tui's cursor and fake-cursor APC markers. NASTY's `\u001b[31m` is SGR
- * too, so its sanitised glyph form is checked separately by `showsGlyphs`.
- */
 const OWN_ESCAPES = [
   new RegExp(String.raw`\u001b\[[0-9;]*m`, "g"),
   new RegExp(String.raw`\u001b_pi:\/?fc\u0007`, "g"),
   new RegExp(String.raw`\u001b_pi:c\u0007`, "g"),
-  // Pi's own OSC 8 hyperlink around a tool's path; the path inside is sanitised first.
   new RegExp(String.raw`\u001b\]8;;[^\u001b\u0007]*\u001b\\`, "g"),
 ];
 
-/** Raw control characters left in rendered lines once the view's own styling is removed. */
 export function rawControls(lines: readonly string[]): number {
   let count = 0;
   for (const line of lines) {
@@ -254,7 +243,6 @@ export function rawControls(lines: readonly string[]): number {
   return count;
 }
 
-/** Raw control characters in text bound for the editor or a model, line breaks allowed. */
 export function rawControlsExceptNewlines(text: string): number {
   let count = 0;
   for (const character of text) {
@@ -263,7 +251,6 @@ export function rawControlsExceptNewlines(text: string): number {
   return count;
 }
 
-/** NASTY drawn as glyphs: the escape as ␛, the bell as ␇, CR as ␍, C1 and bidi as �. */
 export function showsGlyphs(text: string): boolean {
   return text.includes("␛[31mred␛]52;c;SGVsbG8=␇b␍c") && text.includes("d\uFFFDe\uFFFDf");
 }

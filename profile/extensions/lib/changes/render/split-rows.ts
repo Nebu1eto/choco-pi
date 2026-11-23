@@ -1,17 +1,7 @@
 import type { DiffLine } from "../types.ts";
 
-/** One split-mode row: the index of its left (old) and right (new) line, either absent. */
 export type SplitRow = [left: number | undefined, right: number | undefined];
 
-/**
- * The rows split mode draws for `lines`: a context line fills both sides, a
- * deletion run pairs with the addition run right after it (the longer run
- * takes the extra rows), and a lone addition fills the right side.
- *
- * The renderer draws exactly these rows and the body layout maps lines to
- * them, so both must use this one function: a separate copy is how a row
- * count and the rows drawn came apart before.
- */
 export function splitRowPairs(lines: readonly Pick<DiffLine, "kind">[]): SplitRow[] {
   const rows: SplitRow[] = [];
   let index = 0;

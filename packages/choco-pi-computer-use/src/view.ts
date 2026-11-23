@@ -47,7 +47,6 @@ function structuralKey(node: OutlineNode): string {
   return parts.join(">");
 }
 
-/** Preserve public refs only when native or structural identity is unambiguous. */
 export function stabilizeRefs(base: Outline | undefined, next: Outline): Outline {
   if (!base) return next;
   const reserved = new Set<string>();

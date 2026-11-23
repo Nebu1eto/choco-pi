@@ -36,7 +36,6 @@ function pausedGoal(goal: ThreadGoal): ThreadGoal {
   return paused.goal;
 }
 
-/** Mirrors the root contract reader: validate the entry, then call it with the entry as receiver. */
 function readOwnership(owner?: string): GoalRecoveryOwnership | undefined {
   const entry = Object.getOwnPropertyDescriptor(globalThis, GOAL_RECOVERY_SYMBOL)?.value;
   if (entry === undefined) return undefined;

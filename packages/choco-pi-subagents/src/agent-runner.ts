@@ -1,10 +1,3 @@
-/**
- * agent-runner.ts — Core execution engine: creates sessions, runs agents, collects results.
- *
- * Orchestrates the internal runner modules under ./runner/ while preserving every
- * public export and signature.
- */
-
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SubagentType } from "./types.ts";
 import {

@@ -1,6 +1,3 @@
-/**
- * Session configuration: the model and thinking-level options advertised to ACP clients and applied through Pi RPC.
- */
 import { type SessionConfigOption, RequestError } from "@agentclientprotocol/sdk";
 import type { PiState, PiAvailableModels } from "../pi-rpc/protocol.ts";
 import type { PiRpcProcessLike } from "../pi-rpc/process.ts";
@@ -15,37 +12,31 @@ export type AdvertisedModel = {
   description?: string | null;
 };
 
-/** One selectable reasoning-effort entry advertised to the client. */
 export type SessionModeDescriptor = {
   id: string;
   name: string;
   description?: string | null;
 };
 
-/** Reasoning-effort options plus the level Pi currently applies. */
 export type ThinkingState = {
   availableModes: SessionModeDescriptor[];
   currentModeId: string;
 };
 
-/** Advertised models plus the model Pi currently applies. */
 export type ModelState = {
   availableModels: AdvertisedModel[];
   currentModelId: string;
 };
 
-/** The model and reasoning selections a config-option list is rendered from. */
 export type SessionConfigState = {
   models: ModelState | null;
   modes: ThinkingState;
 };
 
-/** A full session configuration snapshot returned to the client. */
 export type SessionConfiguration = SessionConfigState & {
   configOptions: SessionConfigOption[];
 };
 
-/** Pi RPC answers already fetched by the caller, so configuration does not re-probe. */
 export type PiPreloadedState = {
   state?: PiState | null;
   availableModels?: PiAvailableModels | null;
@@ -65,7 +56,6 @@ export async function getThinkingState(
   proc: PiRpcProcessLike,
   pre?: Pick<PiPreloadedState, "state">,
 ): Promise<ThinkingState> {
-  // Ask pi for current thinking level.
   let current: ThinkingLevel = "medium";
 
   const state =
@@ -151,7 +141,6 @@ export async function getModelState(
   proc: PiRpcProcessLike,
   pre?: PiPreloadedState,
 ): Promise<ModelState | null> {
-  // Ask pi for available models.
   let availableModels: AdvertisedModel[] = [];
 
   const data =
@@ -180,7 +169,6 @@ export async function getModelState(
     });
   }
 
-  // Ask pi what model is currently active.
   let currentModelId: string | null = null;
 
   const state =
@@ -204,7 +192,6 @@ export async function getModelState(
 
   if (!availableModels.length && !currentModelId) return null;
 
-  // Fallback if current model is unknown: use first in list.
   if (!currentModelId) currentModelId = availableModels[0]?.modelId ?? "default";
 
   return {
@@ -235,9 +222,6 @@ export async function setSessionModel(
   proc: PiRpcProcessLike,
   requestedModelId: string,
 ): Promise<void> {
-  // Accept either:
-  //  - "provider/model" (preferred, matches how we advertise)
-  //  - "model" (fallback, resolve via available models)
   let provider: string | null = null;
   let modelId: string | null = null;
 

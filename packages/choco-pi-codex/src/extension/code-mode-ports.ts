@@ -1,12 +1,3 @@
-/**
- * code-mode-ports.ts — The Codex side of the Code Mode ports.
- *
- * The provider-neutral Code Mode layer (`src/adapter/code-mode*`,
- * `src/tools/code-mode/`, ...) never imports OpenAI Codex code; this
- * composition-root module implements its ports with the Codex runtime plan,
- * the OpenAI view_image fallback, native async exec calls, and the Codex-only
- * nested tools (web__run, image_gen__imagegen).
- */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { CodexConversionConfig } from "../adapter/activation/config.ts";
 import {
@@ -33,7 +24,6 @@ const WEB_RUN_USAGE =
 const IMAGEGEN_USAGE =
   'await tools.image_gen__imagegen({ prompt: string, action?: "generate" | "edit", images?: string[] })';
 
-/** The standalone Code Mode `web__run` tool, cross-provider through the Codex fallback. */
 export function createCodeModeWebSearchTool(
   config: CodexConversionConfig,
   allowConfiguredProvider: NonNullable<WebSearchToolOptions["allowConfiguredProvider"]>,
@@ -48,7 +38,6 @@ export function createCodeModeWebSearchTool(
   });
 }
 
-/** Codex nested tools appended after the core tools, in their established order. */
 export function createCodexOptionalNestedTools(
   state: AdapterState,
   ctx: ExtensionContext | undefined,
@@ -101,7 +90,6 @@ export function createCodexOptionalNestedTools(
   return tools;
 }
 
-/** Implement every Code Mode port against the live adapter state. */
 export function createCodexCodeModePorts(state: () => AdapterState): CodeModePorts {
   return {
     policy: {

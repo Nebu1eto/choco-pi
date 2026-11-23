@@ -44,7 +44,6 @@ export type ResolvedEditorCommand = {
 
 const TOKENS = /\{(?:path|line|column|dir)\}/g;
 
-/** Substitute every supported token, including tokens embedded inside an argument. */
 export function resolveEditorCommand(
   config: EditorConfig,
   location: EditorLocation,
@@ -109,10 +108,6 @@ const defaultSpawn: SpawnEditor = (command, args, options) =>
   // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   nodeSpawn(command, [...args], options) as SpawnedEditor;
 
-/**
- * Launch a configured editor. Terminal editors always restore and redraw the
- * TUI, whether spawning fails or the editor exits unsuccessfully.
- */
 export async function launchEditor(
   config: EditorConfig,
   location: EditorLocation,
@@ -144,7 +139,6 @@ export async function launchEditor(
   }
 }
 
-/** Open the review root using the same editor template and lifecycle rules. */
 export function launchEditorProject(
   config: EditorConfig,
   dir: string,

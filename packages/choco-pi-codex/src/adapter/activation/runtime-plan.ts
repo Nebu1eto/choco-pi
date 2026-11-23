@@ -169,18 +169,11 @@ function normalToolNames(
   return names;
 }
 
-/**
- * The model- and config-only exits of a runtime plan, shared by
- * {@link resolveCodexRuntimePlan} and {@link resolveNativeCompactionEligibility}
- * so the two can never disagree on native compaction.
- */
 interface PlanGate {
   readonly isConfigured: boolean;
   readonly codexTransport: boolean;
   readonly effectiveOpenAICodex: boolean;
-  /** The extras plan applies (no native compaction). */
   readonly extras: boolean;
-  /** Not voice-only, the canonical alias endpoint is trusted, and the adapter is in scope. */
   readonly active: boolean;
 }
 
@@ -211,11 +204,6 @@ function resolvePlanGate(
   };
 }
 
-/**
- * Whether Codex compacts natively for `model`: exactly
- * `resolveCodexRuntimePlan(...).nativeCompaction`, without building tool
- * lists. Published to the compaction host as the ownership predicate.
- */
 export function resolveNativeCompactionEligibility(
   model: PlanModel,
   config: CodexConversionConfig,
@@ -230,7 +218,6 @@ export function resolveNativeCompactionEligibility(
   );
 }
 
-/** {@link resolveNativeCompactionEligibility} with the adapter state's canonical-alias trust. */
 export function resolveNativeCompactionEligibilityForState(
   model: PlanModel,
   state: Pick<AdapterState, "config" | "canonicalAliasEndpoint">,
@@ -240,7 +227,6 @@ export function resolveNativeCompactionEligibilityForState(
   });
 }
 
-/** Undefined for a model that is not a canonical alias (trusted by default). */
 function canonicalAliasTrustFor(
   model: PlanModel,
   state: Pick<AdapterState, "canonicalAliasEndpoint">,

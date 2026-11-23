@@ -262,7 +262,6 @@ function formatWebRunOutput(parsed: BoundaryRecord): string | undefined {
   return undefined;
 }
 
-/** Execute the native Codex web helper with already-resolved OpenAI credentials. */
 async function executeCodexWebRun(
   options: OpenAICodexWebRunRequest,
   requireOpenAI: boolean,
@@ -285,7 +284,6 @@ async function executeCodexWebRun(
       "config",
       "Native OpenAI web search requires the OpenAI Codex subscription transport",
     );
-  // The helper only calls /alpha/search; never hand it an api.openai.com credential.
   if (provider.openAIPlatform)
     throw new CodexWebRunTransportError("config", OPENAI_PLATFORM_WEB_RUN_UNSUPPORTED_REASON);
   const request: WebRunRequest = { ...params, id: sessionId };
@@ -319,14 +317,12 @@ async function executeCodexWebRun(
   return { text: output, details: parsed };
 }
 
-/** Execute the helper for the standalone tool's legacy configured-provider route. */
 export function executeConfiguredCodexWebRun(
   options: OpenAICodexWebRunRequest,
 ): Promise<OpenAICodexWebRunResult> {
   return executeCodexWebRun(options, false);
 }
 
-/** Execute a backend-adapter request, rejecting non-OpenAI provider credentials. */
 export function executeOpenAICodexWebRun(
   options: OpenAICodexWebRunRequest,
 ): Promise<OpenAICodexWebRunResult> {

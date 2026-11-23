@@ -34,10 +34,6 @@ const RollingFiveHourLimitSchema = obj(
 );
 const isRollingFiveHourLimit = compile(RollingFiveHourLimitSchema).check;
 
-/**
- * Synthetic subscription accounts expose at least one subscription quota
- * window. PAYG accounts return an empty quota object or legacy tool windows.
- */
 export function detectBillingMode(quotas: QuotasResponse | undefined): BillingMode {
   return isSubscriptionQuota(quotas?.subscription) ||
     isWeeklyTokenLimit(quotas?.weeklyTokenLimit) ||

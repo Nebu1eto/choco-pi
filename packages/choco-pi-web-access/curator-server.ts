@@ -93,8 +93,6 @@ export interface CuratorServerHandle {
     meta?: { query?: string; slotIndex?: number },
   ) => void;
   searchesDone: () => void;
-  /** Reports browser connection state so a cancelled search can surface WHY it
-   * went stale (e.g. the browser never connected). */
   getConnectionState: () => { browserConnected: boolean; lastHeartbeatAgeMs: number };
 }
 

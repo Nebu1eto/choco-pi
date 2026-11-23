@@ -25,11 +25,6 @@ import { errorText, type Notifier } from "./notices.ts";
 import type { OwnerCore } from "./owner-core.ts";
 import type { BackgroundCompactionOptions } from "./owner-spec.ts";
 
-// ---------------------------------------------------------------------------
-// Per-registration host state shared by the session lifecycle, routes and
-// child provider
-// ---------------------------------------------------------------------------
-
 export interface PendingRoute {
   readonly candidateId: string;
   readonly trigger: "idle" | "context-cap" | "manual";
@@ -37,7 +32,6 @@ export interface PendingRoute {
 
 export type Decision =
   | { readonly action: "proceed" }
-  /** A plain `/compact` continues in the background; the host compaction is cancelled. */
   | { readonly action: "cancel" }
   | {
       readonly action: "adopt";
@@ -45,62 +39,34 @@ export type Decision =
       readonly compaction: CompactionResult;
     };
 
-/** One owned main session. */
 export interface MainOwner {
   readonly core: OwnerCore;
   readonly generation: number;
   readonly decisions: WeakMap<SessionBeforeCompactEvent, Promise<Decision>>;
-  /** Candidates the host refused on the idle route; boundary adoption remains possible. */
   readonly refusedIdle: Set<string>;
   pendingRoute: PendingRoute | undefined;
-  /** Candidate a plain `/compact` is waiting on; adopted as soon as it is ready and the session is idle. */
   manualCandidate: string | undefined;
-  /** Bumped by every new manual request; a follower whose serial moved is superseded and stops. */
   manualSerial: number;
-  /**
-   * The outcome notice of the current manual request, shown once when its
-   * candidate installs (a text retry folded into one notice per user action).
-   */
   manualNotice: string | undefined;
-  /**
-   * Set when the `session_before_compact` hook answers `cancel`: the host's
-   * `compact()` is still unwinding (it clears the shared compaction controller
-   * in its `finally`, after every `session_compact_failed` handler), so the
-   * manual follower must not adopt through `ctx.compact()` until a later host
-   * boundary (`turn_end`, `agent_settled`, `input`), which the host emits
-   * only after that invocation returned. Cleared at that boundary.
-   */
   hostCompactUnwinding: boolean;
-  /**
-   * An adoption requested from `agent_settled` (a context-cap hand-off or a
-   * manual candidate that became ready late in the run). Run at the next
-   * prompt's `input` hook, before that prompt starts its run.
-   */
   idlePending: IdleRequest | undefined;
-  /** The pending request while it runs; later requests join it. */
   idleRunning: Promise<void> | undefined;
   lastCtx: ExtensionContext;
   readonly cleanup: (() => void)[];
 }
 
-/**
- * A deferred adoption of the ready candidate. `onSettled` runs exactly once
- * with whether a compaction completed.
- */
 export interface IdleRequest {
   readonly kind: "adopt";
   readonly trigger: PendingRoute["trigger"];
   readonly onSettled: (compacted: boolean) => void;
 }
 
-/** The main session's host services a child attachment borrows. */
 export interface ParentHost {
   readonly modelRegistry: ExtensionContext["modelRegistry"];
   readonly state: CompactionSessionState;
   readonly ctx: ExtensionContext;
 }
 
-/** The vendor compaction modes and the opaque-history setting of a registration. */
 export interface CompactionModes {
   readonly anthropic: AnthropicCompactionMode;
   readonly xai: XaiCompactionMode;
@@ -112,84 +78,36 @@ export interface HostRuntime {
   readonly readState: SessionStateReader;
   readonly options: BackgroundCompactionOptions;
   readonly notify: Notifier;
-  /**
-   * Append one lane journal record through `pi.appendEntry` (validated by
-   * `appendLaneRecord`). Dropped while no session is bound to this
-   * registration (before the first session start, after shutdown).
-   */
   readonly journal: (record: LaneRecordInput) => void;
-  /** Lane transitions already journaled, per session (reset when the session's binding is torn down). */
   readonly transitions: LaneTransitionMemo;
-  /** Opaque-history setting (`compactionOpaqueHistory`) read at session start; default `preserve`. */
   opaqueHistory: OpaqueHistoryMode;
-  /** sessionId -> the opaque checkpoint entry id the user consented to lose (`/compaction-allow-loss`). */
   readonly opaqueConsent: Map<string, string>;
-  /**
-   * Removes this registration's resolver from the process-global consent slot.
-   * Set while published (registration, and every session start after a
-   * shutdown); `shutdown` runs and clears it.
-   */
   unpublishOpaqueConsent: (() => void) | undefined;
-  /**
-   * Seam: a replay rejection or refusal turned a vendor's server-side
-   * compaction off for `sessionId`. Undefined until a lane unit assigns it.
-   */
   onReplayDisabled:
     | ((sessionId: string, provider: "anthropic" | "xai", code: string) => void)
     | undefined;
-  /** The child provider this registration publishes (kept for the Codex eligibility watcher). */
   childProvider: ChildCompactionProvider | undefined;
-  /** Disposes this registration's Codex eligibility watch; set at session start. */
   unwatchCodexEligibility: (() => void) | undefined;
-  /** The current vendor compaction modes and opaque-history setting. */
   modes(): CompactionModes;
-  /** Bumped by every session start and shutdown; owners compare their generation to it. */
   lifecycle: number;
   main: MainOwner | undefined;
   loaded: LoadedBackgroundSettings;
   unpublishProvider: (() => void) | undefined;
-  /** Removes this registration's Preferences row provider. */
   unpublishPreferences: (() => void) | undefined;
   unregisterResourceCleanup: (() => void) | undefined;
   parent: ParentHost | undefined;
-  /** Anthropic compaction mode read at session start. */
   anthropicMode: AnthropicCompactionMode;
-  /** Session-scoped server-side switch (disabled after a replay rejection). */
   readonly serverSide: AnthropicServerSideSession;
-  /**
-   * The registration's one Anthropic capability gate (and cooldowns): the
-   * foreground server-side path, and the background lane through
-   * `OwnerSpec.anthropicGate`.
-   */
   readonly foregroundGate: AnthropicCapabilityGate;
-  /** Capture, projection and replay rewrite shared by foreground and background. */
   readonly replay: AnthropicReplayBinder;
-  /** Unbind of each session's Anthropic replay binding, by session ID. */
   readonly replayUnbinds: Map<string, () => void>;
-  /** xAI compaction mode read at session start. */
   xaiMode: XaiCompactionMode;
-  /** Session-scoped xAI server-side switch (disabled after a replay refusal or rejection). */
   readonly xaiServerSide: AnthropicServerSideSession;
-  /** Capability gate (and cooldowns) of the xAI foreground path. */
   readonly xaiGate: AnthropicCapabilityGate;
-  /** xAI capture, projection and replay rewrite. */
   readonly xaiReplay: XaiReplayBinder;
-  /** Unbind of each session's xAI replay binding, by session ID. */
   readonly xaiReplayUnbinds: Map<string, () => void>;
-  /**
-   * Replay unbinds detached by a session start that has not yet installed the
-   * new bindings (D8). They run after the new bindings exist (the binder's
-   * token check then keeps a renewed binding's projection); `shutdown` runs
-   * them at once. No unbind releases captures: see `releaseCaptures`.
-   */
   readonly detachedUnbinds: (() => void)[];
-  /**
-   * Sessions bound in `serverSide`/`xaiServerSide` by this registration;
-   * released at shutdown. Their wire captures are released at shutdown and
-   * once a session start binds a different session.
-   */
   readonly nativeSessions: Set<string>;
-  /** Removes this registration's per-session native refresher. */
   unregisterNativeRefresher: (() => void) | undefined;
 }
 
@@ -197,23 +115,15 @@ export function isCurrent(rt: HostRuntime, owner: MainOwner): boolean {
   return rt.main === owner && rt.lifecycle === owner.generation;
 }
 
-/** Shown (once per registration, by the notifier) when the coordinator registry is in conflict. */
 export const REGISTRY_CONFLICT_NOTICE =
   "background compaction unavailable: registry conflict; restart pi";
 
-/**
- * Whether the process-wide coordinator registry is usable. A conflicting slot
- * (left by incompatible code in this process) turns the background feature off
- * exactly like the master switch: no owner attaches and every route falls
- * through to host compaction until pi restarts.
- */
 export function registryUsable(rt: HostRuntime, ctx: ExtensionContext | undefined): boolean {
   if (registryAvailability().status === "available") return true;
   rt.notify(ctx, REGISTRY_CONFLICT_NOTICE);
   return false;
 }
 
-/** The current main owner, recording ctx as its latest context; undefined when none is current. */
 export function touchCurrentOwner(rt: HostRuntime, ctx: ExtensionContext): MainOwner | undefined {
   const owner = rt.main;
   if (owner === undefined || !isCurrent(rt, owner)) return undefined;
@@ -251,7 +161,6 @@ export function shutdown(rt: HostRuntime): void {
     releaseCaptures(sessionId);
     rt.serverSide.release(sessionId);
     rt.xaiServerSide.release(sessionId);
-    // A released session starts fresh: no journal memo, no loss consent.
     rt.transitions.reset(sessionId);
     rt.opaqueConsent.delete(sessionId);
   }
@@ -274,19 +183,12 @@ export function shutdown(rt: HostRuntime): void {
   unpublishPreferences?.();
 }
 
-/**
- * Detach every replay binding synchronously (the refresher is unregistered and
- * the transition memo of each detached session starts fresh) without running
- * the unbinds: they move to `rt.detachedUnbinds`, and the returned list is
- * the ones detached now. The binders stay bound until the unbinds run.
- */
 export function detachReplayUnbinds(rt: HostRuntime): (() => void)[] {
   const unregister = rt.unregisterNativeRefresher;
   rt.unregisterNativeRefresher = undefined;
   unregister?.();
   const detached: (() => void)[] = [];
   for (const unbinds of [rt.replayUnbinds, rt.xaiReplayUnbinds]) {
-    // The transition memo of a session whose binding is torn down starts fresh.
     for (const sessionId of unbinds.keys()) rt.transitions.reset(sessionId);
     detached.push(...unbinds.values());
     unbinds.clear();
@@ -295,24 +197,15 @@ export function detachReplayUnbinds(rt: HostRuntime): (() => void)[] {
   return detached;
 }
 
-/** Run detached unbinds (each drops its projection and replay activation unless a newer binding exists). */
 export function runUnbinds(list: readonly (() => void)[]): void {
   for (const unbind of list) unbind();
 }
 
-/**
- * Release one session's Anthropic and xAI wire captures (D8). Capture
- * retention is separate from replay binding: an unbind never releases them,
- * so the same session keeps its captures across every rebind (model change,
- * mode off and on without a checkpoint); only `shutdown` and a session start
- * for a different session (`releaseOtherSessionCaptures`) release them.
- */
 export function releaseCaptures(sessionId: string): void {
   releaseSessionCaptures(sessionId);
   releaseXaiSessionCaptures(sessionId);
 }
 
-/** Release the captures of every session this registration bound except `current`. */
 export function releaseOtherSessionCaptures(rt: HostRuntime, current: string): void {
   for (const sessionId of rt.nativeSessions) {
     if (sessionId !== current) releaseCaptures(sessionId);

@@ -1,4 +1,3 @@
-// The renderer and the body layout share one split pairing: the rows drawn and the rows mapped never disagree.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
@@ -12,7 +11,6 @@ import {
 
 const plain = { fg: (_color: string, text: string) => text, inverse: (text: string) => text };
 
-/** One hunk body as patch lines: " " context, "-" deletion, "+" addition, "\\" a no-newline marker. */
 type HunkCase = { name: string; body: string };
 
 const HUNK_CASES: readonly HunkCase[] = [
@@ -28,7 +26,6 @@ const HUNK_CASES: readonly HunkCase[] = [
   { name: "no newline after an uneven replacement", body: " ---+\\" },
 ];
 
-/** A parsed file from `hunkCase`; every line's text is unique, so a row can be matched to its line. */
 function fileOf(hunkCase: HunkCase): DiffFile {
   const lines: string[] = [];
   let oldCount = 0;

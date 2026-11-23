@@ -18,7 +18,6 @@ test("keys are compared after unescaping", () => {
   assert.equal(findDuplicateKey('{"\\"":1,"\\u0022":2}'), '"');
   assert.equal(findDuplicateKey('{"a\\\\":1,"a\\u005c":2}'), "a\\");
   assert.equal(findDuplicateKey('{"\\/":1,"/":2}'), "/");
-  // Escaped quotes and commas inside strings do not confuse the scan.
   assert.equal(findDuplicateKey('{"k\\",\\"k":1,"k":2,"v":"\\",\\"k\\":"}'), undefined);
   assert.equal(findDuplicateKey('{"A":1,"a":2}'), undefined);
 });

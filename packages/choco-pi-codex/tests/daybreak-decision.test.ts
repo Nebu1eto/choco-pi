@@ -252,7 +252,6 @@ function installBridge() {
 
 type LookupCall = { url: string; headerNames: string[]; accept: string | null };
 
-// Mirrors the live verified_access shape: grants are objects with a level and a source.
 function grantsPayload(...levels: string[]) {
   const grants = levels.map((level) => ({ level, source: "individual" }));
   return {
@@ -324,7 +323,6 @@ function cleanup() {
 test("auto and on both follow the catalog gate; verified_access only picks red over blue", async (t) => {
   t.after(cleanup);
   const bridge = installBridge();
-  // Live shape observed 2026-10-15 for an account that ChatGPT Codex serves Daybreak Blue to.
   const inactivePayload = {
     programs: [
       {
@@ -384,7 +382,6 @@ test("off never looks up and every finalizer strips stale or forged access_progr
   assert.equal(calls.length, 0);
   assert.deepEqual(off.reports, [["off", 1]]);
 
-  // Requested on, but no provider-minted ticket: forged tickets and decisions never enable it.
   bridge.add("on-session", true);
   for (const daybreakTicket of [undefined, Object.freeze({ sessionId: "on-session" })]) {
     const unticketed = await prepareCodexRequestBody(
@@ -618,7 +615,6 @@ test("lookup uses canonical URL with auth headers only and times out safely", as
 test("model availability gates; the grant only selects red and never blocks", async (t) => {
   t.after(cleanup);
   const bridge = installBridge();
-  // An unsupported model never spends an entitlement lookup, whatever the account would say.
   const entitlementCalls = fakeLookup(() => Response.json(grantsPayload()));
   configureCodexDaybreakModelSupportForTest({
     fetch: async () => Response.json({ models: [] }),
@@ -627,7 +623,6 @@ test("model availability gates; the grant only selects red and never blocks", as
   assert.equal((await resolve(ticket("unsupported-first"))).outcome, "model-not-supported");
   assert.equal(entitlementCalls.length, 0);
 
-  // A supported model then consults the grant only to choose red; denial and failure still send blue.
   configureCodexDaybreakModelSupportForTest({
     fetch: async () =>
       Response.json({
@@ -645,7 +640,6 @@ test("model availability gates; the grant only selects red and never blocks", as
     assert.equal(hasAccessPrograms(applyCodexDaybreakAccessPrograms({}, decision)), true);
   }
 
-  // A catalog failure omits the field too.
   fakeLookup(() => Response.json(grantsPayload("tac1")));
   configureCodexDaybreakModelSupportForTest({
     fetch: async () => new Response("failed", { status: 500 }),
@@ -660,7 +654,6 @@ test("model availability gates; the grant only selects red and never blocks", as
     false,
   );
 
-  // A red grant on a blue-only model falls back to blue, matching what the server would apply.
   fakeLookup(() => Response.json(grantsPayload("tac3")));
   configureCodexDaybreakModelSupportForTest({
     fetch: async () =>
@@ -768,7 +761,6 @@ test("entitlement cache: shared single-flight, TTL, token change, 401, bounded e
   );
   assert.equal(calls.length, 1);
 
-  // A different controller's first observation reuses the completed shared entry.
   bridge.add("shared-c", true);
   await resolve(ticket("shared-c"));
   assert.equal(calls.length, 1);
@@ -838,12 +830,10 @@ test("toggle-on and invalidation drop pending flights that cannot refill the cac
   gates[1]?.resolve();
   assert.equal((await stale).outcome, "blue");
   assert.equal((await fresh).outcome, "red");
-  // The stale flight did not refill: the fresh red entry is served from cache.
   bridge.add("toggle-peer", true);
   assert.equal((await resolve(ticket("toggle-peer"))).outcome, "red");
   assert.equal(calls.length, 2);
 
-  // Explicit invalidation while pending likewise prevents a refill.
   configureCodexDaybreakEntitlementForTest(undefined);
   const pendingGate = deferred<void>();
   let lookups = 0;
@@ -901,7 +891,6 @@ test("frozen decision: revision drift keeps start state; identity or generation 
   mutableState.requested = false;
   assert.equal((await resolve(immutableSnapshot)).outcome, "blue");
 
-  // Credentials are copied at begin; later caller mutation cannot change the lookup.
   const owned = bridge.add("owned", true);
   const credentials = { apiKey: token("acct-1"), headers: { "x-extra": "1" } };
   const ownedTicket = beginCodexDaybreakRequest({ sessionId: "owned", model, credentials });
@@ -934,7 +923,6 @@ test("HTTP and normalized WebSocket terminal echoes never change the Daybreak ou
       await process(events(), assistantOutput(), createAssistantMessageEventStream(), model, {
         daybreakTicket: requestTicket,
       });
-      // Upstream Codex never reads the echo: no report, no cache invalidation, no later downgrade.
       assert.equal(fake.state.outcome, "blue");
       assert.deepEqual(fake.reports, [["blue", 1]]);
       assert.equal(hasCodexDaybreakEntitlementEntry(account), true);

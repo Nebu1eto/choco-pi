@@ -19,19 +19,7 @@ import type { GoalRuntimeSessionHandlerContext } from "./goal-runtime-event-hand
 import type { GoalRecoveryMachineState } from "./recovery-machine.ts";
 import type { ThreadGoal } from "./types.ts";
 
-/**
- * Background-compaction adoption signal published by `choco-pi-compaction`.
- *
- * A boundary adoption commits a checkpoint without any host compaction event,
- * so the goal runtime learns about it from this process-global relay instead.
- * Host-routed adoptions also arrive as a real `session_compact`; both paths
- * key on the committed entry ID, so each compaction is handled exactly once.
- * "recovered" notices happened in an earlier process and are ignored. An
- * absent or foreign slot leaves the goal runtime exactly as before.
- */
 const BACKGROUND_ADOPTION_SIGNAL = Symbol.for("choco-pi:compaction-background-adoption");
-// Both objects are open, as the previous TypeBox objects were. Function-valued members are not
-// JSON, so the shape check leaves them unknown and instanceof Function confirms them.
 const hasAdoptionSignalMembers = compile(
   obj({ version: lit(1), subscribe: unknown() }, { open: true }),
 ).check;
@@ -45,7 +33,6 @@ const AdoptionNoticeSchema = obj(
 );
 const isAdoptionNotice = compile(AdoptionNoticeSchema).check;
 
-/** The members of the published notice this runtime reads. */
 type AdoptionNotice = Static<typeof AdoptionNoticeSchema>;
 type AdoptionListener = (notice: AdoptionNotice, ctx: ExtensionContext) => void;
 interface AdoptionSignal {
@@ -98,7 +85,6 @@ export function createSessionEventHandlers(deps: GoalRuntimeSessionHandlerContex
     );
   };
 
-  /** Post-compaction goal work shared by host compactions and boundary adoptions. */
   const afterCompaction = (ctx: ExtensionContext, willRetry: boolean): void => {
     if (runStaleQueuedWorkPlan(runtimeState.staleQueuedWorkGuard.planSessionCompact(), ctx, deps)) {
       return;
@@ -127,10 +113,7 @@ export function createSessionEventHandlers(deps: GoalRuntimeSessionHandlerContex
     }
   };
 
-  // Background adoption relay; only active while the compaction package
-  // publishes its signal for this session.
   let adoptionSubscription: { readonly sessionId: string; readonly stop: () => void } | undefined;
-  /** Compaction entries this session already handled, from either path. */
   const handledEntryIds = new Set<string>();
 
   const afterCompactionOnce = (entryId: string, ctx: ExtensionContext, willRetry: boolean) => {
@@ -158,12 +141,10 @@ export function createSessionEventHandlers(deps: GoalRuntimeSessionHandlerContex
       afterCompactionOnce(notice.committedEntryId, noticeCtx, false);
     };
     const unsubscribe = signal.subscribe(listener);
-    // The slot is foreign code: confirm the callback before keeping it.
     if (!isUnsubscribe(unsubscribe)) return;
     adoptionSubscription = { sessionId, stop: () => unsubscribe() };
   };
 
-  /** Bumped on each session start and shutdown; an await that outlives it is stale. */
   let sessionGeneration = 0;
 
   return {
@@ -233,7 +214,6 @@ export function createSessionEventHandlers(deps: GoalRuntimeSessionHandlerContex
   };
 }
 
-/** Clear a host-overflow recovery that blocks the post-compaction continuation. */
 function clearHostOverflowRecoveryForContinuation(
   { runtimeState, status }: GoalRuntimeSessionHandlerContext,
   ctx: ExtensionContext,
@@ -246,10 +226,6 @@ function clearHostOverflowRecoveryForContinuation(
   return true;
 }
 
-/**
- * On a session resume, offer to resume a paused goal; true when the user accepted.
- * An answer that arrives after the session ended or restarted does nothing.
- */
 async function confirmPausedGoalResume(
   { stateController, goalAccounting, resumeGoalWithContinuation }: GoalRuntimeSessionHandlerContext,
   event: SessionStartEvent,

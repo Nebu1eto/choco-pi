@@ -1,7 +1,3 @@
-/**
- * Static server-side compaction policy: family floors, first-party endpoint,
- * OAuth only, no network; plus replay rejection detection.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -42,7 +38,6 @@ const ADMITTED = [
   "claude-sonnet-5",
   "claude-sonnet-5-5",
   "claude-haiku-5-5",
-  // Later versions pass the numeric floor.
   "claude-opus-5-6",
   "claude-sonnet-6",
   "claude-haiku-6",
@@ -119,7 +114,6 @@ test("cooldown applies per admitted scope under the default policy", () => {
   assert.deepEqual(gate.check(scope("claude-sonnet-4-6")), { supported: true }, "other model");
   clock += 1_000;
   assert.deepEqual(gate.check(opus), { supported: true });
-  // Refused scopes are never tracked.
   gate.recordFailure(scope("claude-opus-4-5"), "malformed");
   assert.equal(gate.cooldownRemaining(scope("claude-opus-4-5")), 0);
 });
@@ -168,7 +162,6 @@ test("replay rejections: compaction_ error codes and the OAuth extra-usage refus
   const ignored: readonly Response[] = [
     errorResponse(400, { type: "invalid_request_error", message: "max_tokens too large" }),
     errorResponse(400, { type: "invalid_request_error", details: { error_code: "other_code" } }),
-    // Transient: retry, never disable.
     errorResponse(529, {
       type: "overloaded_error",
       message: "x",
@@ -180,7 +173,6 @@ test("replay rejections: compaction_ error codes and the OAuth extra-usage refus
   for (const response of ignored) {
     assert.equal(await replayRejectionCode(response), undefined);
   }
-  // The observer reads a clone: the original body stays readable for the adapter.
   const original = errorResponse(400, {
     type: "invalid_request_error",
     details: { error_code: "compaction_content_mismatch" },

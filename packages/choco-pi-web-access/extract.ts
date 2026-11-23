@@ -276,11 +276,8 @@ export interface ExtractOptions {
   mode?: "readable" | "raw" | "answer";
   answerModel?: string;
   authFetchProfile?: AuthFetchProfile;
-  /** Custom DNS resolver used for SSRF validation. Primarily a test seam. */
   lookup?: Lookup;
-  /** Explicit transport fixture seam; direct requests otherwise use approved DNS snapshots. */
   fetch?: typeof fetch;
-  /** Optional isolated web-access registry scope (defaults to process-shared scope). */
   scope?: WebAccessScope;
 }
 
@@ -631,13 +628,11 @@ export async function extractContent(
 }
 
 function isLikelyJSRendered(html: string): boolean {
-  // Extract body content
   const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
   if (!bodyMatch) return false;
 
   const bodyHtml = bodyMatch[1];
 
-  // Strip tags to get text content
   const textContent = bodyHtml
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
@@ -645,10 +640,8 @@ function isLikelyJSRendered(html: string): boolean {
     .replace(/\s+/g, " ")
     .trim();
 
-  // Count scripts
   const scriptCount = (html.match(/<script/gi) || []).length;
 
-  // Heuristic: little text content but many scripts suggests JS rendering
   return textContent.length < 500 && scriptCount > 3;
 }
 
@@ -909,9 +902,6 @@ async function extractViaHttp(
     const isHTML =
       contentType.includes("text/html") || contentType.includes("application/xhtml+xml");
 
-    // Registered response-stage extractors get the first claim on non-HTML, non-PDF responses
-    // (for example application/json) before the generic unsupported-type and plain-text paths.
-    // Built-in response extractors match only PDFs or parsed HTML, so they never claim here.
     if (!isPDFContent && !isHTML) {
       const responseCtx: ContentExtractorContext = {
         url,
@@ -1047,9 +1037,6 @@ export async function fetchAllContent(
     urls.map((url) => fetchLimit(() => extractContent(url, signal, options))),
   );
   if (options?.mode === "raw") return results;
-  // Inline data: URIs in extracted markdown would otherwise flow into tool
-  // results and the fetch cache as opaque base64; typed thumbnail/frame image
-  // blocks are deliberate outputs and are left untouched.
   return results.map((result, index) => {
     if (!result.content) return result;
     const sanitized = sanitizeInlineDataUris(result.content, `urls[${index}].content`);

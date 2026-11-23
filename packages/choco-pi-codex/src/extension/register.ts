@@ -32,11 +32,6 @@ import {
 
 export const CODEX_PACKAGE_NAME = "choco-pi-codex";
 
-/**
- * Stand-in for Code Mode when the standalone choco-pi-code-mode extension
- * loaded first and already owns it: that extension prepares, prompts and
- * shuts down its own host, so Codex must not drive it a second time.
- */
 function standaloneOwnedCodeMode(): CodeModeRegistration {
   return {
     prepare: () => undefined,
@@ -62,8 +57,6 @@ function warnStandaloneCodeModeOwner(pi: ExtensionAPI): void {
 }
 
 export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
-  // Code Mode ownership on this Pi runtime: Codex composes it with its ports
-  // unless the standalone choco-pi-code-mode extension loaded first and owns it.
   const codeModeOwner = probeCodeModeHostOwner(pi);
   const standaloneCodeMode = codeModeOwner?.kind === "standalone";
   const releaseCodeModeClaim = codeModeOwner
@@ -74,15 +67,12 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
   registerNativeSteeringBridge();
   if (!standaloneCodeMode) registerApplyPatchDisplayBroker(pi);
   const runtime = createCodexExtensionRuntime(pi);
-  // The budget follows the live adapter config, so a compaction-row change
-  // (which also resets the transport below) applies on the consumer's next read.
   let findModel: NativeCompactionModelLookup | undefined;
   const budgetHook = createNativeCompactionBudgetHook({
     state: () => runtime.state,
     findModel: () => findModel,
   });
   let unpublishBudget: (() => void) | undefined = publishNativeCompactionBudgetHook(budgetHook);
-  // Published once registration succeeds; withdrawn at shutdown, re-published at session start.
   let configReaderPublished = false;
   let unpublishConfigReader: (() => void) | undefined;
   pi.on("session_start", (_event, ctx) => {
@@ -121,8 +111,6 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
     throw error;
   }
   let cleanupProxyProvider: ReturnType<typeof registerCodeModeProxyProvider> | undefined;
-  // Published once registered so the compaction host's ownership follows this
-  // registration's live config; withdrawn at shutdown, re-published at session start.
   const eligibility = createCodexCompactionEligibility(() => runtime.state);
   try {
     registerOpenAICodexCustomProvider(pi, {
@@ -137,7 +125,6 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
       turnState: runtime.state.codexTurnState,
       getDiagnostics: () => runtime.diagnosticsSink(),
       onPreparedPayload: (payload) => {
-        // A request refused for an incompatible checkpoint fails here, before any network call.
         assertCodexRequestAllowed(payload);
         runtime.captureCacheKeepaliveRequest(payload);
         if (!runtime.state.pendingActiveProviderPromptCapture) return;
@@ -154,7 +141,6 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
     const tools = registerCodexTools(pi, runtime, { coreTools: !standaloneCodeMode });
     const ui = registerCodexUi(pi, runtime);
     registerCodexCommand(pi, runtime.state, (config, ctx, previousConfig) => {
-      // Compaction, scope, voice-only or tool-only switches change native-compaction ownership.
       eligibility.refresh();
       const executionModeChanged = config.executionMode !== previousConfig.executionMode;
       proxyProvider.applyConfig(config, ctx.modelRegistry);

@@ -23,14 +23,8 @@ export type MinimalistPathDisplayMode = "compact" | "project" | "full";
 export type MinimalistContextFormat = "percent" | "percent-total";
 export type EditorBorderColorMode = "static" | "adaptive";
 
-/**
- * Blank rows inside a frame: under the top border, above the closing row, or
- * both. In the editor the bottom row is the gap between the input and its
- * metadata line; in a message frame it is the row above the closing rule.
- */
 export type PaddingRows = "none" | "top" | "bottom" | "both";
 
-/** Working-line label overrides, keyed by registered tool name. */
 export type ToolLabelOverrides = Readonly<Record<string, string>>;
 
 export function isPaddingRows(value: BoundaryValue): value is PaddingRows {
@@ -58,7 +52,6 @@ export type PathDisplayMode = "basename" | "full";
 
 export type PathDisplayConfig = {
   mode: PathDisplayMode;
-  /** Trailing directories to show in full mode. 0 = unlimited; clamped to 0..5. */
   depth: number;
 };
 
@@ -119,7 +112,6 @@ export type MinimalistEditorStyleConfig = {
   contextThresholds: ContextThresholds;
 };
 
-/** Temporary name retained for existing settings consumers. */
 export type MinimalistConfig = MinimalistEditorStyleConfig;
 
 export type EditorStylesConfig = {
@@ -133,7 +125,6 @@ export type EditorComponentConfig = {
   borderColorMode: EditorBorderColorMode;
   modelLabel: ModelLabelSource;
   viewportIndicators: boolean;
-  /** Blank rows rendered inside the editor frame. */
   paddingRows: PaddingRows;
   styles: {
     opencode: PolishedEditorStyleConfig;
@@ -151,7 +142,6 @@ export type UserMessagesComponentConfig = {
   enabled: boolean;
   style: UserMessageStyle;
   colorSource: ColorSource;
-  /** Blank rows rendered inside the message frame. */
   paddingRows: PaddingRows;
   styles: {
     framed: FramedUserMessageStyleConfig;
@@ -229,7 +219,6 @@ export type WorkingLineComponentConfig = {
   colorSource: ColorSource;
   messages: WorkingLineMessagesConfig;
   segments: WorkingLineSegmentsConfig;
-  /** Overrides for the working-line tool label, keyed by registered tool name. */
   toolLabels: ToolLabelOverrides;
 };
 
@@ -251,20 +240,12 @@ export type ComponentsConfig = {
 export type ExtensionStatusPlacement = "off" | "left" | "middle" | "right";
 export type ExtensionStatusColorMode = "zentui" | "original";
 
-/**
- * Starship `git_commit`-style options.
- * See https://starship.rs/config/#git-commit
- */
 export type GitCommitConfig = {
   hashLength: number;
   onlyDetached: boolean;
   showTag: boolean;
 };
 
-/**
- * Starship `git_metrics`-style options.
- * See https://starship.rs/config/#git-metrics
- */
 export type GitMetricsConfig = {
   onlyNonzero: boolean;
   ignoreSubmodules: boolean;
@@ -327,10 +308,6 @@ export type PolishedTuiColors = {
   workingLineHigh?: ColorSpec;
 };
 
-/**
- * Canonical configuration plus a temporary flat compatibility projection used
- * by production consumers while they migrate to `components`.
- */
 export type PolishedTuiConfig = ZentuiConfig & {
   footerFormat: string;
   responsiveFooter: boolean;
@@ -354,10 +331,6 @@ export type PolishedTuiConfig = ZentuiConfig & {
   extensionStatuses: ExtensionStatusesConfig;
 };
 
-/**
- * Canonical footer format variable names. In a `footerFormat` string these
- * are written as `$name` or `${name}`.
- */
 export const FOOTER_FORMAT_VARIABLES = [
   "cwd",
   "session_name",
@@ -388,10 +361,6 @@ export const FOOTER_FORMAT_VARIABLES = [
   "sep",
 ] as const;
 
-/**
- * Alias → canonical variable name mapping for `footerFormat`.
- * `$fill` is special (not a variable) and handled by the parser.
- */
 interface FooterFormatAliases {
   [alias: string]: string;
 }
@@ -406,5 +375,3 @@ export const FOOTER_FORMAT_ALIASES: FooterFormatAliases = {
   duration: "session_duration",
   separator: "sep",
 };
-
-/** Canonical config file name for this package. */

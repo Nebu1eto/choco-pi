@@ -116,11 +116,8 @@ test("TypeScript spawn wiring uses only the asynchronous ATA config API", async 
 test("runtime session keeps explicit and automatic LSP warm wiring separate", async () => {
   const source = await readFile(new URL("../clients/runtime-session.ts", import.meta.url), "utf-8");
 
-  // Wiring guards: both startup paths must resolve warmFiles before deciding
-  // whether automatic dominant-language warming is enabled. The helper tests
-  // above own behavioral branching; these assertions protect its call sites.
   const quickPathStart = source.indexOf("const lspConfig = await loadLSPConfig(warmupCwd)");
-  const fullPathStart = source.indexOf("// LSP warm files — deferred");
+  const fullPathStart = source.indexOf("void loadLSPConfig(cwd)");
   assert.notEqual(quickPathStart, -1);
   assert.notEqual(fullPathStart, -1);
 
@@ -142,8 +139,6 @@ test("runtime session keeps explicit and automatic LSP warm wiring separate", as
     );
   }
 
-  // The guarded quick-path fallback must still warm explicitly configured
-  // files when dominant-language warming is disallowed by the startup scan.
   assert.match(
     quickPath,
     /if \(!scan\.canWarmCaches\)[\s\S]*?warmFiles\.length > 0[\s\S]*?igniteWarmFiles\(/,

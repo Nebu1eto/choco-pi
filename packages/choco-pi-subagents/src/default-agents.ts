@@ -1,9 +1,3 @@
-/**
- * default-agents.ts — Embedded default agent configurations.
- *
- * These are always available but can be overridden by user .md files with the same name.
- */
-
 import type { AgentConfig } from "./types.ts";
 
 const READ_ONLY_TOOLS = ["read", "bash", "find", "ls"];
@@ -16,9 +10,6 @@ export const DEFAULT_AGENTS: Map<string, AgentConfig> = new Map([
       displayName: "Agent",
       description:
         "General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you.",
-      // builtinToolNames omitted — means "all available tools" (resolved at lookup time)
-      // inheritContext / runInBackground / isolated omitted — strategy fields, callers decide per-call.
-      // Setting them to false would lock callsite intent (see resolveAgentInvocationConfig in invocation-config.ts).
       extensions: true,
       skills: true,
       systemPrompt: "",
@@ -36,9 +27,6 @@ export const DEFAULT_AGENTS: Map<string, AgentConfig> = new Map([
       builtinToolNames: READ_ONLY_TOOLS,
       extensions: true,
       skills: true,
-      // Fast/cheap model for read-only search. Provider-preferred but resilient:
-      // resolveModel matches this fuzzily (date-stamp optional) and falls back to
-      // the same model under another provider if anthropic doesn't expose it.
       model: "anthropic/claude-haiku-4-5",
       systemPrompt: `# CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS
 You are a file search specialist. You excel at thoroughly navigating and exploring codebases.

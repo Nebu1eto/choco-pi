@@ -1,4 +1,3 @@
-// Body loads that finish after a newer snapshot was applied are dropped.
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { FileBody } from "../profile/extensions/lib/changes/git/model.ts";
@@ -12,14 +11,8 @@ type Load = {
   reject(error: Error): void;
 };
 
-/**
- * Every load stays pending until the test settles it, in any order. Like the real store
- * (tests/changes-store-contract.test.ts), a load answers with the store's revision when it
- * began: settling it with any other revision fails the test.
- */
 class ControlledStore {
   readonly loads: Load[] = [];
-  /** The store's own snapshot revision; it can be ahead of the view's. */
   revision = 0;
   loadFile(path: string): Promise<{ revision: number; body: FileBody }> {
     const began = this.revision;
@@ -60,7 +53,6 @@ function mount() {
       isFocusKey: () => false,
     },
   });
-  /** The store moves to `revision` and the view applies it, as the hosts' subscriptions do. */
   const ready = (revision: number) => {
     store.revision = revision;
     view.setState({ kind: "ready", snapshot: snapshot(revision, [A]), refreshing: false });

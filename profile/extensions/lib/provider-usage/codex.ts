@@ -29,15 +29,8 @@ import {
 
 const OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
 
-/**
- * Display name of the single ChatGPT entry. It reports whichever of the twin
- * providers `openai-codex` (Codex login, chatgpt.com) or `openai` (Sign in with
- * ChatGPT, api.openai.com) `chatgptUsageProvider` selects.
- */
 export const CHATGPT_USAGE_NAME = "ChatGPT";
-/** Status of a signed-in `openai` account: api.openai.com exposes no quota window. */
 export const OPENAI_SIGNED_IN_STATUS = "signed in; quota window not available on api.openai.com";
-/** Status of `openai` configured with an API key, which has no subscription window. */
 export const OPENAI_API_KEY_STATUS = "API key; no subscription quota window";
 const CODEX_RESET_SIGNED_OUT = "ChatGPT Codex login (openai-codex) is not signed in.";
 
@@ -96,7 +89,6 @@ const CODEX_PLAN_LABELS = recordOf<string, string>()({
   quorum: "Quorum",
 });
 
-/** Maps the ChatGPT `plan_type` wire value to the label ChatGPT bills under. */
 export function codexPlanLabel(planType: string | undefined): string | undefined {
   if (!planType) return undefined;
   const key = planType.toLowerCase();
@@ -134,11 +126,6 @@ export function normalizeCodexUsage(payload: RuntimeValue): ProviderUsage {
 
 type ChatGPTProvider = "openai" | "openai-codex";
 
-/**
- * Provider the ChatGPT entry reports: the active model's provider when it is
- * `openai` or `openai-codex` and configured, else `openai-codex` when
- * configured, else `openai` when configured. Reads auth status only.
- */
 export function chatgptUsageProvider(ctx: ExtensionContext): ChatGPTProvider | undefined {
   const active = ctx.model?.provider;
   if ((active === "openai" || active === "openai-codex") && providerConfigured(ctx, active)) {
@@ -149,11 +136,6 @@ export function chatgptUsageProvider(ctx: ExtensionContext): ChatGPTProvider | u
   return undefined;
 }
 
-/**
- * Provider `openai` (api.openai.com). Sign in with ChatGPT carries no account
- * id for chatgpt.com, and api.openai.com publishes no quota window, so this
- * never resolves a token or makes a request; it reports the sign-in state only.
- */
 export function openaiUsage(ctx: ExtensionContext): ProviderUsage {
   const notConnected: ProviderUsage = {
     name: CHATGPT_USAGE_NAME,
@@ -188,13 +170,6 @@ export async function readCodexUsage(
   return withCacheNote(normalizeCodexUsage(usage.payload), usage);
 }
 
-/**
- * The single ChatGPT entry. Resolving the `openai-codex` token may refresh a
- * stale OAuth credential (network and credential-store lock), so it happens
- * only when the selection is `openai-codex`; an `openai` selection reads auth
- * status only. A Codex sign-in without a usable account id falls back to the
- * `openai` state. Resolves `undefined` when neither provider is signed in.
- */
 export async function chatgptUsage(
   ctx: ExtensionContext,
   cache: UsageCache,

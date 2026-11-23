@@ -1,8 +1,3 @@
-/**
- * A stored usage-limit closure is re-checked against live evidence before a
- * spawn, resume or workflow step is refused: the owner policy's reading, a
- * later success, or the absence of any reading decides, not the stored time.
- */
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 
@@ -32,7 +27,6 @@ async function setup(t: TestContext): Promise<UsageLimitEnv> {
   return env;
 }
 
-/** The real root policy for `owner`, reading usage through `read`. */
 function realPolicy(owner: string, read: () => Promise<ProviderUsageSnapshot | undefined>) {
   let reads = 0;
   const policy = createUsageLimitPolicy({
@@ -58,7 +52,6 @@ test("a root closure the live reading disproves no longer refuses a spawn (incid
   const installed = installPolicyObject(policy, env.owner);
   const { manager, runs } = harness();
   try {
-    // The root controller closed Anthropic for 24 h on a 429 that later reset.
     policy.closeProvider("anthropic", "default", Date.now() + 24 * HOUR);
     assert.throws(
       () => manager.spawn(env.pi, env.context(), "implementer", "refused", background),
@@ -73,7 +66,6 @@ test("a root closure the live reading disproves no longer refuses a spawn (incid
     assert.equal(policy.isClosed("anthropic", "default"), false);
     manager.spawn(env.pi, env.context(), "implementer", "runs", background);
     assert.equal(runs.length, 1);
-    // Nothing is closed any more, so a later check does not read again.
     await manager.refreshProviderBlock("anthropic", env.owner);
     assert.equal(reads(), 1);
   } finally {
@@ -217,7 +209,6 @@ test("a nested spawn re-checks the closure under its parent's root owner", async
   try {
     const parent = manager.spawn(env.pi, env.context(), "implementer", "parent", background);
     policy.closeProvider("anthropic", "default", Date.now() + 24 * HOUR);
-    // The grandchild's context belongs to the child session, not the root.
     const childContext = env.context({ sessionManager: env.freshSessionManager() });
     const nested = { ...background, parentAgentId: parent };
     assert.throws(

@@ -1,17 +1,3 @@
-/**
- * Background Anthropic native preparation on a session whose every turn
- * carries an identical persona custom message (`choco-pi-agent-persona`), as
- * the runtime agent-preferences extension appends it.
- *
- * Drives a real `createAgentSession` with the INSTALLED Anthropic adapter and
- * fake transports (no network). Two failure mechanisms used to make the native
- * lane refuse `no-legal-cut` on this shape:
- * - the capture's tail cut was discarded although the branch retains the
- *   assistant reply appended after the capture was sent;
- * - every interior cut split the set of identical persona owners and was
- *   refused as `ambiguous-cut`.
- * Both tests below failed with `no-legal-cut` before the fix.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -74,7 +60,6 @@ const BLOCK = {
   signature: "persona-synthetic-signature",
 };
 const TURNS = 6;
-/** Padding so each turn weighs a few hundred estimated tokens. */
 const PADDING = "detail ".repeat(200);
 
 type Frame = JsonObject & { readonly type: string };
@@ -143,7 +128,6 @@ const usage = {
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
-/** The text lane is enabled (as in production) but must never be the one that prepares. */
 const textSummarizer: TextSummarizer = {
   scope: { provider: MODEL.provider, model: MODEL.id, baseUrl: MODEL.baseUrl },
   summarize: async () => ({
@@ -163,11 +147,8 @@ interface Rig {
 }
 
 interface SessionExtras {
-  /** A second identical per-turn message after the persona, as the language preference appends. */
   readonly language?: boolean;
-  /** A context-invisible custom entry appended after every turn (timing, turn summaries). */
   readonly turnMetadata?: boolean;
-  /** Keep window read on every cut search, so a test can set it after seeding. */
   readonly keepWindow?: KeepWindow;
 }
 
@@ -179,8 +160,6 @@ async function createRig(keepRecentTokens: number, extras: SessionExtras = {}): 
   const keep = extras.keepWindow ?? { value: keepRecentTokens };
   const dir = await mkdtemp(join(tmpdir(), "choco-pi-anthropic-persona-"));
   const sidecar = join(dir, "background-compaction.json");
-  // Background on with both lanes; the usage threshold is never crossed, so
-  // only the explicit request below starts a preparation.
   await writeFile(
     sidecar,
     JSON.stringify({
@@ -220,7 +199,6 @@ async function createRig(keepRecentTokens: number, extras: SessionExtras = {}): 
     retry: { enabled: false },
   });
   const persona = (pi: ExtensionAPI): void => {
-    // The runtime agent-preferences extension appends this identical message every turn.
     pi.on("before_agent_start", () => ({
       message: { customType: PERSONA_TYPE, content: PERSONA_TEXT, display: false },
     }));
@@ -301,7 +279,6 @@ function personaEntryIds(manager: SessionManager): string[] {
     .map((entry) => entry.id);
 }
 
-/** Request a native preparation and wait for it to settle. */
 async function prepareNative(rig: Rig): Promise<CoordinatorStatus> {
   const coordinator = getCoordinator(mainOwnerKey(rig.manager.getSessionId()));
   assert.ok(coordinator, "the main owner has a coordinator");
@@ -324,7 +301,6 @@ interface Adopted {
   readonly details: AnthropicDetails;
 }
 
-/** Adopt the ready native candidate through the host's own compaction. */
 async function adopt(rig: Rig): Promise<Adopted> {
   await rig.session.compact();
   const entries = rig.manager
@@ -354,14 +330,11 @@ test(
       assert.equal(personas.length, TURNS, "one identical persona message per turn");
       const capture = capturesFor(rig.manager.getSessionId()).at(-1);
       assert.ok(capture?.mapping, "the last request was captured and mapped");
-      // The capture was taken when the last request was sent: its last
-      // projected entry is the last persona message, the reply came later.
       assert.equal(capture.mapping.projection.at(-1)?.entryId, personas.at(-1));
       const reply = rig.manager.getBranch().at(-1);
       assert.ok(reply?.type === "message" && reply.message.role === "assistant");
 
       const status = await prepareNative(rig);
-      // Before the fix: { state: "failed", reason: "no-legal-cut", detail: "no-legal-cut" }.
       assert.equal(status.state, "ready", JSON.stringify(status));
       assert.equal(status.backendId, ANTHROPIC_BACKEND_ID);
       assert.equal(rig.lane.sent.length, 1, "one native lane request");
@@ -384,7 +357,6 @@ test(
   "repeated persona messages: an interior cut resolves the copies by position",
   { timeout: 30_000 },
   async () => {
-    // Keeps roughly the last two turns, so the cut falls among the persona copies.
     const rig = await createRig(700);
     try {
       await seedTurns(rig);
@@ -392,7 +364,6 @@ test(
       assert.equal(personas.length, TURNS);
       const capture = capturesFor(rig.manager.getSessionId()).at(-1);
       assert.ok(capture?.mapping);
-      // Each wire copy owns its own persona entry, in order, and none is ambiguous.
       const owners = capture.mapping.messages
         .filter((message) => message.entryIds.some((id) => personas.includes(id)))
         .map((message) => message.entryIds.find((id) => personas.includes(id)));
@@ -400,7 +371,6 @@ test(
       assert.ok(capture.mapping.messages.every((message) => message.ambiguous.length === 0));
 
       const status = await prepareNative(rig);
-      // Before the fix: every interior cut was ambiguous-cut, so no-legal-cut.
       assert.equal(status.state, "ready", JSON.stringify(status));
 
       const { entry, details } = await adopt(rig);
@@ -412,7 +382,6 @@ test(
         branch.slice(0, cutIndex + 1).some((item) => item.id === id),
       ).length;
       assert.ok(summarizedPersonas > 0 && summarizedPersonas < TURNS, "the cut splits the copies");
-      // Positional: the lane prefix carries exactly the copies at or before the cut.
       assert.equal(personaCopies(rig.lane.sent[0]), summarizedPersonas);
       const laneBody = rig.lane.sent[0];
       assert.ok(laneBody);
@@ -421,7 +390,6 @@ test(
         capture.body.messages.slice(0, details.wire.prefixLength),
         "the lane carried the captured wire prefix unchanged",
       );
-      // The first kept message is a user message the wire places right after the prefix.
       assert.equal(capture.body.messages[details.wire.prefixLength]?.role, "user");
       assert.equal(entry.firstKeptEntryId, branch[cutIndex + 1]?.id);
     } finally {
@@ -430,12 +398,6 @@ test(
   },
 );
 
-/**
- * The keep window whose own cut falls between a turn's persona and language
- * messages: locally a legal turn boundary, but the two are consecutive user
- * wire messages, so the replay cannot cut there and the Anthropic lane must
- * move the cut back to the previous turn end.
- */
 function splitPersonaWindow(manager: SessionManager): number {
   const branch = manager.getBranch();
   const personas = new Set(personaEntryIds(manager));
@@ -469,7 +431,6 @@ test(
       keepWindow.value = splitPersonaWindow(rig.manager);
 
       const status = await prepareNative(rig);
-      // Before the fix: { state: "failed", reason: "no-legal-cut", detail: "nothing-to-summarize" }.
       assert.equal(status.state, "ready", JSON.stringify(status));
       assert.equal(status.backendId, ANTHROPIC_BACKEND_ID);
 
@@ -478,8 +439,6 @@ test(
       const cutIndex = adopted.findIndex((item) => item.id === details.cut.cutEntryId);
       const firstKeptIndex = adopted.findIndex((item) => item.id === entry.firstKeptEntryId);
       assert.ok(cutIndex >= 0 && firstKeptIndex === cutIndex + 1);
-      // A turn-end cut: only context-invisible entries lie between the last
-      // summarized message and the user message that starts the kept range.
       const keptUser = adopted
         .slice(firstKeptIndex)
         .find((item) => item.type === "message" && item.message.role === "user");

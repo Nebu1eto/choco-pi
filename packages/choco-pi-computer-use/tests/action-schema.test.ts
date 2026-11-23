@@ -8,14 +8,12 @@ import { compile } from "@earendil-works/pi-schema";
 import { toActParams, type WireUiAction } from "../src/tool-params.ts";
 import { isJsonObject, isString, type JsonObject, type JsonValue } from "../src/json.ts";
 
-/** The object at `key` of a JSON object, or undefined. */
 function objectAt(value: JsonValue | undefined, key: string): JsonObject | undefined {
   if (!isJsonObject(value)) return undefined;
   const field = value[key];
   return isJsonObject(field) ? field : undefined;
 }
 
-/** A property description of one act_ui action variant in the serialized schema. */
 function actionDescription(schema: JsonValue, action: string, property: string): string {
   const variants = objectAt(objectAt(schema, "properties"), "actions")?.items;
   const anyOf = isJsonObject(variants) ? variants.anyOf : undefined;
@@ -86,7 +84,6 @@ test("registered act_ui schema accepts every action shape", async () => {
       "click_count must be an integer",
     );
 
-    // Objects are closed: unknown keys, including every former camelCase name, are rejected.
     assert.equal(check({ actions: [{ action: "press", ref: "@e1", extra: 1 }] }), false);
     assert.equal(check({ actions: [{ action: "press", ref: "@e1" }], extra: true }), false);
     assert.equal(check({ stateId: "s1", actions: [{ action: "press", ref: "@e1" }] }), false);
@@ -114,7 +111,6 @@ test("registered act_ui schema accepts every action shape", async () => {
         false,
         `${former} was renamed`,
       );
-    // Optional state_id/expect may be omitted; required actions may not.
     assert.equal(check({ state_id: "s1", actions: [{ action: "move_mouse", x: 1, y: 2 }] }), true);
     assert.equal(check({ state_id: "s1" }), false, "actions required");
     assert.equal(check({ actions: [] }), false, "actions minItems");
@@ -145,14 +141,10 @@ test("registered act_ui schema accepts every action shape", async () => {
       assert.equal(check({ actions: [action] }), true);
     }
 
-    // Keyboard input without ref goes to the app's focused element; the
-    // descriptions must say so instead of requiring a ref.
     const described = JSON.stringify(schema);
     assert.doesNotMatch(described, /Required unless an earlier action/);
     assert.match(described, /omit to send keys to the target app's focused element/);
     assert.match(described, /omit to type into the target app's focused element/);
-    // Keyboard wording matches the browser path: the headless ref rule and
-    // chord strings apply to desktop delivery only.
     const serialized: JsonValue = JSON.parse(described);
     assert.equal(
       actionDescription(serialized, "type_text", "ref"),

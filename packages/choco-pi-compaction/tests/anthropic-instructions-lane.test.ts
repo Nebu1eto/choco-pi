@@ -1,13 +1,3 @@
-/**
- * `/compact <focus>` on the Anthropic lane (D9) through a real
- * `createAgentSession` (captured Anthropic provider stream, fake transports,
- * no network), background on with the Anthropic and text lanes:
- * - the native lane is selected first and sends the focus as
- *   `compaction.instructions`;
- * - instructions over the lane's cap fail `oversized` before any request, the
- *   text lane answers, the user gets one folded notice, and the failed
- *   candidate's record carries `instructions-forwarded`.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -137,7 +127,6 @@ interface Rig {
   readonly manager: SessionManager;
   readonly notices: string[];
   readonly laneBodies: unknown[];
-  /** Prompt texts of the text lane's summary requests. */
   readonly summarizedPrompts: string[];
   dispose(): Promise<void>;
 }
@@ -274,7 +263,6 @@ async function drain(): Promise<void> {
   for (let tick = 0; tick < 20; tick++) await new Promise((resolve) => setTimeout(resolve, 5));
 }
 
-/** Outcome notices of the manual request (its start notice excluded). */
 function outcomeNotices(rig: Rig): string[] {
   return rig.notices.filter(
     (notice) => notice.startsWith(NOTICE_PREFIX) && !START_NOTICE.test(notice),

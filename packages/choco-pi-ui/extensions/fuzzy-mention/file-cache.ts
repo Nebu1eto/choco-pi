@@ -4,8 +4,6 @@ export type FileListLoader = (cwd: string) => Promise<string[]>;
 
 export function loadRgFileList(cwd: string): Promise<string[]> {
   return new Promise((resolve, reject) => {
-    // Deliberately use `rg --files` without `--hidden` or ignore overrides: the
-    // cache must have the same ignore behavior as the command users already run.
     execFile(
       "rg",
       ["--files", "-0"],
@@ -21,11 +19,6 @@ export function loadRgFileList(cwd: string): Promise<string[]> {
   });
 }
 
-/**
- * Ignore-aware file cache with a short TTL. Requests within the TTL share one
- * `rg --files` result; after the TTL the first request refreshes it and peers
- * share that in-flight refresh. Session shutdown invalidates it immediately.
- */
 export class IgnoreAwareFileCache {
   private readonly cwd: string;
   private readonly ttlMs: number;

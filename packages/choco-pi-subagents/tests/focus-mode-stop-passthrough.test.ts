@@ -32,8 +32,6 @@ function setup() {
   const aborted: string[] = [];
   const editor = {
     text: "",
-    // The host's own submit path. The predecessor handleInput below invokes whatever
-    // onSubmit is installed at that moment, like Pi's Editor does on Enter.
     onSubmit(text: string) {
       hostSubmits.push(text);
     },

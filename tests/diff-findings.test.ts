@@ -158,7 +158,6 @@ test("findings render from recorded agents with candidates, claim outcomes, may-
     assert.doesNotMatch(body, /OLD1/, "only the newest review of a work task counts");
     assert.match(body, /Not in this diff:\n\s+⚑ high finding F2 gone\.ts L9: F2 invariant/);
 
-    // f jumps to the first finding and expands its file.
     h.tui.input("f");
     await flush();
     body = h.body();
@@ -171,7 +170,6 @@ test("findings render from recorded agents with candidates, claim outcomes, may-
       candidate >= 0 && candidate < header3,
       "a finding before every hunk sits above the first one",
     );
-    // Open by default: the heading row, then the whole record under it.
     assert.match(
       lines[candidate] ?? "",
       /▶ ▾ ⚑ low candidate C1 L1 \[REFUTED\] \(may be outdated\)/,
@@ -233,7 +231,6 @@ test("review records are not read before the pane is used, then on refresh and s
     h.fakePi.events.emit("subagents:completed", { id: "x" });
     await flush();
     assert.equal(reader.calls(), 0, "no record read before first use");
-    // The automatic-opening check may read the session source; it builds no view and reads no records.
     assert.equal(h.probe.session()?.view, undefined);
     await h.run("open");
     assert.equal(reader.calls(), 1, "first use reads once");
@@ -243,7 +240,6 @@ test("review records are not read before the pane is used, then on refresh and s
     assert.equal(reader.calls(), 4);
     await h.run("refresh");
     assert.equal(reader.calls(), 5);
-    // The only timer is the preference-write debounce; running every pending timer reads nothing.
     for (const timer of h.clock.timers.values()) timer.fn();
     h.clock.timers.clear();
     await flush();

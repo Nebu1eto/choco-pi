@@ -1,4 +1,3 @@
-/** Opaque-history guard predicates and the process-global consent slot (D2/D3). */
 import assert from "node:assert/strict";
 import test from "node:test";
 

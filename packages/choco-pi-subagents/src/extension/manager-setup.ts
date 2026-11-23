@@ -1,6 +1,3 @@
-/**
- * AgentManager construction and its listeners.
- */
 import { DescendantFailureReporter } from "../subagent-tree.ts";
 import { AgentManager } from "../agent-manager.ts";
 import { TERMINAL_RESULT_RETRIEVAL_GUIDANCE } from "../result-read.ts";
@@ -19,24 +16,15 @@ import { formatTaskNotification, buildNotificationDetails } from "./notification
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { SubagentsRuntime } from "./runtime.ts";
 
-/** Constructs the AgentManager and wires its status and usage-limit listeners. */
 export function installAgentManager(pi: ExtensionAPI, rt: SubagentsRuntime) {
-  // One root-visible line per failed nested generation (owner delivery is unchanged).
   const descendantFailures = new DescendantFailureReporter();
 
-  // Background completion: route through group join or send individual nudge
   const manager = new AgentManager(
     (record) => {
-      // Nested children report only through their owning parent's scoped tools.
-      // Deliver their completion to the owning child session, not the root
-      // lifecycle/UI channels. Delivery is best effort: the generation-pinned
-      // result remains on the manager record if this notification is missed.
       if (record.parentAgentId) {
         const parent = manager.getRecord(record.parentAgentId);
         const failureLine = descendantFailures.report(record, parent);
         if (failureLine !== undefined) {
-          // Informational, like usage-limit notices: rides the next root
-          // delivery and never starts a root turn by itself.
           try {
             pi.sendMessage(
               {
@@ -72,14 +60,11 @@ export function installAgentManager(pi: ExtensionAPI, rt: SubagentsRuntime) {
                 triggerTurn: mayTriggerTurn(record.admissionRoot, record.admissionEpoch),
               },
             )
-            .catch(() => {
-              /* missed delivery never consumes or removes the durable record */
-            });
+            .catch(() => {});
         }
         return;
       }
 
-      // Emit lifecycle event based on terminal status
       const isError =
         record.status === "error" ||
         record.status === "stopped" ||
@@ -93,7 +78,6 @@ export function installAgentManager(pi: ExtensionAPI, rt: SubagentsRuntime) {
         rt.notifications.emitLifecycle("subagents:completed", eventData);
       }
 
-      // Persist final record for cross-extension history reconstruction
       pi.appendEntry("subagents:record", {
         id: record.id,
         type: record.type,
@@ -115,10 +99,6 @@ export function installAgentManager(pi: ExtensionAPI, rt: SubagentsRuntime) {
         }),
       });
 
-      // Workflow steps remain ordinary top-level records for FleetView/focus and
-      // lifecycle events, but static workflows deliver one aggregate result. A
-      // dynamic workflow relays step completions so the orchestrator can adjust
-      // the still-open graph from the result.
       if (record.workflowId) {
         if (rt.state.workflows?.shouldNotifySteps(record.workflowId)) {
           rt.notifications.sendIndividualNudge(record);
@@ -133,10 +113,6 @@ export function installAgentManager(pi: ExtensionAPI, rt: SubagentsRuntime) {
         return;
       }
 
-      // Side answers stay out of the orchestrator transcript. Their controller
-      // keeps an open overlay live, or emits a non-turn-triggering UI notice when
-      // the user dismissed it. Shared lifecycle, widget and fleet bookkeeping
-      // still applies because this is an ordinary top-level record.
       if (record.sideConversation) {
         rt.agentActivity.delete(record.id);
         rt.views.fleet.markFinished(record.id);
@@ -146,7 +122,6 @@ export function installAgentManager(pi: ExtensionAPI, rt: SubagentsRuntime) {
         return;
       }
 
-      // Skip notification if result was already consumed via get_subagent_result
       if (record.resultConsumed) {
         rt.agentActivity.delete(record.id);
         rt.views.fleet.markFinished(record.id);
@@ -155,8 +130,6 @@ export function installAgentManager(pi: ExtensionAPI, rt: SubagentsRuntime) {
         return;
       }
 
-      // If this agent is pending batch finalization (debounce window still open),
-      // don't send an individual nudge — finalizeBatch will pick it up retroactively.
       if (rt.state.currentBatchAgents.some((a) => a.id === record.id)) {
         rt.views.fleet.update();
         return;
@@ -166,20 +139,15 @@ export function installAgentManager(pi: ExtensionAPI, rt: SubagentsRuntime) {
       if (result === "pass") {
         rt.notifications.sendIndividualNudge(record);
       }
-      // 'held' → do nothing, group will fire later
-      // 'delivered' → group callback already fired
       rt.views.fleet.update();
     },
     undefined,
     (record) => {
       if (record.parentAgentId) return;
-      // Agent-tool spawns refresh these surfaces in their tool handler, but RPC
-      // and scheduler spawns enter through the manager directly.
       if (rt.state.currentCtx?.hasUI) {
         rt.views.fleet.ensureTimer();
         rt.views.fleet.update();
       }
-      // Emit started event when agent transitions to running (including from queue)
       rt.notifications.emitLifecycle("subagents:started", {
         id: record.id,
         type: record.type,
@@ -192,7 +160,6 @@ export function installAgentManager(pi: ExtensionAPI, rt: SubagentsRuntime) {
     },
     (record, info) => {
       if (record.parentAgentId) return;
-      // Emit compacted event when agent's session compacts (preserves count on record).
       rt.notifications.emitLifecycle("subagents:compacted", {
         id: record.id,
         type: record.type,
@@ -211,9 +178,6 @@ export function installAgentManager(pi: ExtensionAPI, rt: SubagentsRuntime) {
     getMaxSubagentDepth,
   });
 
-  // Usage-limit transitions: an informational event on every transition, plus
-  // one nudge to the owning parent when a child parks. The final outcome (with
-  // the usageLimit block) travels through the ordinary completion notification.
   manager.setUsageLimitListener((record) => {
     const usageLimit = record.usageLimit;
     if (!usageLimit) return;
@@ -241,9 +205,7 @@ export function installAgentManager(pi: ExtensionAPI, rt: SubagentsRuntime) {
       if (parent?.session && parent.status === "running") {
         void parent.session
           .sendCustomMessage(message, { deliverAs: "steer", triggerTurn: false })
-          .catch(() => {
-            /* informational only; the final notification still follows */
-          });
+          .catch(() => {});
       }
       return;
     }

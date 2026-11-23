@@ -1,27 +1,19 @@
-/** One dispatched server-sent event. */
 export interface SseEvent {
   event: string | undefined;
   data: string;
 }
 
-/**
- * Incremental text/event-stream parser (WHATWG framing): LF, CR and CRLF line endings, a CRLF
- * split across chunks, multi-line data joined with LF, comments, and a final event that is not
- * followed by a blank line.
- */
 export class SseParser {
   #buffer = "";
   #data: string[] = [];
   #event: string | undefined;
   #hasData = false;
 
-  /** Feeds decoded text and returns the events it completes. */
   push(text: string): SseEvent[] {
     this.#buffer += text;
     return this.#drain(false);
   }
 
-  /** Flushes the trailing line and any pending event at end of stream. */
   end(): SseEvent[] {
     return this.#drain(true);
   }

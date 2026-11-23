@@ -1,9 +1,3 @@
-/**
- * Host-port assembly for the extension activation.
- *
- * Extracted from `runtime-extension.ts`; behavior is unchanged.
- */
-
 import type { RuntimeValue } from "../tools/runtime-values.ts";
 import { isRuntimeUndefined } from "../tools/runtime-values.ts";
 import { logExtension } from "../clients/extension-log.ts";
@@ -25,7 +19,6 @@ export interface CreateHostPortsOptions {
   getRenderInvalidator?: () => (() => void) | undefined;
 }
 
-/** Assemble pi's live ExtensionAPI/context projections behind HostPorts. */
 export function createHostPorts(pi: ExtensionAPI, options: CreateHostPortsOptions): HostPorts {
   // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
   const context = () => options.getContext() as any;
@@ -44,8 +37,6 @@ export function createHostPorts(pi: ExtensionAPI, options: CreateHostPortsOption
       user(message, level) {
         const mode = currentMode();
         if (mode === "print" || mode === "json") {
-          // #1366: suppressed notices are still LEDGERED so headless
-          // operators can see them in lsp_health.
           recordDegradation({
             kind: "mode-suppression",
             subject: "user degradation notice",
@@ -66,11 +57,6 @@ export function createHostPorts(pi: ExtensionAPI, options: CreateHostPortsOption
       extension: logExtension,
       debug: (message, metadata) =>
         logExtension({ subsystem: "host", level: "debug", message, metadata }),
-      // DECLARATION-ONLY in S2 (#1367 review): no production code consumes
-      // ports.log.sink yet -- the 13 subsystem loggers still own their
-      // NDJSON files directly. Migrating them onto this port (routing to
-      // their per-subsystem files, NOT extension.log) is S4 scope; this
-      // placeholder exists so the interface is complete for contract tests.
       sink: (subsystem) => (entry) =>
         logExtension({
           subsystem,

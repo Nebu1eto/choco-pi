@@ -1,62 +1,3 @@
-/**
- * Project-level `.choco-pi-lsp.json` config loader.
- *
- * Reads an optional `.choco-pi-lsp.json` (or `choco-pi-lsp.json`) at the project root and
- * surfaces the fields the rest of choco-pi-lsp honors:
- *
- *   - `ignore` — gitignore-style glob patterns added to every scan (LSP walk,
- *     fact-rules, tree-sitter, jscpd, knip, review graph, source-filter). Wired
- *     into `getProjectIgnoreMatcher` in `file-utils.ts` via the existing
- *     `createProjectIgnoreMatcher(rootDir, extraPatterns)` extension point.
- *
- *   - `rules` — per-rule threshold overrides. Currently honored:
- *       rules["high-complexity"].threshold — cyclomatic complexity (default 15)
- *       rules["high-fan-out"].threshold   — distinct-function calls (default 20)
- *
- *   - `maxProjectFiles` — the base project-size scale knob (#776). Read by
- *     `clients/project-scale.ts`'s `getProjectScaleBase`, which derives the
- *     five subsystem size budgets (project-diagnostics scanner, review graph,
- *     startup scan, jscpd, word index) as documented ratios of this value.
- *
- *   - `reviewGraph.maxFiles` — explicit review-graph file-budget override
- *     (#775 R2), for monorepos that want a bigger graph than
- *     `project-scale.ts`'s adaptive taper would derive from
- *     `maxProjectFiles` alone. Tolerantly parsed (numeric strings coerce via
- *     `toPositiveFinite`, same as `maxProjectFiles`) and clamped to
- *     `[100, 20_000]` — a value outside that range is silently clamped
- *     rather than rejected (still an explicit, deliberate opt-in; only a
- *     non-numeric/non-positive value warns and is dropped). Read by
- *     `getReviewGraphMaxFilesDerived`, where it takes precedence over the
- *     taper (but the subsystem's own PRE-EXISTING
- *     `CHOCO_PI_LSP_REVIEW_GRAPH_MAX_FILES` env override still wins outright over
- *     both, unchanged).
- *
- *   - `format.enabled`, `autofix.enabled`, and
- *     `actionableWarnings.autoFix.enabled` — project-owned mutation controls.
- *     These can disable choco-pi-lsp writes while leaving diagnostics enabled.
- *
- * The file is loaded once per `(path, mtimeMs)` and cached — editing the file
- * invalidates the cache so the next access sees the new values without
- * restarting pi. Discovery is cached by starting directory and validated by the
- * cached directory mtimes plus the config-file mtime, so hot paths do not repeat
- * candidate-file probes on every dispatch.
- *
- * The loader walks up from the starting directory until it finds a config file
- * (mirroring `lsp/config.ts`'s `loadLSPConfig` so project-monorepos with a
- * `.choco-pi-lsp.json` at the repo root work without per-subdir configs).
- *
- * A malformed file is treated as "no config" and logged once — we never want a
- * stray syntax error in user-edited JSON to break diagnostics.
- *
- * `findPiLensConfigInDir` / `loadPiLensConfigInDir` are the per-directory
- * (no upward walk) counterparts used by `file-utils.ts`'s
- * `getProjectIgnoreMatcher` to layer NESTED `.choco-pi-lsp.json` `ignore` fields
- * the same way nested `.gitignore`s are already layered (#783): every
- * ancestor directory between the git root and a scanned file is checked for
- * its own config file, so a package-local `.choco-pi-lsp.json`'s `ignore`
- * patterns apply to files inside that package, in addition to (and with
- * higher precedence than) the root config's `ignore` patterns.
- */
 import {
   isFiniteNumber,
   isObjectRecord,
@@ -87,99 +28,42 @@ type ParseRulePolicyListResultContract = { list: string[]; invalid: boolean };
 
 const PROJECT_CONFIG_BASENAMES = [".choco-pi-lsp.json", "choco-pi-lsp.json"];
 
-/**
- * The project loader's OWN recognized top-level keys — choco-pi-lsp-native sections,
- * whether parsed here into typed fields (`ignore`, `rules`, `maxProjectFiles`,
- * `reviewGraph`) or read off `PiLensProjectConfig.raw` by another choco-pi-lsp
- * consumer (`trivy`, read via `.raw` in `trivy-client.ts`). The project-scoped
- * flag sections (`format`, `autofix`, `actionableWarnings`) are NOT listed here;
- * they are derived from `PROJECT_SCOPED_LENS_FLAGS` so the registry stays the
- * single source of truth (#883). Foreign (non-choco-pi-lsp) namespaces the shared
- * file also carries live in `PROJECT_FOREIGN_CONFIG_NAMESPACES` beside the
- * registry.
- */
 const PROJECT_OWN_CONFIG_KEYS = [
   "ignore",
   "rules",
   "maxProjectFiles",
   "reviewGraph",
-  // `helm.renderValidation.enabled` — the opt-in for rendered-manifest
-  // validation, read via `.raw` in the helm-render runner (#1283).
   "helm",
 ] as const;
 
 export interface PiLensProjectRuleConfig {
-  /** Optional override for the rule's primary numeric threshold. */
   threshold?: number;
-  /**
-   * Project-level disable list — rule ids whose diagnostics the project's
-   * `.choco-pi-lsp.json` deliberately turns off. Output-only filtering (the
-   * diagnostics are still recorded: widget state, baseline, and dispatch
-   * dedup see them), so a project's own policy never widens the trusted
-   * surface area beyond what the user actually sees. Matching is PROJECT-
-   * WIDE: the `<id>` key this list lives under is a grouping label only, not
-   * a filter scope — every `disable` list across every `rules.<key>` entry
-   * is unioned before matching. Disable is stronger than `select` (below) —
-   * a rule on both lists is dropped.
-   */
   disable?: string[];
-  /**
-   * Project-level allowlist — when the UNION of `select` lists across every
-   * `rules.<key>` entry is non-empty, ONLY the rule ids in that union
-   * survive filtering; everything else is dropped, project-wide (an absent
-   * or empty union everywhere is "no restriction"). Like `disable`, the
-   * `<id>` key this list lives under does not scope which rules it can
-   * match. A rule on both `select` and `disable` is dropped (disable wins —
-   * explicit exclusion trumps explicit inclusion).
-   */
   select?: string[];
 }
 
 export interface PiLensProjectMutationConfig {
-  /** Whether this mutation path is enabled for the project. */
   enabled?: boolean;
 }
 
 export interface PiLensProjectReviewGraphConfig {
-  /**
-   * Explicit review-graph file budget, clamped to `[100, 20_000]`.
-   * `undefined` means "derive from `maxProjectFiles` via the taper".
-   */
   maxFiles?: number;
 }
 
-/** Clamp bounds for `reviewGraph.maxFiles` — see the field's doc comment above. */
 const REVIEW_GRAPH_MAX_FILES_MIN = 100;
 const REVIEW_GRAPH_MAX_FILES_MAX = 20_000;
 
 export interface PiLensProjectConfig {
-  /** gitignore-style glob patterns added to every diagnostic scan. */
   ignore: string[];
-  /** Per-rule threshold overrides; missing keys mean "use hardcoded default". */
   rules: Record<string, PiLensProjectRuleConfig>;
-  /** Whether automatic formatting is enabled after write/edit tool calls. */
   format?: PiLensProjectMutationConfig;
-  /** Whether the pipeline may apply deterministic linter fixes. */
   autofix?: PiLensProjectMutationConfig;
-  /** Project-level controls for actionable-warning behavior. */
   actionableWarnings?: {
-    /** Whether conservative warning fixes may run at agent_end. */
     autoFix?: PiLensProjectMutationConfig;
   };
-  /**
-   * Base project-size scale knob (#776) — see `clients/project-scale.ts`.
-   * `undefined` means "use the env override / default chain".
-   */
   maxProjectFiles: number | undefined;
-  /**
-   * Review-graph-specific overrides (#775 R2). `undefined` (the whole
-   * object, or just `maxFiles`) means "use the adaptive taper" — see
-   * `clients/project-scale.ts`'s `getReviewGraphMaxFilesDerived`.
-   */
   reviewGraph?: PiLensProjectReviewGraphConfig;
-  /** The parsed JSON as-is, for forward-compat consumers. */
   raw: unknown;
-  /** Absolute path of the config file that was loaded, or undefined if none. */
   configPath: string | undefined;
 }
 
@@ -194,15 +78,6 @@ export const EMPTY_PROJECT_CONFIG: PiLensProjectConfig = {
 
 interface CacheEntry {
   mtimeMs: number;
-  /**
-   * Byte size at parse time (#1105). Reuse requires BOTH mtime and size to
-   * match — size is the free second axis (the same stat already read it) that
-   * catches an mtime-preserving, length-changing in-place edit (git checkout,
-   * same-second rewrite) that mtime alone would replay stale. Residual (same
-   * mtime AND same size) matches the review-graph `size:mtimeMs` accepted
-   * residual; closing it would need a content hash on every gate check — the
-   * hot-path cost the word-index #1105 fix deliberately declined.
-   */
   size: number;
   config: PiLensProjectConfig;
 }
@@ -212,15 +87,10 @@ interface DiscoveryCacheEntry {
   dirMtimes: Array<{ dir: string; mtimeMs: number }>;
 }
 
-/** Cache by absolute config path; we read each candidate's mtime before reuse. */
 const configCache = new Map<string, CacheEntry>();
 const discoveryCache = new Map<string, DiscoveryCacheEntry>();
 const warnedInvalidConfigs = new Set<string>();
 
-/**
- * Walk up from `startDir` looking for a `.choco-pi-lsp.json` or `choco-pi-lsp.json`.
- * Returns the parsed config, or an empty config if none was found.
- */
 export function loadPiLensProjectConfig(
   startDir: string,
   preloadedInfo = findPiLensProjectConfig(startDir),
@@ -242,7 +112,6 @@ export function loadPiLensProjectConfig(
   return config;
 }
 
-/** For tests + callers that need to force a re-read (e.g. config-watcher hooks). */
 export function resetProjectLensConfigCache(): void {
   configCache.clear();
   discoveryCache.clear();
@@ -253,23 +122,9 @@ export interface PiLensProjectConfigFileInfo {
   path: string;
   dir: string;
   mtimeMs: number;
-  /** Byte size at stat time — the #1105 second freshness axis (see CacheEntry). */
   size: number;
 }
 
-/**
- * Look for a `.choco-pi-lsp.json`/`choco-pi-lsp.json` directly IN `dir` — no upward
- * walk. Used to layer nested per-package configs (#783) the same way
- * `file-utils.ts` layers nested `.gitignore`s: each ancestor directory
- * between the git root and a target file is checked for its OWN config
- * file, independent of whatever config `loadPiLensProjectConfig`'s upward
- * walk would find starting from `dir`.
- *
- * Sourced from the shared workspace-topology marker index (#806) — one
- * `readdir` pass per directory visit collects this marker alongside
- * `tsconfig.json`/workspace-manifest markers other consumers need for the
- * SAME directory, instead of each subsystem re-probing it independently.
- */
 export function findPiLensConfigInDir(dir: string): PiLensProjectConfigFileInfo | undefined {
   const marker = findPiLensConfigMarkerInDir(dir);
   if (!marker) return undefined;
@@ -286,11 +141,6 @@ export interface NestedProjectMutationValue {
   dir: string;
 }
 
-/**
- * Find the closest config, between an edited file and the project root, that
- * explicitly defines one mutation flag. The walk uses the shared primitive
- * and refuses to inspect HOME or any ancestor of HOME.
- */
 export function findNestedProjectMutationValue(
   spec: LensFlagSpec,
   editedFilePath: string,
@@ -311,13 +161,6 @@ export function findNestedProjectMutationValue(
   return undefined;
 }
 
-/**
- * Load the `.choco-pi-lsp.json`/`choco-pi-lsp.json` directly IN `dir` (no upward
- * walk) — the per-directory counterpart to `loadPiLensProjectConfig`'s
- * upward-walking discovery. Shares `configCache` (keyed by absolute config
- * path + mtime), so a directory whose config was already loaded via the
- * upward-walk path (e.g. the git root itself) is not re-read here.
- */
 export function loadPiLensConfigInDir(dir: string): PiLensProjectConfig {
   const info = findPiLensConfigInDir(dir);
   if (!info) return EMPTY_PROJECT_CONFIG;
@@ -395,7 +238,6 @@ function warnInvalidConfigOnce(configPath: string, reason: string): void {
     message,
     metadata: { configPath, reason },
   });
-  // HUMAN-audience too: the user's own `.choco-pi-lsp.json` is being ignored.
   notifyUserDegradation(`choco-pi-lsp: ${message}`);
 }
 
@@ -418,10 +260,6 @@ function parseRulePolicyList(
     if (trimmed.length > 0) list.push(trimmed);
   }
   if (list.length === 0) {
-    // #1087: an explicitly empty array (`"disable": []`) is a well-formed
-    // no-op, not an error — don't warn. Only warn when the array HAD entries
-    // but none were usable strings (all blank / non-string), which is a real
-    // authoring mistake that must not fail silently.
     if (value.length > 0) {
       warnInvalidConfigOnce(
         configPath,
@@ -475,10 +313,6 @@ function parseConfigFile(configPath: string): PiLensProjectConfig {
     // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
     const rawRules = obj.rules as Record<string, LspDictionaryValue>;
     for (const [ruleId, ruleCfg] of Object.entries(rawRules)) {
-      // #444's own example writes the lists directly under `rules` (`rules.
-      // disable`), which lands here as an array and would otherwise be
-      // dropped without a word — the one shape a user is most likely to try.
-
       if (!ruleCfg || !isObjectRecord(ruleCfg) || Array.isArray(ruleCfg)) {
         warnInvalidConfigOnce(
           configPath,
@@ -501,19 +335,12 @@ function parseConfigFile(configPath: string): PiLensProjectConfig {
       }
       if ("disable" in r) {
         const parsed = parseRulePolicyList(configPath, ruleId, "disable", r.disable);
-        // #1087: an explicitly empty list is valid-but-empty (no warning);
-        // don't store a pointless no-op entry for it.
         if (!parsed.invalid && parsed.list.length > 0) entry.disable = parsed.list;
       }
       if ("select" in r) {
         const parsed = parseRulePolicyList(configPath, ruleId, "select", r.select);
         if (!parsed.invalid && parsed.list.length > 0) entry.select = parsed.list;
       }
-      // Honor both threshold-only and policy-only entries; only drop if
-      // the entry had no recognized fields at all (e.g. { unrelated: true }).
-      // A recognized-but-malformed field already warned above, so only warn
-      // here when nothing recognized was spelled at all — #444 proposed
-      // `only` rather than `select`, and that typo must not fail silent.
       if (entry.threshold !== undefined || entry.disable || entry.select) {
         rules[ruleId] = entry;
       } else if (!("threshold" in r) && !("disable" in r) && !("select" in r)) {
@@ -563,15 +390,6 @@ function parseConfigFile(configPath: string): PiLensProjectConfig {
     }
   }
 
-  // #533 hygiene: mirror the global loader's unknown-key warn so a typo in a
-  // shared `.choco-pi-lsp.json` (e.g. `maxProjectFile`, `lps`) produces a signal
-  // instead of silently doing nothing. The recognized set is single-sourced
-  // (#883): the project loader's own keys + the project-scoped flag sections
-  // (registry-derived) + the foreign namespaces the LSP loader reads from this
-  // same file. A key recognized ONLY at global scope (e.g. `lsp`, `tests`,
-  // `delta`) gets a distinct, honest signal that it does nothing here rather
-  // than being lumped in with typos — docs previously called this "silently
-  // ignored".
   const knownProjectKeys = new Set<string>([
     ...PROJECT_OWN_CONFIG_KEYS,
     ...flagConfigSectionKeys(PROJECT_SCOPED_LENS_FLAGS),

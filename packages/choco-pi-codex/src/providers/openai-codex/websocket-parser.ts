@@ -15,7 +15,6 @@ import {
 } from "./websocket-connection.ts";
 import { extractCodexTurnStateFromWebSocketEvent } from "./turn-state.ts";
 
-// Blob-like data object (live host value): the method may live on the prototype.
 function hasArrayBuffer<Value>(value: Value): value is Value & WebSocketArrayBufferData {
   return isJsonObject(value) && isFunction(value["arrayBuffer"]);
 }
@@ -89,7 +88,6 @@ export function parseWebSocket(
           if (!isCodexStreamEvent(candidate)) return;
           parsed = candidate;
         } catch {
-          // Codex ignores malformed individual events and keeps the live stream.
           return;
         }
         const turnState = extractCodexTurnStateFromWebSocketEvent(parsed);
@@ -221,9 +219,6 @@ export function parseWebSocket(
   }
 
   const iterator = events();
-  // A generator suspended at an internal await cannot observe return() until next() settles.
-  // This wrapper invalidates ownership synchronously and wakes the loop to exit;
-  // any later decode continuation sees stale ownership and cannot mutate the stream.
   return {
     [Symbol.asyncIterator]() {
       return {

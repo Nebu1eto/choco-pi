@@ -8,26 +8,10 @@ import {
   type InputReplayTarget,
 } from "./lib/mouse-escape-guard.ts";
 
-/**
- * Keeps mouse scrolling from aborting the running turn or typing `[<65;12;30M`
- * into the prompt (see ./lib/mouse-escape-guard.ts for the cause).
- *
- * The guard needs two inputs. Pi's terminal input listener is where a bare ESC
- * is held back and dropped. Recent mouse input has to be read from raw stdin:
- * in fullscreen mode pi-tui's own viewport listener runs before every
- * extension listener and consumes every whole mouse report, so no extension
- * listener ever sees the scrolling that precedes a split report.
- *
- * A held ESC is handed back through the TUI's own input path, so it reaches
- * every listener after this one and the focused component exactly as it would
- * have without the guard.
- */
-
 export const PROBE_WIDGET_KEY = "choco-pi-mouse-escape-guard-probe";
 
 type RawInputListener = (chunk: string | Buffer) => void;
 
-/** The part of `process.stdin` the raw observer uses. */
 export interface RawInput {
   prependListener(event: "data", listener: RawInputListener): void;
   removeListener(event: "data", listener: RawInputListener): void;
@@ -45,11 +29,6 @@ interface ProbeCapture {
   tui?: TUI;
 }
 
-/**
- * Obtain Pi's TUI handle from a widget factory, which Pi calls synchronously,
- * and remove the zero-line widget again before anything is drawn. The handle
- * follows Pi's current renderer across TUI mode switches.
- */
 export function probeReplayTarget(ui: GuardContext["ui"]): InputReplayTarget | undefined {
   const captured: ProbeCapture = {};
   ui.setWidget(PROBE_WIDGET_KEY, (tui) => {
@@ -61,7 +40,6 @@ export function probeReplayTarget(ui: GuardContext["ui"]): InputReplayTarget | u
   return tui !== undefined && isInputReplayTarget(tui) ? tui : undefined;
 }
 
-/** Start the guard for one session; undefined outside the TUI or when input cannot be replayed. */
 export function installMouseEscapeGuard(ctx: GuardContext, stdin: RawInput): Installed | undefined {
   if (ctx.mode !== "tui") return undefined;
   const target = probeReplayTarget(ctx.ui);
@@ -80,7 +58,6 @@ export function installMouseEscapeGuard(ctx: GuardContext, stdin: RawInput): Ins
   });
   const unsubscribe = ctx.ui.onTerminalInput((data) => guard.handleInput(data));
   const observe: RawInputListener = (chunk) => guard.observeRaw(rawInputText(chunk));
-  // prependListener, unlike on(), never switches a paused stdin to flowing.
   stdin.prependListener("data", observe);
   let disposed = false;
   return {

@@ -4,10 +4,6 @@ import type { CustomMessageEntry } from "@earendil-works/pi-coding-agent";
 import { NATIVE_COMPACTION_DISPLAY_MESSAGE_TYPE } from "../compaction/types.ts";
 import { EXECUTION_MODE_SESSION_ENTRY } from "../activation/execution-mode.ts";
 
-// Voice and Notebook Mode were removed from this fork, but sessions recorded by
-// the upstream package may still contain their custom entries. The message-type
-// strings are inlined verbatim so replay and compaction keep excluding them
-// exactly as upstream did.
 const REALTIME_VOICE_MESSAGE_TYPE = "codex-realtime-voice";
 const CODEX_VOICE_MODE_MESSAGE_TYPE = "codex-voice-mode";
 const NOTEBOOK_TREE_EPOCH_ENTRY = "pi-codex-conversion-notebook-tree-epoch";

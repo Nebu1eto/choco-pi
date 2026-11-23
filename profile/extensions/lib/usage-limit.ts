@@ -1,8 +1,3 @@
-/**
- * Usage-limit classification, corroboration against live quota data, the
- * cross-provider fallback table, and the owner policy published through the
- * usage-limit seam (`usage-limit-contract.ts`).
- */
 export {
   getUsageLimitClassifiers,
   registerUsageLimitClassifier,

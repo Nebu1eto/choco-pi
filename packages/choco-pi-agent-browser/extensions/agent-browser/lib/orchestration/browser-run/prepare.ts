@@ -222,16 +222,10 @@ async function prepareBatchScreenshotPaths(
   }
   const argumentSteps = getUpstreamEffectiveBatchSteps(commandTokens, undefined);
   if (argumentSteps.length > 0) {
-    // Upstream executes raw argument steps exclusively and ignores stdin, so
-    // prepare parent directories for the rows that will run and skip stdin
-    // preparation (no directories for never-executed rows).
     for (const step of argumentSteps) {
       const stepTokens = extractUpstreamCommandTokens(step);
       await ensureArtifactParentDirectory(stepTokens, cwd);
       if (stepTokens[0] === "screenshot") {
-        // Reuse the screenshot path resolution for its parent-directory side
-        // effect only: raw strings are never rewritten, so the normalized
-        // tokens and path request are deliberately discarded.
         await normalizeScreenshotPathInTokens(step, cwd);
       }
     }
@@ -1624,9 +1618,6 @@ export async function prepareBrowserRun(
             }
             if (pinnedBatchPlan) {
               sessionTabCorrection = plannedSessionTabSelection;
-              // The rewritten batch must keep the caller's fail-fast semantics:
-              // upstream reads only the exact --bail token, so re-emit it whenever
-              // the original batch tokens carried it (argv or stdin/job/qa mode).
               const pinnedBailArgs = commandTokens.includes("--bail") ? ["--bail"] : [];
               processArgs = [
                 "--json",

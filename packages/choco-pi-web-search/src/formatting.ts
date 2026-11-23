@@ -54,10 +54,6 @@ export function requiredCapabilities(request: SearchRequest): SearchCapability[]
   return [...required];
 }
 
-/**
- * The web_search tool spelling of an internal (camelCase) capability or request field, for
- * model-visible messages only; the adapter contract keeps the camelCase names.
- */
 export function toolParamName(name: string): string {
   return name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }
@@ -75,10 +71,6 @@ export function incompatibility(
   return undefined;
 }
 
-/**
- * Normalize legacy top-level backend fields (such as `exaSearchType`) into `providerOptions`
- * while keeping the original field intact for backward compatibility.
- */
 export function normalizeSearchRequest(
   request: SearchRequest,
   adapterFamily?: SearchProviderFamily,

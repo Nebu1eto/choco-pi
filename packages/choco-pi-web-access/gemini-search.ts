@@ -175,9 +175,6 @@ function normalizeSearchRouting<Value>(value: Value): SearchRoutingConfig {
     throw new Error(`searchRouting in ${CONFIG_PATH} must be an object`);
   }
   const raw = value;
-  // Configured routing may target any well-formed family, including custom families that
-  // extensions register with the shared SearchRouter (for example `searxng`). The closed
-  // built-in list still governs the UI picker and tool-schema provider values.
   const providers = normalizeProviderFamilyList(
     raw.providers,
     `searchRouting.providers in ${CONFIG_PATH}`,
@@ -255,7 +252,6 @@ export interface FullSearchOptions extends SearchOptions {
   responseLength?: "short" | "medium" | "long";
   searchContextSize?: "low" | "medium" | "high";
   requiredCapabilities?: SearchCapability[];
-  /** Backend-specific options forwarded verbatim to the canonical search request. */
   providerOptions?: Readonly<Record<string, JsonRecord>>;
 }
 

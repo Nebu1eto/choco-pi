@@ -14,7 +14,6 @@ function commandIo(ctx: ExtensionCommandContext): StopCommandIo {
   };
 }
 
-/** /stop and /resume-work: one session-scoped epoch latch honoured by every participant. */
 export default function stopControl(pi: ExtensionAPI): void {
   const controller: StopController = createStopController({
     events: pi.events,

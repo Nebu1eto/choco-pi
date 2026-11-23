@@ -1,40 +1,5 @@
 import { assignOptionalProperties } from "./optional-properties.ts";
 import { isFiniteNumber } from "./runtime-guards.ts";
-/**
- * Project Report (#773) — the top of the discovery funnel: `project_report` →
- * `module_report` → `read_symbol`. Answers "orient me in this project" from
- * data the review graph already computes, so no line of output exists unless
- * it changes which file the calling agent opens next (no vanity metrics —
- * no file counts, LOC averages, language breakdowns as their own section).
- *
- * READ-ONLY over the cached review graph, mirroring module_report's #256
- * no-build contract: this tool's product IS the graph, so a cold cache kicks
- * off a single bounded background build (deduped per cwd, fire-and-forget)
- * and returns `available: false` with an actionable retry hint — the same
- * shape symbol_search's cold word-index path uses (clients/lsp-engine.ts).
- * The call never blocks on a build.
- *
- * Six sections, each capped and ranked worst/most-important first:
- *  1. trust     — graph freshness + coverage + edge-resolution-quality mix.
- *  2. hubs      — top fan-in files (the repo's contract surface).
- *  3. entryPoints — near-zero fan-in, high fan-out files (activation/CLI/mains).
- *  4. subsystems — directory-level import graph: cycles + layering violations.
- *  5. riskHotspots — fan-in × max per-symbol cyclomatic complexity.
- *  6. deadWeight — zero-importer files that aren't entry points (low-confidence
- *     — shipped with an explicit disclaimer; dynamic imports/runtime
- *     registration/test-only reachability all produce false positives here).
- *
- * Non-goals (v1, refs #773): no per-symbol detail (module_report's job), no
- * delta/"since ref" mode (needs git integration — a follow-up), no prose
- * summarization (structural facts only; the calling agent composes its own
- * narrative). Middle-man detection is NOT surfaced here: the review graph
- * does not currently persist that signal on symbol nodes (module_report
- * computes it per-file, on demand, from raw file content — see
- * middle-man-analysis.ts) and re-deriving it project-wide would mean
- * re-reading and re-scanning every class-bearing file on this read-only,
- * never-blocks path. A follow-up could have the builder persist the signal
- * into symbol-node metadata so this path can read it for free.
- */
 
 import * as path from "node:path";
 import { normalizeMapKey, toProjectRelativePath } from "./path-utils.ts";
@@ -52,52 +17,26 @@ type ComputeEntryPointsResultContract = {
 type ComputeDeadWeightResultContract = { files: DeadWeightFile[]; disclaimer: string };
 
 export interface ProjectReportOptions {
-  /** Scales every ranked list's cap (default 10). A single knob, per #773's
-   * mechanics — no per-section limit params. */
   limit?: number;
-  /** Optional task hint used only to re-rank sections toward relevant
-   * subsystems; never expands scope or triggers scans. The project-level
-   * analogue of module_report's `focus`-ranked recommendedReads. */
   focus?: string;
-  /** Rendering instruction only (mirrors module_report's `view`): "compact"
-   * signals the caller to use `renderCompactProjectReport` instead of JSON.
-   * The computed data is identical either way. */
   view?: "compact";
 }
 
 export interface ProjectReportTrust {
   graphBuiltAt: string;
-  /** Files with a node in the cached graph. */
   filesCovered: number;
-  /** Project source-file count from the persisted project snapshot (#773:
-   * reuses that existing file-count source rather than a new tree walk).
-   * Equal to `filesCovered` when no snapshot exists yet (honest fallback,
-   * not a claim of full coverage). */
   filesTotal: number;
-  /** filesCovered / filesTotal, clamped to [0, 1]. */
   coverage: number;
-  /** Fraction of resolution-tagged calls/references edges in each tier.
-   * Edges without a `resolution` tag (imports/contains/defines, or an
-   * unambiguous external call) are excluded from the denominator. */
   resolution: {
     exact: number;
     import: number;
     receiverType: number;
     nameOnly: number;
-    /** Count backing the fractions above — 0 means no resolution-tagged
-     * edges exist yet (e.g. a graph with no jsts files). */
     sampleSize: number;
   };
-  /** True when the graph is older than a "trust this without a refresh"
-   * threshold. */
   stale: boolean;
-  /** True when coverage is low enough that whole subsystems may be
-   * invisible to every other section below. */
   lowCoverage: boolean;
-  /** Exact element coverage when persistence capped this on-disk graph. */
   persistCoverage?: ReviewGraph["persistCoverage"];
-  /** Human-readable call-outs for the two flags above — always non-empty
-   * when `stale` or `lowCoverage` is true (#773: "must say so explicitly"). */
   notes: string[];
 }
 
@@ -109,7 +48,6 @@ export interface ProjectReportHub extends ProjectReportFileRef {
   file: string;
   fanIn: number;
   blastRadius: number;
-  /** Comma-joined most-imported exported symbol names, when known. */
   role?: string;
 }
 
@@ -131,22 +69,16 @@ export interface DirectoryCycle {
 }
 
 export interface LayeringViolation {
-  /** The minority (against-the-grain) direction. */
   from: string;
   to: string;
   count: number;
-  /** Edge count in the dominant (majority) direction for the same pair. */
   dominantCount: number;
 }
 
 export interface SubsystemMap {
   directories: string[];
   edges: DirectoryEdge[];
-  /** Directory-level import cycles, worst-first (most edges among the
-   * cycle's members). */
   cycles: DirectoryCycle[];
-  /** Edges running against the dominant direction for their directory pair
-   * — layering violations, worst-first. */
   violations: LayeringViolation[];
 }
 
@@ -154,7 +86,6 @@ export interface RiskHotspot extends ProjectReportFileRef {
   file: string;
   fanIn: number;
   maxComplexity: number;
-  /** fanIn * maxComplexity — the ranking key. */
   score: number;
 }
 
@@ -163,13 +94,8 @@ export interface DeadWeightFile extends ProjectReportFileRef {
 }
 
 export interface ProjectReport {
-  /** False on a cold cache (no graph yet) or an unreadable project root. */
   available: boolean;
-  /** Actionable guidance when `available` is false: a background build was
-   * kicked off (deduped per cwd), never blocking this call. */
   hint?: string;
-  /** Most recent background/build attempt, including terminal skip/failure
-   * reasons so a cold report never masquerades as perpetual progress. */
   lastBuildAttempt?: {
     when: string;
     outcome: "running" | "succeeded" | "skipped" | "failed";
@@ -183,16 +109,12 @@ export interface ProjectReport {
   riskHotspots?: RiskHotspot[];
   deadWeight?: {
     files: DeadWeightFile[];
-    /** Always present alongside `files` (#773: "ALWAYS include the
-     * low-confidence disclaimer line"), even when the list is empty, so a
-     * caller who inspects only `deadWeight.files.length === 0` still saw
-     * the caveat travel with the section. */
     disclaimer: string;
   };
 }
 
 const DEFAULT_LIMIT = 10;
-const STALE_THRESHOLD_MS = 15 * 60_000; // 15 minutes
+const STALE_THRESHOLD_MS = 15 * 60_000;
 const LOW_COVERAGE_THRESHOLD = 0.8;
 const DEAD_WEIGHT_DISCLAIMER =
   "Low confidence: dynamic imports, runtime registration, and test-only " +
@@ -203,20 +125,10 @@ function clampLimit(limit: number | undefined): number {
   return Math.max(1, Math.floor(limit ?? DEFAULT_LIMIT));
 }
 
-// Same display-path convention as module-report.ts's toDisplayPath: cwd-relative
-// + forward-slashed under the project root, else the absolute (slash-normalized)
-// path. Delegates to the shape-aware toProjectRelativePath (#1163/#1194) instead
-// of hand-rolling with host-default path.isAbsolute/path.relative, which
-// mis-parses a Windows-shaped path (e.g. a persisted graph symbol-key path) on
-// Linux CI: path.isAbsolute("C:\\repo\\x.ts") is false there, short-circuiting
-// to the raw absolute path instead of relativizing (#1024 divergence class).
 function toDisplayPath(p: string, projectRoot: string): string {
   return toProjectRelativePath(p, projectRoot);
 }
 
-/** Test-only export (refs #1194) so the shape-aware delegation can be verified
- * directly without standing up a full review graph — mirrors the
- * `_reset*ForTests` underscore convention used elsewhere in this file. */
 export function _toDisplayPathForTests(p: string, projectRoot: string): string {
   return toDisplayPath(p, projectRoot);
 }
@@ -224,12 +136,6 @@ export function _toDisplayPathForTests(p: string, projectRoot: string): string {
 function suggestedNext(displayPath: string): SuggestedNextResultContract {
   return { tool: "module_report", path: displayPath };
 }
-
-// --- focus re-ranking (module_report's normalizeFocus/focusScore pattern) ----
-// Duplicated rather than imported: module-report.ts doesn't export these, and
-// the two token sets are scored slightly differently downstream (whole
-// section rankings here vs per-symbol/per-callback there), so a shared export
-// would be a false abstraction for two call sites.
 
 function normalizeFocus(focus: string | undefined): string[] {
   return (focus ?? "")
@@ -246,12 +152,8 @@ function focusScore(text: string, terms: string[]): number {
   return terms.reduce((score, term) => score + (haystack.includes(term) ? 6 : 0), 0);
 }
 
-// --- file-level fan-in/fan-out over internal "imports" edges -----------------
-
 interface FileDegrees {
-  /** fileNodeId -> set of importer fileNodeIds. */
   fanIn: Map<string, Set<string>>;
-  /** fileNodeId -> set of imported fileNodeIds. */
   fanOut: Map<string, Set<string>>;
 }
 
@@ -264,7 +166,7 @@ function buildFileDegrees(graph: ReviewGraph): FileDegrees {
     const fromNode = graph.nodes.get(edge.from);
     const toNode = graph.nodes.get(edge.to);
     if (!fromNode || fromNode.kind !== "file") continue;
-    if (!toNode || toNode.kind !== "file") continue; // internal files only
+    if (!toNode || toNode.kind !== "file") continue;
     let outSet = fanOut.get(edge.from);
     if (!outSet) {
       outSet = new Set();
@@ -280,8 +182,6 @@ function buildFileDegrees(graph: ReviewGraph): FileDegrees {
   }
   return { fanIn, fanOut };
 }
-
-// --- section 1: trust header --------------------------------------------------
 
 function computeTrust(graph: ReviewGraph, cwd: string): ProjectReportTrust {
   const filesCovered = graph.fileNodes.size;
@@ -368,8 +268,6 @@ function computeTrust(graph: ReviewGraph, cwd: string): ProjectReportTrust {
   };
 }
 
-// --- section 2: hubs -----------------------------------------------------------
-
 function roleFor(graph: ReviewGraph, filePath: string): string | undefined {
   const symbolIds = graph.symbolNodesByFile.get(filePath) ?? [];
   const scored: Array<{ name: string; refs: number }> = [];
@@ -421,8 +319,6 @@ async function computeHubs(
   });
 }
 
-// --- section 3: entry points ---------------------------------------------------
-
 function computeEntryPoints(
   graph: ReviewGraph,
   degrees: FileDegrees,
@@ -443,9 +339,6 @@ function computeEntryPoints(
       return b.fanOut - a.fanOut || a.filePath.localeCompare(b.filePath);
     });
 
-  // The exclusion set for dead weight is UNCAPPED (#773: "zero-importer files
-  // that aren't entry points") — an entry-point-like file past the display
-  // cap must not be reclassified as suspected dead weight.
   const entryPointFiles = new Set(candidates.map((c) => c.filePath));
   const entryPoints = candidates.slice(0, limit).map((f) => {
     const display = toDisplayPath(f.filePath, cwd);
@@ -460,12 +353,6 @@ function computeEntryPoints(
   return { entryPoints, entryPointFiles };
 }
 
-// --- section 4: subsystem map (directory-level aggregation) -------------------
-
-// Depth heuristic (#773): first path segment under the project root by
-// default; collapse to a deeper (two-segment) cluster only for files under a
-// segment that dominates the covered file set (so a monorepo's one giant
-// top-level dir still gets useful sub-clustering instead of one blob node).
 const DOMINANCE_THRESHOLD = 0.4;
 
 function directoryClusters(filePaths: string[], cwd: string): Map<string, string> {
@@ -501,8 +388,6 @@ function directoryClusters(filePaths: string[], cwd: string): Map<string, string
   return clusterOf;
 }
 
-// Tarjan SCC over the (small, directory-granularity) cluster graph — finds
-// every strongly-connected component, i.e. every directory-level import cycle.
 function tarjanSCCs(nodes: string[], adjacency: Map<string, Set<string>>): string[][] {
   let index = 0;
   const indices = new Map<string, number>();
@@ -552,7 +437,7 @@ function computeSubsystems(graph: ReviewGraph, cwd: string, limit: number): Subs
     if (cluster) fileNodeIdToCluster.set(nodeId, cluster);
   }
 
-  const edgeCounts = new Map<string, number>(); // "from|to" -> count
+  const edgeCounts = new Map<string, number>();
   for (const edge of graph.edges) {
     if (edge.kind !== "imports") continue;
     const fromCluster = fileNodeIdToCluster.get(edge.from);
@@ -570,9 +455,6 @@ function computeSubsystems(graph: ReviewGraph, cwd: string, limit: number): Subs
     })
     .sort((a, b) => b.count - a.count || a.from.localeCompare(b.from));
 
-  // Layering violations: for each unordered pair with edges both ways, the
-  // minority direction is the violation candidate (#773). Ties (equal counts,
-  // genuinely ambiguous "dominant direction") are skipped rather than guessed.
   const seenPairs = new Set<string>();
   const violations: LayeringViolation[] = [];
   for (const edge of edges) {
@@ -625,8 +507,6 @@ function computeSubsystems(graph: ReviewGraph, cwd: string, limit: number): Subs
   };
 }
 
-// --- section 5: risk hotspots ---------------------------------------------------
-
 function computeRiskHotspots(
   graph: ReviewGraph,
   degrees: FileDegrees,
@@ -668,8 +548,6 @@ function computeRiskHotspots(
   });
 }
 
-// --- section 6: suspected dead weight --------------------------------------------
-
 function computeDeadWeight(
   graph: ReviewGraph,
   degrees: FileDegrees,
@@ -687,8 +565,6 @@ function computeDeadWeight(
       filePath,
       fanOut: degrees.fanOut.get(fileNodeId)?.size ?? 0,
     }))
-    // Truly-isolated files (zero fan-in AND zero fan-out) first — the
-    // highest-confidence dead weight — then rising fan-out.
     .sort((a, b) => a.fanOut - b.fanOut || a.filePath.localeCompare(b.filePath))
     .slice(0, limit);
 
@@ -701,11 +577,8 @@ function computeDeadWeight(
   };
 }
 
-// --- cold-path background build (mirrors word-index.ts's #348 pattern) --------
-
 const inFlightGraphBuilds = new Set<string>();
 
-/** Test-only: reset the in-flight-build guard between test files/cases. */
 export function _resetProjectReportBuildGuardForTests(): void {
   inFlightGraphBuilds.clear();
 }
@@ -720,7 +593,6 @@ function triggerBackgroundGraphBuild(cwd: string): boolean {
       const { FactStore } = await import("./dispatch/fact-store.ts");
       await buildOrUpdateGraph(key, [], new FactStore());
     } catch {
-      // buildOrUpdateGraph records the durable failure and surfaced status.
     } finally {
       inFlightGraphBuilds.delete(key);
     }
@@ -728,13 +600,6 @@ function triggerBackgroundGraphBuild(cwd: string): boolean {
   return true;
 }
 
-// --- entry point ---------------------------------------------------------------
-
-/**
- * Project-level orientation report (#773), read-only over the cached review
- * graph. Returns `available: false` on a cold cache and kicks off a background
- * build (never blocking this call) — see module-level doc comment.
- */
 export async function projectReport(
   cwd: string,
   options?: ProjectReportOptions,
@@ -753,10 +618,6 @@ export async function projectReport(
   }
 
   if (!graph) {
-    // #782: a fresh size-skip verdict means the graph will never build at the
-    // CURRENT cap — retrying "shortly" is actively wrong guidance here, so
-    // this branches before the generic cold-cache hint (and skips kicking off
-    // another background build that would just re-hit the same cap).
     let sizeSkip: ReturnType<typeof getReviewGraphSizeSkipVerdict>;
     try {
       sizeSkip = getReviewGraphSizeSkipVerdict(cwd);
@@ -831,25 +692,15 @@ export async function projectReport(
   );
 }
 
-// --- compact (line-oriented text) rendering -------------------------------------
-
 function fmtPct(n: number): string {
   return `${Math.round(n * 100)}%`;
 }
 
-/**
- * Render a ProjectReport as line-oriented text (mirrors
- * renderCompactModuleReport's convention) — cheapest option, one line per
- * ranked item instead of a repeated-keys JSON object.
- */
 export function renderCompactProjectReport(report: ProjectReport): string {
   if (!report.available) {
     return `project_report — unavailable${report.hint ? `: ${report.hint}` : ""}`;
   }
   const lines: string[] = [];
-  // #919: an available graph whose persist failed serves this process fine
-  // but leaves the NEXT session cold — compact view must say so, not only
-  // the JSON view.
   if (report.lastBuildAttempt?.reason) {
     lines.push(`! build: ${report.lastBuildAttempt.reason}`);
   }

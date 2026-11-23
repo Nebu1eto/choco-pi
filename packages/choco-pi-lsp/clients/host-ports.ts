@@ -1,5 +1,3 @@
-/** Host-neutral capabilities available to the choco-pi-lsp engine (#1358 S2). */
-
 import type { ExtensionLogEntry } from "./extension-log.ts";
 import type { ExtensionRunMode } from "./extension-mode.ts";
 import type { ProjectTrustState } from "./project-trust.ts";
@@ -33,13 +31,6 @@ export interface HostPorts {
     sink(subsystem: string): HostLogSink;
   };
   readonly emit: {
-    /**
-     * Every `pi.events` publish, including the `choco-pi-lsp/*` producer family
-     * (clients/lsp-events.ts). A separate `.lens` port existed briefly but
-     * was never wired to anything but this same `emit` function — removed
-     * as vestigial (#1415 review) rather than kept as a distinction with no
-     * behavioral difference.
-     */
     bus<T>(channel: string, payload: T): void;
   };
   readonly status: {
@@ -73,11 +64,6 @@ export type HostPortsOverrides = {
   [K in keyof HostPorts]?: Partial<HostPorts[K]>;
 };
 
-/**
- * Headless/test implementation. Its feature-detection defaults deliberately
- * match the pre-ports absent-host paths: unknown trust/mode, fail-open spawn,
- * and no-op delivery surfaces.
- */
 export function createDefaultHostPorts(overrides: HostPortsOverrides = {}): HostPorts {
   const unknownMode = (): ExtensionRunMode => "unknown";
   const defaults: HostPorts = {

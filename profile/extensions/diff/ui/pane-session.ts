@@ -1,4 +1,3 @@
-/** The live `/diff` session: creating and shutting it down, its store and preferences, and where its messages go. */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { DiffSource, DiffStore } from "../../lib/changes/git/model.ts";
 import { sanitizeTerminalText } from "../../lib/changes/terminal-text.ts";
@@ -91,8 +90,6 @@ export function ensureStore(pane: DiffPaneController, session: Session): DiffSto
   session.store = store;
   session.unsubscribeStore = store.subscribe((update) => {
     if (!session.alive) return;
-    // A poll can list a new prompt's edits before any event names them. Following
-    // changes the source, and `update` is then older than what the store holds.
     const generation = session.sourceGeneration;
     followTurn(pane, session);
     const state = generation === session.sourceGeneration ? update : store.getState();
@@ -112,8 +109,6 @@ export function ensureStore(pane: DiffPaneController, session: Session): DiffSto
   return store;
 }
 
-/* ------------------------------------------------------ messages */
-
 export function say(
   pane: DiffPaneController,
   session: Session,
@@ -131,11 +126,6 @@ export function say(
   }
 }
 
-/**
- * Confirm a source switch. The open pane names its source on the header's
- * border, so there it only clears an older message (an earlier failure
- * would otherwise stay up); a closed pane gets a notice.
- */
 export function saySource(pane: DiffPaneController, session: Session, source: DiffSource): void {
   if (session.view && session.host) {
     session.view.clearMessage();
@@ -145,11 +135,6 @@ export function saySource(pane: DiffPaneController, session: Session, source: Di
   }
 }
 
-/**
- * Show a failure of work nothing awaits: in the open pane, else as a notice.
- * Silent once the session ended or its context went stale. Never throws, so
- * it is safe as the last handler of a fire-and-forget promise.
- */
 export function reportFailure(
   pane: DiffPaneController,
   session: Session,
@@ -161,16 +146,12 @@ export function reportFailure(
     say(pane, session, text, "error");
   } catch (failure) {
     if (isStaleContextError(failure) || !session.view || !session.host) return;
-    // The pane could not show it: try a notice instead.
     try {
       session.ctx.ui.notify(sanitizeTerminalText(text), "warning");
-    } catch {
-      // Neither the pane nor a notice can show it; there is nowhere left to report it.
-    }
+    } catch {}
   }
 }
 
-/** Give keyboard focus back to the prompt editor without arming double-Esc close. */
 export function returnToEditor(pane: DiffPaneController, session: Session): void {
   if (session.host?.isFocused()) session.host.unfocus();
 }
@@ -180,8 +161,6 @@ export function insertIntoEditor(pane: DiffPaneController, session: Session, tex
   ui.setEditorText(appendToEditor(ui.getEditorText(), text));
   returnToEditor(pane, session);
 }
-
-/* ------------------------------------------------- review records */
 
 export function shutdown(pane: DiffPaneController, session: Session): void {
   session.alive = false;

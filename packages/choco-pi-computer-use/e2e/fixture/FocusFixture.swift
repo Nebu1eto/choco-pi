@@ -1,13 +1,3 @@
-// Disposable tier-B E2E fixture: one AppKit binary, two bundles.
-//
-// - com.choco-pi.FocusFixture ("CU Fixture Target"): text field "Field", button "Increment" with a
-//   visible counter, and "Custom View" (AX group, mouseDown counter, no AXPress).
-// - com.choco-pi.FocusHolder ("CU Focus Holder"): one text field; the stand-in for the user's app.
-//   It activates itself once at launch. The target never activates itself.
-//
-// Both append JSON lines to $CU_FIXTURE_LOG. Quit on SIGTERM or when `.cu-quit` appears next to
-// the log. The target resizes and moves its window when `.cu-resize` appears there (or on SIGUSR1).
-// No network, no documents, no autosave, no user defaults are written.
 
 import AppKit
 import Foundation
@@ -62,7 +52,6 @@ func frameFields(_ frame: NSRect) -> [String: Any] {
 	["x": frame.origin.x, "y": frame.origin.y, "width": frame.size.width, "height": frame.size.height]
 }
 
-/// Mouse target without an accessibility press action: only a real mouseDown increments it.
 final class CustomView: NSView {
 	var hits = 0
 	var onHit: ((Int) -> Void)?
@@ -148,8 +137,6 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 			let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
 			log.write("frontmost", ["bundleId": app?.bundleIdentifier ?? "", "frontPid": Int(app?.processIdentifier ?? 0)])
 		}
-		// Only the holder logs keystrokes: it must never receive any. Target typing is
-		// recorded as fieldValue changes.
 		if isHolder {
 			NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
 				log.write("keyDown", ["keyCode": Int(event.keyCode)])
@@ -171,8 +158,6 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 
 		if isHolder {
 			window.makeKeyAndOrderFront(nil)
-			// The only activation either app performs: the holder stands in for the user's
-			// frontmost app. The target never activates itself.
 			NSApp.activate(ignoringOtherApps: true)
 		} else {
 			window.orderFrontRegardless()

@@ -99,10 +99,6 @@ function isConfiguredCustomTool(tool: CodeModeToolDefinition): tool is CustomToo
   return "command" in tool;
 }
 
-/**
- * `name({a, b?})` from a bridged tool's input schema (required names then `…` past six
- * properties), or the bare name when the schema is opaque.
- */
 function bridgedToolCall(tool: CodeModeToolDefinition): string {
   if (isConfiguredCustomTool(tool)) return tool.name;
   const schema = isBoundaryValue(tool.inputSchema) ? tool.inputSchema : undefined;

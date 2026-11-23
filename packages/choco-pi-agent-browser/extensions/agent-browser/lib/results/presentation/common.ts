@@ -56,8 +56,6 @@ export function getStringField<Value>(
   return hasRuntimeType(value, "string") && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-// `lifecycle` is upstream launch/reuse bookkeeping, never page content, so it must not be the
-// answer an agent reads when a command has no dedicated presenter.
 export function omitUpstreamLifecycle<Value>(data: Record<string, Value>) {
   const { lifecycle: _lifecycle, ...rest } = data;
   return rest;

@@ -90,7 +90,6 @@ async function captureSse() {
     new Response(text, { status: 200, headers: { "Content-Type": "text/event-stream" } });
 }
 
-/** Fallback catalog with the captured model enum on gemini-3.8-flash, as a refreshed one has. */
 function catalogWithEnum(): AntigravityCatalog {
   return {
     ...FALLBACK_CATALOG,
@@ -133,8 +132,6 @@ describe("streamGenerateContent request", () => {
     const comparable = (paths: string[]) => paths.filter((path) => !path.startsWith(declarations));
     assert.deepEqual(comparable(keyPaths(sent, 4)), comparable(keyPaths(capture, 4)));
     assert.deepEqual(keysAt(sent, "request", "labels"), keysAt(capture, "request", "labels"));
-    // Deliberate divergence: Gemini tools use JSON Schema (parametersJsonSchema), not agy's
-    // OpenAPI "parameters"; see docs/transport.md.
     assert.deepEqual(keysAt(sent, "request", "tools", 0, "functionDeclarations", 0), [
       "description",
       "name",
@@ -298,7 +295,6 @@ describe("streamGenerateContent request", () => {
     const off = ["gemini-3.8-flash-low", { includeThoughts: false, thinkingLevel: "LOW" }];
     assert.deepEqual(await run({ thinking: { enabled: false } }), off);
     assert.deepEqual(await run({}), off);
-    // xhigh is not advertised for this model; Pi's clamp picks the nearest supported level.
     assert.deepEqual(await run({ reasoning: "xhigh" }), [
       "gemini-3.8-flash-high",
       { includeThoughts: true, thinkingLevel: "HIGH" },
@@ -327,8 +323,6 @@ describe("streamGenerateContent request", () => {
   it("sends Claude tools as JSON Schema, unions included, with explicit tool-call ids", async () => {
     const respond = await captureSse();
     const fake = fakeFetch(respond);
-    // The agent_browser shape that Claude rejected through the OpenAPI "parameters" field:
-    // an anyOf of objects discriminated by const.
     const unionTool: Tool = {
       name: "browse",
       description: "Browse.",
@@ -480,7 +474,6 @@ describe("generationConfig matches agy 1.5.14", () => {
         thinkingConfig: { includeThoughts: true, thinkingLevel: 100 },
       },
     });
-    // Pi's max clamps down to the highest advertised level, xhigh.
     assert.deepEqual(await generationConfig("gemini-4-neon", { reasoning: "max" }), {
       model: "gemini-4-neon-xhigh",
       config: {
@@ -495,7 +488,6 @@ describe("generationConfig matches agy 1.5.14", () => {
         thinkingConfig: { includeThoughts: true, thinkingLevel: "HIGH" },
       },
     });
-    // A model without xhigh clamps to HIGH.
     assert.deepEqual(await generationConfig("claude-sonnet-5-5", { reasoning: "xhigh" }), {
       model: "claude-sonnet-5-5-high",
       config: {

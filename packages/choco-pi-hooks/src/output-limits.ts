@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import type { MergedHookResult } from "./types.ts";
 
-/** Claude Code's cap on one hook string; longer text is saved to a file with a preview. */
 export const HOOK_TEXT_LIMIT = 10_000;
 const PREVIEW_LENGTH = 2_000;
 
@@ -12,7 +11,6 @@ export function hookOutputDirectory(sessionId: string): string {
   return path.join(os.tmpdir(), "choco-pi-hooks", sessionId.replaceAll(/[^A-Za-z0-9_-]/g, "_"));
 }
 
-/** Context Claude receives inside a system reminder cannot open or close one. */
 export function escapeSystemReminder(text: string): string {
   return text.replace(/<(\/?system-reminder)/g, "&lt;$1");
 }
@@ -25,10 +23,6 @@ async function limitText(text: string, directory: string): Promise<string> {
   return `Hook output exceeded ${HOOK_TEXT_LIMIT} characters and was saved to ${file}. Preview:\n${text.slice(0, PREVIEW_LENGTH)}`;
 }
 
-/**
- * Apply the per-string cap to `additionalContext` (including plain stdout),
- * `systemMessage`, and `initialUserMessage`, and escape reminder tags in context.
- */
 export async function limitHookResult(
   result: MergedHookResult,
   directory: string,

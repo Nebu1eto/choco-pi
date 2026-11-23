@@ -257,10 +257,6 @@ const stopSchema = obj(
 const listSchema = obj({}, { open: false });
 
 export default function shellsExtension(pi: ExtensionAPI): void {
-  // Child identity latches one way: the async-context marker is checked at load, and the
-  // subagents registry is probed for every session id this activation observes. The
-  // registry drops a child id before its session_shutdown, so the latch must already be
-  // set by session_start; a child must never be treated as the process-singleton owner.
   const loadedInChildContext = inChildSessionContext();
   let isChildActivation = loadedInChildContext;
   const isChildSession = (sessionId: string): boolean => {
@@ -283,10 +279,8 @@ export default function shellsExtension(pi: ExtensionAPI): void {
   let rootUI: ShellsUICtx | undefined;
   let currentSessionId: string | undefined;
   let shuttingDown = false;
-  // Stop epoch each root-owned shell was authorised in; completions from an older epoch never trigger a turn.
   const shellStartEpochs = new Map<string, number>();
   let unsubscribeStopShells: (() => void) | undefined;
-  /** Completion notifications sent by this activation; the print-mode settle wait watches it. */
   let completionDeliveries = 0;
 
   const flushCompletions = (completed: ShellResult[]): void => {
@@ -320,9 +314,6 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       );
       completionDeliveries += 1;
     } catch (error) {
-      // Session replacement or reload can stale this ctx without session_shutdown
-      // firing before the debounced timer. Contain only the canonical stale-context
-      // error and stop scheduling flushes for the dead runtime; rethrow the rest.
       // SAFETY: catch produces unknown; the helper narrows via instanceof before reading the message.
       if (!isStaleContextError(error as RuntimeValue)) throw error;
       shuttingDown = true;
@@ -347,8 +338,6 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     notificationGate.enqueue(event.shell);
   });
 
-  // Lifecycle events stay attached through quit/child cleanup so stop transitions
-  // are still published; they detach synchronously on every other shutdown path.
   let lifecycleEventsActive = true;
   const emitLifecycle = (kind: ShellLifecycleKind, payload: ShellLifecyclePayload): void => {
     if (!lifecycleEventsActive) return;
@@ -360,8 +349,6 @@ export default function shellsExtension(pi: ExtensionAPI): void {
         detachLifecycle();
         return;
       }
-      // ShellManager swallows listener exceptions so its lifecycle cannot be
-      // interrupted; rethrow unrelated failures outside that boundary instead.
       queueMicrotask(() => {
         throw error;
       });
@@ -432,8 +419,6 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     }
   };
 
-  // Revocation and the acknowledgement run synchronously inside the handler; only the
-  // settled/failed report waits for the SIGTERM/SIGKILL escalation to finish.
   const handleStopShells = (payload: StopShellsRequest): void => {
     const requesterId = currentSessionId;
     if (shuttingDown || isChildActivation || requesterId === undefined) return;
@@ -445,7 +430,6 @@ export default function shellsExtension(pi: ExtensionAPI): void {
         if (shell.state === "running") targets.push(shell.shellId);
       }
     }
-    // Admin stop keeps output readable; cleanupOwner/dispose would drop the owner's records.
     const stops = targets.map((shellId) => manager.stop({ requesterId, isAdmin: true, shellId }));
     emitStopReport({
       requestId,
@@ -504,8 +488,6 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     notificationGate.turnEnd();
   });
 
-  // Print and JSON mode exit when the last prompt settles; hold the settle until this root's
-  // background shells deliver their completion so the announced follow-up turn can run.
   pi.on("agent_before_settle", async (_event, ctx) => {
     if (ctx.mode !== "print" && ctx.mode !== "json") return;
     const ownerId = currentSessionId;
@@ -567,7 +549,6 @@ export default function shellsExtension(pi: ExtensionAPI): void {
             env: scratchEnv(ownerId),
           });
           if (startState !== undefined) shellStartEpochs.set(started.shellId, startState.epoch);
-          // Warn mode: the process already runs; the agent learns where scratch files belong.
           const warnings = await scratchWarner.check({
             sessionId: ownerId,
             toolName: "shell_start",
@@ -711,11 +692,9 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     unsubscribeStopShells?.();
     unsubscribeStopShells = undefined;
     shellStartEpochs.clear();
-    // Snapshot identity before any await; this activation is already invalidated above.
     const shutdownSessionId = currentSessionId ?? ctx.sessionManager.getSessionId();
 
     if (isChildSession(shutdownSessionId)) {
-      // A child quit releases only its own shells; the shared manager stays with root.
       const ownerId = shutdownSessionId;
       try {
         await manager.cleanupOwner(ownerId);
@@ -733,16 +712,10 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     rootSessionId = undefined;
 
     if (event.reason !== "quit") {
-      // Session replacement leaves shells running under the outgoing owner with no
-      // runtime to report them; reload keeps the same session id, so its new
-      // activation continues reporting and nothing is lost.
       if (event.reason !== "reload") emitLostForOwner(currentSessionId);
       detachLifecycle();
       return;
     }
-    // Only the root activation whose manager still occupies the process-wide slot owns
-    // teardown. Release the slot synchronously before awaiting so an activation created
-    // during disposal builds a fresh manager and is never torn down by this one.
     if (registry[MANAGER_KEY] !== manager) {
       detachLifecycle();
       return;

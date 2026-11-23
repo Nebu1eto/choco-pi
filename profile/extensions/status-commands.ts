@@ -169,9 +169,6 @@ function overrideSessionCommand(): void {
   const run = prototype.run;
   prototype.run = function captureStatusHost(this: SessionCommandHost): Promise<void> {
     // SAFETY: `run` is InteractiveMode's public entry point (interactive-mode.d.ts), and
-    // AgentSession.cacheWarmingStatus / SettingsManager.getCacheWarmingMode are documented
-    // SDK properties that InteractiveMode's own /session handler reads. Capturing here
-    // records the live host once per interactive process, before any command is typed.
     setCacheWarmingSource(this);
     return run.call(this);
   };

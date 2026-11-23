@@ -75,7 +75,6 @@ test("cancelled headless target selection notifies without reading a diff", asyn
   const notifications: Array<{ message: string; type?: string }> = [];
   let diffReads = 0;
 
-  // Hosts bound elicitation; the presenter intentionally adds no picker timeout.
   await presentHeadlessReview({
     request: { action: "pick" },
     cwd: root,
@@ -265,7 +264,6 @@ test("targets that end at the working tree are titled with the working tree", ()
       assessments: assessDiff(patchModel(), config),
       savedReviews: [],
     }).title;
-  // Regression: uncommitted changes were titled "HEAD…HEAD".
   assert.equal(
     titleOf({ kind: "branch", base: "HEAD" }),
     "Review: uncommitted changes (HEAD → working tree)",

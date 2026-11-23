@@ -1,9 +1,3 @@
-/**
- * A child's Fable-only usage limit (Anthropic's Fable weekly window, which
- * covers the Claude Fable and Claude Mythos series) closes only those models:
- * Opus and the provider's other models keep spawning, and refusals name the
- * refused model and what the limit covers.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -103,13 +97,11 @@ test("a child's Fable limit closes Fable and Mythos only; Opus still spawns", as
       /claude-fable\*, claude-mythos\* only; other models stay available/,
     );
 
-    // Opus, the context's default model, is unaffected.
     assert.equal(manager.isProviderAvailable("anthropic", env.owner, "claude-opus-4-5"), true);
     assert.equal(manager.isProviderAvailable("anthropic", env.owner), true);
     manager.spawn(env.pi, env.context(), "implementer", "on opus", background);
     assert.equal(runs.length, 2);
 
-    // Fable and Mythos are refused with a model-level message the workflow parser reads.
     for (const model of [fable, mythos]) {
       assert.equal(manager.isProviderAvailable("anthropic", env.owner, model.id), false);
       let message = "";
@@ -256,7 +248,6 @@ test("without live usage data, a Fable 429 blocks only Fable; Opus keeps spawnin
     generation: 1,
     readPreference: async () => "auto-resume",
     fallbacks: { tiers: {}, lastResort: [] },
-    // The usage endpoint cannot be read.
     usageSnapshot: async () => undefined,
   });
   const installed = installPolicyObject(policy, env.owner);
@@ -286,7 +277,6 @@ test("without live usage data, a Fable 429 blocks only Fable; Opus keeps spawnin
     manager.spawn(env.pi, env.context(), "implementer", "on opus", background);
     assert.equal(runs.length, 2, "Opus reaches the provider");
 
-    // Fable itself waits out its own failure.
     assert.throws(
       () =>
         manager.spawn(env.pi, env.context(), "implementer", "fable again", {
@@ -354,7 +344,6 @@ test("a policy-only exact closure refuses the model, not the provider, so workfl
     fallbacks: { tiers: {}, lastResort: [] },
     usageSnapshot: async () => undefined,
   });
-  // The root wrote the closure (no usage data); the manager holds no copy.
   policy.closeProvider("anthropic", "default", Date.now() + DAY, {
     name: "unconfirmed",
     models: ["claude-fable-5-2"],
@@ -407,7 +396,7 @@ test("a closure a success removed during the re-check is not recreated by its re
     };
     closeUntil(key, until);
     const pending = manager.refreshProviderBlock("anthropic", env.owner, "claude-fable-5-2");
-    clearUsageLimitClosure(key); // a Fable request succeeded meanwhile
+    clearUsageLimitClosure(key);
     release({ open: false, until });
     await pending;
     assert.equal(manager.isProviderAvailable("anthropic", env.owner, "claude-fable-5-2"), true);

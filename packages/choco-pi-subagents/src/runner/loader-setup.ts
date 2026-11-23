@@ -1,7 +1,3 @@
-/**
- * loader-setup.ts — Resource loader preparation, prompt/model/session creation, and extension binding.
- */
-
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -97,46 +93,28 @@ interface ModelRegistryWithRuntime {
   runtime?: unknown;
 }
 
-/**
- * Custom session entry written once into every freshly created subagent
- * session. Part of the host contract (docs/waku-integration.md): hosts hide
- * sessions carrying it from user-facing session pickers.
- */
 export const SUBAGENT_SESSION_MARKER = "choco-pi:subagent";
-/** Records the scratch directory a child last ran under, so a revived or resumed child learns of a change. */
 export const SUBAGENT_SCRATCH_ENTRY = "choco-pi:scratch";
 
-/** Info about a tool event in the subagent. */
 export interface ToolActivity {
   type: "start" | "end";
   toolName: string;
 }
 
 export interface MainSessionFork {
-  /** In-memory clone of the main session's active branch. */
   sessionManager: SessionManager;
-  /** Effective main-agent system prompt captured at /btw submission time. */
   systemPrompt: string;
-  /** Main-agent runtime identity captured with the branch. */
   model: Model<Api> | undefined;
   thinkingLevel: ThinkingLevel | undefined;
-  /**
-   * Wall-clock fork time. Every inherited message predates it, so viewers use
-   * it to start the side transcript at the /btw question.
-   */
   capturedAt: number;
 }
 
 export interface RunOptions {
-  /** Synchronous, generation-pinned check before a tool-free turn may finish. */
   onFinishAttempt?: () => { steer?: string; failure?: string } | undefined;
-  /** ExtensionAPI instance — used for pi.exec() instead of a blocking child process. */
   pi: ExtensionAPI;
-  /** Narrow loader-construction seam used by wiring probes before a child session is created. */
   createResourceLoader?: (
     loaderOptions: ConstructorParameters<typeof DefaultResourceLoader>[0],
   ) => DefaultResourceLoader;
-  /** Manager-assigned id; suffixes session name to disambiguate parallel spawns (e.g. `Explore#a1b2c3d4`). */
   agentId?: string;
   model?: Model<Api>;
   maxTurns?: number;
@@ -144,77 +122,28 @@ export interface RunOptions {
   isolated?: boolean;
   inheritContext?: boolean;
   thinkingLevel?: ThinkingLevel;
-  /** Genuine, non-persisted main-session fork used only by /btw. */
   mainSessionFork?: MainSessionFork;
-  /** Use only read/find/ls, load no extensions, and disable delegation. */
   readOnly?: boolean;
-  /**
-   * Reopen this pi session file rather than starting an empty conversation.
-   * `createAgentSession` seeds itself from whatever its SessionManager holds,
-   * so pointing it at an existing file rehydrates that agent's history and the
-   * prompt continues it. Everything else — tools, model, system prompt, turn
-   * caps — is still resolved from the agent type, so the continuation runs
-   * under the type's *current* definition, not the one the original run used.
-   */
   resumeSessionFile?: string;
-  /**
-   * True when another agent spawned this one. Nested handles form messaging
-   * paths but stay outside prompt mentions and tombstones. Their sessions
-   * persist like top-level ones (`rememberAgents`) so durable revival can
-   * reopen them; frontmatter `persist_session: false` still keeps one in memory.
-   */
   nested?: boolean;
-  /** Override working directory (e.g. for worktree isolation). */
   cwd?: string;
-  /**
-   * Directory the worktree copy was created from. Set only when `cwd` points
-   * into a worktree — the prompt then tells the agent to stay in the copy
-   * instead of following the inherited parent prompt back to the main tree.
-   */
   worktreeBase?: string;
-  /**
-   * Where .pi config is discovered (project extensions, skills, pi settings,
-   * agent memory). Default: same as the working directory. The manager sets
-   * this to the parent session's cwd when `SpawnOptions.cwd` points the
-   * working directory elsewhere — the agent works *there* but carries the
-   * parent project's config (the target's `.pi` extensions never execute).
-   *
-   * WARNING for future callers: if you pass `cwd` pointing at a directory the
-   * user didn't open, you almost certainly must pass `configCwd` too —
-   * omitting it makes the target's `.pi` extensions execute in this process.
-   * (Worktree isolation is the one intentional exception: its copy IS the
-   * parent's repo, so config resolving inside it is correct.)
-   */
   configCwd?: string;
-  /** Called on tool start/end with activity info. */
   onToolActivity?: (activity: ToolActivity) => void;
-  /** Called on streaming text deltas from the assistant response. */
   onTextDelta?: (delta: string, fullText: string) => void;
   onSessionCreated?: (session: AgentSession) => void;
-  /** Called at the end of each agentic turn with the cumulative count. */
   onTurnEnd?: (turnCount: number) => void;
-  /**
-   * Called once per assistant message_end with that message's usage delta.
-   * Lets callers maintain a lifetime accumulator that survives compaction
-   * (which replaces session.state.messages and resets stats-derived sums).
-   */
   onAssistantUsage?: (usage: { input: number; output: number; cacheWrite: number }) => void;
-  /**
-   * Called when the session successfully compacts. `tokensBefore` is upstream's
-   * pre-compaction context size estimate. Aborted compactions don't fire.
-   */
   onCompaction?: (info: {
     reason: "manual" | "threshold" | "overflow";
     tokensBefore: number;
   }) => void;
-  /** Runtime bridge for opt-in child-safe nested delegation. */
   nestedRuntime?: {
     manager: NestedAgentManager;
     parentAgentId: string;
     depth: number;
     maxSubagentDepth?: number;
   };
-  /** Accepted at spawn time; never read dynamically from the parent. */
   fastMode?: FastModeSnapshot;
   fastModeGeneration?: number;
   daybreak?: DaybreakSnapshot;
@@ -224,33 +153,17 @@ export interface RunOptions {
 export interface RunResult {
   responseText: string;
   session: AgentSession;
-  /** True if the agent was hard-aborted (max_turns + grace exceeded). */
   aborted: boolean;
-  /** True if the agent was steered to wrap up (hit soft turn limit) but finished in time. */
   steered: boolean;
-  /**
-   * A failure message for the run's FINAL assistant turn, when that turn failed:
-   * a provider error (stopReason "error"), or a "length" stop that produced no
-   * text (a silent max-token death). pi resolves an exhausted-retries failure
-   * normally instead of rejecting, so without this the manager would report such
-   * a run as completed — with an empty result, or worse, an earlier turn's text
-   * presented as the answer (#144). Undefined for a clean stop, or a "length"
-   * stop that produced text (a legitimate truncated answer).
-   */
   failure?: string;
 }
 
-/**
- * Unknown type fallback: the canonical general-purpose config under the
- * requested name (defensive — index.ts resolves unknown types before runAgent).
- */
 function fallbackAgentConfig(type: string): AgentConfig {
   const fallback = DEFAULT_AGENTS.get("general-purpose");
   if (!fallback) throw new Error(`No fallback config available for unknown type "${type}"`);
   return { ...fallback, name: type };
 }
 
-/** The parent's active tools, or none when the host cannot report them. */
 function parentActiveToolNames(pi: Pick<ExtensionAPI, "getActiveTools">): string[] {
   try {
     return pi.getActiveTools();
@@ -259,10 +172,6 @@ function parentActiveToolNames(pi: Pick<ExtensionAPI, "getActiveTools">): string
   }
 }
 
-/**
- * Try to find the right model for an agent type.
- * Priority: explicit option > config.model > parent model.
- */
 export function resolveDefaultModel(
   parentModel: Model<Api> | undefined,
   registry: {
@@ -277,7 +186,6 @@ export function resolveDefaultModel(
       const provider = configModel.slice(0, slashIdx);
       const modelId = configModel.slice(slashIdx + 1);
 
-      // Build a set of available model keys for fast lookup
       const available = registry.getAvailable?.();
       const availableKeys = available
         ? new Set(available.map((m) => `${m.provider}/${m.id}`))
@@ -293,14 +201,6 @@ export function resolveDefaultModel(
   return parentModel;
 }
 
-/**
- * Clone the main session's active branch into a non-persisted SessionManager.
- *
- * Pi 0.85 restores externally held entries into an in-memory manager. Passing
- * the active branch directly preserves entry ids, so compaction references
- * resolve without creating a side-session file or moving the main session's
- * leaf.
- */
 export function captureMainSessionFork(ctx: ExtensionContext): MainSessionFork {
   const parent = ctx.sessionManager;
   const fork = SessionManager.inMemory(
@@ -318,7 +218,6 @@ export function captureMainSessionFork(ctx: ExtensionContext): MainSessionFork {
   };
 }
 
-/** Resolve the first user prompt without flattening a real fork into text. */
 export function buildEffectivePrompt(
   ctx: ExtensionContext,
   prompt: string,
@@ -369,7 +268,6 @@ interface LoadedChildContext {
   setSystemPrompt: (value: string) => void;
 }
 
-/** Prepare environment, prompt composition, resource loader, and extension warnings. */
 export async function prepareAgentResourceLoader(
   ctx: ExtensionContext,
   type: SubagentType,
@@ -378,10 +276,7 @@ export async function prepareAgentResourceLoader(
   const config = getConfig(type);
   const agentConfig = getAgentConfig(type);
 
-  // Resolve working directory: worktree override > parent cwd
   const effectiveCwd = options.cwd ?? ctx.cwd;
-  // Filesystem work happens in effectiveCwd; config discovery in configCwd.
-  // They differ only for SpawnOptions.cwd spawns (config stays with the parent).
   const configCwd = options.configCwd ?? effectiveCwd;
   const statusRuntime = options.nestedRuntime;
   const effectiveMaxDepth = statusRuntime?.maxSubagentDepth ?? getMaxSubagentDepth();
@@ -395,12 +290,7 @@ export async function prepareAgentResourceLoader(
       }
     : undefined;
 
-  // Isolated runs load neither extensions nor skills. Read-only side
-  // conversations keep skills available as instructions, but load no extension
-  // code or tools: the only callable capabilities are the static allowlist below.
   const extensions = options.isolated || options.readOnly ? false : config.extensions;
-  // Nulling excludes under either override also suppresses the orphaned-exclude
-  // warning — both are intentional restrictions, not misconfiguration.
   const excludeExtensions =
     options.isolated || options.readOnly ? undefined : config.excludeExtensions;
   const skills = options.isolated ? false : config.skills;
@@ -410,8 +300,6 @@ export async function prepareAgentResourceLoader(
     toolNames = toolNames.filter((name) => READ_ONLY_TOOL_NAMES.has(name));
   }
 
-  // Persistent memory: detect write capability and branch accordingly.
-  // Account for disallowedTools — a tool in the base set but on the denylist is not truly available.
   let memoryBlock: Promise<string> | undefined;
   if (agentConfig?.memory) {
     const existingNames = new Set(toolNames);
@@ -711,7 +599,6 @@ function emitLoaderWarnings(params: {
   }
 }
 
-/** Create, register, bind extensions, and install tool scoping on the child session. */
 export async function createAndBindChildSession(
   ctx: ExtensionContext,
   type: SubagentType,

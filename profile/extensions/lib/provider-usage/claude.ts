@@ -56,7 +56,6 @@ function structuredClaudeWindow(value: RuntimeValue): UsageWindow | undefined {
     const model = scopeRecord && isRecord(scopeRecord.model) ? scopeRecord.model : undefined;
     const name = stringValue(model?.display_name);
     label = `${name ?? "Scoped"} Weekly`;
-    // An unnamed scope still limits only some models; keep it scoped.
     scope = name ?? stringValue(model?.id) ?? "Scoped";
     windowSeconds = 7 * DAY_SECONDS;
   } else {
@@ -89,11 +88,6 @@ const CLAUDE_SUBSCRIPTION_LABELS = recordOf<string, string>()({
   enterprise: "Enterprise",
 });
 
-/**
- * Derives the plan label from the `/api/oauth/profile` response. Team and
- * Enterprise organizations keep a Max rate-limit tier, so the organization
- * type decides those labels before the tier is consulted.
- */
 export function claudePlanLabel(
   profile: RuntimeValue,
   fallbackSubscription?: string,
@@ -166,11 +160,6 @@ export function normalizeClaudeUsage(payload: RuntimeValue, profile?: RuntimeVal
   };
 }
 
-/**
- * Reads the live plan from Anthropic's profile endpoint. The value only changes
- * when the subscription changes, so it is read far less often than the usage
- * windows and never blocks the usage report when it fails.
- */
 export async function claudeProfile(
   token: string,
   cache: UsageCache = usageCache,
@@ -202,12 +191,6 @@ export async function readClaudeUsage(
   return withCacheNote(normalizeClaudeUsage(usage.payload, profile), usage);
 }
 
-/**
- * Anthropic's OAuth token is opaque and rotates, and the account only appears in
- * the profile response this key already guards. The provider therefore owns one
- * cache slot: a snapshot from a previous account is replaced by the next live
- * read and is labelled with its age until then.
- */
 export async function claudeUsage(
   ctx: ExtensionContext,
   cache: UsageCache,

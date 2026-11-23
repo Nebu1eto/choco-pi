@@ -25,8 +25,6 @@ const DEFAULT_HEAD_BYTES = 64 * 1024;
 const SESSION_METADATA_BYTES = 256 * 1024;
 
 function getPiAgentDir(): string {
-  // pi supports overriding config dir via PI_CODING_AGENT_DIR; without it the shared
-  // resolver gives `$CHOCO_PI_HOME/agent` in standalone mode and `~/.pi/agent` otherwise.
   return resolve(piAgentDir(process.env));
 }
 
@@ -94,9 +92,7 @@ function readHead(path: string, headBytes = DEFAULT_HEAD_BYTES): string | null {
     if (fd !== null) {
       try {
         closeSync(fd);
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
   }
 }
@@ -121,9 +117,7 @@ function readTail(path: string, tailBytes = DEFAULT_TAIL_BYTES): string {
   } finally {
     try {
       closeSync(fd);
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 }
 
@@ -140,8 +134,6 @@ function parseSessionHeader(
 }
 
 function pickTitleFromTail(tail: string): string | null {
-  // Try to find the *latest* session_info entry (stores the user-provided name).
-  // We scan backwards line-by-line.
   const lines = tail.split(/\r?\n/);
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim();
@@ -156,8 +148,6 @@ function pickTitleFromTail(tail: string): string | null {
 }
 
 function scanSessionInfoNameFromFile(path: string): string | null {
-  // Session names are emitted near startup. Keep this fallback bounded rather than reading
-  // an arbitrarily large transcript when the early name is outside the tail window.
   const head = readHead(path, SESSION_METADATA_BYTES);
   if (!head) return null;
   let lastName: string | null = null;
@@ -189,11 +179,8 @@ function firstSessionInfoName(path: string): string | null {
 }
 
 function pickUpdatedAtFromTail(tail: string): string | null {
-  // pi's `/resume` effectively orders sessions by last *message* activity.
-  // We scan backwards and pick the timestamp of the most recent entry with type === "message".
   const lines = tail.split(/\r?\n/);
 
-  // 1) Prefer the most recent message entry.
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim();
     if (!line) continue;
@@ -203,7 +190,6 @@ function pickUpdatedAtFromTail(tail: string): string | null {
     if (Number.isFinite(d.getTime())) return d.toISOString();
   }
 
-  // 2) Fallback: any valid timestamp (covers sessions that somehow have no messages).
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim();
     if (!line) continue;
@@ -217,8 +203,6 @@ function pickUpdatedAtFromTail(tail: string): string | null {
 }
 
 function pickFallbackTitleFromHead(path: string): string | null {
-  // Fallback to first user message.
-  // NOTE: keep the read bounded; user messages normally occur near startup.
   const raw = readHead(path, SESSION_METADATA_BYTES);
   if (!raw) return null;
   const lines = raw.split(/\r?\n/);
@@ -264,8 +248,6 @@ function resolvedProjectPath(path: string): ResolvedProjectPath {
 function projectPathsMatch(left: string, right: string): boolean {
   const a = resolvedProjectPath(left);
   const b = resolvedProjectPath(right);
-  // Project identity requires two canonical filesystem paths. If either side cannot be
-  // canonicalized, reject it rather than treating matching lexical spellings as identity.
   return a.real !== null && b.real !== null && a.real === b.real;
 }
 
@@ -276,9 +258,6 @@ function isDirectProjectSessionFile(sessionsDir: string, file: string): boolean 
 }
 
 function isSubagentSidechain(parentSession: string | null, firstName: string | null): boolean {
-  // `parentSession` alone is insufficient: Pi also writes it for ordinary compaction/new
-  // continuations and branches. Persisted choco-pi subagents additionally receive an early
-  // `<alias>#<hex>` session_info name from agent-runner.ts, so require both signals.
   return (
     parentSession !== null && firstName !== null && /^[^#\r\n]+#[0-9a-f]{5,8}$/i.test(firstName)
   );
@@ -299,9 +278,7 @@ export function listPiSessions(cwd?: string): PiSessionListItem[] {
         if (!statSync(candidate).isDirectory()) continue;
         foundCandidate = true;
         listDirectJsonlFiles(candidate, files);
-      } catch {
-        // Missing and raced directories are handled by the full-walk fallback below.
-      }
+      } catch {}
     }
     if (!foundCandidate) walkJsonlFiles(sessionsDir, files);
   } else {
@@ -311,8 +288,6 @@ export function listPiSessions(cwd?: string): PiSessionListItem[] {
   const items: PiSessionListItem[] = [];
 
   for (const file of files) {
-    // A valid project session is directly inside its encoded project directory. Nested JSONL
-    // files belong to custom subagent sessionDirs or Pi's internal task-lineage artifacts.
     if (!isDirectProjectSessionFile(sessionsDir, file)) continue;
     const first = readFirstLine(file);
     if (!first) continue;
@@ -333,16 +308,12 @@ export function listPiSessions(cwd?: string): PiSessionListItem[] {
       const tail = readTail(file);
       title = pickTitleFromTail(tail);
       updatedAt = pickUpdatedAtFromTail(tail);
-    } catch {
-      // ignore
-    }
+    } catch {}
 
-    // If the session was named early and grew large, it may fall outside of the tail window.
     if (!title) {
       title = scanSessionInfoNameFromFile(file);
     }
 
-    // Fallback for updatedAt when we couldn't parse timestamps from tail.
     if (!updatedAt) {
       try {
         updatedAt = statSync(file).mtime.toISOString();
@@ -364,7 +335,6 @@ export function listPiSessions(cwd?: string): PiSessionListItem[] {
     });
   }
 
-  // Sort most recent first.
   items.sort((a, b) => {
     const aa = a.updatedAt ?? "";
     const bb = b.updatedAt ?? "";

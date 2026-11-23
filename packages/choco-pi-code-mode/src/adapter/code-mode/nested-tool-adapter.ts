@@ -14,10 +14,6 @@ import type { HostSchema } from "../../schema-bridge.ts";
 import { finiteNum } from "../../value-guards.ts";
 import { toolCallSignature, unknownParameterHints } from "../../tools/code-mode/tool-signature.ts";
 
-/**
- * JSON object whose values are JSON (the argument shape Pi's validator takes). Numbers are bounded
- * so NaN and +/-Infinity, which structuredClone preserves but JSON cannot hold, stay rejected.
- */
 const isPiJsonObject = compile({
   type: "object",
   additionalProperties: { $ref: "#/$defs/JsonValue" },
@@ -35,19 +31,8 @@ const isPiJsonObject = compile({
   },
 }).check;
 
-/**
- * Per-session tool scopes published by choco-pi-subagents for its children.
- * A bridged session tool can run without Pi's `tool_call` hooks (the direct
- * `execute()` fallback below), so the bridge must consult the calling
- * session's scope itself. Typed independently over `Symbol.for` because a
- * package must not import another; a session without a scope is unrestricted.
- */
 const TOOL_SCOPE_SYMBOL = Symbol.for("choco-pi.tool-scope.v1");
 
-/**
- * `structuredContent` of Pi's shell tools (`bash`, `powershell`): the full output up to 1 MiB,
- * whether it was cut, the spill file when it was, the exit code and the wall time.
- */
 const isShellStructuredContent = compile(
   obj(
     {
@@ -61,17 +46,9 @@ const isShellStructuredContent = compile(
   ),
 ).check;
 
-/**
- * Details that name stored, retrievable content: web-access `fetch_content`/`source_check` set
- * `responseId` and `web_search` sets `searchId`; `get_search_content` needs that id (as its
- * `response_id` parameter) to page the content, so a nested result must keep it instead of
- * collapsing to text.
- */
 const isShortString = compile(str({ maxLength: 256 })).check;
-/** Keys the retrievable result owns; detail scalars never overwrite them. */
 const RETRIEVABLE_RESERVED_KEYS = new Set(["output"]);
 
-/** Pi's native validator appends the raw payload after this marker; code mode never surfaces it. */
 const RECEIVED_ARGUMENTS_MARKER = "\n\nReceived arguments:\n";
 const VALIDATION_FAILURE_PREFIX = 'Validation failed for tool "';
 const MAX_REPORTED_ISSUES = 3;
@@ -90,27 +67,18 @@ interface NestedToolLifecycle {
 
 interface NestedToolContractBase {
   kind?: "function" | "freeform";
-  /** Deferred tools stay out of the prompt and are discovered through ALL_TOOLS. */
   deferLoading?: boolean;
   toolName?: CodeModeToolIdentity;
   yieldTimeMs?: number;
   prepareInput?(input: BoundaryValue): BoundaryValue;
 }
 
-/** Run the wrapped definition itself; used for Codex-native tool instances code mode owns. */
 interface DirectNestedToolContract<TDetails> extends NestedToolContractBase {
   dispatch?: "direct";
   resultError?(result: AgentToolResult<TDetails>): string | undefined;
   resultValue?(result: AgentToolResult<TDetails>): BoundaryValue;
 }
 
-/**
- * Run a session-registered tool through `ctx.executeTool()` when the session lists it as
- * callable, so the call gets Pi's hooks, nested-call events, `nestedCalls` record and usage
- * folding. A registered tool the session does not list as callable (an inactive `direct` tool)
- * keeps running its definition directly, as before. Session outcomes carry untyped details, so
- * this variant takes no details-typed result hooks.
- */
 interface SessionNestedToolContract extends NestedToolContractBase {
   dispatch: "session";
 }
@@ -169,8 +137,6 @@ export function toNestedTool<TParams extends HostSchema, TDetails, TState>(
         );
       }
       const parsedInput = isBoundaryValue(input) ? input : undefined;
-      // The host sends `null` for a call without arguments (`tools.name()`). Both mean "no
-      // arguments" for a schema that takes `{}`, unless the schema itself takes `null`.
       const validator = parameterValidator(tool.parameters);
       const noArguments =
         parsedInput === undefined || (parsedInput === null && !validator.check(null));
@@ -195,9 +161,6 @@ export function toNestedTool<TParams extends HostSchema, TDetails, TState>(
       }
       const validated = validation.value;
       if (signal.aborted) throw new Error(`${tool.name} aborted`);
-      // Before either dispatch path: the direct `execute()` fallback below gets
-      // no `tool_call` hooks, so the session's published call guard (the same
-      // decision as its hook) is applied here.
       const blockReason = sessionToolCallBlock(extensionContext, tool.name, validated);
       if (blockReason !== undefined) {
         throw new Error(`Code mode tool error [blocked]: ${blockReason}`);
@@ -208,7 +171,6 @@ export function toNestedTool<TParams extends HostSchema, TDetails, TState>(
       context.refreshTrace?.();
       try {
         if (contract.dispatch === "session" && isSessionCallable(extensionContext, tool.name)) {
-          // Pi prepares and validates the arguments again, exactly as for a model-issued call.
           const outcome = await extensionContext.executeTool(tool.name, toolInput, {
             signal,
             onUpdate: (update) => forwardUpdate(update, context),
@@ -239,14 +201,8 @@ export function toNestedTool<TParams extends HostSchema, TDetails, TState>(
   };
 }
 
-/** Prepared code-mode payloads crossing the bridge before schema validation. */
 type BridgeCandidate = BoundaryValue | undefined;
 
-/**
- * For a bridged Pi tool, the keys its schema does not declare with their nearest declared name
- * (`path → file_path`) and the expected call signature, so a guessed argument name is
- * corrected in one retry.
- */
 function bridgedArgumentGuidance<TParams extends HostSchema, TDetails, TState>(
   tool: ToolDefinition<TParams, TDetails, TState>,
   prepared: BoundaryValue,
@@ -260,7 +216,6 @@ function bridgedArgumentGuidance<TParams extends HostSchema, TDetails, TState>(
   ].join("");
 }
 
-/** The executor's own parameter type. */
 type ExecuteParams<TParams extends HostSchema, TDetails, TState> = Parameters<
   ToolDefinition<TParams, TDetails, TState>["execute"]
 >[1];
@@ -269,11 +224,6 @@ type BridgedArguments<TParams extends HostSchema, TDetails, TState> =
   | { ok: true; value: ExecuteParams<TParams, TDetails, TState> }
   | { ok: false; issues: string };
 
-/**
- * Schema guard for the executor parameter type.
- *
- * The predicate is decided by a real schema check against the tool's own parameters.
- */
 function matchesToolParameters<TParams extends HostSchema, TDetails, TState>(
   tool: ToolDefinition<TParams, TDetails, TState>,
   value: BridgeCandidate,
@@ -281,16 +231,6 @@ function matchesToolParameters<TParams extends HostSchema, TDetails, TState>(
   return parameterValidator(tool.parameters).check(value);
 }
 
-/**
- * Validate prepared code-mode arguments exactly as Pi validates a native tool call.
- *
- * Object payloads go through the SDK's public validator, so optional-null removal,
- * scalar conversion, and the cloned argument object match a directly registered tool.
- * Non-object payloads keep their previous bare schema check, which preserves freeform
- * inputs and explicit top-level null rejection for object-only schemas. A native failure
- * that is not a validation rejection propagates unchanged, as it would for a directly
- * registered tool call, and never reaches the executor.
- */
 function validateBridgedArguments<TParams extends HostSchema, TDetails, TState>(
   tool: ToolDefinition<TParams, TDetails, TState>,
   prepared: BridgeCandidate,
@@ -311,12 +251,9 @@ function validateBridgedArguments<TParams extends HostSchema, TDetails, TState>(
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (message.startsWith(VALIDATION_FAILURE_PREFIX)) {
-        // The schema-aware description collapses union branches; fall back to the native
-        // bullets only when the schema check cannot reproduce the failure (e.g. converter-only rejects).
         const schemaIssues = describeSchemaIssues(tool.parameters, prepared);
         return { ok: false, issues: schemaIssues || describeNativeIssues(message) };
       }
-      // Not a validation rejection: propagate it instead of executing on unvalidated input.
       throw error;
     }
   }
@@ -328,11 +265,6 @@ function isPiJsonObjectValue(value: BoundaryValue): value is PiJsonObject {
   return isPiJsonObject(value);
 }
 
-/**
- * One validator per tool schema, built with the options Pi's own tool validation uses
- * (pi-ai `validateToolArguments`: standard formats, coercion on, unresolved `$ref`s reject
- * instead of throwing), so this recheck accepts exactly what the host accepts.
- */
 const parameterValidators = new WeakMap<HostSchema, CoercingValidator>();
 function parameterValidator(schema: HostSchema): CoercingValidator {
   const cached = parameterValidators.get(schema);
@@ -359,11 +291,9 @@ const isUnionNode = compile(
     { open: true },
   ),
 ).check;
-/** The two schema shapes the path walk needs: a property map or an array item schema. */
 const isPropertiesNode = compile(obj({ properties: map(unknown()) }, { open: true })).check;
 const isItemsNode = compile(obj({ items: unknown() }, { open: true })).check;
 
-/** A JSON Pointer's segments, unescaped. */
 function pointerSegments(pointer: string): string[] {
   return pointer
     .split("/")
@@ -371,10 +301,6 @@ function pointerSegments(pointer: string): string[] {
     .map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"));
 }
 
-/**
- * For an object union keyed by a literal (e.g. `action: "click" | "press"`), name the key and the
- * accepted values instead of repeating one branch's complaint per alternative.
- */
 function unionHint(schema: HostSchema, pointer: string): string | undefined {
   let node: BoundaryValue = schema;
   for (const segment of pointerSegments(pointer)) {
@@ -402,11 +328,6 @@ function unionHint(schema: HostSchema, pointer: string): string | undefined {
   return `expected one of the ${branches.length} shapes selected by "${key}": ${values.join(", ")}`;
 }
 
-/**
- * pi-schema reports a failed union through the leaf errors of one branch (e.g. `/actions/0/ref`),
- * not at the union itself, so the nearest enclosing discriminated union of the error path supplies
- * the hint and the path it is reported under.
- */
 function enclosingUnionHint(
   schema: HostSchema,
   pointer: string,
@@ -420,12 +341,10 @@ function enclosingUnionHint(
   return undefined;
 }
 
-/** A pi-schema error path (a JSON Pointer) as the dotted path the model sees. */
 function dottedPath(pointer: string): string {
   return pointer === "" ? "root" : pointerSegments(pointer).join(".");
 }
 
-/** Schema issues name their instance path, collapse union branches, and never echo the value. */
 function describeSchemaIssues(schema: HostSchema, value: BridgeCandidate): string {
   const issues: string[] = [];
   const seen = new Set<string>();
@@ -442,7 +361,6 @@ function describeSchemaIssues(schema: HostSchema, value: BridgeCandidate): strin
   return issues.join("; ");
 }
 
-/** Keep the native validator's path-qualified bullets, deduplicated, without the raw arguments. */
 function describeNativeIssues(message: string): string {
   const [head = ""] = message.split(RECEIVED_ARGUMENTS_MARKER);
   const issues: string[] = [];
@@ -490,7 +408,6 @@ interface ToolScopeRegistry {
     sessionManager: ExtensionToolContext["sessionManager"],
     name: string,
   ): BoundaryValue;
-  /** Optional per-call guard; absent in registries that predate it. */
   toolCallBlock?(
     sessionManager: ExtensionToolContext["sessionManager"],
     name: string,
@@ -510,17 +427,12 @@ function publishedToolScope(): ToolScopeRegistry | undefined {
   return isToolScopeRegistry(registry) ? registry : undefined;
 }
 
-/** Whether the calling session's published tool scope admits `name`. */
 function isInSessionToolScope(context: ExtensionToolContext, name: string): boolean {
   const registry = publishedToolScope();
   if (registry === undefined) return true;
   return Boolean(registry.isToolAllowed(context.sessionManager, name));
 }
 
-/**
- * The calling session's refusal reason for this call, from the published
- * per-call guard; undefined (allow) when no registry, guard or reason exists.
- */
 function sessionToolCallBlock(
   context: ExtensionToolContext,
   name: string,
@@ -532,7 +444,6 @@ function sessionToolCallBlock(
   return isString(reason) ? reason : undefined;
 }
 
-/** Whether `ctx.executeTool()` can reach `name`: active `direct` tools and `codemode`/`deferred` ones. */
 function isSessionCallable(context: ExtensionToolContext, name: string): boolean {
   return context.tools.some((candidate) => candidate.name === name);
 }
@@ -547,10 +458,6 @@ function forwardUpdate<TDetails>(
   context.onUpdate?.({ content, details: update.details });
 }
 
-/**
- * Shell results resolve to their validated `structuredContent`, also for non-zero exits, so a
- * script sees the exit code, an empty output as `""`, and truncation with its spill file.
- */
 function shellStructuredResult<TDetails>(
   result: AgentToolResult<TDetails>,
 ): BoundaryValue | undefined {
@@ -574,7 +481,6 @@ function resultText<TDetails>(result: AgentToolResult<TDetails>): string {
     .join("\n");
 }
 
-/** camelCase -> snake_case: "_" before each capital, lowercased (responseId -> response_id). */
 function snakeCaseKey(key: string): string {
   return key.replace(/[A-Z]/g, (capital) => `_${capital.toLowerCase()}`);
 }
@@ -590,13 +496,6 @@ function compactNestedResult<TDetails>(result: AgentToolResult<TDetails>): Bound
   return resultText(result) || "(no output)";
 }
 
-/**
- * Results naming stored content resolve to `{ output, ...scalars }` so a script can pass the
- * `response_id`/`search_id` on to `get_search_content`. Only top-level booleans, finite numbers
- * and short strings from `details` are copied; arrays, objects and long strings stay out. The
- * copied keys are model-visible tool output, so they are converted to snake_case here while
- * `details` itself keeps its camelCase shape.
- */
 function retrievableResult<TDetails>(result: AgentToolResult<TDetails>): BoundaryValue | undefined {
   const details = result.details;
   if (!isJsonObject(details)) return undefined;
@@ -604,7 +503,6 @@ function retrievableResult<TDetails>(result: AgentToolResult<TDetails>): Boundar
   const scalars: Record<string, boolean | number | string> = {};
   for (const [key, value] of Object.entries(details)) {
     if (RETRIEVABLE_RESERVED_KEYS.has(key)) continue;
-    // isNumber rejects NaN and Infinity, so copied scalars stay JSON-safe.
     if (!isBoolean(value) && !isNumber(value) && !isShortString(value)) continue;
     scalars[snakeCaseKey(key)] = value;
   }

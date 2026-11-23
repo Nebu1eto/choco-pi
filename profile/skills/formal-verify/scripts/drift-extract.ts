@@ -1,12 +1,3 @@
-// Symbol extraction and hashing for the formal-artefact drift check.
-//
-// Parsing uses the TypeScript 7 compiler's own parser through its programmatic
-// API (`typescript/unstable/async`), which runs the bundled tsgo binary as a
-// child process. Sources are handed to it through an in-memory virtual file
-// system, so the parser never reads the repository itself: the text that is
-// hashed is exactly the text that was parsed. Locating a symbol and hashing
-// its text are pure functions over an already parsed source file.
-
 import { createHash } from "node:crypto";
 import { extname } from "node:path";
 import {
@@ -34,16 +25,8 @@ import {
 import { API } from "typescript/unstable/async";
 import { createVirtualFileSystem } from "typescript/unstable/fs";
 
-/** Prefix of every hash this tool writes; a recorded hash in any other form never matches. */
 export const HASH_PREFIX = "sha256:";
 
-/**
- * Normalise text before hashing: CRLF and lone CR become LF and trailing
- * whitespace is stripped from every line. Line-ending conversion and editor
- * trailing-space cleanup therefore do not count as a change, while every other
- * edit does, including indentation-only reformatting (leading whitespace is
- * kept), blank-line changes and comment edits inside the declaration.
- */
 export function normaliseForHash(text: string): string {
   return text
     .replace(/\r\n?/gu, "\n")
@@ -52,12 +35,10 @@ export function normaliseForHash(text: string): string {
     .join("\n");
 }
 
-/** SHA-256 of the normalised text, as `sha256:<hex>`. */
 export function hashText(text: string): string {
   return HASH_PREFIX + createHash("sha256").update(normaliseForHash(text), "utf8").digest("hex");
 }
 
-/** A parsed symbol reference: `name` for a top-level declaration, `Class.member` for a class member. */
 export type SymbolRef =
   | { readonly kind: "top"; readonly name: string }
   | { readonly kind: "member"; readonly className: string; readonly member: string };
@@ -65,7 +46,6 @@ export type SymbolRef =
 const IDENT = "[A-Za-z_$][A-Za-z0-9_$]*";
 const SYMBOL_PATTERN = new RegExp(`^(${IDENT})(?:\\.(#?${IDENT}))?$`, "u");
 
-/** Parse a coverage `symbol` string; undefined when it is not `name` or `Class.member` (ASCII identifiers only). */
 export function parseSymbolRef(symbol: string): SymbolRef | undefined {
   const match = SYMBOL_PATTERN.exec(symbol);
   if (match === null) return undefined;
@@ -75,30 +55,16 @@ export function parseSymbolRef(symbol: string): SymbolRef | undefined {
   return { kind: "member", className: first, member };
 }
 
-/**
- * A located symbol. `start`/`end` delimit the declaration in the source and
- * `text` is what gets hashed. They agree except for one declarator of a
- * multi-variable statement, where `text` is the statement head (modifiers such
- * as `export`/`declare` plus the `const`/`let`/`var`/`using` keyword, exactly as
- * written up to the first declarator) followed by that declarator's own text, so
- * the keyword and modifiers are covered while a change to a sibling declarator
- * is not. Out of scope: a member entry does not cover its class's heritage
- * clauses (cover the class for that), and a separate `export { name }` list is
- * not part of the declaration's text.
- */
 export type Located =
   | { readonly ok: true; readonly start: number; readonly end: number; readonly text: string }
   | { readonly ok: false; readonly reason: string };
 
 interface Candidate {
   readonly node: Node;
-  /** Position of the containing statement or member, used to recognise adjacent overloads. */
   readonly index: number;
-  /** Declarations in the same family may be merged when adjacent (overloads, get/set pairs). */
   readonly family: "function" | "method" | "constructor" | "accessor" | "single";
   readonly isStatic: boolean;
   readonly hasBody: boolean;
-  /** For one declarator of several: the statement whose head (up to the first declarator) is hashed with it. */
   readonly head?: { readonly statement: Node; readonly firstDeclarator: Node };
 }
 
@@ -151,8 +117,6 @@ function topLevelCandidates(sourceFile: SourceFile, name: string): Candidate[] {
       const declarations = statement.declarationList.declarations;
       for (const declaration of declarations) {
         if (isIdentifier(declaration.name) && declaration.name.text === name) {
-          // A single declarator is hashed as its whole statement. One of several
-          // declarators is hashed as the statement head plus its own text.
           const [firstDeclarator] = declarations;
           if (declarations.length === 1 || firstDeclarator === undefined) {
             found.push({
@@ -231,12 +195,6 @@ function memberCandidates(declaration: ClassDeclaration, member: string): Candid
   return found;
 }
 
-/**
- * Several declarations of one name form a single symbol only when they are
- * adjacent and of one overloadable family: function or method overload
- * signatures followed by at most one implementation (which must be last), or
- * a get/set accessor pair. Anything else is ambiguous.
- */
 function mergeable(candidates: readonly Candidate[]): boolean {
   const [first] = candidates;
   if (first === undefined || first.family === "single") return false;
@@ -263,7 +221,6 @@ function spanOf(sourceFile: SourceFile, candidates: readonly Candidate[], label:
   if (first === undefined || last === undefined) {
     return { ok: false, reason: `no declaration named ${label}` };
   }
-  // getStart skips leading trivia, including JSDoc, and includes decorators and modifiers.
   const start = first.node.getStart(sourceFile);
   const end = last.node.end;
   const ownText = sourceFile.text.slice(start, end);
@@ -277,13 +234,6 @@ function spanOf(sourceFile: SourceFile, candidates: readonly Candidate[], label:
   return { ok: true, start, end, text: ownText };
 }
 
-/**
- * Locate a symbol in a parsed source file. Top-level names match function,
- * class, interface, type alias, enum, and const/let/var declarations; members
- * match methods (including private, static and async ones), constructors,
- * accessors and property declarations of one top-level class. Zero matches
- * and non-overload duplicates are errors.
- */
 export function locateSymbol(sourceFile: SourceFile, symbol: string): Located {
   const ref = parseSymbolRef(symbol);
   if (ref === undefined) return { ok: false, reason: `invalid symbol reference "${symbol}"` };
@@ -308,7 +258,6 @@ export function locateSymbol(sourceFile: SourceFile, symbol: string): Located {
   return spanOf(sourceFile, memberCandidates(classNode, ref.member), symbol);
 }
 
-/** File extensions the parser accepts for symbol entries. */
 export const PARSEABLE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".ts",
   ".tsx",
@@ -324,17 +273,10 @@ export type ParseOutcome =
   | { readonly ok: true; readonly sourceFile: SourceFile }
   | { readonly ok: false; readonly reason: string };
 
-/** Thrown when the parser itself cannot run; callers must not treat this as a per-entry result. */
 export class ParserUnavailableError extends Error {
   override readonly name = "ParserUnavailableError";
 }
 
-/**
- * Parse every source in one parser session. Keys are caller identifiers;
- * `fileName` only supplies the extension, which selects the script kind.
- * A file with syntax errors is reported as a failure: recovery could move
- * declaration boundaries, so nothing in it is trusted.
- */
 export async function parseSources(
   sources: ReadonlyMap<string, { readonly fileName: string; readonly text: string }>,
 ): Promise<Map<string, ParseOutcome>> {
@@ -401,7 +343,6 @@ export async function parseSources(
   }
 }
 
-/** Parse one source text and locate one symbol in it; convenience for tests and single lookups. */
 export async function extractSymbol(
   fileName: string,
   text: string,

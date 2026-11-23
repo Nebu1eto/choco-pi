@@ -20,12 +20,8 @@ export const XAI_SEARCH_ADAPTER_ID = "xai.responses";
 export const XAI_SEARCH_TRANSPORT = "responses";
 export const XAI_PROVIDER_ID = "xai";
 export const XAI_DEFAULT_BASE_URL = "https://api.x.ai/v1";
-// Hardcoded on purpose: Pi has no `webSearchModel` setting to mirror. The web-access OpenAI
-// transport's `openaiSearchModel` lives in that package's own config file, which this root
-// extension must not read. grok-4.3 is the cheapest xAI chat model in Pi 1.4.0's catalog.
 export const XAI_SEARCH_MODEL = "grok-4.3";
 export const XAI_SEARCH_TIMEOUT_MS = 60_000;
-// xAI documents at most five allowed or excluded domains, and never both in one request.
 const XAI_MAX_DOMAINS = 5;
 const XAI_DEFAULT_RESULT_LIMIT = 20;
 const XAI_MAX_OUTPUT_TOKENS = 8192;
@@ -35,7 +31,6 @@ export type XaiResolvedAuth =
   | { ok: true; apiKey?: string; headers?: ProviderHeaders; baseUrl?: string }
   | { ok: false; error: string };
 
-/** The subset of Pi's `ModelRegistry` the adapter reads; Pi's registry satisfies it. */
 export interface XaiModelRegistry {
   getProviderAuthStatus(provider: string): { configured: boolean };
   find(provider: string, modelId: string): Model<Api> | undefined;
@@ -270,7 +265,6 @@ function httpErrorKind(status: number): XaiHttpFailure {
 }
 
 function displayTitle(title: string | undefined, url: string): string {
-  // xAI labels inline citations with their visible number ("1", "2"), which is not a title.
   if (title && title.trim() && !/^\d+$/.test(title.trim())) return title.trim();
   try {
     return new URL(url).hostname;
@@ -297,7 +291,6 @@ interface ParsedXaiResponse {
   results: SearchResult[];
 }
 
-/** Parses a raw xAI Responses API body at the I/O boundary. */
 export function parseXaiResponse(text: string, status?: number): ParsedXaiResponse {
   let value: unknown;
   try {
@@ -498,7 +491,6 @@ export function createXaiSearchAdapter(options: XaiSearchAdapterOptions = {}): S
     family: "xai",
     transport: XAI_SEARCH_TRANSPORT,
     billing: "api",
-    // Grok search is billed per call; it runs only when a caller names the xai family.
     explicitOnly: true,
     capabilities: {
       actions: ["search"],
@@ -613,16 +605,10 @@ export function registerXaiSearchAdapter(
 }
 
 export interface XaiRegistrationGate {
-  /** Registers when the xai provider is configured and unregisters when it is not. */
   sync(registry: Pick<XaiModelRegistry, "getProviderAuthStatus"> | undefined): boolean;
   dispose(): void;
 }
 
-/**
- * Keeps the adapter registered only while Pi reports configured xai credentials, so an
- * unconfigured provider never appears in the curator or provider availability lists.
- * Reads only auth status, never credentials.
- */
 export function createXaiRegistrationGate(
   scope: SearchScope,
   options: XaiSearchAdapterOptions = {},

@@ -14,39 +14,26 @@ import type {
 } from "../types.ts";
 import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/runner-helpers.ts";
 
-// SpotBugs is a JVM tool installed via the archive strategy (#133); java gates
-// it (no JRE → skip). It analyzes the *bytecode tree*, not the edited source.
 const java = createAvailabilityChecker("java", ".exe", ["-version"]);
 const spotbugs = createAvailabilityChecker("spotbugs", ".bat", ["-version"]);
 
 const MAX_DIAGNOSTICS = 50;
 const MAX_XML_BYTES = 4 * 1024 * 1024;
 
-// Per-classes-dir cache: SpotBugs is project-level + heavyweight, so we only
-// re-invoke it when the compiled .class tree actually changed (i.e. after a
-// rebuild). Between rebuilds, repeated dispatches return the cached findings.
 interface SpotbugsCacheEntry {
   signature: string;
   diagnostics: Diagnostic[];
 }
 const scanCache = new BoundedLruCache<string, SpotbugsCacheEntry>(32);
 
-/** Reset the SpotBugs scan cache (tests). */
 export function _resetSpotbugsCacheForTests(): void {
   scanCache.clear();
 }
 
-/**
- * Cheap signature of the compiled-classes tree: count + newest mtime of all
- * `.class` files. Changes iff the user rebuilt, which is exactly when SpotBugs
- * should re-run.
- */
 function classesSignature(classesDir: string): string {
   let count = 0;
   let newest = 0;
   const stack = [classesDir];
-  // Bounded walk — large class trees are fine (count is cheap), but cap depth
-  // of the stack defensively.
   while (stack.length > 0) {
     const dir = stack.pop();
     if (!dir) break;
@@ -72,7 +59,6 @@ function classesSignature(classesDir: string): string {
   return `${count}:${newest}`;
 }
 
-// SpotBugs bug categories → choco-pi-lsp defect taxonomy (per #133).
 function mapCategory(category: string): DefectClass {
   switch (category.toUpperCase()) {
     case "CORRECTNESS":
@@ -87,7 +73,6 @@ function mapCategory(category: string): DefectClass {
     case "EXPERIMENTAL":
       return "style";
     default:
-      // Unmapped SpotBugs categories are still bug patterns — treat as correctness.
       return "correctness";
   }
 }
@@ -104,7 +89,6 @@ function mapSeverity(priority: string): Diagnostic["severity"] {
 }
 
 function attr(attrs: string, name: string): string | undefined {
-  // Bounded, non-backtracking: a single negated-char class, no nesting (S5852-safe).
   const m = new RegExp(`\\b${name}="([^"]*)"`).exec(attrs);
   return m ? m[1] : undefined;
 }
@@ -115,18 +99,12 @@ function firstSentence(text: string): string {
   return (dot > 0 ? trimmed.slice(0, dot + 1) : trimmed).slice(0, 300);
 }
 
-/**
- * Parse SpotBugs `-xml:withMessages` output. Hand-rolled (no XML dep, zero-dep
- * ethos) but bounded: input capped, lazy `<BugInstance>…</BugInstance>` blocks
- * (no nested quantifiers), diagnostics capped.
- */
 export function parseSpotbugsXml(raw: string): Diagnostic[] {
   const xml = raw.length > MAX_XML_BYTES ? raw.slice(0, MAX_XML_BYTES) : raw;
   const diagnostics: Diagnostic[] = [];
   const blockRe = /<BugInstance\b([^>]*)>([\s\S]*?)<\/BugInstance>/g;
   let block: RegExpExecArray | null;
   let index = 0;
-  // biome-ignore lint/suspicious/noAssignInExpressions: standard regex-exec loop
   while ((block = blockRe.exec(xml)) !== null) {
     if (diagnostics.length >= MAX_DIAGNOSTICS) break;
     const headAttrs = block[1];
@@ -135,14 +113,10 @@ export function parseSpotbugsXml(raw: string): Diagnostic[] {
     const priority = attr(headAttrs, "priority") || "2";
     const category = attr(headAttrs, "category") || "CORRECTNESS";
 
-    // A BugInstance has several SourceLines: class span, method span, and the
-    // primary (the actual defect location, marked primary="true"). Prefer the
-    // primary; otherwise the last one (most specific), else the first.
     let filePath: string | undefined;
     let line = 1;
     const slRe = /<SourceLine\b([^>]*?)\/?>/g;
     let sl: RegExpExecArray | null;
-    // biome-ignore lint/suspicious/noAssignInExpressions: standard regex-exec loop
     while ((sl = slRe.exec(body)) !== null) {
       const slAttrs = sl[1];
       const start = attr(slAttrs, "start");
@@ -151,9 +125,9 @@ export function parseSpotbugsXml(raw: string): Diagnostic[] {
       if (!start || !(sourcepath || sourcefile)) continue;
       filePath = sourcepath || sourcefile;
       line = Number(start) || 1;
-      if (attr(slAttrs, "primary") === "true") break; // the defect location
+      if (attr(slAttrs, "primary") === "true") break;
     }
-    if (!filePath) continue; // no source mapping — skip (can't surface usefully)
+    if (!filePath) continue;
 
     const longMsgMatch = /<LongMessage>([\s\S]*?)<\/LongMessage>/.exec(body);
     const shortMsgMatch = /<ShortMessage>([\s\S]*?)<\/ShortMessage>/.exec(body);
@@ -169,8 +143,6 @@ export function parseSpotbugsXml(raw: string): Diagnostic[] {
       line,
       column: 1,
       severity: mapSeverity(priority),
-      // Bug patterns are advisory by default (not always exploitable); a user
-      // can promote to blocking via config. So semantic stays "warning".
       semantic: "warning",
       tool: "spotbugs",
       rule: type,
@@ -194,14 +166,6 @@ function decodeXmlEntities(s: string): string {
     .replace(/&amp;/g, "&");
 }
 
-/**
- * SpotBugs bytecode bug-pattern analyzer for Java + Kotlin (#133).
- *
- * Opt-in (lens-spotbugs flag) and gated via the withSpotbugsGroup dispatch
- * group, which only adds it when a Java build descriptor + compiled .class dir
- * exist. Operates on the compiled tree, NOT the edited source, and only
- * re-invokes after a rebuild (mtime-cached).
- */
 const spotbugsRunner: RunnerDefinition = {
   id: "spotbugs",
   appliesTo: ["java", "kotlin"],
@@ -219,12 +183,10 @@ const spotbugsRunner: RunnerDefinition = {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
 
-    // JRE required — skip silently if absent (SpotBugs needs JDK 11+).
     if (!(await java.isAvailableAsync(cwd))) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
 
-    // Cache gate: re-run only when the .class tree changed since last scan.
     const signature = classesSignature(classesDir);
     const cached = scanCache.get(classesDir);
     if (cached && cached.signature === signature) {
@@ -249,7 +211,6 @@ const spotbugsRunner: RunnerDefinition = {
     try {
       xml = fs.readFileSync(tmpXml, "utf8");
     } catch {
-      // No output file — if the run errored, surface a soft failure.
       if (result.error || (result.status ?? 0) > 1) {
         return {
           status: "failed",

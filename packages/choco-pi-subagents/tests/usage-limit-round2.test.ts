@@ -1,8 +1,3 @@
-/**
- * Second review round for the "On Usage Limit" manager paths: billing through
- * the real classifier, owner-policy account keys, availability-gated resumes,
- * re-parking a queued continuation, and the child's own Codex limit entry.
- */
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 
@@ -55,7 +50,6 @@ function codexModel(env: UsageLimitEnv): Model<Api> {
   return model;
 }
 
-/** Closed state shared by `closeProvider` and `isClosed`, like the root policy. */
 function closedFrom(state: FakePolicyState): FakePolicyState["isClosed"] {
   return (providerKey, accountId, now = Date.now()) =>
     state.closed.some(
@@ -100,7 +94,6 @@ test("a billing failure through the real classifier is reported with a suggestio
     assert.match(record?.error ?? "", /Usage limit: Anthropic usage limit \(billing\)/);
     assert.deepEqual(completions, ["error"]);
     assert.deepEqual(usageEvents, ["error:reported"]);
-    // Closed for 30 minutes under the owner's policy and the manager's closure.
     assert.equal(policy.isClosed("anthropic", "default"), true);
     assert.equal(policy.isClosed("anthropic", "default", Date.now() + 30 * 60_000), false);
     assert.equal(
@@ -130,7 +123,6 @@ test("the owner policy's account keys both the spawn gate and the closure writes
   const { manager, runs } = harness();
   const onCodex = { ...background, model: codex };
   try {
-    // The root closed (openai-codex, acct-A); no child has classified anything yet.
     state.closed.push(["openai-codex", "acct-A", Date.now() + HOUR]);
     assert.throws(
       () => manager.spawn(env.pi, env.context(), "implementer", "refused", onCodex),
@@ -141,7 +133,6 @@ test("the owner policy's account keys both the spawn gate and the closure writes
     assert.equal(runs.length, 0);
     assert.equal(manager.isProviderAvailable("openai-codex", env.owner), false);
 
-    // A child limit without an account in its classification closes the same key.
     state.closed.length = 0;
     const id = manager.spawn(env.pi, env.context(), "implementer", "task", onCodex);
     const promise = manager.getRecord(id)?.promise;
@@ -159,7 +150,6 @@ test("the owner policy's account keys both the spawn gate and the closure writes
       [["openai-codex", "acct-A"]],
     );
     assert.equal(manager.isProviderAvailable("openai-codex", env.owner), false);
-    // Another account of the same owner is open.
     account = "acct-B";
     assert.equal(manager.isProviderAvailable("openai-codex", env.owner), true);
   } finally {
@@ -200,7 +190,6 @@ test("resume is refused while the child's provider is closed, with the reset and
     assert.equal(record?.usageLimit?.status, "reported");
     assert.deepEqual(resumePrompts, []);
 
-    // Once the owner's closures lift, the same resume dispatches.
     state.closed.length = 0;
     cleanupProviders();
     const resumed = manager.resume(id, "again");
@@ -252,7 +241,6 @@ for (const ending of ["continuation", "stop"] as const) {
       const owned = record?.promise;
       assert.ok(owned);
 
-      // The same account is limited again before the slot frees.
       const until = Date.now() + HOUR;
       closeUntil({ owner: env.owner, providerKey: "anthropic", accountId: "default" }, until, {
         suggestedModel: SOL,
@@ -299,14 +287,12 @@ for (const fresh of [true, false]) {
     const codex = codexModel(env);
     const codexSession = await env.childSession(codex);
     enableTimers(t);
-    // A writable root session: its branch gets an entry that must not be read for a child.
     const rootManager = env.freshSessionManager();
     const owner = rootManager.getSessionId();
     const state = policyState({
       preference: "auto-resume",
       classification: { kind: "quota", confidence: "inferred" },
     });
-    // Like the root policy: only the structured entry confirms the limit.
     state.corroborate = (count) => ({
       ready: false,
       evidence:
@@ -446,7 +432,6 @@ for (const signed of [true, false]) {
     const installed = installPolicy(state, rootManager.getSessionId());
     const { manager, runs } = harness();
     try {
-      // The openai sign-in entry carries no reset time and no account id.
       solSession.sessionManager.appendCustomEntry(CODEX_USAGE_LIMIT_ENTRY, {
         observedAt: Date.now(),
       });
@@ -485,7 +470,6 @@ test("Fast and Daybreak requests on openai sign-in report why they are not appli
   const { env } = await setup(t);
   const sol = env.models.sol;
   const { manager, runs } = harness();
-  // The real registry; only its auth-type answer is scripted, read at query time.
   let oauth = true;
   const registry = env.context().modelRegistry;
   t.mock.method(registry, "isUsingOAuth", () => oauth);

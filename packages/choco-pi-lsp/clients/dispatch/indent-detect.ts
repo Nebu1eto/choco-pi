@@ -7,11 +7,6 @@ export interface Indentation {
 
 const DEFAULT_INDENTATION: Indentation = { style: "space", width: 2 };
 
-/**
- * Infer the prevailing indentation convention from lines that are indented.
- * The detector deliberately has no language knowledge: formatter callers use
- * it only as a conservative fallback when the repository has no config.
- */
 export function detectIndentation(content: string): Indentation {
   const lines = content.split(/\r?\n/);
   const tabs = lines.filter((line) => /^\t+\S/.test(line)).length;
@@ -40,7 +35,6 @@ export function detectIndentation(content: string): Indentation {
   return DEFAULT_INDENTATION;
 }
 
-/** Whether the content supplied evidence from which a style can be inferred. */
 export function hasDetectableIndentation(content: string): boolean {
   return /^(?:\t+| {1,})\S/m.test(content);
 }

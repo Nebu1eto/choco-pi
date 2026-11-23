@@ -1,7 +1,3 @@
-/**
- * env.ts — Detect environment info (git, platform) for subagent system prompts.
- */
-
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { EnvInfo } from "./types.ts";
 
@@ -15,9 +11,7 @@ export async function detectEnv(pi: ExtensionAPI, cwd: string): Promise<EnvInfo>
       timeout: 5000,
     });
     isGitRepo = result.code === 0 && result.stdout.trim() === "true";
-  } catch {
-    // Not a git repo or git not installed
-  }
+  } catch {}
 
   if (isGitRepo) {
     try {

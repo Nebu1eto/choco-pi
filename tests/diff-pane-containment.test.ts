@@ -1,6 +1,3 @@
-// The pane hosts contain what the view throws inside pi-tui's render and input
-// calls (Pi exits on an uncaught throw): a bounded fallback, one report, and
-// the view is not called again after a render failure.
 import assert from "node:assert/strict";
 import test from "node:test";
 import type {
@@ -83,14 +80,12 @@ class FakeTui implements PaneTui {
 
 type Failures = { render?: Error | "always"; key?: Error };
 
-/** A bell or the start of an operating-system command: what a hostile message would carry. */
 function hostileBytes(text: string): boolean {
   return text.includes("\u0007") || text.includes("\u001b]");
 }
 
 const HOSTILE = "bad \u001b]52;c;Zm9v\u0007 \u001b[31mred\nsecond line";
 
-/** A surface whose calls can be made to throw, counting every call that reaches it. */
 function breakableSurface() {
   const calls = { header: 0, body: 0, keys: 0 };
   const fail: Failures = {};
@@ -134,7 +129,6 @@ async function microtasks(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-/** The dock host's body and header components, as pi-tui renders them. */
 function dock() {
   const transcript = new ScrollView(new Container(), { follow: "end", primary: true });
   const editor = new Lines(["editor"]);
@@ -185,7 +179,6 @@ test("dock: a render that throws gives one sanitised fallback line within the wi
   const lines = pane.body.render(30);
   assert.equal(lines.length, 1);
   assert.ok(visibleWidth(lines[0] ?? "") <= 30);
-  // Later frames: the header carries the line, the body is empty.
   assert.deepEqual(pane.body.render(80), []);
   const line = pane.header.render(80)[0] ?? "";
   assert.equal(
@@ -255,7 +248,6 @@ test("overlay: a failing render keeps the frame within the request and stops cal
 
 test("overlay: the host's own drawing and size getters are contained too", async () => {
   const pane = overlay();
-  // The dock measurement renders Pi's other components, outside the view.
   pane.tui.children = [
     new Lines([]),
     {

@@ -73,7 +73,6 @@ function assertCompleteSource(rendered: string): void {
 
 function renderDirectCommand(expanded?: boolean): string {
   const runtime = createRenderingRuntime();
-  // The production adapter exposes the native callback with its minimal render context.
   const tool = toNestedTool(createExecCommandTool(runtime.tracker, runtime.sessions), "");
   assert.ok(tool.renderCall);
   return tool

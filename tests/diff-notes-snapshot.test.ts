@@ -1,6 +1,3 @@
-// Notes sent to the editor quote a hunk only from a body of the snapshot current when the
-// message is built. The fake store answers like the real one: with the revision and body
-// current when each load began (tests/changes-store-contract.test.ts checks that).
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { DiffHunk } from "../profile/extensions/lib/changes/types.ts";
@@ -30,12 +27,10 @@ async function withNote() {
   assert.equal(h.probe.session()?.notes?.notes.length, 1);
   store.holdLoads = true;
   store.held.length = 0;
-  /** Move the store to `revision` with the hunk at `line`. */
   const move = (revision: number, line: number) => {
     store.bodies.set("a.ts", textBody("a.ts", [at(original, line)]));
     store.ready(revision, [file("a.ts")]);
   };
-  /** Release the oldest load the send is waiting on, once it has begun. */
   const release = async () => {
     await flush();
     const index = store.held.findIndex((entry) => entry.path === "a.ts");
@@ -54,9 +49,8 @@ test("a second move during the retry sends the note outdated", async () => {
   const sent = h.run("notes send");
   await flush();
   move(2, 20);
-  await release(); // revision 1's body
+  await release();
   move(3, 30);
-  // Release everything still waiting: the send's revision-2 load and the view's loads.
   while (store.held.length > 0) await release();
   await sent;
   assert.equal(h.editor.text, OUTDATED);

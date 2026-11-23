@@ -93,7 +93,6 @@ test("PreToolUse warns once per tool and directory about /tmp writes outside scr
   t.mock.method(HookEngine.prototype, "run", async (input: HookInput) =>
     mergeResults(input.hook_event_name, []),
   );
-  // The scratch root comes from the registry here, not from a host session's environment.
   for (const name of ["PI_SCRATCH_DIR", "PI_ROOT_SESSION_ID", "PI_PREVIOUS_SCRATCH_DIR"]) {
     const previous = process.env[name];
     delete process.env[name];

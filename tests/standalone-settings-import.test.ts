@@ -68,7 +68,6 @@ const INSTALLED = {
   modelThinkingLevels: { ...DEFAULT_PROFILE_MODEL_THINKING_LEVELS },
 };
 
-/** An agent directory as a first standalone setup leaves it: installed, then seeded. */
 async function seededAgent(directory: string): Promise<string> {
   const agentDir = path.join(directory, "agent");
   await writeJson(path.join(agentDir, "settings.json"), INSTALLED);
@@ -76,7 +75,6 @@ async function seededAgent(directory: string): Promise<string> {
   return agentDir;
 }
 
-/** A Pi settings file outside any real ~/.pi. */
 async function piSettings(directory: string, settings: JsonRecord): Promise<string> {
   const file = path.join(directory, "pi-home", ".pi", "agent", "settings.json");
   await writeJson(file, settings);
@@ -233,7 +231,6 @@ test("a key is imported when absent or still the seeded value; a value changed i
   const directory = await scratch(t);
   const agentDir = await seededAgent(directory);
   const settingsPath = path.join(agentDir, "settings.json");
-  // The user changes one seeded key and sets one key of their own.
   await writeJson(settingsPath, {
     ...(await readJson(settingsPath)),
     cacheWarming: "off",
@@ -316,7 +313,6 @@ test("a second import refuses without --force, and --force never replaces or re-
   });
   await assert.rejects(importPiSettings(agentDir, source), /already imported; rerun with --force/);
 
-  // In between: the user changes one imported key and deletes the other; Pi gains a key.
   const { agentLanguage: _deleted, ...rest } = await readJson(settingsPath);
   await writeJson(settingsPath, { ...rest, theme: "solarized" });
   await writeJson(source, { theme: "gruvbox", agentLanguage: "Japanese", steeringMode: "all" });
@@ -344,12 +340,10 @@ test("the import record is written before settings.json: a failed settings write
   const settingsPath = path.join(agentDir, "settings.json");
   const before = await readFile(settingsPath, "utf8");
   const source = await piSettings(directory, { theme: "dracula" });
-  // agent/choco-pi stays writable; settings.json's temporary file cannot be created.
   await whileReadOnly(agentDir, () => assert.rejects(importPiSettings(agentDir, source), /EACCES/));
   assert.equal(await readFile(settingsPath, "utf8"), before, "settings.json is unchanged");
   assert.deepEqual((await readImportRecord(agentDir))?.imported, ["theme"]);
   await assert.rejects(importPiSettings(agentDir, source), /already imported/);
-  // Intended: at most once. The key was about to be imported, so even --force leaves it.
   const forced = await importPiSettings(agentDir, source, { force: true });
   assert.deepEqual(forced.imported, []);
   assert.equal((await readJson(settingsPath)).theme, "nord-dark");
@@ -386,7 +380,6 @@ test("the seed never overwrites a key the import set", async (t) => {
   assert.equal(settings.cacheWarming, "idle");
 });
 
-/** A fixture home whose ~/.pi holds a Pi settings file and poisoned neighbours. */
 async function poisonedHome(directory: string) {
   const home = path.join(directory, "user");
   const piAgent = path.join(home, ".pi", "agent");
@@ -418,7 +411,6 @@ async function poisonedHome(directory: string) {
   return { home, piAgent, poisoned, snapshot };
 }
 
-/** Runs the launcher's `self setup` under the fs-trace hook; returns the ~/.pi calls. */
 async function tracedSetup(directory: string, home: string, args: readonly string[]) {
   const log = path.join(directory, `trace-${args.length}-${Date.now()}.log`);
   const result = await runFile(LAUNCHER, ["self", "setup", ...args], {
@@ -473,7 +465,6 @@ test("default setup reads nothing under ~/.pi; --import-pi-settings reads only ~
     tracedSetup(directory, home, ["--import-pi-settings"]),
     /already imported on .*rerun with --force/,
   );
-  // --from reads that file and nothing under ~/.pi.
   const elsewhere = path.join(directory, "elsewhere.json");
   await writeJson(elsewhere, { steeringMode: "all" });
   const fromFile = await tracedSetup(directory, home, [

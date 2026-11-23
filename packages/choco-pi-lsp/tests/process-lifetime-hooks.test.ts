@@ -15,12 +15,6 @@ const moduleUrl = (relative: string): string =>
 
 const isChildReport = compile(map(unknown())).check;
 
-/**
- * Each scenario runs in a fresh Node process: process listeners, module
- * instances, and data directories are process-wide state, and a module is
- * re-evaluated (as Pi does for an in-process session with another cwd) by
- * importing it under a distinct query string.
- */
 async function runChild(source: string, root: string, env: Record<string, string> = {}) {
   const { stdout } = await execFileAsync(process.execPath, ["--input-type=module", "-e", source], {
     cwd: root,
@@ -140,7 +134,6 @@ test("a drained review-graph persist queue unregisters its exit hook", async () 
     const cwd = await reviewGraphFixture(root);
     const report = await runChild(reviewGraphSource(cwd, "drain"), root, debounced);
     assert.ok(Number(report.pendingListeners) >= 1, JSON.stringify(report));
-    // Shared logger hooks may stay; this instance's persist hook must not.
     assert.equal(report.drainedListeners, Number(report.pendingListeners) - 1);
   });
 });

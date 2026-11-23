@@ -191,11 +191,9 @@ test("project setting wins over the agent profile when present", () => {
   const projectDir = mkdtempSync(join(tmpdir(), "fuzzy-mention-project-"));
   try {
     writeFileSync(join(agentDir, "settings.json"), '{"fuzzyFileMentions":true}\n');
-    // No project settings file: agent profile decides.
     assert.equal(fuzzyFileMentionsEnabled(agentDir, projectDir), true);
     mkdirSync(join(projectDir, ".pi"), { recursive: true });
     writeFileSync(join(projectDir, ".pi", "settings.json"), '{"fuzzyFileMentions":false}\n');
-    // Explicit project default false overrides the agent profile true.
     assert.equal(fuzzyFileMentionsEnabled(agentDir, projectDir), false);
     writeFileSync(join(projectDir, ".pi", "settings.json"), '{"fuzzyFileMentions":true}\n');
     writeFileSync(join(agentDir, "settings.json"), '{"fuzzyFileMentions":false}\n');

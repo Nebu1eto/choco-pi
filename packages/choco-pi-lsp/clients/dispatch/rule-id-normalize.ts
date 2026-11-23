@@ -1,15 +1,7 @@
-/**
- * Normalize a rule id to the form a user typically writes in a
- * `choco-pi-lsp-ignore` comment, an inline suppression, or a project-level
- * `disable`/`select` list. Strips the `ast-grep:` LSP source prefix and the
- * language suffix used by the rule catalogs.
- */
-
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAstGrepRuleSources } from "../sgconfig.ts";
 
-/** Derive language tags from shipped rule filenames, rather than a list. */
 export function deriveRuleIdLanguageSuffixes(ruleRoot: string): Set<string> {
   const suffixes = new Set<string>();
   const visit = (dir: string): void => {

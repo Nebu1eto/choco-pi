@@ -1,12 +1,3 @@
-/**
- * Transient-failure retry around the summarization call.
- *
- * A dropped provider stream carries no summary, so failing the whole
- * compaction on the first drop cancels recovery exactly when an overflow
- * triggered the compaction. The host's default compaction wraps its
- * summarization in `retryAssistantCall`; this extension must do the same, with
- * the same terminal cases: aborts and deterministic errors never retry.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
@@ -43,7 +34,6 @@ function committedCompactions(host: CompactionHost): number {
   return host.sessionManager.getEntries().filter((entry) => entry.type === "compaction").length;
 }
 
-/** First call drops the stream, second call succeeds. */
 const dropThenSucceed: CompactionScript = (_call, index): ScriptedReply =>
   index === 0 ? { stopReason: "error", errorMessage: "terminated" } : {};
 
@@ -67,8 +57,6 @@ test("a transient stream drop is retried and the retried summary is committed", 
       .at(-1);
     assert.ok(committed);
     assert.equal(committed.fromHook, true, "the checkpoint came from this extension");
-    // `retryAssistantCall` returns only the final message, so usage is the
-    // successful attempt's usage alone, exactly as the host records it.
     assert.equal(committed.usage?.totalTokens, 18);
     assert.equal(committed.usage?.input, 11);
     assert.equal(committed.usage?.output, 7);
@@ -122,7 +110,6 @@ test("aborting during the retry backoff commits nothing and reports an aborted c
       aborted = event.aborted;
     });
   };
-  // A long backoff guarantees the abort lands during the sleep, not during a call.
   const host = await hostFor(
     dropThenSucceed,
     { enabled: true, maxRetries: 1, baseDelayMs: 10_000, maxAgentDelayMs: 10_000 },

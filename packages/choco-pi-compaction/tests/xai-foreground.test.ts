@@ -1,14 +1,3 @@
-/**
- * Foreground xAI server-side compaction through a real `createAgentSession`
- * (the shared xAI rig: INSTALLED openai-responses adapter, fake transports, no
- * network): the host's compaction is answered with an opaque compaction item,
- * replay sends it first (before the system prompt) with no summary text,
- * failures fall back to the local summarizer with a single notice and a
- * cooldown (or, over a committed checkpoint, the opaque guard cancels), and a
- * replay the transport refuses is refused locally without turning server-side
- * off. Wire expectations are written out by the test (role and text of each
- * item), never derived by slicing a captured request.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -56,7 +45,6 @@ import {
 
 const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 
-/** This file's own opaque item: the lane answers with it, replay must carry it verbatim. */
 const ITEM = { type: "compaction", encrypted_content: "xai-foreground-synthetic-opaque" };
 
 function nativeLane(): RecordingFetch {
@@ -69,7 +57,6 @@ function createRig(options: Omit<XaiRigOptions, "lane"> & { readonly lane?: Reco
 
 type Frame = JsonObject & { readonly type: string };
 
-/** Tool the auto-compaction rig's model calls; each result is a distinct marker. */
 const STEP_TOOL = defineTool({
   name: "step",
   label: "step",
@@ -80,11 +67,6 @@ const STEP_TOOL = defineTool({
   },
 });
 
-/**
- * A `step` function call reporting `inputTokens` of context (drives the host
- * threshold), optionally preceded by assistant text in the same turn: the
- * adapter then replays that turn as two input items (message + function_call).
- */
 function toolCallResponse(label: string, inputTokens: number, text?: string): Response {
   const item = {
     type: "function_call",
@@ -174,10 +156,6 @@ const isPartsTurn = compile(
 ).check;
 const isXaiOptInSetting = compile(obj({ compactionXai: lit("choco-pi") }, open)).check;
 
-/**
- * The test's own reading of one wire item: `system`, `<role>:<text>`, or
- * `compaction:<opaque>`. Independent of the production cut and mapping helpers.
- */
 function turnOf(item: JsonObject | undefined): string {
   if (isOpaqueItem(item)) return `compaction:${item.encrypted_content}`;
   if (isTextTurn(item)) return item.role === "system" ? "system" : `${item.role}:${item.content}`;
@@ -223,8 +201,6 @@ test(
       assert.equal(request.body.instructions, xaiCompactionInstructions("XR focus"));
       assert.ok(String(request.body.instructions).startsWith(DEFAULT_XAI_COMPACTION_INSTRUCTIONS));
       assert.ok(String(request.body.instructions).endsWith("XR focus"), "custom focus appended");
-      // The compacted prefix: every captured turn up to the host cut, the
-      // system prompt excluded, written out here rather than sliced from the capture.
       assert.deepEqual(turnsOf(request), [
         "user:XR-PREFIX-A",
         "assistant:XR-PREFIX-B",
@@ -261,7 +237,6 @@ test(
       assert.equal(replay?.body?.store, false);
       assert.deepEqual(xaiTransportRefusals(rig.manager.getSessionId()), []);
 
-      // Re-compaction carries the earlier item forward inside the new prefix.
       await rig.session.compact();
       assert.equal(lane.sent.length, 2);
       assert.deepEqual(turnsOf(lane.sent[1]), [
@@ -391,7 +366,6 @@ test(
   async () => {
     const foreground = textForeground();
     const lane = nativeLane();
-    // The model's static baseUrl is api.x.ai; the registry resolves a proxy for the request.
     const rig = await createRig({
       foreground,
       lane,
@@ -419,7 +393,6 @@ test(
     const rig = await createRig({ foreground, lane });
     try {
       await rig.session.prompt("XR-GO");
-      // 16 384 code points is the cap of the whole instructions text (default + focus).
       const result = await rig.session.compact("\u{1F600}".repeat(16_384));
       assert.equal(lane.sent.length, 0, "refused locally");
       assert.match(result.summary, /XR-LOCAL-SUMMARY/u);
@@ -589,7 +562,6 @@ test(
   async () => {
     const dir = await mkdtemp(join(tmpdir(), "choco-pi-xai-preferences-"));
     const previous = process.env[AGENT_DIR_ENV];
-    // `applyXaiMode` writes to Pi's agent dir; the session reads the mode back from it.
     process.env[AGENT_DIR_ENV] = dir;
     const foreground = textForeground();
     const lane = nativeLane();
@@ -609,7 +581,6 @@ test(
       const written: unknown = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
       assert.ok(isXaiOptInSetting(written));
       assert.equal(row()?.currentValue, "choco-pi");
-      // Applied in place: the next compaction stays local.
       const local = await rig.session.compact();
       assert.equal(lane.sent.length, 0, "choco-pi mode: no compact request");
       assert.match(local.summary, /XR-LOCAL-SUMMARY/u);
@@ -679,7 +650,6 @@ test(
     const sessionId = rig.manager.getSessionId();
     try {
       assert.ok(sessionNativeRefreshers(sessionId).includes("choco-pi-compaction:replay"));
-      // Detached state: the session's projection is gone, so captures cannot be mapped.
       releaseXaiSessionCaptures(sessionId);
       await rig.session.prompt("XR-UNMAPPED");
       await rig.session.compact();
@@ -770,7 +740,6 @@ test(
     }
   },
 );
-/** A response that streams nothing more until the request is aborted (a cancelled turn). */
 function stalledResponse(signal: AbortSignal | null | undefined): Response {
   const created = {
     type: "response.created",
@@ -859,7 +828,6 @@ test(
   },
 );
 
-/** Request 0 answers; request 1 (after the first compaction) fails, so its capture is unusable. */
 function failingSecondRequest(): RecordingFetch {
   return recordingFetch((index) =>
     index === 1

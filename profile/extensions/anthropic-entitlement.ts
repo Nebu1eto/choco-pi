@@ -1,22 +1,3 @@
-/**
- * Hide access-program Anthropic models from accounts that cannot use them.
- *
- * Pi lists every catalog model once a provider has credentials. Claude Mythos
- * 5.1 and 5.2 are served only to accounts in Anthropic's access programs, so
- * this extension registers a native `anthropic` provider that delegates to the
- * current one and adds `filterModels`. Both the model picker and the
- * usage-limit fallback read `ModelRegistry.getAvailable()`, which applies that
- * filter. A gated model stays hidden until `GET /v1/models` for the current
- * credential lists it; a pending, failed, or credential-less check hides it.
- *
- * Pi keeps one native or one config registration per provider, and each
- * replaces the other. The wrapper delegates to the provider composed at
- * registration time, so earlier config overlays keep working, and it is
- * re-installed on session start, model selection, and agent start when a later
- * config registration displaced it. Wrappers that build on the registered
- * native provider (the Anthropic capture and the opaque guard) keep it, and
- * they use it as their prototype, which is how `ensure` recognizes it.
- */
 import { createHash } from "node:crypto";
 import type { Credential, Provider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -24,7 +5,6 @@ import { arr, bool, compile, obj, opt, str } from "@earendil-works/pi-schema";
 import { rethrowUnlessStaleContext } from "./lib/lifecycle.ts";
 
 const PROVIDER = "anthropic";
-/** Anthropic models served only to accounts in an access program. */
 const GATED_MODEL_IDS: ReadonlySet<string> = new Set(["claude-mythos-5-1", "claude-mythos-5-2"]);
 const MODELS_URL = "https://api.anthropic.com/v1/models";
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -52,7 +32,6 @@ function credentialSecret(credential: Credential): string | undefined {
   return credential.type === "oauth" ? credential.access : credential.key;
 }
 
-/** In-memory cache key; the credential itself is never stored. */
 function credentialKey(credential: Credential | undefined): string | undefined {
   if (credential === undefined) return undefined;
   const secret = credentialSecret(credential);
@@ -72,7 +51,6 @@ function authHeaders(credential: Credential): Record<string, string> | undefined
     : { "x-api-key": secret, "anthropic-version": ANTHROPIC_VERSION };
 }
 
-/** Every model id the credential's account can use, following pagination. */
 async function fetchModelIds(
   headers: Record<string, string>,
   signal: AbortSignal,
@@ -97,15 +75,9 @@ async function fetchModelIds(
 
 export default function anthropicEntitlement(pi: ExtensionAPI): void {
   const entitlements = new Map<string, Entitlement>();
-  /** This instance's installed wrapper. */
   let installed: Provider | undefined;
-  /**
-   * The registry outlives a session switch or reload (a ctx does not), so a
-   * wrapper left by an earlier load still republishes its own late result.
-   */
   let registry: ExtensionContext["modelRegistry"] | undefined;
 
-  /** Recompute availability so a newly confirmed model appears. */
   const republish = (): void => {
     if (registry === undefined) return;
     let pending: Promise<unknown>;
@@ -118,7 +90,6 @@ export default function anthropicEntitlement(pi: ExtensionAPI): void {
     void pending.catch(rethrowUnlessStaleContext);
   };
 
-  /** Confirmed model ids, or undefined while unverified (starting a check when due). */
   const entitledIds = (credential: Credential | undefined): ReadonlySet<string> | undefined => {
     const key = credentialKey(credential);
     if (key === undefined || credential === undefined) return undefined;
@@ -135,7 +106,6 @@ export default function anthropicEntitlement(pi: ExtensionAPI): void {
         if ([...GATED_MODEL_IDS].some((id) => ids.has(id))) republish();
       },
       () => {
-        // Unverified, not denied: hide the gated models and retry later.
         entitlements.set(key, { state: "failed", at: Date.now() });
       },
     );
@@ -151,7 +121,6 @@ export default function anthropicEntitlement(pi: ExtensionAPI): void {
     return models.filter((model) => !GATED_MODEL_IDS.has(model.id) || ids?.has(model.id) === true);
   };
 
-  /** A provider that delegates every member to `base` and filters gated models. */
   const wrap = (base: Provider): Provider => {
     const baseFilter = base.filterModels?.bind(base);
     const wrapper: Provider = {
@@ -199,18 +168,15 @@ export default function anthropicEntitlement(pi: ExtensionAPI): void {
     return wrapper;
   };
 
-  /** Whether this instance's wrapper is the native provider or a prototype of it. */
   const inChain = (native: Provider | undefined): boolean =>
     installed !== undefined &&
     native !== undefined &&
     (native === installed || Object.prototype.isPrototypeOf.call(installed, native));
 
-  /** Install the wrapper unless this instance's wrapper is already in the native chain. */
   const ensure = (ctx: ExtensionContext): void => {
     const current = ctx.modelRegistry;
     registry = current;
     if (inChain(current.getRegisteredNativeProvider(PROVIDER))) return;
-    // The composed provider keeps earlier overlays, including a wrapper from an earlier load.
     const base = current.getProvider(PROVIDER);
     if (base === undefined) return;
     installed = wrap(base);

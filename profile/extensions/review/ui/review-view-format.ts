@@ -1,7 +1,3 @@
-/**
- * Pure drawing helpers of the full-screen review: the header line, comment
- * blocks, the chat transcript pane, and the layout constants.
- */
 import { isJsonRecord, isString, type RuntimeValue } from "../../lib/runtime-values.ts";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
@@ -23,40 +19,25 @@ import { HIDDEN_CONTENTS } from "../../lib/changes/view/changes-view.ts";
 import type { DiffHunk, ReviewComment, ReviewRecord } from "../core/types.ts";
 import type { OpenReviewViewOptions } from "./review-view-types.ts";
 
-/** The changes view's own words on a hidden sensitive file, repeated where `e` refuses one. */
 export const HIDDEN_FILE_HINT = HIDDEN_CONTENTS;
 
-/**
- * True for targets whose head is the working tree: a whole session, a
- * session turn with no later turn, and a branch review without a target. The
- * caller knows which turn is last; without it a session turn counts.
- */
 export function targetIncludesWorkingTree(target: ReviewRecord["target"]): boolean {
   if (target.kind === "branch") return target.target === undefined;
   return target.kind === "session" || target.kind === "session-turn";
 }
 
-/**
- * The instruction Finish places in the prompt editor for a review of the
- * working tree. It is never sent: the user reads it and presses Enter.
- */
 export function composeSessionReviewInstruction(
   record: ReviewRecord,
   markdown: string,
   includesWorkingTree = targetIncludesWorkingTree(record.target),
 ): string | undefined {
-  // A pull request's comments go to GitHub, not to the agent.
   if (record.target.kind === "pr") return undefined;
-  // Every other target's comments reach the editor. Only a comparison that ends
-  // at the working tree can be "addressed" as is; an earlier turn or a fixed
-  // range is described as what it is.
   const lead = includesWorkingTree
     ? "Please address the following human code review. Resolve each comment, preserve unrelated behavior, and report any comment you cannot address."
     : "The following human code review refers to an earlier comparison, not the working tree; its lines may not match the files as they are now. Read each comment against that comparison before acting on it.";
   return [lead, "", markdown.trimEnd()].join("\n");
 }
 
-/** What the view's header names for a review target (the review's own title line names it in full). */
 export function sourceOfTarget(target: ReviewRecord["target"]): DiffSource {
   switch (target.kind) {
     case "session":
@@ -77,7 +58,6 @@ export function sourceOfTarget(target: ReviewRecord["target"]): DiffSource {
   }
 }
 
-/** The pane's outdated-note line, for a review comment: `✎ (outdated, was path:line) text`. */
 export function outdatedCommentLines(
   comment: ReviewComment,
   withPath: boolean,
@@ -109,7 +89,6 @@ export function commentBlock(
   );
 }
 
-/** The row a comment sits under: its line on its side, or undefined when no longer displayed. */
 export function commentLineIndex(
   hunk: DiffHunk,
   comment: Pick<ReviewComment, "side" | "line">,
@@ -120,12 +99,6 @@ export function commentLineIndex(
       : line.kind !== "del" && line.newLine === comment.line,
   );
 }
-
-/**
- * A tool call's arguments or output with every string terminal-safe, for
- * display only: the chat's agent and the repository control these strings.
- * Tabs and line breaks stay, as the tool renderers lay them out.
- */
 
 export function terminalSafeValue(value: RuntimeValue): RuntimeValue {
   if (isString(value)) {
@@ -143,21 +116,8 @@ export function terminalSafeValue(value: RuntimeValue): RuntimeValue {
   return value;
 }
 
-/**
- * One header plus status, inactive-input, and two context-sensitive keymap rows.
- * An active editor reserves its own rows at render time, as does an open
- * completion list; zentui's frame replaces the editor's rule rows rather than
- * adding any, so this baseline is unchanged.
- */
 export const REVIEW_CHROME_ROWS = 5;
-/** At narrower widths the focused pane replaces the other instead of squeezing both. */
 export const REVIEW_CHAT_SPLIT_MIN_WIDTH = 120;
-/**
- * Layout width for collapsed tool previews. A collapsed tool call must stay
- * concise in the narrow chat pane, so its lines are laid out wide and then
- * cut to the pane instead of wrapping a long source line across dozens of
- * rows. 512 columns exceeds every per-line cap the read-only tools emit.
- */
 export const COLLAPSED_TOOL_RENDER_WIDTH = 512;
 
 export type ReviewViewHeights = {
@@ -176,7 +136,6 @@ export function reviewViewHeights(terminalRows: number): ReviewViewHeights {
   };
 }
 
-/** `startLine` is absent for a single line, so the label never fakes a range. */
 export function rangeLabel(position: { line: number; startLine?: number }): string {
   return position.startLine === undefined
     ? `${position.line}`
@@ -187,7 +146,6 @@ export function fullWidthLine(line: string, width: number): string {
   return `${clipped}${" ".repeat(Math.max(0, width - visibleWidth(clipped)))}`;
 }
 
-/** Format a GitHub timestamp with a compact, deterministic relative time. */
 export function formatRelativeTime(
   updatedAt: string | null | undefined,
   now: string,
@@ -315,10 +273,6 @@ export function chatBodyLines(
     ? theme.fg("accent", theme.bold("Agent chat [FOCUSED]"))
     : theme.bold("Agent chat");
   const messageWidth = Math.max(1, width - 2);
-  // Agent replies go through the same Markdown renderer and theme as the
-  // main Pi transcript, so headings, lists, code, and emphasis read the same
-  // here as everywhere else. Questions stay plain text: they are shown as
-  // typed, exactly like the main prompt's user messages.
   const content: string[] = [];
   for (const message of chat.messages) {
     if (content.length > 0) content.push("");
@@ -338,7 +292,6 @@ export function chatBodyLines(
       content.push(...renderTool(message, messageWidth));
       continue;
     }
-    // Model output: its control characters are drawn as glyphs, never sent to the terminal.
     content.push(
       ...new Markdown(sanitizeTerminalLines(message.text), 0, 0, markdownTheme).render(
         messageWidth,
@@ -347,8 +300,6 @@ export function chatBodyLines(
   }
   if (content.length === 0) content.push(theme.fg("dim", "Ask about the selected diff line."));
   if (chat.pending) content.push(theme.fg("dim", "Agent is replying…"));
-  // The pane scrolls: offset counts rows hidden below the viewport, so 0 is
-  // the live tail and page keys walk back through the transcript.
   const visibleHeight = Math.max(0, height - 1);
   const offset = Math.max(0, Math.min(scrollOffset, Math.max(0, content.length - visibleHeight)));
   if (offset > 0) heading += theme.fg("muted", ` · ↓${offset} below`);
@@ -359,7 +310,6 @@ export function chatBodyLines(
   return { lines: lines.slice(0, height), offset };
 }
 
-/** The first line of a thrown value's message, safe to draw. */
 export function failureLine(error: RuntimeValue): string {
   const raw = error instanceof Error ? error.message : String(error);
   return safe((raw.split(/\r?\n/u)[0] ?? "").trim() || "unknown error");

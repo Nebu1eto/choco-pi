@@ -1,7 +1,3 @@
-/**
- * Moving through the changes view: files, hunks, findings and comments, the
- * line cursor with its Shift selection, folds, and search matches.
- */
 import type { FileSummary } from "../git/model.ts";
 import type { DiffHunk } from "../types.ts";
 import {
@@ -18,8 +14,6 @@ import {
 import { ChangesViewBlocks } from "./file-block-renderer.ts";
 
 export abstract class ChangesViewNavigation extends ChangesViewBlocks {
-  /* ------------------------------------------------------- navigation */
-
   select(index: number): void {
     const files = this.files();
     if (files.length === 0) return;
@@ -48,14 +42,12 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
     this.keepSelectionVisible();
   }
 
-  /** Expand a file and load its body; nothing when already expanded. */
   expand(path: string): void {
     if (this.expanded.has(path)) return;
     this.expanded.add(path);
     this.ensureBody(path);
   }
 
-  /** n/N: the next or previous hunk, crossing into neighbouring files. */
   moveHunk(direction: 1 | -1): void {
     const files = this.files();
     for (let guard = 0; guard <= files.length; guard += 1) {
@@ -88,12 +80,6 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
     }
   }
 
-  /**
-   * f/F: the next or previous finding or comment on a listed file, in
-   * display order, wrapping at the ends. With the cursor off every item, the
-   * first one in or after the cursor's file (F: in or before it). Its file
-   * expands; an item of a loading body gets the cursor when the body arrives.
-   */
   moveFinding(direction: 1 | -1): void {
     const entries: Array<{ path: string; itemId: string; fileIndex: number }> = [];
     this.files().forEach((file, fileIndex) => {
@@ -129,7 +115,6 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
     if (target) this.goToItem(target.path, target.itemId);
   }
 
-  /** Put the cursor on an item: its file expands; a loading body is awaited. */
   goToItem(path: string, itemId: string): void {
     const index = this.files().findIndex((file) => file.path === path);
     if (index < 0) return;
@@ -143,19 +128,16 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
     this.setCursor({ path });
   }
 
-  /** True when the cursor can land on the item now (its file is open and placed). */
   protected hasItemStop(path: string, itemId: string): boolean {
     const file = this.cursorFiles().find((entry) => entry.path === path);
     return file !== undefined && cursorRows([file]).some((row) => row.itemId === itemId);
   }
 
-  /** Open or close one finding or comment; the cursor stays on it. */
   toggleItem(itemId: string): void {
     this.itemOpen.set(itemId, !this.isItemOpen(itemId));
     this.keepSelectionVisible();
   }
 
-  /** e: close every finding and comment of the cursor's file when all are open; else open them all. */
   toggleFileItems(): void {
     const path = this.selectedPath;
     const ids = this.itemIds(path);
@@ -176,7 +158,6 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
     if (height <= 0) return;
     const top = scroller.top();
     const line = this.selectedLine;
-    // The pinned rows at the top cover the rows under them: keep the line below them.
     const covered = this.pinning ? this.pinnedRowCount(top, height) : 0;
     if (line < top + covered) {
       scroller.scrollTo(this.pinning ? this.topShowing(line, height) : line);
@@ -187,12 +168,6 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
     return Math.max(1, (this.scroller?.viewportHeight() ?? 10) - 1);
   }
 
-  /* ------------------------------------------------------ line cursor */
-
-  /**
-   * Select a hunk; the line cursor starts on its first displayed line unless
-   * it is folded or its header is a stop.
-   */
   protected enterHunk(path: string, hunk: DiffHunk): void {
     this.selectedHunk = { path, hunkId: hunk.id };
     this.selectedItem = undefined;
@@ -211,7 +186,6 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
     this.anchorLine = undefined;
   }
 
-  /** Where the line cursor is; undefined with nothing listed. */
   lineCursor(): LineCursor | undefined {
     const path = this.selectedPath;
     if (path === undefined) return undefined;
@@ -228,14 +202,12 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
     return cursor;
   }
 
-  /** Hunks of a showable, loaded file as displayed (with revealed context). */
   displayHunks(file: FileSummary): readonly DiffHunk[] | undefined {
     const hunks = this.visibleHunks(file);
     const expand = this.options.expandContext;
     return hunks && expand ? hunks.map((hunk) => expand(hunk)) : hunks;
   }
 
-  /** The cursor's hunk as displayed. */
   currentDisplayHunk(): { file: FileSummary; hunk: DiffHunk } | undefined {
     const current = this.currentHunk();
     if (!current) return undefined;
@@ -259,13 +231,11 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
         place: entry.place,
       }));
       if (items.length > 0) cursorFile.items = items;
-      // A hidden file's body lists its items under the hidden notice.
       if (expanded && !shown) cursorFile.itemsOnly = true;
       return cursorFile;
     });
   }
 
-  /** Put the line cursor at `cursor` (a listed path) and keep it visible. */
   setCursor(cursor: LineCursor | undefined): void {
     if (!cursor) return;
     const index = this.files().findIndex((file) => file.path === cursor.path);
@@ -284,12 +254,10 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
     this.keepSelectionVisible();
   }
 
-  /** Move the line cursor `delta` stops (file rows, folded hunks, lines); a selection collapses. */
   moveCursor(delta: number): void {
     this.setCursor(moveLine(this.cursorFiles(), this.lineCursor(), delta));
   }
 
-  /** Shift+↑/↓: extend the selection within the cursor's hunk. */
   extendLineSelection(delta: number): void {
     const cursor = this.lineCursor();
     const current = this.currentDisplayHunk();
@@ -302,7 +270,6 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
     if (count === 0 || !Number.isInteger(delta) || delta === 0) return;
     const index = cursor.lineIndex;
     if (index === undefined) {
-      // From the hunk's header a selection starts on its first line.
       if (delta > 0) this.setCursor({ ...cursor, lineIndex: 0 });
       return;
     }
@@ -311,7 +278,6 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
     this.setCursor({ ...cursor, lineIndex: next, anchorIndex: cursor.anchorIndex ?? index });
   }
 
-  /** Where a comment written now attaches; undefined off a line. */
   commentPosition(): CommentPosition | undefined {
     const cursor = this.lineCursor();
     const current = this.currentDisplayHunk();
@@ -319,26 +285,22 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
     return currentCommentPosition(current.file.path, current.hunk, cursor);
   }
 
-  /** Fold or unfold a hunk; the cursor on it moves to its placeholder or first line. */
   setFolded(hunkId: string, folded: boolean): void {
     if (folded === this.foldedHunks.has(hunkId)) return;
     if (folded) this.foldedHunks.add(hunkId);
     else this.foldedHunks.delete(hunkId);
     if (this.selectedHunk?.hunkId === hunkId) {
       this.anchorLine = undefined;
-      // Where headers are stops (the pane), the cursor stays on the header it folded from.
       this.cursorLine = folded || this.options.hunkStops ? undefined : 0;
     }
     this.invalidate();
   }
 
-  /** Fold or unfold a hunk and keep the cursor in view. */
   protected toggleHunk(hunkId: string): void {
     this.setFolded(hunkId, !this.foldedHunks.has(hunkId));
     this.keepSelectionVisible();
   }
 
-  /** The hunk whose header (or folded placeholder) the line cursor is on, not a line or item. */
   protected headerHunkId(): string | undefined {
     const hunk = this.selectedHunk;
     const onHeader =
@@ -349,7 +311,6 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
     return onHeader ? hunk.hunkId : undefined;
   }
 
-  /** Enter/space with the line cursor: fold the cursor's hunk, or expand its file row. */
   protected toggleLine(): void {
     const hunk = this.selectedHunk;
     if (hunk && hunk.path === this.selectedPath) {
@@ -360,10 +321,6 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
     this.toggleExpanded();
   }
 
-  /**
-   * The host changed the context shown around `hunkId`; `aboveDelta` lines were
-   * added (or removed) above it, so the cursor follows its line. A selection collapses.
-   */
   contextChanged(hunkId: string, aboveDelta: number): void {
     if (this.selectedHunk?.hunkId === hunkId && this.cursorLine !== undefined) {
       const shown = this.currentDisplayHunk()?.hunk.lines.length ?? 0;
@@ -374,7 +331,6 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
     this.keepSelectionVisible();
   }
 
-  /** Replace the search; an empty query clears it. The cursor goes to the first match. */
   setSearch(query: string): void {
     const search = this.options.search;
     if (query.length === 0 || !search) {
@@ -386,7 +342,6 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
     this.goTo(matches[0]);
   }
 
-  /** The next or previous match, wrapping at the ends. */
   moveSearchMatch(delta: number): void {
     const search = this.searchState;
     if (!search || search.matches.length === 0 || !Number.isInteger(delta)) return;
@@ -396,7 +351,6 @@ export abstract class ChangesViewNavigation extends ChangesViewBlocks {
     this.goTo(search.matches[index]);
   }
 
-  /** Send the line cursor to a line: its file expands and its hunk unfolds; a loading body is awaited. */
   goTo(target: LineTarget | undefined): void {
     if (!target) return;
     const file = this.files().find((entry) => entry.path === target.path);

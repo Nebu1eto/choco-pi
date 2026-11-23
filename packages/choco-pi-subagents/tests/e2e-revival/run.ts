@@ -1,14 +1,3 @@
-/**
- * Opt-in end-to-end harness for durable subagent revival against a REAL Pi
- * 1.6.x process in RPC mode, driven by a scripted faux provider (no network,
- * no model credit). See README.md in this directory.
- *
- *   node packages/choco-pi-subagents/tests/e2e-revival/run.ts --pi "$PI_LAUNCHER" [--scenario S1] [--dry-run]
- *
- * Every check prints PASS or FAIL with its evidence. `M*` checks are harness
- * mechanics (a FAIL there is a harness or host problem); `J*` checks are the
- * revival contract. A step that was not observed is a FAIL, never a PASS.
- */
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { constants } from "node:fs";
 import { access, appendFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
@@ -47,7 +36,6 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-/** Stable 1.6 patch releases, matching the package's `~1.6.0` SDK range. */
 const REQUIRED_PI_VERSION = ">=1.6.0 <1.7.0";
 function supportedPiVersion(version: string | undefined): boolean {
   return /^1\.6\.(0|[1-9]\d*)$/.test(version ?? "");
@@ -58,11 +46,6 @@ const SUBAGENTS_ENTRY = resolve(HERE, "../../src/index.ts");
 const SCENARIOS = ["S1", "S2", "S3", "S4", "S5"] as const;
 type ScenarioName = (typeof SCENARIOS)[number];
 
-/**
- * The longest line the clean and unclean revival prompts share, computed from
- * the real builder (called with only the stable `unclean`/`steers` fields) so
- * detection follows its wording. Empty when the variants share no line.
- */
 function deriveRevivalMarker(): string {
   const clean = buildInterruptionPrompt({ unclean: false, steers: [] }).split("\n");
   const unclean = new Set(buildInterruptionPrompt({ unclean: true, steers: [] }).split("\n"));
@@ -74,17 +57,11 @@ function deriveRevivalMarker(): string {
 
 const REVIVAL_MARKER = deriveRevivalMarker();
 
-/** Reset delay the fake policy reports, per scenario (manager adds a 30 s margin). */
 const QUOTA_RESET_MS = 30_000;
 const MANAGER_RESET_MARGIN_MS = 30_000;
 const SCENARIO_TIMEOUT_MS = 300_000;
 const SHORT_JOURNAL_WAIT_MS = 3_000;
 
-// ---------------------------------------------------------------------------
-// Boundary parsing
-// ---------------------------------------------------------------------------
-
-/** A value parsed from JSON before validation. */
 type HostValue = {} | null | undefined;
 
 function parseJson(line: string): HostValue {
@@ -188,7 +165,6 @@ const MessageLineSchema = obj(
   { open: true },
 );
 
-/** Only the fixed journal-contract names this harness asserts on. */
 const JournalDataSchema = obj(
   {
     v: lit(1),
@@ -212,7 +188,6 @@ const JournalDataSchema = obj(
 type JournalData = Static<typeof JournalDataSchema>;
 
 interface JournalEntry {
-  /** Position among all non-header lines of the session file. */
   index: number;
   data: JournalData;
 }
@@ -226,10 +201,8 @@ interface SessionSnapshot {
   journal: JournalEntry[];
   malformedJournal: number;
   userTexts: string[];
-  /** Concatenated assistant text, for completion evidence. */
   assistantText: string;
   hasBashCall: boolean;
-  /** Every custom entry, by position, for attributing new lines. */
   customs: { index: number; customType: string }[];
 }
 
@@ -314,10 +287,6 @@ function describe(entry: JournalEntry | undefined): string {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Process control
-// ---------------------------------------------------------------------------
-
 interface ExitInfo {
   code: number | null;
   signal: NodeJS.Signals | null;
@@ -357,7 +326,6 @@ class PiProcess {
     this.exit = new Promise<ExitInfo>((resolveExit) => {
       child.once("exit", (code, signal) => {
         this.exitInfo = { code, signal };
-        // Outstanding commands can never be answered by a dead process.
         for (const waiter of this.pending.values()) {
           waiter.reject(new Error(`Pi ${this.pid} exited (code=${code} signal=${signal})`));
         }
@@ -382,7 +350,6 @@ class PiProcess {
     return this.logWrites;
   }
 
-  /** Last lines of Pi's stderr, for evidence when the process misbehaves. */
   async stderrTail(): Promise<string> {
     await this.logWrites;
     const text = (await readText(`${this.logPrefix}.stderr.log`)) ?? "";
@@ -435,7 +402,6 @@ class PiProcess {
     return response;
   }
 
-  /** Index of the next record, for waits that must ignore earlier records. */
   mark(): number {
     return this.records.length;
   }
@@ -450,18 +416,13 @@ class PiProcess {
   signal(signal: NodeJS.Signals): void {
     try {
       process.kill(this.pid, signal);
-    } catch {
-      /* already gone */
-    }
+    } catch {}
   }
 
-  /** Kill the whole process group (Pi plus any tool subprocess it left behind). */
   killGroup(): void {
     try {
       process.kill(-this.pid, "SIGKILL");
-    } catch {
-      /* group already gone */
-    }
+    } catch {}
   }
 
   async waitExit(timeoutMs: number): Promise<ExitInfo | undefined> {
@@ -493,7 +454,6 @@ async function cleanupAll(): Promise<string[]> {
   for (const pi of livePis) {
     if (pi.exitInfo === undefined) pi.killGroup();
     const exit = await pi.waitExit(10_000);
-    // Orphans (for example a child's `sleep`) keep the group id after Pi dies.
     pi.killGroup();
     let alive = false;
     try {
@@ -514,10 +474,6 @@ async function cleanupAll(): Promise<string[]> {
 function killAllSync(): void {
   for (const pi of livePis) pi.killGroup();
 }
-
-// ---------------------------------------------------------------------------
-// Scenario environment and checks
-// ---------------------------------------------------------------------------
 
 interface Check {
   id: string;
@@ -618,7 +574,6 @@ class Scenario {
     ];
     if (sessionFile !== undefined) args.push("--session", sessionFile);
     const env: NodeJS.ProcessEnv = {};
-    // Allowlist only: no provider keys or user Pi configuration reach the child.
     for (const key of ["PATH", "HOME", "TMPDIR", "USER", "LOGNAME", "SHELL", "LANG", "TERM"]) {
       const value = process.env[key];
       if (value !== undefined) env[key] = value;
@@ -668,7 +623,6 @@ class Scenario {
     return waitFor(async () => (await this.observations(since)).find(predicate), timeoutMs);
   }
 
-  /** Full timeout once the root file carries any journal entry; short otherwise. */
   async journalTimeout(rootFile: string, normal: number): Promise<number> {
     const snapshot = await readSession(rootFile);
     return snapshot.journal.length > 0 ? normal : Math.min(normal, SHORT_JOURNAL_WAIT_MS);
@@ -688,7 +642,6 @@ class Scenario {
       .at(-1);
   }
 
-  /** Child session file named by the journal, else found by its header's parent link. */
   async childFile(rootFile: string, fromJournal: string | undefined): Promise<string | undefined> {
     if (fromJournal !== undefined) return fromJournal;
     const names = await readdir(this.sessionDir, { recursive: true });
@@ -703,7 +656,6 @@ class Scenario {
   }
 }
 
-/** User messages carrying the revival prompt's shared line. */
 function interruptionCount(snapshot: SessionSnapshot): number {
   return snapshot.userTexts.filter((text) => text.includes(REVIVAL_MARKER)).length;
 }
@@ -712,10 +664,6 @@ function eventId(entry: Observation): string | undefined {
   return entry.data === undefined ? undefined : checked(EventDataSchema, parseJson(entry.data))?.id;
 }
 
-// ---------------------------------------------------------------------------
-// Shared steps
-// ---------------------------------------------------------------------------
-
 interface Started {
   pi: PiProcess;
   rootFile: string;
@@ -723,7 +671,6 @@ interface Started {
   agentId: string;
 }
 
-/** Start Pi, prompt the main session to spawn a background child, and identify it. */
 async function startAndSpawn(s: Scenario, script: "sleep" | "quota"): Promise<Started | undefined> {
   const pi = await s.startPi();
   const state = await s.state(pi);
@@ -793,7 +740,6 @@ async function startAndSpawn(s: Scenario, script: "sleep" | "quota"): Promise<St
     ) {
       return undefined;
     }
-    // Let the tool call leave the provider and start the subprocess.
     await delay(1_500);
   } else {
     const parked = await s.waitObservation(
@@ -831,7 +777,6 @@ async function startAndSpawn(s: Scenario, script: "sleep" | "quota"): Promise<St
   };
 }
 
-/** J-check: the child is journaled running (not suspended) before the disruption. */
 async function journalRunning(s: Scenario, run: Started): Promise<JournalEntry | undefined> {
   const entry = await s.waitJournal(
     run.rootFile,
@@ -839,8 +784,6 @@ async function journalRunning(s: Scenario, run: Started): Promise<JournalEntry |
       candidate.data.agent.id === run.agentId &&
       candidate.data.agent.status === "running" &&
       !candidate.data.suspended,
-    // Short when the root file has no journal at all, so a build without the
-    // feature does not let the child finish before the disruption.
     await s.journalTimeout(run.rootFile, 15_000),
   );
   const snapshot = await readSession(run.rootFile);
@@ -882,7 +825,6 @@ interface RevivalExpectations {
   since: number;
 }
 
-/** Shared post-disruption checks: running again, interruption message, completed, never stopped. */
 async function checkRevived(
   s: Scenario,
   rootFile: string,
@@ -966,10 +908,6 @@ async function checkRevived(
       : `${forAgent} entries, stopped: ${stopped.map(describe).join("; ") || "none"}`,
   );
 }
-
-// ---------------------------------------------------------------------------
-// Scenarios
-// ---------------------------------------------------------------------------
 
 async function scenarioReload(s: Scenario): Promise<void> {
   const run = await startAndSpawn(s, "sleep");
@@ -1263,15 +1201,9 @@ async function promptAndSettle(
 
 const SUSPEND_STATUSES = new Set(["interrupted", "waiting_for_reset"]);
 
-/**
- * Session A has a running sleep child. Fork at a later user message: A may gain
- * only suspended interrupted/waiting_for_reset journal entries, the fork must
- * not revive A's agent, and switching back to A must revive it there.
- */
 async function scenarioFork(s: Scenario): Promise<void> {
   const run = await startAndSpawn(s, "sleep");
   if (run === undefined) return;
-  // The spawn turn settles once the main model acknowledges the tool result.
   await waitFor(
     async () => ((await s.state(run.pi))?.isStreaming === false ? true : undefined),
     30_000,
@@ -1315,12 +1247,10 @@ async function scenarioFork(s: Scenario): Promise<void> {
   ) {
     return;
   }
-  // Revival window, then one turn so the forked session is flushed to disk.
   await delay(8_000);
   await promptAndSettle(s, run.pi, `${MAIN_NOOP} in fork`, "M11");
   await delay(1_000);
 
-  // --- While the fork is active -------------------------------------------
   const forked = await readSession(forkFile ?? "");
   const copied = forked.journal.filter((entry) => entry.data.rootSessionId === run.sessionId);
   s.progress(
@@ -1381,7 +1311,6 @@ async function scenarioFork(s: Scenario): Promise<void> {
       `unattributed lines: ${otherLines}`,
   );
 
-  // --- Switch back to A -----------------------------------------------------
   const switched = await run.pi.send({ type: "switch_session", sessionPath: run.rootFile });
   const switchData = checked(ForkDataSchema, switched.data);
   s.check(
@@ -1428,10 +1357,6 @@ const TITLES = {
   S4: "usage-limit park survives restart and resumes after reset",
   S5: "fork does not revive the original session's agent",
 } satisfies Record<ScenarioName, string>;
-
-// ---------------------------------------------------------------------------
-// Entry point
-// ---------------------------------------------------------------------------
 
 function isScenarioName(value: string): value is ScenarioName {
   return SCENARIOS.some((name) => name === value);

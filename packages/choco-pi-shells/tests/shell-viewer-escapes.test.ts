@@ -6,8 +6,6 @@ import { sanitizeShellText, TERMINAL_ESCAPE_PATTERN } from "../src/ui/shell-view
 const ESC = "\u001B";
 const BEL = "\u0007";
 
-// Expected values were captured from the original regex-literal pattern before it was
-// rebuilt from ESC/BEL constants; they pin the stripping behavior byte for byte.
 const cases: ReadonlyArray<{ name: string; input: string; pattern: string; sanitized: string }> = [
   {
     name: "plain text",

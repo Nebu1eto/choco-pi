@@ -15,10 +15,9 @@ const WEEKLY_BURN_HALF_LIFE_MS = 3 * DAY_MS;
 export const ROLLING_FIVE_HOUR_ID = "rollingFiveHourLimit" as const;
 export const WEEKLY_TOKEN_LIMIT_ID = "weeklyTokenLimit" as const;
 
-/** Minimal snapshot view used by persistent history and projections. */
 export interface ProjectionSnapshot {
   quotas: QuotasResponse;
-  updatedAt: number; // epoch ms
+  updatedAt: number;
 }
 
 interface Sample {
@@ -38,15 +37,6 @@ interface DailyBurnRates {
   rates: number[];
 }
 
-/**
- * Build refill-aware hints for rolling requests and weekly credits.
- *
- * The 5-hour window uses samples at least five minutes apart and projects one
- * hour ahead. Weekly credits estimate absolute credit burn from daily trends,
- * including trends from older capacity tiers, then apply the current tier's
- * refill rate and project one day ahead. Capacity transitions themselves are
- * never treated as usage.
- */
 export function buildProjectionHints(
   snapshots: readonly ProjectionSnapshot[],
 ): Map<string, ProjectionHint> {
@@ -79,9 +69,6 @@ function rollingSample(snapshot: ProjectionSnapshot): Sample | undefined {
   const quota = snapshot.quotas.rollingFiveHourLimit;
   if (!quota || quota.max <= 0) return undefined;
 
-  // tickPercent is a fraction (for example 0.05 = 5% per tick). All ticks in
-  // a five-hour window replenish the full capacity, so the interval can be
-  // deduced as tickPercent * window duration.
   const tickFraction = quota.tickPercent;
   if (!(tickFraction > 0) || tickFraction > 1) return undefined;
   const refillAmount = tickFraction * quota.max;
@@ -111,9 +98,6 @@ function weeklySample(snapshot: ProjectionSnapshot): Sample | undefined {
     return undefined;
   }
 
-  // All weekly regen ticks replenish one full capacity over seven days. Infer
-  // this tier's tick interval from its API-provided amount rather than assuming
-  // a particular subscription capacity or regen amount.
   const refillIntervalMs = (refillAmount / capacity) * WEEK_MS;
   return {
     id: WEEKLY_TOKEN_LIMIT_ID,
@@ -245,9 +229,6 @@ function grossBurnRateBetween(previous: Sample, current: Sample): number | undef
   const refillRate = current.refillAmount / current.refillIntervalMs;
   const expectedRefill = refillRate * elapsedMs;
   const refillHeadroom = Math.max(0, current.capacity - previous.remaining);
-  // Once expected refill exceeds the starting headroom, some refill may have
-  // been hidden by the capacity ceiling. Skip the ambiguous interval instead
-  // of inventing burn from refill that may never have landed.
   if (expectedRefill > refillHeadroom) return undefined;
   const remainingDelta = current.remaining - previous.remaining;
   return Math.max(0, expectedRefill - remainingDelta) / elapsedMs;

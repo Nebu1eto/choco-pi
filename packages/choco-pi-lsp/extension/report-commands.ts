@@ -1,9 +1,3 @@
-/**
- * Report commands: /lens-tdi, /lens-map, /lens-health, /lens-perf, /lens-tools.
- *
- * Extracted from `runtime-extension.ts` `activateExtension`; behavior is unchanged.
- */
-
 import { getDegradationSummary } from "../clients/degradation-ledger.ts";
 import * as path from "node:path";
 import { getDiagnosticTracker } from "../clients/diagnostic-tracker.ts";
@@ -19,7 +13,6 @@ import type { ExtensionActivation } from "./activation.ts";
 import { processState } from "./process-state.ts";
 import { notifyUi } from "./shared.ts";
 
-/** Register the report commands. */
 export function registerReportCommands(activation: ExtensionActivation): void {
   const { pi, runtime } = activation;
   pi.registerCommand("lens-tdi", {
@@ -65,17 +58,10 @@ export function registerReportCommands(activation: ExtensionActivation): void {
       try {
         const { generateLensMap } = await import("../clients/lsp-map.ts");
         const result = await generateLensMap(cwd);
-        // testFileCount is normally 0 (the review graph excludes tests by
-        // role since #260) — only mention it when the map-level guard
-        // actually dropped something.
         const testNote =
           result.testFileCount > 0 ? `, ${result.testFileCount} test files excluded` : "";
-        // Compiled twins (X.js merged into X.ts) only occur in
-        // compile-in-place projects — mention only when something merged.
         const twinNote =
           result.compiledTwinCount > 0 ? `, ${result.compiledTwinCount} compiled twins merged` : "";
-        // Untracked-gitignored files dropped from the map (0 outside a
-        // git repo, where the filter degrades to a no-op).
         const ignoredNote =
           result.ignoredFileCount > 0
             ? `, ${result.ignoredFileCount} gitignored files excluded`
@@ -117,7 +103,6 @@ export function registerReportCommands(activation: ExtensionActivation): void {
         ? [...last.runners].sort((a, b) => b.durationMs - a.durationMs).slice(0, 3)
         : [];
 
-      // Session duration
       const sessionAge = Date.now() - runtime.sessionStartedAt;
       const sessionMins = Math.floor(sessionAge / 60_000);
       const sessionHrs = Math.floor(sessionMins / 60);
@@ -179,10 +164,6 @@ export function registerReportCommands(activation: ExtensionActivation): void {
         }),
       );
 
-      // Event-loop occupancy — the dimension our duration logs were blind to
-      // (#192). The histogram window is now per-turn (#1122), so the session
-      // worst genuine (non-stall) block is tracked separately; p99/mean here
-      // reflect the current turn window.
       const elStats = getEventLoopStats();
       if (elStats) {
         lines.push(
@@ -201,21 +182,10 @@ export function registerReportCommands(activation: ExtensionActivation): void {
         }
       }
 
-      // Memory attribution (#1123 item 2) — reuses the same O(1) accessors the
-      // periodic latency.log `memory_sample` uses; see clients/memory-sampler.ts.
       try {
         lines.push("", formatMemoryHealthLine(buildMemorySample(runtime.wordIndex)));
-      } catch {
-        // best-effort — a health-line render must never break /lens-health
-      }
+      } catch {}
 
-      // On-demand heap snapshot (#1126) — the retainer-attribution half of the
-      // memory line above: it says how many bytes are resident by subsystem,
-      // this captures WHICH objects retain them. Gated behind CHOCO_PI_LSP_DEBUG_HEAP
-      // (zero cost + no file when unset) and only ever triggered from this
-      // operator-invoked diagnostics command — never a hot path or timer, so the
-      // synchronous multi-second snapshot pause is opt-in and explicit. See
-      // clients/debug-heap.ts.
       if (isDebugHeapEnabled()) {
         try {
           const snap = writeHeapSnapshotNow("lsp_health");
@@ -224,18 +194,12 @@ export function registerReportCommands(activation: ExtensionActivation): void {
               `Heap snapshot written: ${snap.path} (RSS ${Math.round(snap.rssBytes / (1024 * 1024))}MB, ${snap.durationMs}ms) — open in Chrome DevTools › Memory`,
             );
           }
-        } catch {
-          // best-effort — a snapshot write must never break /lens-health
-        }
+        } catch {}
       }
 
-      // Smells self-surfacing (#1123 item 3) — same bounded tail-scan the
-      // session_start line and turn_end note use; see clients/smells-rollup.ts.
       try {
         lines.push(formatSmellsHealthLine(countRecentSmells()));
-      } catch {
-        // best-effort — a health-line render must never break /lens-health
-      }
+      } catch {}
 
       if (diagStats.repeatOffenders.length > 0) {
         lines.push(t("lens.health.repeatOffenders", "Repeat offenders:"));
@@ -258,7 +222,6 @@ export function registerReportCommands(activation: ExtensionActivation): void {
         }
       }
 
-      // LSP status
       const lspClients = getLSPService().getStatus();
       if (lspClients.length > 0) {
         lines.push("", "LSP servers:");
@@ -271,7 +234,6 @@ export function registerReportCommands(activation: ExtensionActivation): void {
         lines.push("", "LSP servers: none started");
       }
 
-      // Cascade summary
       const cascadeStats = dispatchIntegration.getCascadeSessionStats();
       if (cascadeStats.runs > 0) {
         lines.push(
@@ -339,7 +301,6 @@ export function registerReportCommands(activation: ExtensionActivation): void {
         `Installed: ${statuses.filter((s) => s.installed).length}/${statuses.length}`,
       ];
 
-      // Global PATH tools
       if (bySource["global-path"].length > 0) {
         lines.push("", `📍 Global PATH (${bySource["global-path"].length}):`);
         for (const tool of bySource["global-path"]) {
@@ -348,7 +309,6 @@ export function registerReportCommands(activation: ExtensionActivation): void {
         }
       }
 
-      // npm global tools
       if (bySource["npm-global"].length > 0) {
         lines.push("", `📦 npm global (${bySource["npm-global"].length}):`);
         for (const tool of bySource["npm-global"]) {
@@ -356,7 +316,6 @@ export function registerReportCommands(activation: ExtensionActivation): void {
         }
       }
 
-      // pip user tools
       if (bySource["pip-user"].length > 0) {
         lines.push("", `🐍 pip user (${bySource["pip-user"].length}):`);
         for (const tool of bySource["pip-user"]) {
@@ -364,7 +323,6 @@ export function registerReportCommands(activation: ExtensionActivation): void {
         }
       }
 
-      // GitHub releases
       if (bySource["github-release"].length > 0) {
         lines.push("", `⬇️ GitHub releases (${bySource["github-release"].length}):`);
         for (const tool of bySource["github-release"]) {
@@ -372,7 +330,6 @@ export function registerReportCommands(activation: ExtensionActivation): void {
         }
       }
 
-      // choco-pi-lsp auto-installed
       if (bySource["choco-pi-lsp-auto"].length > 0) {
         lines.push("", `🤖 Auto-installed (${bySource["choco-pi-lsp-auto"].length}):`);
         for (const tool of bySource["choco-pi-lsp-auto"]) {
@@ -380,7 +337,6 @@ export function registerReportCommands(activation: ExtensionActivation): void {
         }
       }
 
-      // npx fallback
       if (bySource["npx-fallback"].length > 0) {
         lines.push("", `📦 npx fallback (${bySource["npx-fallback"].length} - on-demand install):`);
         for (const tool of bySource["npx-fallback"]) {
@@ -388,7 +344,6 @@ export function registerReportCommands(activation: ExtensionActivation): void {
         }
       }
 
-      // Not installed (should be empty for npm tools, they'll use npx)
       const trulyMissing = bySource["not-installed"].filter((s) => s.strategy !== "npm");
       if (trulyMissing.length > 0) {
         lines.push("", `❌ Missing (${trulyMissing.length}):`);

@@ -1,8 +1,3 @@
-/**
- * A few lines of a listed file as it is now, for the context the pane shows
- * around a finding outside every hunk. Size-capped like a body read: a file
- * over the body limit is not read at all.
- */
 import { join } from "node:path";
 import { isString } from "../../runtime-values.ts";
 import type { ExecRunner } from "../types.ts";
@@ -11,21 +6,17 @@ import type { DiffLimits } from "./limits.ts";
 import { MAX_EXCERPT_LINES, type FileExcerpt } from "./model.ts";
 import { readWorktreeFile } from "./worktree-files.ts";
 
-/** Characters kept of one excerpt line; a minified file has lines of megabytes. */
 export const MAX_EXCERPT_LINE_CHARS = 2_000;
 
 export type ExcerptContext = {
   runner: ExecRunner;
   repoRoot: string;
   limits: DiffLimits;
-  /** Head tree-ish of a "range" source; absent when the head is the working tree. */
   head?: string;
 };
 
-/** A 1-based inclusive line range of one file. */
 export type ExcerptRange = { first: number; last: number };
 
-/** The 1-based inclusive range actually read: whole numbers, at most {@link MAX_EXCERPT_LINES}. */
 export function excerptRange(from: number, to: number): ExcerptRange {
   const first = Number.isFinite(from) ? Math.max(1, Math.floor(from)) : 1;
   const end = Number.isFinite(to) ? Math.floor(to) : first;
@@ -68,7 +59,6 @@ async function worktreeText(context: ExcerptContext, path: string): Promise<stri
   }
 }
 
-/** Lines `from`..`to` of `path`; failures become "unavailable" and are never thrown. */
 export async function readExcerpt(
   context: ExcerptContext,
   path: string,

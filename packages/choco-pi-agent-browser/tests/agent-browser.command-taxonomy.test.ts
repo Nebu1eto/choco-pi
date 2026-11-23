@@ -1,9 +1,3 @@
-/**
- * Purpose: Lock agent-browser command capability predicates so wrapper behaviors do not drift through broad set reuse.
- * Responsibilities: Assert alias normalization and independent capability dimensions for ref guards, mutation hints, summaries, and session-close behavior.
- * Scope: Unit tests for command-taxonomy.ts only.
- */
-
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -49,14 +43,9 @@ test("command taxonomy keeps independent capability dimensions explicit", () => 
 });
 
 test("command taxonomy guards exactly the upstream ref-resolving selector commands", () => {
-  // diff guarding is deliberately command-level: diff screenshot resolves refs while diff snapshot's
-  // selector is CSS-only, but the wrapper's stale-ref guidance is a clearer failure than upstream's
-  // invalid-selector error and subcommand precision buys nothing observable.
   for (const command of ["diff", "frame", "highlight", "is", "screenshot", "scroll"]) {
     assert.equal(isRefGuardedCommand(command), true, command);
   }
-  // Upstream passes these selectors/operands through literally and never resolves @e refs for them,
-  // so guarding would falsely reject literal tokens such as `wait --text @e1` or `find text @e1 click`.
   for (const command of ["a11y", "find", "wait"]) {
     assert.equal(isRefGuardedCommand(command), false, command);
   }

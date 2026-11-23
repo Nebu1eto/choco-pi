@@ -272,9 +272,6 @@ function compilePathArtifactJobStep(
   };
 }
 
-// ponytail: allowedFields for each action live in JOB_STEP_ALLOWED_FIELDS (same key
-// alignment enforced by Record<AgentBrowserJobStepAction, …>), so the compiler map no
-// longer mirrors that set per entry; the call site looks it up by action.
 const JOB_STEP_COMPILERS = {
   assert_text: compileAssertTextJobStep,
   assert_url: compileAssertUrlJobStep,

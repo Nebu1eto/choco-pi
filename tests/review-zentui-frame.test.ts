@@ -30,7 +30,6 @@ const PLAIN_THEME = {
   bold: (text: string) => text,
 } as Theme;
 
-/** pi-tui's Editor renders a plain rule above and below its text rows. */
 function editorRender(width: number, ...text: string[]): string[] {
   const rule = "─".repeat(width);
   return [rule, ...text.map((line) => line.padEnd(width, " ")), rule];
@@ -63,10 +62,6 @@ function recordingLoader(
   return { loader, calls };
 }
 
-/**
- * A zentui that also exports the polished renderer, which is what decorates the
- * session prompt in every style but `minimalist`.
- */
 function polishedRecordingLoader(
   options: {
     config?: Record<string, RuntimeValue>;
@@ -565,8 +560,6 @@ test(
     skip: SKIP_WITHOUT_ZENTUI,
   },
   async () => {
-    // The separator row this asserts is a configurable padding row, so the
-    // fixture pins it rather than inheriting the developer's own preference.
     const adapter = await createZentuiFrameAdapter(
       withEditorConfig(realZentuiLoader, { style: "opencode", paddingRows: "bottom" }),
     );

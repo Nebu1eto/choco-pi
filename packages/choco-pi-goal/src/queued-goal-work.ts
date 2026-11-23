@@ -16,7 +16,6 @@ import {
 } from "./queued-goal-messages.ts";
 import { CUSTOM_ENTRY_TYPE, type GoalStatus, type ThreadGoal } from "./types.ts";
 
-// Open object, as the previous TypeBox object was: extra detail keys are accepted.
 const isSupersededDetails = compile(
   obj({ kind: lit("superseded_continuation") }, { open: true }),
 ).check;
@@ -67,7 +66,6 @@ interface QueuedGoalRewriteResult<TMessage extends QueuedGoalContextInput> {
   changed: boolean;
 }
 
-/** Single typed bridge from concrete queued-goal rewrites back onto provider-context messages. */
 function mergeProviderContextMessage<TMessage extends QueuedGoalContextInput>(
   original: TMessage,
   rewritten: RewrittenQueuedGoalWorkMessage,

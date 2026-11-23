@@ -81,7 +81,6 @@ export function latestUnresolvedPending(
   return latest && !resolved.has(latest.pending.recoveryId) ? latest : undefined;
 }
 
-/** Latest pending recovery on the branch that no resolved entry closes. */
 export function unresolvedPendingEntry(
   branch: readonly SessionEntry[],
 ): UsageLimitPendingEntry | undefined {

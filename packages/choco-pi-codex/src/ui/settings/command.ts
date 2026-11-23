@@ -72,8 +72,6 @@ export function registerCodexCommand(
   }
 
   async function openSettings(ctx: ExtensionContext, tab: SettingsTab): Promise<void> {
-    // RPC hosts have dialogs but no terminal components, so only the TUI gets
-    // the settings screen; every other mode receives the text summary.
     if (ctx.mode !== "tui") {
       if (tab === "usage") {
         const [{ fetchCodexUsage }, { formatCodexUsage }] = await Promise.all([
@@ -179,9 +177,6 @@ export function registerCodexCommand(
     },
   });
 
-  // The provider is process-global and closes over this load's `pi` and
-  // adapter state. A subagent child would leave it bound to a runtime that is
-  // disposed when the child ends, so only the main session publishes it.
   if (!inSubagentChildLoad()) {
     registerCodexPreferencesProvider({
       effectiveConfig,

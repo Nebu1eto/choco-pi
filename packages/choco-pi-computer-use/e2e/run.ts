@@ -62,22 +62,9 @@ import {
 } from "./process.ts";
 import type { FixtureEvidence } from "./tier-b.ts";
 
-/** Per-scenario wall-clock budget; the model budget below caps it further. */
 const SCENARIO_MS = 4 * 60_000;
-/**
- * Tier B S4: the proxy cancels a typeText still in flight after this long. The TS transport
- * timeout is max(15 s, chars*25 ms + 4 s) while the real helper types about 12 ms per character,
- * so the transport timeout never fires before the helper finishes; the proxy sends the same
- * `cancel {target: requestId}` instead.
- */
 const S4_HARNESS_CANCEL_MS = 3000;
-/** A scenario that could not start for a harness-side precondition (fixture, focus). */
 class BlockedError extends Error {}
-/**
- * S4 waits out the TS transport timeout for its held typeText (max(15 s, chars*25+4 s), 15 s for
- * the 400-character prompt) before the cancel, then needs model turns; one extra minute covers
- * the hold and keeps S4 well above timeout + 90 s.
- */
 function scenarioMs(scenario: ScenarioId): number {
   return scenario === "S4" ? SCENARIO_MS + 60_000 : SCENARIO_MS;
 }
@@ -85,11 +72,6 @@ interface Daemon {
   child: ChildProcess;
   log: Sink;
 }
-/**
- * Never let a daemon inherit the harness's stdout/stderr: an inherited descriptor keeps the
- * harness output open after the harness is done. Both streams are drained into a scenario log
- * so a chatty daemon cannot block on a full pipe.
- */
 function daemon(p: Plan, file: string, args: string[]): Daemon {
   const log = sink(p.daemonLog);
   const child = spawn(file, args, { cwd: p.cwd, env: p.env, stdio: ["ignore", "pipe", "pipe"] });
@@ -98,7 +80,6 @@ function daemon(p: Plan, file: string, args: string[]): Daemon {
   child.once("error", (error) => log.errors.push(`spawn: ${error.message}`));
   return { child, log };
 }
-/** Bounded daemon shutdown; returns harness defects instead of waiting indefinitely. */
 async function stopDaemon(target: Daemon): Promise<string[]> {
   const defects: string[] = [];
   const stop = await stopProcess(target.child, "daemon");
@@ -136,7 +117,6 @@ class TierADaemon implements DaemonLauncher {
     ]);
   }
 }
-/** Tier B: the logging proxy between Pi and the already running dev helper daemon. */
 function proxyArgs(p: Plan, scenario: ScenarioId): string[] {
   return [
     "--experimental-strip-types",
@@ -156,7 +136,6 @@ class TierBProxy implements DaemonLauncher {
     return daemon(p, process.execPath, proxyArgs(p, scenario));
   }
 }
-/** Prompt for a scenario; a tier-specific `<id>.<tier>.txt` overrides `<id>.txt`. */
 async function promptFor(tier: Tier, scenario: ScenarioId): Promise<string> {
   const specific = new URL(`./scenarios/${scenario}.${tier}.txt`, import.meta.url);
   try {
@@ -280,10 +259,6 @@ async function mainDaemonPids(explicit?: number): Promise<number[]> {
     throw new GateError("MAIN_DAEMON_MISSING", "pass --main-daemon-pid");
   return pids;
 }
-/**
- * Tier B: the dev daemon (queried directly, not through the proxy) runs protocol 7 from the dev
- * app and holds both permissions. Returns the executable path it reports.
- */
 async function checkTierB(p: Plan): Promise<string> {
   const socket = p.upstream;
   if (!socket) throw new GateError("ARGUMENT", "tier b requires --helper-socket");
@@ -308,10 +283,6 @@ async function checkTierB(p: Plan): Promise<string> {
     );
   return executable;
 }
-/**
- * Tier B shares one daemon across scenarios: wait (at most 40 s, beyond the 30 s owner TTL) until
- * no earlier Pi session owns it, proven by a harness claim that is released at once.
- */
 async function ownerFree(socket: string): Promise<void> {
   const session = { id: `e2e-harness-${randomUUID()}`, generation: 0 };
   const until = Date.now() + 40_000;
@@ -372,7 +343,6 @@ async function run(): Promise<void> {
     verdict: string;
     notes?: ScenarioNotes;
   }[] = [];
-  /** Tier B provenance recorded in summary.json (helper, proxy, fixture build). */
   let tierB: JsonObject | undefined;
   async function summary(status: string): Promise<void> {
     const content: JsonObject = {
@@ -469,11 +439,6 @@ async function run(): Promise<void> {
   try {
     for (const model of resolved) {
       const modelDeadline = Date.now() + 30 * 60_000;
-      /**
-       * Isolation is proven only by S1's isolation checks (allowlisted tools, no global agent path,
-       * scratch helper path, stderr diagnostics), never by its scenario assertions. When S1 never
-       * reached those checks, isolation is unproven and the remaining scenarios stay blocked.
-       */
       let isolationBlock: string | undefined;
       for (const scenario of scenarioRows) {
         if (isolationBlock) {
@@ -510,8 +475,6 @@ async function run(): Promise<void> {
           if (await socketBusy(p.socket)) throw new GateError("SOCKET_BUSY", p.socket);
           const daemon = await launcher.start(p, scenario.id);
           owned.add(daemon);
-          // The scenario deadline stops Pi (inside launch) and the daemon, each with SIGTERM
-          // then SIGKILL after KILL_GRACE_MS, and the loop advances regardless.
           const budget = Math.max(0, Math.min(scenarioMs(scenario.id), modelDeadline - Date.now()));
           const deadline = new AbortController();
           let scenarioTimedOut = false;
@@ -525,10 +488,6 @@ async function run(): Promise<void> {
           let fixtureRun: FixtureRun | undefined;
           let helperExecutable: string | undefined;
           let tierBClosed = false;
-          // Tier B: stop the proxy (flushing its log) and quit the fixture exactly once, before
-          // scoring, so the logs are complete and the fixture has written its final state. The
-          // fixture run exists before its launch, so a partial launch is stopped too; quitFixture
-          // is a no-op when launchFixture already stopped it.
           const closeTierB = async (): Promise<void> => {
             if (tierBClosed) return;
             tierBClosed = true;
@@ -561,7 +520,6 @@ async function run(): Promise<void> {
             const mutate =
               scenario.id === "S5" && runFixture ? () => resizeTarget(runFixture) : undefined;
             const piStart = Date.now();
-            // launch bounds its own waits; this watchdog is a last resort so the run advances.
             const launched = await within(
               launch(p, deadline.signal, scenario.id, mutate),
               budget + KILL_GRACE_MS + 4 * WAIT_BOUND_MS,
@@ -664,7 +622,6 @@ async function run(): Promise<void> {
       }
     }
   } catch (error) {
-    // Leave evidence of a partial run; the verdicts so far are already recorded.
     const why = error instanceof Error ? error.message : String(error);
     await summary(`ABORTED(${why})`);
     throw error;

@@ -14,7 +14,6 @@ test("OpenAI Codex catalog exposes the host GPT-6 Astra entry exactly once", () 
   assert.equal(astra.api, "openai-codex-responses");
   assert.deepEqual(astra.input, ["text", "image"]);
   assert.equal(astra.thinkingLevelMap?.minimal, "low");
-  // Daybreak models remain a choco-pi addition until the host catalog carries them.
   assert.ok(models.some(({ id }) => id === "gpt-daybreak-blue-latest"));
 });
 
@@ -29,7 +28,6 @@ test("OpenAI Codex catalog exposes the host GPT-6.2 Astra and Sol entries exactl
     const model = entries[0];
     assert.equal(entries.length, 1, id);
     assert.ok(model);
-    // The host catalog (Pi 1.6+) owns these entries; choco-pi adds no fallback.
     assert.equal(
       host.find((candidate) => candidate.id === id),
       model,

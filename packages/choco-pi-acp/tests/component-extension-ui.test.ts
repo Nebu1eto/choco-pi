@@ -91,18 +91,15 @@ class UiProcess implements PiRpcProcessLike {
   }
 }
 
-/** The `cancelled` flag of an extension UI reply, or `undefined` for other replies. */
 function cancelledFlag(response: PiExtensionUiResponse): boolean | undefined {
   return "cancelled" in response ? response.cancelled : undefined;
 }
 
-/** The text payload of an extension UI reply. */
 function responseValue(response: PiExtensionUiResponse): string {
   assert.ok("value" in response, "extension UI reply carries a text value");
   return response.value;
 }
 
-/** The form properties of an elicitation this adapter raised. */
 function formProperties(
   request: CreateElicitationRequest,
 ): Record<string, ElicitationPropertySchema> {
@@ -110,21 +107,18 @@ function formProperties(
   return request.requestedSchema.properties ?? {};
 }
 
-/** One string-typed form property of an elicitation this adapter raised. */
 function stringProperty(request: CreateElicitationRequest, key: string): StringPropertySchema {
   const property = formProperties(request)[key];
   assert.ok(property?.type === "string", `elicitation property \`${key}\` is a string field`);
   return property;
 }
 
-/** The text of an `agent_message_chunk` notification. */
 function messageChunkText(update: SessionUpdate | undefined): string {
   assert.ok(update?.sessionUpdate === "agent_message_chunk", "update is an agent message chunk");
   assert.ok(update.content.type === "text", "agent message chunk carries text content");
   return update.content.text;
 }
 
-/** How many extension UI dialogs the session still holds open. */
 function pendingExtensionUiCount(session: PiAcpSession): number {
   const pending = recordField(session, "pendingExtensionUi");
   const size = pending === undefined ? undefined : numberField(pending, "size");
@@ -231,7 +225,6 @@ test("a form shows the request's title once: as its message, never again as the 
   for (const request of requests) proc.emit(request);
   await tick();
 
-  // The title is the form's message; the field's own label never repeats it.
   assert.deepEqual(
     conn.elicitations.map((request) => request.message),
     [

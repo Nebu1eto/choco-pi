@@ -53,7 +53,6 @@ function encodedModel(model: RuntimeModel): string {
   );
 }
 
-/** Replaces this extension's complete prompt region while preserving all foreign content. */
 export function composeModelGuidancePrompt(
   systemPrompt: string,
   model: RuntimeModel | undefined,

@@ -40,7 +40,6 @@ function cacheRuntimeInfo(
   fingerprint: string,
   runtime: RuntimeInfo | undefined,
 ): void {
-  // Drop prior fingerprints for the same cwd so stale marker sets do not linger.
   for (const key of runtimeInfoCache.keys()) {
     if (key === cwd || key.startsWith(`${cwd}\0`)) runtimeInfoCache.delete(key);
   }
@@ -74,8 +73,6 @@ type RuntimeDef = RuntimeMetadata & {
   detect: DetectionSpec;
   version: (cwd: string) => Promise<string | undefined>;
 };
-
-// --- Detection utilities ---
 
 function hasAnyFile(cwd: string, names: readonly string[]): boolean {
   return names.some((name) => existsSync(join(cwd, name)));
@@ -126,8 +123,6 @@ function matchesDetection(
   );
 }
 
-// --- Version utilities ---
-
 async function runVersion(
   command: string,
   args: readonly string[] = [],
@@ -175,16 +170,9 @@ function noVersion(): Promise<undefined> {
   return Promise.resolve(undefined);
 }
 
-// --- Priority levels ---
-// 10 = build-system runtimes (checked first to avoid language false-positives)
-// 50 = common runtimes (bun, deno, node, python, etc.)
-// 100 = default (everything else, checked in definition order)
-
 const PRIORITY_BUILD_SYSTEM = 10;
 const PRIORITY_COMMON = 50;
 const PRIORITY_DEFAULT = 100;
-
-// --- Runtime definitions ---
 
 const runtimes: RuntimeDef[] = [
   {
@@ -786,7 +774,6 @@ const runtimes: RuntimeDef[] = [
   },
 ];
 
-// Sort once at module load — stable sort preserves definition order within same priority
 const sortedRuntimes = [...runtimes].sort((a, b) => a.priority - b.priority);
 
 export const runtimeMetadata: RuntimeMetadata[] = runtimes.map(({ name, symbol, style }) => ({
@@ -811,7 +798,6 @@ export async function readRuntimeInfo(cwd: string): Promise<RuntimeReadResult> {
   try {
     entries = readdirSync(cwd);
   } catch {
-    // readdir failure is treated as a transient error so last-good can be kept.
     return { kind: "error" };
   }
 

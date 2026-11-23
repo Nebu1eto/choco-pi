@@ -6,12 +6,6 @@ export const PROBE_WIDGET_KEY = "choco-pi-diff-probe";
 
 type ProbeCapture = { tui?: TUI };
 
-/**
- * Obtain Pi's TUI handle. Extensions receive it only through component
- * factories, so this mounts a zero-line widget, keeps the handle the factory
- * receives, and removes the widget again in the same tick. Pi calls widget
- * factories synchronously, so nothing is ever drawn.
- */
 export function probeTui(ui: Pick<ExtensionUIContext, "setWidget">): PaneTui | undefined {
   const captured: ProbeCapture = {};
   ui.setWidget(PROBE_WIDGET_KEY, (tui) => {

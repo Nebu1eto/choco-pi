@@ -96,63 +96,28 @@ export interface LaunchOptions {
   profile?: "boundary-only" | "worktree";
   cycles?: number;
   seedBytes?: number;
-  /** Seeded step-tool exchanges (count x chars of tool output) before the first turn. */
   seedToolResults?: SeedToolResults;
   seedNamespace?: string;
-  /** Host compaction keepRecentTokens, which production reads for the snapshot cut (default 1). */
   keepRecentTokens?: number;
-  /** Enable Pi's own compaction (needed for host overflow recovery); default off. */
   hostCompaction?: boolean;
-  /**
-   * Serve the Anthropic model (offline: the OAuth-shaped mirror over the
-   * production capturing stream and a scripted lane) with background compaction
-   * off, for the foreground server-side path.
-   */
   anthropicForeground?: boolean;
-  /**
-   * Offline only: serve an xAI Grok mirror (openai-responses) over production's
-   * xAI capturing stream and a scripted `/responses/compact` lane on global
-   * fetch, for the xAI foreground server-side path.
-   */
   xaiForeground?: boolean;
-  /** Extra keys merged into the isolated agent `settings.json` (e.g. context presets). */
   agentSettings?: Readonly<Record<string, string>>;
-  /**
-   * Seed every live catalog mirror into the in-memory models store and apply the
-   * worktree `profile/models.json` overrides (the real agent dir symlinks it), copied
-   * into the isolated agent dir. Both tiers.
-   */
   catalog?: boolean;
-  /**
-   * Offline: serve this model instead of the default fixture: an
-   * anthropic-messages model (harness-offline provider), or with
-   * `xaiForeground` an xai openai-responses model.
-   */
   offlineModel?: Model<Api>;
-  /** Offline `xaiForeground`: more xai models the provider serves (switch targets). */
   extraOfflineModels?: readonly Model<Api>[];
-  /**
-   * Live: allow a non-Anthropic model served by its own provider transport (for
-   * Codex, choco-pi-codex's WebSocket, which global fetch does not see).
-   */
   providerOwnedTransport?: boolean;
-  /** Live tier: real provider transport for this approved provider/model. */
   live?: LiveLaunch;
-  /** Reuse a caller-owned runtime tree (agent/project/sessions/home) across launches. */
   runtimeRoot?: string;
-  /** Reopen this persisted session through SessionManager.open instead of seeding. */
   resumeSessionFile?: string;
-  /** Keep the runtime tree on cleanup (always kept for a caller-owned runtimeRoot). */
   preserveRuntime?: boolean;
 }
 
 export interface LiveLaunch {
   readonly model: string;
-  /** The real agent dir holding auth.json, resolved before any launcher scoped the env. */
   readonly sourceAgentDir: string;
 }
 
-/** Live inputs read once before the launcher scopes the process. */
 interface LiveSource {
   readonly launch: LiveLaunch;
   readonly provider: string;
@@ -166,7 +131,6 @@ interface LiveInputs extends LiveSource {
 
 let launcherActive = false;
 
-/** Resources owned by one launch, released by cleanup. */
 class Owned {
   readonly releases: (() => void)[] = [];
   readonly children = new Set<AgentSession>();
@@ -198,7 +162,6 @@ function isXaiResponsesModel(model: Model<Api>): model is Model<"openai-response
   return model.api === "openai-responses" && model.provider === "xai";
 }
 
-/** The offline xAI subject of an `xaiForeground` launch (the Grok mirror by default). */
 function offlineXaiModel(options: LaunchOptions): Model<"openai-responses"> {
   const requested = options.offlineModel ?? XAI_GROK_MIRROR;
   if (!isXaiResponsesModel(requested))
@@ -214,7 +177,6 @@ function extraXaiModels(options: LaunchOptions): Model<"openai-responses">[] {
   });
 }
 
-/** The requested offline Anthropic-wire subject, refusing any other api. */
 function offlineAnthropicModel(options: LaunchOptions): Model<"anthropic-messages"> | undefined {
   const requested = options.offlineModel;
   if (requested === undefined) return undefined;
@@ -262,14 +224,12 @@ function globalFetchFor(
   });
 }
 
-/** Writes the given catalog mirrors into an in-memory store, one entry per provider. */
 async function seededStore(models: readonly Model<Api>[]): Promise<InMemoryModelsStore> {
   const modelsStore = new InMemoryModelsStore();
   const byProvider = new Map<string, Model<Api>[]>();
   for (const model of models)
     byProvider.set(model.provider, [...(byProvider.get(model.provider) ?? []), model]);
   for (const [provider, list] of byProvider)
-    // The runtime prefers a stored catalog only when it is newer than the built-in data.
     await modelsStore.write(provider, {
       models: list,
       checkedAt: Date.now(),
@@ -279,9 +239,7 @@ async function seededStore(models: readonly Model<Api>[]): Promise<InMemoryModel
 }
 
 interface CatalogPlan {
-  /** Seed every live mirror (not only the live subject). */
   readonly all: boolean;
-  /** Isolated copy of the worktree models.json, or null for none. */
   readonly modelsPath: string | null;
 }
 
@@ -296,15 +254,12 @@ async function liveRuntime(
     : LIVE_SEEDED_MODELS.filter(
         (model) => model.provider === live.provider && model.id === live.modelId,
       );
-  // Loads the in-memory store; allowModelNetwork=false keeps catalogs off the network.
   const runtime = await ModelRuntime.create({
     credentials,
     modelsStore: await seededStore(seeded),
     allowModelNetwork: false,
     modelsPath: catalog.modelsPath,
   });
-  // An extension-owned provider (Synthetic) exists only once its extension
-  // registers it; register its static mirror so the live model resolves first.
   const mirror = LIVE_PROVIDER_MIRRORS.get(live.provider);
   if (mirror && !runtime.getModel(live.provider, live.modelId))
     runtime.registerProvider(live.provider, mirror);
@@ -392,12 +347,6 @@ async function writeConfig(
   ]);
 }
 
-/**
- * Live parity with a real session on the same credential: the user's
- * `SYSTEM.md` replaces Pi's default harness preamble. Read from the source agent
- * dir (not a secret: it resolves to the tracked profile prompt) and copied into
- * the isolated agent dir; recorded by digest only.
- */
 async function copyLiveSystemPrompt(state: HostState, dirs: RuntimeDirs, live: LiveInputs) {
   let text: string;
   try {
@@ -459,7 +408,6 @@ function capturePrompt(state: HostState, manager: SessionManager, parsed: Captur
   capturePayload(state.recorder, "before-provider", parsed, state.book.sync(sessionId), sessionId);
 }
 
-/** Tail harness extension: deterministic tool and payload capture. */
 function harnessFactory(
   state: HostState,
   manager: SessionManager,
@@ -472,8 +420,6 @@ function harnessFactory(
       slot.ctx = ctx;
     });
     pi.registerTool(stepTool());
-    // tool-search declares only always-active tools on its first commit; this tail
-    // handler runs after it and keeps the harness tool declared.
     pi.on("before_agent_start", () => {
       const active = pi.getActiveTools();
       if (!active.includes(STEP_TOOL)) pi.setActiveTools([...active, STEP_TOOL]);
@@ -492,7 +438,6 @@ function worktreeName(path: string): string {
   return relative(WORKTREE, resolve(path)).split("\\").join("/");
 }
 
-/** Host-loaded (JITI) extensions must be exactly the plan's host paths. */
 function assertHostSet(loadedPaths: readonly string[], plan: WorktreeProfilePlan): void {
   const expected = new Set(plan.hostExtensionPaths.map(worktreeName));
   const loaded = new Set(loadedPaths.map(worktreeName).filter((name) => expected.has(name)));
@@ -579,7 +524,6 @@ async function loadPlan(options: LaunchOptions): Promise<WorktreeProfilePlan> {
   return options.profile === "worktree" ? loadWorktreeProfilePlan() : emptyPlan();
 }
 
-/** Everything a launched host hands to its scenario. */
 interface LaunchedParts {
   readonly options: LaunchOptions;
   readonly state: HostState;
@@ -599,7 +543,6 @@ interface LaunchedParts {
   readonly cleanup: () => Promise<void>;
 }
 
-/** The scenario-facing host handle; every accessor rechecks the launcher is current. */
 function launchedHost(parts: LaunchedParts) {
   const { options, state, live, owned, slot, session, manager, dirs } = parts;
   const { consumerProbe, adoptionProbe, reregister, observeCoordinators } = parts;
@@ -612,30 +555,23 @@ function launchedHost(parts: LaunchedParts) {
     recorder,
     credentials: parts.credentials,
     mode: live ? ("live" as const) : ("fake" as const),
-    /** Live launch inputs (model, source agent dir) for fresh-process workers. */
     live: options.live === undefined ? undefined : { ...options.live },
-    /** Live: provider/model actually served; fake: the offline fixture. */
     model: `${parts.model.provider}/${parts.model.id}`,
-    /** Waits for every in-flight usage read, then returns the real-usage ledger. */
     usage: async () => {
       if (!live) return undefined;
       await live.ledger.drain();
       return live.ledger.report();
     },
-    /** Memory-only credential strings no artifact may contain. */
     protectedSecrets: () => (live ? credentialSecrets(live.credential) : []),
     root: dirs.root,
-    /** Redacted artifact directory for this run (the CLI's --out), if any. */
     artifactDir: options.failureOut,
     agentDir: dirs.agentDir,
     projectDir: dirs.projectDir,
     sessionFile: () => manager.getSessionFile(),
     markers: parts.markers,
     wire: state.wire,
-    /** Offline xAI: memory-only foreground and compact-lane requests (never recorded). */
     xaiWire: state.xaiWire,
     xaiLane: state.xaiLane,
-    /** Production's xAI wire captures of the main session (memory only). */
     xaiCaptures: () => xaiCapturesFor(manager.getSessionId()),
     parent: () => {
       current();
@@ -669,7 +605,6 @@ function launchedHost(parts: LaunchedParts) {
       current();
       state.responseOverride = override;
     },
-    /** Offline: `usage.input_tokens` of default foreground responses (undefined restores 10). */
     setReportedInputTokens: (tokens: number | undefined) => {
       current();
       state.reportedInputTokens = tokens;
@@ -703,7 +638,6 @@ export async function launch(input: LaunchOptions) {
     throw new Error("Launchers require isolated processes; global fetch/env are scoped");
   if (!matches(BackgroundCompactionSidecarSchema, options.settings ?? {}))
     throw new Error("Invalid scenario sidecar");
-  // Read once, before scoping, so the Recorder redacts the credential from the start.
   const source = readLiveSource(options);
   launcherActive = true;
   const state = new HostState(new Recorder(protectedStringsOf(source?.credential)));
@@ -777,7 +711,6 @@ export async function launch(input: LaunchOptions) {
         "The xAI foreground scenario is offline only; live xAI runs use the RPC probe",
       );
     const xai = options.xaiForeground === true ? offlineXaiModel(options) : undefined;
-    // Offline Anthropic mirror: the background native lane or the foreground server-side path.
     const anthropic = sidecar.anthropicNative || options.anthropicForeground === true;
     const apiKey = anthropic ? FAKE_ANTHROPIC_KEY : FAKE_OFFLINE_KEY;
     const sidecarText = JSON.stringify(sidecar);
@@ -790,7 +723,6 @@ export async function launch(input: LaunchOptions) {
       all: options.catalog === true,
       modelsPath: options.catalog === true ? join(dirs.agentDir, "models.json") : null,
     };
-    // The real agent dir's models.json is a symlink to the worktree copy.
     if (catalog.modelsPath !== null)
       await copyFile(join(WORKTREE, ".pi", "models.json"), catalog.modelsPath);
     if (live) await copyLiveSystemPrompt(state, dirs, live);
@@ -819,7 +751,6 @@ export async function launch(input: LaunchOptions) {
     const modelRegistry = new ModelRegistry(runtime);
     const manager = openManager(options, dirs);
     state.mainSessionId = manager.getSessionId();
-    // A resumed session continues the request index, keeping labels unique.
     state.requestCounts.set(state.mainSessionId, assistantCount(manager));
     const markers = state.book.attach(manager);
     if (options.resumeSessionFile === undefined)
@@ -833,7 +764,6 @@ export async function launch(input: LaunchOptions) {
       );
     state.issuedSignatures.add(NATIVE_SIGNATURE);
     if (sidecar.text) owned.releases.push(installTextFakeFactory(recorder, modelRegistry));
-    // Live: production's default native factory, capture and lane transport run unmodified.
     if (sidecar.anthropicNative && offline)
       owned.releases.push(installAnthropicFakeFactory(recorder, offline, apiKey));
     const reregister = xai
@@ -898,7 +828,6 @@ export async function launch(input: LaunchOptions) {
       resourceLoader: loader,
       sessionManager: manager,
       settingsManager: settings,
-      // Live keeps the built-in tools a real session declares (parity); offline omits them.
       noTools: live ? undefined : "builtin",
     });
     owned.session = session;

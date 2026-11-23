@@ -1,14 +1,3 @@
-/**
- * Goal post-compaction work runs exactly once per compaction whether the
- * checkpoint came from background adoption (no host event on the boundary
- * route; a real session_compact on the idle route) or from host compaction.
- *
- * The real compaction extension runs in a real SDK session with a scripted
- * provider; the goal session handlers are wired exactly as the goal runtime
- * wires them, over counting fakes for their collaborators. Extensions load in
- * production order: .pi/settings.json loads choco-pi-goal before
- * choco-pi-compaction.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -87,9 +76,7 @@ function summarizer(model: Model<Api>, wait: Promise<void>): TextSummarizer {
 }
 
 interface GoalProbe {
-  /** Post-compaction recovery notifications (one per handled compaction). */
   compactions: number;
-  /** Continuation re-enables after a non-retrying compaction. */
   continuations: number;
 }
 
@@ -153,7 +140,6 @@ interface Setup {
   state(): string | undefined;
 }
 
-/** Real compaction extension with background text compaction gated on `wait`. */
 function backgroundCompaction(file: string, wait: Promise<void>): (pi: ExtensionAPI) => void {
   return (pi) => {
     registerCompaction(pi, backgroundCompactionOptions(file, wait));
@@ -219,7 +205,6 @@ test(
   "boundary adoption notifies the goal once; a later host compaction once more",
   { timeout: 20_000 },
   async () => {
-    // A fresh process has no slot until the compaction extension loads.
     Reflect.deleteProperty(globalThis, Symbol.for("choco-pi:compaction-background-adoption"));
     await withDir(async (dir) => {
       let ready: Promise<void> = Promise.resolve();
@@ -238,9 +223,6 @@ test(
         assert.equal(context.state(), "installed");
         assert.equal(context.probe.compactions, 1, "exactly one goal notification for adoption");
         assert.equal(context.probe.continuations, 1);
-        // Instructions are a background text-lane request too: compact() is
-        // taken over before any host compaction starts, and the focused
-        // checkpoint is adopted once ready while the session is idle.
         assert.equal(
           await context.host.session.compact("host compaction with instructions"),
           undefined,

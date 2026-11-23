@@ -24,7 +24,6 @@ import {
 } from "./fast.ts";
 
 export type Period = "24h" | "3d" | "7d" | "30d" | "all";
-/** The order `r` cycles through. */
 export const PERIODS: readonly Period[] = ["24h", "3d", "7d", "30d", "all"];
 export const DEFAULT_PERIOD: Period = "30d";
 
@@ -35,7 +34,6 @@ export function isPeriod(value: string): value is Period {
 export type Scope = "all" | "project";
 export const DEFAULT_SCOPE: Scope = "all";
 
-/** The period and scope the Statistics tab shows. */
 export type StatsSelection = { period: Period; scope: Scope };
 
 export function nextPeriod(period: Period): Period {
@@ -51,7 +49,6 @@ export function periodLabel(period: Period): string {
   return "All time";
 }
 
-/** Calendar days a day-based period spans; undefined for the rolling 24 hours and for all time. */
 export function periodDays(period: Period): number | undefined {
   if (period === "3d") return 3;
   if (period === "7d") return 7;
@@ -69,13 +66,6 @@ export function scopeLabel(scope: Scope): string {
 
 const HOUR_MS = 3_600_000;
 
-/**
- * Inclusive lower bound of the period in epoch ms, or undefined for all time.
- * "Last 24 hours" is the rolling window ending now. "Last N days" means the N
- * local calendar days ending today, so the bound is local midnight of today
- * minus N-1 days (date arithmetic, so DST days count as one day), matching the
- * chart buckets and the active-day count.
- */
 export function periodStart(period: Period, now: number): number | undefined {
   if (period === "24h") return now - HOUR_MS * 24;
   const days = periodDays(period);
@@ -86,41 +76,29 @@ export function periodStart(period: Period, now: number): number | undefined {
   return start.getTime();
 }
 
-/** Days the all-time charts plot, ending today. */
 export const ALL_TIME_CHART_DAYS = 60;
 
-/** The unit the charts bucket calls into: hours for the rolling 24 hours, local days otherwise. */
 export type BucketUnit = "day" | "hour";
 
 export function bucketUnitOf(period: Period): BucketUnit {
   return period === "24h" ? "hour" : "day";
 }
 
-/**
- * Start of the local clock hour containing `at`: the instant less its local
- * minutes, seconds, and milliseconds. Rebuilding the hour from local fields
- * would resolve the repeated hour of a DST fall-back to its first occurrence;
- * subtracting keeps both occurrences distinct, at any UTC offset.
- */
 export function hourStart(at: number): number {
   const date = new Date(at);
   return at - (date.getMinutes() * 60_000 + date.getSeconds() * 1000 + date.getMilliseconds());
 }
 
-/** The chart bucket of a call: its local day (YYYY-MM-DD) or the epoch ms of its local hour. */
 export function bucketKey(unit: BucketUnit, at: number): string {
   return unit === "day" ? dayKey(at) : String(hourStart(at));
 }
 
-/** The buckets a period's charts plot, oldest first, ending with the one containing `now`. */
 export type Timeline = { unit: BucketUnit; keys: string[] };
 
 export function timelineOf(period: Period, now: number): Timeline {
   const unit = bucketUnitOf(period);
   const keys: string[] = [];
   if (unit === "hour") {
-    // Every clock hour the rolling window touches: the partial hour 24 hours
-    // back through the current one.
     const first = hourStart(now - HOUR_MS * 24);
     for (let at = hourStart(now); at >= first; at = hourStart(at - 1)) keys.unshift(String(at));
     return { unit, keys };
@@ -134,10 +112,6 @@ export function timelineOf(period: Period, now: number): Timeline {
   return { unit, keys };
 }
 
-/**
- * Drop every record whose key was already seen. Records must arrive with
- * parent sessions before their forks so the original file keeps the call.
- */
 export type DedupedRecords = { records: CallRecord[]; duplicates: number };
 
 export function dedupeRecords(records: readonly CallRecord[]): DedupedRecords {
@@ -158,16 +132,10 @@ export function dedupeRecords(records: readonly CallRecord[]): DedupedRecords {
 export type RecordFilter = {
   period: Period;
   scope: Scope;
-  /**
-   * Directories the "project" scope keeps: the current directory and, in a
-   * git repository, every worktree of it, so a checkout and its worktrees
-   * read as one project.
-   */
   projectDirs: readonly string[];
   now: number;
 };
 
-/** A directory path with its trailing separator removed, for header comparisons. */
 export function normalizeDir(dir: string): string {
   const trimmed = dir.replace(/[\\/]+$/, "");
   return trimmed.length > 0 ? trimmed : dir;
@@ -183,52 +151,35 @@ export function filterRecords(records: readonly CallRecord[], filter: RecordFilt
   });
 }
 
-/** Per-million-token list prices of a model, as the model registry exposes them. */
 export type { ModelPrices, PriceLookup } from "./fast.ts";
 
 export type Breakdown = {
   key: string;
   calls: number;
   tokens: CallTokens;
-  /** Recorded plus estimated dollars. */
   cost: number;
-  /** Share of all tokens in the report, 0..1. */
   share: number;
 };
 
 export type SpeedRow = {
-  /** Row key: the provider, or the model key with a Fast suffix ("|on", "|off", "|unknown") when split. */
   key: string;
-  /** The model key (provider/model) the row belongs to; the provider for provider rows. */
   model: string;
-  /** Fast state when the provider supports Fast and the row is a model row. */
   fast: FastState | undefined;
-  /** Successful calls with output and a duration. */
   calls: number;
   outputTokens: number;
-  /** Calls that also carry a recorded TTFT. */
   timedCalls: number;
-  /**
-   * Generation speed: output tokens per second after the first token, over the
-   * timed calls only. Rows without timed calls take the fitted estimate.
-   */
   generationTokPerSec: number | undefined;
   ttftMedianMs: number | undefined;
   ttftP90Ms: number | undefined;
-  /** TTFT and generation rate fitted from request timing when no TTFT was recorded. */
   estimate: SpeedEstimate | undefined;
 };
 
 export type DayBucket = { day: string; tokens: number; cost: number; calls: number };
 
-/** Calls bucketed by chart bucket (local day or clock hour), for the charts. */
 export type TimelineData = {
   unit: BucketUnit;
-  /** Totals per bucket; `day` holds the bucket key. */
   totals: Map<string, DayBucket>;
-  /** Tokens per model key per bucket, for the token chart series. */
   byModel: Map<string, Map<string, number>>;
-  /** Speed samples per base model (Fast and standard together) per bucket, for the throughput trend. */
   speed: Map<string, Map<string, SpeedAccumulator>>;
 };
 
@@ -237,17 +188,13 @@ export type StatsReport = {
   failedCalls: number;
   sessions: number;
   tokens: CallTokens;
-  /** Dollars recorded with the calls. */
   recordedCost: number;
-  /** Dollars estimated at current list prices for calls recorded at zero. */
   estimatedCost: number;
   estimatedCalls: number;
-  /** Calls with tokens but neither a recorded nor an estimable price. */
   unpricedCalls: number;
   unpricedTokens: number;
   byModel: Breakdown[];
   byFeature: Breakdown[];
-  /** What code-mode scripts executed, the code-mode rows' tokens and cost split by result size. */
   byCodeMode: Breakdown[];
   byDay: DayBucket[];
   timeline: TimelineData;
@@ -269,7 +216,6 @@ function addTokens(into: CallTokens, tokens: CallTokens): void {
   into.cacheWrite += tokens.cacheWrite;
 }
 
-/** Local calendar day of an epoch ms value, as YYYY-MM-DD. */
 export function dayKey(at: number): string {
   const date = new Date(at);
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -281,12 +227,6 @@ export function featureOf(record: CallRecord): string {
   return record.isSubagent ? FEATURE_SUBAGENTS : record.feature;
 }
 
-/**
- * List price of a call whose log carries no cost: the tier the context fell
- * in, times the Fast multiplier when the call is classified fast (the same
- * multiples the Codex and xAI integrations apply before persisting). A
- * "fast?" call prices at the standard rate.
- */
 export function estimateCost(
   record: CallRecord,
   prices: ModelPrices,
@@ -311,7 +251,6 @@ function percentile(sorted: readonly number[], fraction: number): number | undef
   return sorted[index];
 }
 
-/** Speed samples of a group of calls; finished into a SpeedRow or a trend point. */
 export type SpeedAccumulator = {
   model: string;
   fast: FastState | undefined;
@@ -374,14 +313,8 @@ function finishSpeed(key: string, speed: SpeedAccumulator): SpeedRow {
   };
 }
 
-/** Most points one trend fit uses; a bucket is a small sample, so the fit stays cheap. */
 const TREND_FIT_POINTS = 150;
 
-/**
- * Generation tok/s of one bucket: from recorded timings when the bucket has
- * any, else the duration fit when it has enough calls, else undefined (the
- * chart leaves a gap rather than plotting zero).
- */
 export function bucketTokPerSec(speed: SpeedAccumulator | undefined): number | undefined {
   if (speed === undefined) return undefined;
   if (speed.generationMs > 0) return speed.timedOutputTokens / (speed.generationMs / 1000);
@@ -407,7 +340,6 @@ function accumulate(
 
 function scaleTokens(tokens: CallTokens, weight: number): CallTokens {
   if (weight === 1) return tokens;
-  // Whole tokens: the split is approximate anyway and the tables print integers.
   return {
     input: Math.round(tokens.input * weight),
     output: Math.round(tokens.output * weight),
@@ -428,7 +360,6 @@ function toBreakdown(map: Map<string, BreakdownAccumulator>, allTokens: number):
     .sort((a, b) => b.share - a.share || b.cost - a.cost || a.key.localeCompare(b.key));
 }
 
-/** Share of calls made at large context, from input + cache read + cache write. */
 export type ContextStats = {
   calls: number;
   over100k: number;
@@ -444,9 +375,7 @@ export type CompactionProviderRow = {
   serverSide: number;
   host: number;
   unknown: number;
-  /** Lane fallbacks from a native lane that did compact something (built-in took over). */
   fallbacks: number;
-  /** Fallbacks that found nothing to summarize; no checkpoint followed. */
   noOps: number;
 };
 
@@ -454,7 +383,6 @@ export type CompactionSummary = {
   total: number;
   manual: number;
   auto: number;
-  /** The automatic triggers broken down, for the expanded view. */
   autoBy: { threshold: number; overflow: number; idle: number; contextCap: number };
   unknownTrigger: number;
   byProvider: CompactionProviderRow[];
@@ -548,7 +476,6 @@ export function compactionSummary(
   };
 }
 
-/** Keep the events inside the period and scope, dropping fork copies by key. */
 export function filterEvents<Event extends { key: string; at: number; cwd: string }>(
   events: readonly Event[],
   filter: RecordFilter,
@@ -569,13 +496,6 @@ export function modelKey(record: CallRecord): string {
   return `${record.provider}/${record.model}`;
 }
 
-/**
- * Aggregate deduplicated, filtered records. Failed calls count only in
- * `failedCalls`; every other record lands in exactly one model bucket and one
- * feature bucket, so both breakdowns sum to the totals. Breakdown rows are
- * ordered by share of tokens, the metric their bars draw. `unit` sets the
- * chart buckets (local days by default).
- */
 export function aggregateStats(
   records: readonly CallRecord[],
   options: {
@@ -673,8 +593,6 @@ export function aggregateStats(
   }
 
   const allTokens = totalTokens(tokens);
-  // Rows order by output tokens; the Fast and standard rows of one model stay
-  // together under the model's total, Fast first.
   const speedRows = (map: Map<string, SpeedAccumulator>): SpeedRow[] => {
     const rows = [...map]
       .map(([key, speed]) => finishSpeed(key, speed))

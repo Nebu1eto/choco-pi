@@ -116,61 +116,20 @@ import {
   type SessionCompactHost,
 } from "./session-compact.ts";
 
-// ===========================================================================
-// Background compaction host integration
-// ===========================================================================
-//
-// Everything here is inert unless the background-compaction sidecar turns
-// the feature on (it ships off). It wires the frozen coordinator, backends and
-// child bridge into the real host:
-//
-// - one coordinator per owned main session, registered under
-//   main-session:<sessionId> with a process-unique generation; child sessions
-//   get theirs from the subagent runner's bridge, so this extension stays inert
-//   inside a child;
-// - preparation starts from boundary usage (prepareAt/hysteresis against the
-//   host trigger point) and never blocks the foreground;
-// - a ready candidate is adopted at a turn_end/agent_before_settle boundary
-//   (draft return, no host event), from the idle input route (ctx.compact as a
-//   trigger only, while idle), or when the host itself compacts;
-// - adoption consumers (goal, hooks, context cap) learn about adoptions through
-//   one process-global signal instead of a forged host event.
-
 export interface BackgroundCompaction {
-  /**
-   * Answer session_before_compact with a ready candidate, or undefined to let
-   * the existing summarizer (or the host) proceed.
-   */
   beforeCompact(
     event: SessionBeforeCompactEvent,
     ctx: ExtensionContext,
   ): Promise<SessionBeforeCompactResult | undefined>;
-  /**
-   * Whether a child session's runner bridge answers this compaction with an
-   * adoption, so the summarizer must not run (and be paid for) at all.
-   */
   childAdopts(event: SessionBeforeCompactEvent, ctx: ExtensionContext): Promise<boolean>;
-  /**
-   * Answer session_before_compact with Anthropic or xAI server-side
-   * compaction, or undefined to let the local summarizer answer the same
-   * compaction.
-   */
   foregroundCompact(
     event: SessionBeforeCompactEvent,
     ctx: ExtensionContext,
   ): Promise<SessionBeforeCompactResult | undefined>;
-  /** Current settings load (for diagnostics and tests). */
   settings(): LoadedBackgroundSettings;
-  /** Current vendor compaction modes and opaque-history setting. */
   modes(): CompactionModes;
 }
 
-/**
- * Wire background compaction into this extension instance. Must be called
- * once from the extension factory; registers its own handlers, with the
- * Anthropic replay rewrite as this extension's last before_provider_request
- * handler.
- */
 export function registerBackgroundCompaction(
   pi: ExtensionAPI,
   readState: SessionStateReader,
@@ -214,11 +173,8 @@ export function registerBackgroundCompaction(
     announce: (ctx, record, text, level, policy) => announce(rt, ctx, record, text, level, policy),
   });
   const builtInForeground: readonly ForegroundCompactHandler[] = [foreground, xaiForeground];
-  /** Bumped by every session_shutdown; a session start awaiting I/O stops when it moved. */
   const shutdowns = { count: 0 };
 
-  // A typed /compact in the TUI continues in the background without the host's
-  // "Compaction cancelled" line; every other case falls back to Pi's handler.
   const deferTypedCompact = async (
     host: CompactCommandHost,
     customInstructions?: string,
@@ -230,15 +186,6 @@ export function registerBackgroundCompaction(
   };
   installCompactCommandBridge(deferTypedCompact);
 
-  // A programmatic compact (RPC `compact`, SDK, `ctx.compact()`) on an idle
-  // session continues in the background and resolves at once, without aborting
-  // the agent or starting a host compaction. A busy session, the feature off,
-  // a registry conflict, or a declined request runs the host's own compact().
-  // An owner that retires while the preparation starts (shutdown, reload,
-  // replacement) reports the request stale: it settles without any compaction.
-  // A declined request runs the host's compaction at once, also from an
-  // agent_settled handler: a prompt arriving meanwhile waits for it in the
-  // bridge's prompt wrapper instead of being rejected.
   const deferSessionCompact = async (
     host: SessionCompactHost,
     customInstructions?: string,
@@ -255,10 +202,8 @@ export function registerBackgroundCompaction(
   installSessionCompactBridge(deferSessionCompact);
 
   pi.on("session_start", async (_event, ctx) => {
-    // Shutdown withdrew this registration's consent resolver; a reactivation publishes it again.
     publishConsent(rt);
     publishPreferences(rt, ctx, childProvider);
-    // Stub watcher until the Codex eligibility unit fills it; disposed at shutdown.
     rt.unwatchCodexEligibility ??= watchCodexEligibility(rt, () => {});
     const shutdownCount = shutdowns.count;
     const lanes = await syncLanesAtSessionStart(rt, ctx);
@@ -268,7 +213,6 @@ export function registerBackgroundCompaction(
     warnOnProjectLanes(rt, ctx, lanes);
   });
   pi.on("model_select", async (_event, ctx) => {
-    // A new model is a new provider scope: replace the owner, keep the settings.
     await startMainSession(rt, ctx, { reloadSettings: false, childProvider });
   });
   pi.on("session_tree", (_event, ctx) => onSessionTree(rt, ctx));
@@ -283,23 +227,18 @@ export function registerBackgroundCompaction(
   pi.on("agent_before_settle", (event, ctx) => adoptAtBoundary(rt, event, ctx));
   pi.on("agent_settled", (_event, ctx) => observeSettled(rt, ctx));
   pi.on("input", async (event, ctx) => {
-    // Steer/follow-up input arrives while a run is active: never compact then.
     if (event.streamingBehavior !== undefined) return undefined;
     await adoptOnIdleInput(rt, ctx);
     return undefined;
   });
-  // The compaction callback has completed; its entry is on the branch.
   pi.on("session_compact", (_event, ctx) => settleCurrentOwner(rt, ctx));
   pi.on("session_compact_failed", (_event, ctx) => onCompactFailed(rt, ctx));
-  // Registered last among this extension's before_provider_request handlers.
   pi.on("before_provider_request", (event, ctx) => rt.replay.handler(event, ctx));
   pi.on("before_provider_request", (event, ctx) => rt.xaiReplay.handler(event, ctx));
 
   return {
     beforeCompact: (event, ctx) => answerBeforeCompact(rt, event, ctx),
     childAdopts: (event, ctx) => childAdopts(event, ctx),
-    // Built-in server-side lanes first; their owners are disjoint (anthropic-messages vs the
-    // xai provider), so at most one answers. Registered provider lanes answer after both declined.
     foregroundCompact: (event, ctx) =>
       firstForegroundAnswer([...builtInForeground, ...registeredForegroundHandlers()], event, ctx),
     settings: () => rt.loaded,
@@ -307,12 +246,6 @@ export function registerBackgroundCompaction(
   };
 }
 
-/**
- * Publish this registration's opaque-loss consent on the process-global slot
- * unless it is published already. Shutdown removes it (`unpublishOpaqueConsent`),
- * so a shut-down registration and its runtime stay unreachable from the slot.
- * Consent is answered only for sessions bound to this registration.
- */
 function publishConsent(rt: HostRuntime): void {
   rt.unpublishOpaqueConsent ??= publishOpaqueConsent(
     (sessionId, entryId) =>
@@ -320,28 +253,14 @@ function publishConsent(rt: HostRuntime): void {
   );
 }
 
-/**
- * What a replay request saw when it started: the lifecycle generation and the
- * session's replay binding (the unbind the binder returned for its newest
- * binding token, so it changes with every rebind).
- */
 interface ReplayRequestStart {
   readonly lifecycle: number;
   readonly sessionId: string;
   readonly binding: (() => void) | undefined;
 }
 
-/**
- * Request starts keyed by the request's `ctx`: Pi creates one context per
- * event emission, and the binder hands that same object to the diagnostic and
- * disable callbacks of the request, including a late rejection's.
- */
 type ReplayRequests = WeakMap<ExtensionContext, ReplayRequestStart>;
 
-/**
- * Wrap a binder's `before_provider_request` handler so every request records
- * its start (generation and binding) before the binder sees it.
- */
 function trackRequestStart<E, R>(
   track: {
     readonly requests: ReplayRequests;
@@ -361,13 +280,6 @@ function trackRequestStart<E, R>(
   };
 }
 
-/**
- * Whether the request behind a binder callback still belongs to the current
- * lifecycle generation and the session's current binding. Checked before the
- * callback touches `ctx`, journals or notifies: a late provider callback of a
- * request started before a shutdown, session or model change (rebind) is
- * dropped silently.
- */
 function requestCurrent(
   rt: HostRuntime,
   requests: ReplayRequests,
@@ -430,7 +342,6 @@ function createRuntime(
     options,
     notify,
     journal: (record) => {
-      // No session bound to this registration (before the first start, after shutdown).
       if (rt.nativeSessions.size === 0) return;
       appendLaneRecord(
         (customType, data) => pi.appendEntry(customType, data),
@@ -511,18 +422,12 @@ function createRuntime(
   return rt;
 }
 
-/** Candidate states a replay disable cancels; an `adopting` proposal is the host's already. */
 const CANCELABLE_ON_DISABLE: ReadonlySet<CandidateState> = new Set<CandidateState>([
   "queued",
   "preparing",
   "ready",
 ]);
 
-/**
- * A replay rejection turned Anthropic server-side off for `sessionId` (D7):
- * the main owner's outstanding `anthropic-native` candidate for that session
- * is cancelled (`disabled`); later threshold work selects the text lane.
- */
 function cancelDisabledCandidate(
   rt: HostRuntime,
   sessionId: string,
@@ -536,17 +441,12 @@ function cancelDisabledCandidate(
   owner.core.coordinator.cancel("disabled");
 }
 
-/** The session a registration-wide event (a gate cooldown) is journaled under, if one is bound. */
 function boundSessionId(rt: HostRuntime): string | undefined {
   const main = rt.main;
   if (main !== undefined && isCurrent(rt, main)) return main.core.sessionId;
   return [...rt.nativeSessions].at(-1);
 }
 
-/**
- * A capability gate started a cooldown for a provider scope: journal it once
- * per session and reason, with its end, and notice it (no host context: journal only).
- */
 function announceCooldown(
   rt: HostRuntime,
   provider: "anthropic" | "xai",
@@ -578,7 +478,6 @@ function announceCooldown(
   );
 }
 
-/** A main session offers the Preferences row; a child session never does. */
 function publishPreferences(
   rt: HostRuntime,
   ctx: ExtensionContext,
@@ -600,15 +499,10 @@ function publishPreferences(
   });
 }
 
-/** Host scalars for a settings change, snapshotted before the first await. */
 function locationOf(ctx: ExtensionContext): SettingsLocation {
   return { cwd: ctx.cwd, agentDir: getAgentDir(), projectTrusted: ctx.isProjectTrusted() };
 }
 
-/**
- * Codex's current `responsesCompaction`, re-read so an OpenAI-row change made
- * earlier in this session is seen; the session-start snapshot when unreadable.
- */
 async function codexServerSide(rt: HostRuntime, location: SettingsLocation): Promise<boolean> {
   try {
     const snapshot = await readCodexCompactionSnapshot(location.cwd, location.projectTrusted);
@@ -629,12 +523,6 @@ async function lanesFor(
   });
 }
 
-/**
- * Bring an existing global sidecar's backend switches in line with the vendor
- * rows before the settings load. A missing sidecar stays missing, and a
- * malformed one is left to the settings load to report. Returns the derived
- * switches; undefined inside a child session, which stays inert.
- */
 async function syncLanesAtSessionStart(
   rt: HostRuntime,
   ctx: ExtensionContext,
@@ -656,7 +544,6 @@ async function syncLanesAtSessionStart(
   return lanes;
 }
 
-/** One notice when a trusted project's sidecar overrides the derived backend switches. */
 function warnOnProjectLanes(
   rt: HostRuntime,
   ctx: ExtensionContext,
@@ -679,12 +566,6 @@ function warnOnProjectLanes(
   );
 }
 
-/**
- * Save the master switch with the backend switches derived from the vendor
- * rows, then reload the settings and replace the main owner in place:
- * switching on registers a coordinator for the running session, switching off
- * disposes it and cancels its candidate before any later boundary.
- */
 async function applyEnabled(
   rt: HostRuntime,
   change: {
@@ -708,13 +589,6 @@ async function applyEnabled(
   }
 }
 
-/**
- * Save the Anthropic compaction mode, re-derive an existing global sidecar's
- * backend switches, then reload and replace the main owner in place so the
- * foreground path, the replay binding and the background lanes all follow the
- * new mode in the running session. A refused sidecar update is reported but
- * does not undo the saved mode.
- */
 async function applyAnthropicMode(
   rt: HostRuntime,
   change: {
@@ -745,7 +619,6 @@ async function applyAnthropicMode(
   }
 }
 
-/** A branch switch invalidates the frozen prefix of any candidate. */
 function onSessionTree(rt: HostRuntime, ctx: ExtensionContext): void {
   const owner = touchCurrentOwner(rt, ctx);
   if (owner === undefined) return;
@@ -753,11 +626,6 @@ function onSessionTree(rt: HostRuntime, ctx: ExtensionContext): void {
   owner.core.coordinator.cancel("stale-prefix");
 }
 
-/**
- * Save the xAI compaction mode, then reload and replace the main owner in
- * place so the foreground path, the replay binding and the background lane
- * selection follow the new mode in the running session.
- */
 async function applyXaiMode(
   rt: HostRuntime,
   change: {
@@ -796,20 +664,10 @@ function nowOf(rt: HostRuntime): number {
   return rt.options.clock?.now() ?? Date.now();
 }
 
-/**
- * The journaled reason of a replay code: our own refusal and disable codes
- * as they are; a provider-supplied code (`compaction_*` from
- * `error.details.error_code`) or a missing one is `provider-error`.
- */
 function replayReason(code: string | undefined): LaneReason {
   return code === undefined ? REASONS.providerError : ownedReasonOf(code);
 }
 
-/**
- * Journal a replay diagnostic once per transition and notify through the
- * registration notifier exactly as before the journal existed (each distinct
- * text once per registration).
- */
 function announceReplayDiagnostic(
   rt: HostRuntime,
   ctx: ExtensionContext,
@@ -867,7 +725,6 @@ function reportReplayDiagnostic(
   );
 }
 
-/** The replayed Anthropic checkpoint: the branch's newest compaction entry, when it is Anthropic-native. */
 function anthropicCheckpointId(ctx: ExtensionContext): string | undefined {
   const branch = ctx.sessionManager.getBranch();
   for (let index = branch.length - 1; index >= 0; index--) {
@@ -884,11 +741,6 @@ function xaiCheckpointId(ctx: ExtensionContext): string | undefined {
   return lookup.kind === "active" ? lookup.checkpoint.entryId : lookup.entryId;
 }
 
-/**
- * One journaled, always-notified disable per session (the replay binder calls
- * this once per session), then the `onReplayDisabled` seam. A stale context
- * (the session is gone) is contained.
- */
 function reportReplayDisabled(
   rt: HostRuntime,
   ctx: ExtensionContext,
@@ -929,7 +781,6 @@ function reportReplayDisabled(
   rt.onReplayDisabled?.(sessionId, provider, code);
 }
 
-/** One notice per session when the provider rejected a replayed block. */
 function reportServerSideDisabled(rt: HostRuntime, ctx: ExtensionContext, code: string): void {
   reportReplayDisabled(rt, ctx, {
     provider: "anthropic",
@@ -939,7 +790,6 @@ function reportServerSideDisabled(rt: HostRuntime, ctx: ExtensionContext, code: 
   });
 }
 
-/** What happens to later requests over an xAI checkpoint that is no longer replayed (`unreplayable` in `xai/replay.ts`). */
 const XAI_REFUSED_UNTIL =
   "later requests over this checkpoint are refused until you run /compaction-allow-loss or create a new xAI checkpoint";
 
@@ -972,7 +822,6 @@ function reportXaiReplayDiagnostic(
   );
 }
 
-/** One notice per session when a replay refusal or provider rejection turned xAI server-side off. */
 function reportXaiServerSideDisabled(rt: HostRuntime, ctx: ExtensionContext, code: string): void {
   reportReplayDisabled(rt, ctx, {
     provider: "xai",
@@ -982,11 +831,6 @@ function reportXaiServerSideDisabled(rt: HostRuntime, ctx: ExtensionContext, cod
   });
 }
 
-/**
- * `/compaction-allow-loss`: consent, for this session and the branch's
- * current opaque checkpoint only, to compaction summarizing without the
- * provider-held history. Journaled with the checkpoint id.
- */
 function allowOpaqueLoss(rt: HostRuntime, ctx: ExtensionContext): void {
   const sessionId = ctx.sessionManager.getSessionId();
   const opaque = opaqueCheckpointOf(ctx.sessionManager.getBranch());

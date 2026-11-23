@@ -23,7 +23,6 @@ type ResultReadRecord = Pick<
   | "resultConsumed"
 >;
 
-/** Statuses whose generation is still active (no terminal result yet). */
 export type ActiveResultStatus = "queued" | "running" | "waiting_for_reset";
 
 export type ResultReadClaim =
@@ -32,7 +31,6 @@ export type ResultReadClaim =
   | { kind: "terminal"; generation: number }
   | { kind: "terminal-refused"; generation: number }
   | { kind: "terminal-pending"; generation: number };
-/** A promise rejection crossing from the child run; it is propagated unchanged. */
 type ResultWaitRejection = {} | null | undefined;
 
 function currentGeneration(record: ResultReadRecord): number {
@@ -40,7 +38,6 @@ function currentGeneration(record: ResultReadRecord): number {
   return record.resultGeneration;
 }
 
-/** Start a new run before exposing its queued/running state. */
 export function beginResultGeneration(record: ResultReadRecord): number {
   const generation = currentGeneration(record) + 1;
   record.resultGeneration = generation;
@@ -48,14 +45,12 @@ export function beginResultGeneration(record: ResultReadRecord): number {
   return generation;
 }
 
-/** Publish a run's final data only after every asynchronous settle step finishes. */
 export function publishTerminalResult(record: ResultReadRecord): number {
   const generation = currentGeneration(record);
   record.terminalResultGeneration = generation;
   return generation;
 }
 
-/** Record an inline terminal result without conflating it with notification suppression. */
 export function markResultGenerationConsumed(record: ResultReadRecord): number {
   const generation = publishTerminalResult(record);
   record.consumedResultGeneration = generation;
@@ -63,17 +58,12 @@ export function markResultGenerationConsumed(record: ResultReadRecord): number {
   return generation;
 }
 
-/**
- * Claim one result read synchronously. Active claims permit one status response
- * per run; terminal claims permit one final-result response per published run.
- */
 export function claimSubagentResultRead(
   record: ResultReadRecord,
   signal?: AbortSignal,
 ): ResultReadClaim {
   if (signal?.aborted) throw signal.reason;
   const generation = currentGeneration(record);
-  // A usage-limit-parked run is still the current, unpublished generation.
   if (
     record.status === "queued" ||
     record.status === "running" ||
@@ -96,7 +86,6 @@ export function claimSubagentResultRead(
   return { kind: "terminal", generation };
 }
 
-/** Roll back an interrupted active read without touching the child or terminal result. */
 export function releaseActiveResultRead(record: ResultReadRecord, generation: number): void {
   if (
     record.resultGeneration === generation &&
@@ -228,10 +217,6 @@ function settleWithin(
   });
 }
 
-/**
- * Give a queued/running result one bounded optimistic wait. The timeout ends
- * only this read; it never aborts or consumes the background agent.
- */
 export async function waitForSubagentResult(
   record: ResultWaitRecord,
   signal?: AbortSignal,
@@ -258,7 +243,6 @@ export function formatResultReadTimeout(id: string, status: ActiveResultStatus):
   );
 }
 
-/** Saved-agent fields a dormant (journal-only) result read needs. */
 export interface DormantResultView {
   id: string;
   handle?: string;
@@ -267,7 +251,6 @@ export interface DormantResultView {
   resultConsumed: boolean;
 }
 
-/** A dormant snapshot still describes an unfinished run (interrupted, parked or never revived). */
 export function isDormantRunUnfinished(status: AgentRecord["status"]): boolean {
   return (
     status === "interrupted" ||
@@ -277,7 +260,6 @@ export function isDormantRunUnfinished(status: AgentRecord["status"]): boolean {
   );
 }
 
-/** How to continue a saved agent: by id, or by its `@handle` from the prompt. */
 export function dormantResumeHint(
   view: Pick<DormantResultView, "id" | "handle" | "alias">,
 ): string {
@@ -288,7 +270,6 @@ export function dormantResumeHint(
   );
 }
 
-/** Result read of a dormant agent whose run did not finish: nothing is running. */
 export function formatDormantNotRunning(view: DormantResultView): string {
   return (
     `Agent ${view.id} is not running (saved status: ${view.status}); it has no result yet and ` +
@@ -296,7 +277,6 @@ export function formatDormantNotRunning(view: DormantResultView): string {
   );
 }
 
-/** Second result read of a dormant terminal agent: mirrors the live exactly-once refusal. */
 export function formatDormantResultConsumed(view: DormantResultView): string {
   return JSON.stringify(
     {

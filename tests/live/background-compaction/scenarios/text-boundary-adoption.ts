@@ -6,7 +6,6 @@ import { prepare } from "./workload.ts";
 
 const GO = "HARNESS-TEXT-BOUNDARY-GO";
 
-/** Prepares while the second foreground request is in flight; adoption lands at the next boundary. */
 async function runActiveAdoption(host: Host): Promise<CheckEvidence> {
   const sessionId = host.manager.getSessionId();
   let activeRef: number | undefined;
@@ -21,7 +20,6 @@ async function runActiveAdoption(host: Host): Promise<CheckEvidence> {
     if (!host.isCurrent()) throw new Error("Owner disposed during active preparation");
   });
   try {
-    // Live: four tool cycles give requests 0-4; adoption lands before request 2.
     await host.session.prompt(stepsPrompt(host, GO, 4, "HARNESS-TEXT-BOUNDARY-ACK"));
   } finally {
     if (host.isCurrent()) host.setForegroundObserver(undefined);

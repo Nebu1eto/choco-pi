@@ -1,9 +1,3 @@
-/**
- * Diagnostic retrieval, last-known fallback, health, and content binding for {@link LSPService}.
- *
- * Extracted from `clients/lsp/index.ts`; behavior is unchanged.
- */
-
 import * as nodeFs from "node:fs";
 import { logLatency } from "../latency-logger.ts";
 import { normalizeMapKey } from "../path-utils.ts";
@@ -46,7 +40,6 @@ export function mergeLspDiagnostics(
   return merged;
 }
 
-/** Implements {@link LSPService.getDiagnosticsHealth}. */
 export function getDiagnosticsHealth(
   core: LSPServiceInternals,
   filePath: string,
@@ -54,7 +47,6 @@ export function getDiagnosticsHealth(
   return core.lastDiagnosticsHealth.get(normalizeMapKey(filePath));
 }
 
-/** Implements {@link LSPService.getLastKnownDiagnostics}. */
 export function getLastKnownDiagnostics(
   core: LSPServiceInternals,
   filePath: string,
@@ -70,7 +62,6 @@ export function getLastKnownDiagnostics(
   return core.lastKnownDiagnostics.get(normalizedKey);
 }
 
-/** Implements {@link LSPService.getDiagnostics}. */
 export async function getDiagnostics(
   core: LSPServiceInternals,
   filePath: string,
@@ -124,8 +115,6 @@ export async function getDiagnostics(
     return stale ?? [];
   }
 
-  // Per-server entries produced by client waits. Each promise resolves
-  // with a PerServerEntry; raceToCompletion collects them as they finish.
   type PerServerEntry = {
     serverId: string;
     launchVariant?: "classic" | "native-ts7";
@@ -158,42 +147,14 @@ export async function getDiagnostics(
     };
   });
 
-  // Document mode: 0ms grace — return as soon as any client has results.
-  // Full mode: 400ms grace — wait a bit for other clients to catch up.
   const graceMs = diagnosticsMode === "document" ? 0 : EARLY_UNBLOCK_GRACE_MS;
 
-  // R8 (#714) / #1458 S2: per-promise role descriptors so raceToCompletion
-  // can apply a bounded aux grace once all primary-role promises have
-  // settled. Servers with role:"auxiliary" (opengrep, ast-grep, zizmor, …)
-  // get their OWN declared `aggregateWaitMs` budget after the primary
-  // settles, capped by the CHOCO_PI_LSP_AUX_GRACE_MS global ceiling (default
-  // 2000ms) — the same "declared budget, capped by a ceiling" shape
-  // `touchFile`'s with-auxiliary push wait uses, so this lane can no longer
-  // starve a scanner whose measured warm run (e.g. opengrep ~1.3s) is
-  // shorter than the ceiling but longer than a flat short grace. Late
-  // arrivals are still dropped (advisory only — they land in the client
-  // cache and surface on the next edit). Primary-only callers have no
-  // auxiliary descriptors, so this path is never entered and there is
-  // zero behavior change for the single-server hot path.
   const diagDescriptors: PromiseDescriptor[] = spawned.map((entry) => {
     if (entry.info.role !== "auxiliary") return { role: "primary" };
     const strategy = getStrategy(entry.info.id, entry.client.getLaunchVariant?.());
-    // Deleting this `budgetMs` fails no end-to-end test, and that is
-    // expected rather than a coverage gap: every promise in `clientWaits`
-    // already self-bounds at this same `strategy.aggregateWaitMs`, so an
-    // auxiliary cuts itself off at its declared budget whether or not the
-    // shared grace timer also knows about it. The descriptor is what keeps
-    // the two agreeing — it is the mitigation for the over-granting
-    // `raceToCompletion` documents, and it starts mattering the moment a
-    // promise here stops self-bounding. The narrowing itself is pinned in
-    // tests/clients/lsp/aggregation.test.ts, which can build the
-    // non-self-bounded promises this path cannot.
     return { role: "auxiliary", budgetMs: strategy.aggregateWaitMs };
   });
 
-  // Result-aware racing: trigger early-unblock when any client has results,
-  // OR when a seedFirstPush server returns (its first push is authoritative
-  // even when empty — waiting longer yields nothing more).
   const perServer = await raceToCompletion(
     clientWaits,
     (results) =>
@@ -208,14 +169,10 @@ export async function getDiagnostics(
       ),
       graceMs,
       descriptors: diagDescriptors,
-      // #1458 S2: ceiling, not a flat wait — each auxiliary's own
-      // budgetMs (above) determines the actual per-touch grace up to
-      // this cap. Matches touchFile's `readEnvAuxGraceMs() ?? 2000`.
       auxGraceMs: readEnvAuxGraceMs() ?? 2000,
     },
   );
 
-  // Fill in any slots that timed out before producing results.
   const earlyUnblockedCount = spawned.length - perServer.length;
   const perServerFull: PerServerEntry[] = spawned.map((entry) => {
     const found = perServer.find((r) => r.serverId === entry.info.id);
@@ -229,8 +186,6 @@ export async function getDiagnostics(
       }
     );
   });
-
-  // Deduplicate across servers (same diagnostic reported by multiple tools).
 
   const merged: import("./client.ts").LSPDiagnostic[] = [];
   const seen = new Set<string>();
@@ -285,12 +240,6 @@ export async function getDiagnostics(
     },
   });
 
-  // Keep last known so the widget can show stale diagnostics if LSP dies.
-  // Live clients returning [] means genuinely no errors — clear the stale
-  // entry so the widget doesn't show resolved issues. This path has no
-  // content in hand, so drop any content hash: a hash-guarded read won't
-  // trust this entry as current (it falls through to a fresh check), while
-  // the unguarded widget read still gets last-known for display.
   if (merged.length > 0) {
     core.lastKnownDiagnostics.set(normalizedPath, merged);
   } else {
@@ -301,32 +250,10 @@ export async function getDiagnostics(
   return merged;
 }
 
-/**
- * Delegates to {@link hashDiagnosticContent} rather than re-hashing here. Every
- * comparison this hash takes part in (`publishedThisContent`, the carried-aux
- * check, the last-known content guard) is against a hash the client produced
- * with that function, so the two implementations must agree byte for byte —
- * a duplicate is a silent divergence waiting for one of them to be tuned.
- */
 export function hashContent(content: string): string {
   return hashDiagnosticContent(content);
 }
 
-/**
- * #1095: compose the content `binding` for a merged diagnostics result across
- * the clients that contributed to it (primary + any auxiliaries). Verifies
- * each contributor's stored binding against current disk lazily (memoized per
- * file+mtime by {@link diskBindingCache}) and composes per
- * {@link composeBoundToCurrentDisk}: ANY contributor mismatches disk → false;
- * else all "unknown" (or no contributors) → "unknown"; else true. The
- * surfaced version/contentHash come from the first contributor that carries
- * them — informational only; the load-bearing field is `boundToCurrentDisk`.
- * #1104: `version` and `contentHash` are tracked INDEPENDENTLY (not gated on
- * the same contributor carrying both) — a pull-sourced binding deliberately
- * has no `version` (the pull protocol has no version-echo concept) but does
- * carry a real `contentHash`; gating the latter on the former would silently
- * drop it here even though `boundToCurrentDisk` above already used it.
- */
 export function mergeBinding(
   core: LSPServiceInternals,
   filePath: string,
@@ -351,7 +278,6 @@ export function mergeBinding(
   };
 }
 
-/** Implements {@link LSPService.getAllDiagnostics}. */
 export async function getAllDiagnostics(core: LSPServiceInternals): Promise<
   Map<
     string,
@@ -370,14 +296,9 @@ export async function getAllDiagnostics(core: LSPServiceInternals): Promise<
       binding?: DiagnosticBinding;
     }
   >();
-  // #1095: per-file stored bindings across every contributing client, merged
-  // into one `boundToCurrentDisk` verdict after the client loop.
   const bindingsByPath = new Map<string, (StoredDiagnosticBinding | undefined)[]>();
   const now = Date.now();
   for (const [_key, client] of core.state.clients) {
-    // Resolve existence asynchronously (was a blocking existsSync per tracked
-    // file inside the prune predicate) so this cascade-checking path doesn't
-    // hold the event loop; then prune with a synchronous, in-memory predicate.
     const trackedPaths = client.getTrackedDiagnosticPaths();
     const existingPaths = new Set<string>();
     await Promise.all(
@@ -385,9 +306,7 @@ export async function getAllDiagnostics(core: LSPServiceInternals): Promise<
         try {
           await nodeFs.promises.access(filePath);
           existingPaths.add(filePath);
-        } catch {
-          /* missing → will be pruned */
-        }
+        } catch {}
         return true;
       }),
     );
@@ -408,21 +327,6 @@ export async function getAllDiagnostics(core: LSPServiceInternals): Promise<
       bindingsByPath.set(filePath, list);
     }
   }
-  // #1095 (P2-2): expose the composed content binding per file LAZILY — the
-  // disk stat+hash verify only runs when a consumer actually reads `.binding`.
-  // The current caller (the cascade, once per edit turn) does NOT read it yet
-  // (binding adoption in cascade/integration.ts is deferred to the second PR),
-  // so this leaves ZERO eager disk cost while still surfacing the field for the
-  // consumer that arrives next. Non-enumerable so incidental spread/serialize
-  // (e.g. logging) can't trigger a stat storm; memoized per entry so repeated
-  // reads verify once.
-  // #1179: DELIBERATELY NOT migrated to an enumerable wrapper field (unlike the
-  // `touchFile` flags). Enumerable would make an incidental `{...entry}`/serialize
-  // eagerly fire this getter and stat every file — the exact stat storm the
-  // laziness above exists to prevent. It therefore stays on the read-off-original
-  // carriage contract (see `DiagnosticBinding`): every consumer reads `.binding`
-  // off the ORIGINAL Map entry (`clients/dispatch/integration.ts` reads it off
-  // `entry`, never a copy), and the cascade's TTL gate reads it only when fresh.
   for (const [filePath, entry] of all) {
     const stored = bindingsByPath.get(filePath) ?? [];
     let memo: DiagnosticBinding | undefined;

@@ -1,9 +1,3 @@
-/**
- * The fix itself: the summarizer sees the retained tail as current state.
- *
- * Every test drives the real `AgentSession.compact()` path with the extension
- * factory loaded, so what is asserted is what the host actually commits.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -186,8 +180,6 @@ test("S2c: repeated compaction keeps the previous summary and carries file histo
     const firstDetails = parseLocalCompactionDetails(first);
     assert.ok(firstDetails, "the checkpoint carries validated local details");
 
-    // Second compaction: the host ignores a hook checkpoint's file lists, so the
-    // carry-forward has to come from this package.
     host.sessionManager.appendMessage({
       role: "user",
       content: "Next request after the checkpoint.".padEnd(400, "-"),
@@ -350,7 +342,6 @@ test("L1/L4/L5: one call, summed usage, hook provenance, one session_compact", a
       const committed = committedCompaction(host);
       assert.ok(committed);
       assert.equal(committed.fromHook, true);
-      // The fake provider reports 11 input and 7 output tokens per call.
       assert.equal(committed.usage?.input, 11);
       assert.equal(committed.usage?.output, 7);
       assert.equal(committed.usage?.totalTokens, 18);
@@ -362,12 +353,6 @@ test("L1/L4/L5: one call, summed usage, hook provenance, one session_compact", a
   );
 });
 
-/**
- * The extension runner swallows a handler's exception and lets the host run
- * its own (defective) summarizer, so an unsafe response is reported and the
- * compaction is cancelled rather than thrown: no checkpoint is committed and
- * exactly one provider call is made.
- */
 test("L6: unsafe summarizer responses fail the compaction and commit nothing", async () => {
   const scripts: ReadonlyArray<readonly [string, CompactionScript]> = [
     ["empty", () => ({ text: "" })],

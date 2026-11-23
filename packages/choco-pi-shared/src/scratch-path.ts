@@ -1,5 +1,3 @@
-// Scratch-path ownership: temporary files belong under /tmp/choco-pi/<root session id>/.
-// Warn mode only. Nothing here denies a tool call or inspects command contents.
 import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -17,13 +15,11 @@ const PREVIOUS_KEY = Symbol.for("choco-pi:scratch-previous");
 export interface ScratchResolution {
   rootSessionId: string;
   currentSessionId: string;
-  /** Always ends with a slash. */
   scratchDir: string;
   previousScratchDir?: string;
 }
 
 export interface ResolveScratchInput {
-  /** Lineage root when known; the current id otherwise. */
   rootSessionId?: string | undefined;
   currentSessionId: string;
   previousSessionId?: string | undefined;
@@ -53,7 +49,6 @@ function sharedMap(key: symbol): Map<string, string> {
   return created;
 }
 
-/** Records that `sessionId` belongs to the lineage rooted at `rootSessionId` (subagent children). */
 export function registerScratchRoot(sessionId: string, rootSessionId: string): void {
   if (sessionId === rootSessionId) return;
   sharedMap(ROOTS_KEY).set(sessionId, rootSessionId);
@@ -64,10 +59,6 @@ export function unregisterScratchRoot(sessionId: string): void {
   sharedMap(PREVIOUS_KEY).delete(sessionId);
 }
 
-/**
- * Lineage root of a session: an inherited `PI_ROOT_SESSION_ID`, else the registered root of a subagent
- * child, else the session itself.
- */
 export function scratchRootFor(
   sessionId: string,
   inherited: Readonly<Record<string, string | undefined>> = process.env,
@@ -94,7 +85,6 @@ export type ScratchEnv = {
   PI_PREVIOUS_SCRATCH_DIR?: string;
 };
 
-/** Variables to add to a child process env; a value already present in `inherited` is never replaced. */
 export function scratchEnv(
   sessionId: string,
   inherited: Readonly<Record<string, string | undefined>> = process.env,
@@ -126,7 +116,6 @@ export function scratchChangedNotice(previousScratchDir: string, scratchDir: str
   return `Scratch directory changed: previous ${previousScratchDir}; use ${scratchDir} from now on. Nothing was moved or deleted.`;
 }
 
-/** Session id embedded in a Pi session file name (`<timestamp>_<id>.jsonl`). */
 export function sessionIdFromFile(sessionFile: string): string | undefined {
   const stem = path.basename(sessionFile, ".jsonl");
   const separator = stem.lastIndexOf("_");
@@ -140,10 +129,6 @@ export interface ScratchChange {
   notice: string;
 }
 
-/**
- * The notice owed after a fork or resume replaced the root session, or `undefined` when the scratch
- * directory is unchanged (same id, other reasons, or an inherited root).
- */
 export function describeScratchChange(input: {
   reason: string;
   previousSessionFile?: string | undefined;
@@ -171,10 +156,6 @@ function mapPrivateTmp(value: string): string {
   return value.startsWith("/private/tmp/") ? value.slice("/private".length) : value;
 }
 
-/**
- * Absolute, normalised path with symlinks resolved on the deepest existing ancestor, and macOS
- * `/private/tmp` mapped to `/tmp`.
- */
 export async function canonicalizePath(target: string, cwd: string): Promise<string> {
   const resolved = mapPrivateTmp(path.resolve(cwd, target));
   const pending: string[] = [];
@@ -199,13 +180,11 @@ export function isUnderDirectory(candidate: string, directory: string): boolean 
 
 export interface ScratchDestination {
   path: string;
-  /** True when `path` is itself a directory (a shell cwd); files are keyed by their parent. */
   directory: boolean;
 }
 
 const PATCH_HEADER = /^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/;
 
-/** Destinations of the host write tools; other tool names yield none. */
 export function scratchDestinations<Input>(toolName: string, input: Input): ScratchDestination[] {
   if (!isJsonRecord(input)) return [];
   const name = toolName.toLowerCase();
@@ -240,10 +219,6 @@ function settingsFiles(): string[] {
   ];
 }
 
-/**
- * Absolute directories the user granted for temporary files (`scratchGrants` in user-level settings).
- * Project settings are not read: a repository must not silence the warning for itself.
- */
 export async function loadScratchGrants(
   files: readonly string[] = settingsFiles(),
 ): Promise<string[]> {
@@ -272,7 +247,6 @@ export interface ScratchCheck {
 }
 
 export interface ScratchWarner {
-  /** Warnings for destinations under /tmp but outside the scratch directory, once per (tool, directory). */
   check(call: ScratchCheck): Promise<string[]>;
   reset(): void;
 }
@@ -307,7 +281,6 @@ export function createScratchWarner(options: ScratchWarnerOptions = {}): Scratch
   }
   return {
     reset: () => seen.clear(),
-    // A warning is advisory: failing to compute one must never fail the tool call it accompanies.
     check: (call) => evaluate(call).catch(() => []),
   };
 }

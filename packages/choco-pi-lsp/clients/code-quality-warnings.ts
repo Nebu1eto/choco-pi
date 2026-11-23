@@ -58,28 +58,11 @@ export interface CodeQualityWarningsReport {
   summary: {
     warnings: number;
     files: number;
-    /**
-     * Per-tier split of `warnings` (#1777). The dispatch path preserves a
-     * rule's declared severity, so the quiet tiers are countable instead of
-     * being folded into `warning`.
-     *
-     * OPTIONAL on purpose: this report is persisted to
-     * `.choco-pi-lsp/cache/code-quality-warnings.json` and read back by
-     * `tools/diagnostics-report.ts`, which can find a file written by a
-     * choco-pi-lsp build that predates the field. Readers must tolerate absence.
-     */
     byTier?: { warning: number; info: number; hint: number };
     topRules: Array<{ rule: string; count: number }>;
   };
 }
 
-/**
- * Report-budget precedence (#1777). A hint is an opinion; a warning is a
- * finding. When the report is capped, warnings must be spent first, or an
- * alphabetically-early file's hints can push every real warning out of the
- * agent's view — the exact "hints dominate the stream" failure the hint tier
- * exists to prevent.
- */
 const TIER_BUDGET_ORDER: Array<CodeQualityWarningRecord["severity"]> = ["warning", "info", "hint"];
 
 function normalizeMessage(message: string): string {
@@ -191,8 +174,6 @@ export function buildCodeQualityWarningsReport(args: {
     (a.line ?? 0) - (b.line ?? 0) ||
     a.message.localeCompare(b.message);
 
-  // Spend the budget tier by tier (see TIER_BUDGET_ORDER), then restore
-  // display order so the report still reads file by file, line by line.
   const candidates = [...byId.values()].sort(byDisplayOrder);
   const merged: CodeQualityWarningRecord[] = [];
   for (const tier of TIER_BUDGET_ORDER) {
@@ -247,33 +228,6 @@ export function buildCodeQualityWarningsReport(args: {
   };
 }
 
-/**
- * #557 audit (same race class as #555's LSP client fix and #560's
- * `widget-state.ts` `recordDiagnostics` fix): choco-pi-lsp deliberately allows
- * concurrent pipeline runs for the SAME file across DIFFERENT same-turn
- * edits (dedupe key is `filePath + contentHash`, not just `filePath` — see
- * `clients/runtime-tool-result.ts`), so a per-key cache fed directly from
- * those concurrent pipeline runs needs an ordering guard (`WriteOrderingGuard`
- * from `clients/write-ordering-guard.ts`) or an older edit's slower pipeline
- * can silently overwrite a newer edit's fresher write.
- *
- * This call site is NOT exposed to that race. Unlike `widget-state.ts`'s
- * `recordDiagnostics` (called directly from `clients/pipeline.ts`, once per
- * pipeline run — i.e. potentially several times per turn, out of completion
- * order), `writeCodeQualityWarningsReport` has exactly one caller:
- * `handleTurnEnd` in `clients/runtime-turn.ts`, which per-edit pipeline runs
- * never call directly — they only feed `runtime.recordCodeQualityWarnings`
- * (an accumulating, order-independent Map). `handleTurnEnd` itself reads that
- * accumulator once via `runtime.peekCodeQualityWarnings()` and writes the
- * aggregate report exactly once per turn-end invocation — the same single
- * sequential turn-end-only shape already confirmed safe for
- * `writeActionableWarningsReport` in `clients/actionable-warnings.ts`, right
- * next to this call site in `handleTurnEnd`. No second writer, so no
- * ordering token to guard against — see
- * `tests/clients/code-quality-warnings.test.ts`'s
- * "single sequential caller" test, which pins this invariant so a future
- * change that adds a second call site has a better chance of being caught.
- */
 export function writeCodeQualityWarningsReport(
   cacheManager: CacheManager,
   cwd: string,
@@ -319,9 +273,7 @@ export function appendCodeQualityWarningsHistory(
       `${warnings.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
       "utf8",
     );
-  } catch {
-    // Non-fatal — history write failure should never surface to the agent.
-  }
+  } catch {}
 }
 
 export function formatCodeQualityWarningsAdvisory(
@@ -332,12 +284,7 @@ export function formatCodeQualityWarningsAdvisory(
     .slice(0, 3)
     .map((entry) => `${entry.rule}×${entry.count}`)
     .join(", ");
-  // #1777: name the tiers, in the same descending-loudness order the on-demand
-  // ast-grep surface uses (`formatDiagnostics`, clients/ast-grep-client.ts).
-  // A tier with no findings is omitted rather than printed as zero.
   const byTier = report.summary.byTier ?? { warning: 0, info: 0, hint: 0 };
-  // The line is worth its space only when a quiet tier is present; an
-  // all-warning turn already says everything in the count above.
   const tiers =
     byTier.hint || byTier.info
       ? [

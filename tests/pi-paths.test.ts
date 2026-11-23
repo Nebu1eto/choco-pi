@@ -52,7 +52,6 @@ test("piStateRoot is the standalone home, else ~/.pi", () => {
   assert.equal(piStateRoot(standalone, home), chocoHome);
   assert.equal(piStateRoot(launcherEnv, home), chocoHome);
   assert.equal(piStateRoot(legacy, home), path.join(home, ".pi"));
-  // A custom agent dir in legacy mode does not move the state root.
   assert.equal(piStateRoot({ PI_CODING_AGENT_DIR: "/custom/agent" }, home), path.join(home, ".pi"));
 });
 

@@ -57,7 +57,6 @@ test("direct requests pin one immutable DNS snapshot and redirects reject rebind
   try {
     forbidden.listen(port, "::1");
     await once(forbidden, "listening");
-    // Any accidental connection-time DNS resolution receives the rebound address locally.
     t.mock.method(dns, "lookup", pinnedLookup("pinned.test", [{ address: "::1", family: 6 }]));
     let lookups = 0;
     const lookup = async () => {

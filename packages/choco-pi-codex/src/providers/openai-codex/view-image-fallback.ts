@@ -1,11 +1,3 @@
-/**
- * OpenAI-side text-model fallback for the provider-neutral view_image tool.
- *
- * The universal tool (`src/tools/view-image/tool.ts`) accepts an injected
- * `ImageDescribeFallbackPort`; this module implements it over the OpenAI
- * Responses endpoint the Codex tool provider resolves, and the extension
- * composition root (`src/extension/`) wires it in.
- */
 import { memoizedImport } from "@choco-pi/code-mode/memoized-import";
 import type { BoundaryValue } from "@choco-pi/code-mode/tools/boundary";
 import { isObjectValue, isStringValue } from "@choco-pi/code-mode/tools/boundary";
@@ -69,7 +61,6 @@ function compareModelIdsDescending(left: string, right: string): number {
   return right.localeCompare(left);
 }
 
-/** Pick the description model from the provider whose credential will be used. */
 export function resolveImageDescriptionModel(
   ctx: ExtensionContext,
   providerName: "openai-codex" | "openai" = "openai-codex",
@@ -121,7 +112,6 @@ export async function describeImageContentForTextModel(
       stream: true,
       instructions: IMAGE_DESCRIPTION_PROMPT,
       text: { verbosity: "low" },
-      // api.openai.com may gate reasoning summaries behind org verification; the description needs none.
       reasoning: openAIPlatform ? { effort: "low" } : { effort: "low", summary: "auto" },
       input: [
         {
@@ -162,6 +152,5 @@ export async function describeImageContentForTextModel(
   return trimmed;
 }
 
-/** The OpenAI implementation of the view_image text-model fallback port. */
 export const openAIImageDescribeFallback: ImageDescribeFallbackPort = (image, ctx, signal) =>
   describeImageContentForTextModel(image, ctx, signal);

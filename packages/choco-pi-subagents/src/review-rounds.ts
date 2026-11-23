@@ -1,19 +1,3 @@
-/**
- * review-rounds.ts — Durable per-work-task cap on review-role and
- * verification-role launches.
- *
- * Identity is (round class, rootSessionId, work_task). Every admitted launch
- * appends a round to a per-session ledger file under a cross-process lock; the
- * caller receives an unforgeable single-use {@link ReviewTicket} that the
- * manager must consume before it starts a gated agent. Review rounds and
- * verification rounds live in separate files with the same schema, so a
- * verifier never spends a review round and existing review ledgers load
- * unchanged. Any ledger problem fails closed (*_STATE_UNAVAILABLE); the ledger
- * is never reset.
- *
- * Caps are constants on purpose: settings files are agent-writable.
- */
-
 import { randomUUID } from "node:crypto";
 import { mkdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -54,13 +38,11 @@ interface RoundPolicy {
   readonly roles: readonly string[];
   readonly perTask: number;
   readonly perSession: number;
-  /** Capitalized round noun: "Review" / "Verification". */
   readonly title: string;
   readonly noun: string;
   readonly agentNoun: string;
   readonly code: CodePrefix;
   readonly command: string;
-  /** Ledger file name suffix; review keeps the original `<root>.json` name. */
   readonly fileSuffix: string;
 }
 
@@ -85,7 +67,6 @@ const POLICIES = {
     agentNoun: "verifier",
     code: "VERIFY",
     command: "/verify-continue",
-    // Root session ids cannot contain ".", so this never collides with a review ledger.
     fileSuffix: ".verification",
   },
 } satisfies Record<RoundClass, RoundPolicy>;
@@ -113,31 +94,25 @@ type Ledger = Static<typeof ledgerSchema>;
 type WorkTaskLedger = Static<typeof workTaskSchema>;
 const isLedger = compile(ledgerSchema).check;
 
-// --- Predicates ----------------------------------------------------------
-
 function hasRole(roles: readonly string[], type: string): boolean {
   const lowered = type.toLowerCase();
   return roles.some((role) => role.toLowerCase() === lowered);
 }
 
-/** Whether `type` (case-insensitive) is a review role subject to the review cap. */
 export function isReviewRole(type: string): boolean {
   return hasRole(REVIEW_ROLES, type);
 }
 
-/** Whether `type` (case-insensitive) is a verification role subject to the verification cap. */
 export function isVerificationRole(type: string): boolean {
   return hasRole(VERIFICATION_ROLES, type);
 }
 
-/** The round class gating `type`, or undefined for an ungated role. */
 export function roundClassOf(type: string): RoundClass | undefined {
   if (isReviewRole(type)) return "review";
   if (isVerificationRole(type)) return "verification";
   return undefined;
 }
 
-/** Whether `type` needs an admission ticket (review or verification role). */
 export function isRoundGatedRole(type: string): boolean {
   return roundClassOf(type) !== undefined;
 }
@@ -145,10 +120,6 @@ export function isRoundGatedRole(type: string): boolean {
 export function isValidWorkTask(value: string): boolean {
   return isWorkTask(value);
 }
-
-// --- Messages ------------------------------------------------------------
-
-// Every builder defaults to the review class, whose wording is unchanged.
 
 export function roundLimitMessage(
   workTask: string,
@@ -254,8 +225,6 @@ function noRoundsMessage(roundClass: RoundClass): string {
   return roundClass === "review" ? NO_ROUNDS_MESSAGE : NO_VERIFICATION_ROUNDS_MESSAGE;
 }
 
-// --- Tickets -------------------------------------------------------------
-
 export type ExemptReason = "user-mention" | "hook-continuation";
 
 export interface ReviewTicket {
@@ -263,22 +232,17 @@ export interface ReviewTicket {
   readonly workTask: string;
   readonly rootSessionId: string;
   readonly exemptReason?: ExemptReason;
-  /** Ledger class of an admitted round; absent on exempt tickets (review by default). */
   readonly roundClass?: RoundClass;
 }
 
-/** Tickets still consumable. Module-private: JSON/RPC callers cannot forge membership. */
 const liveTickets = new WeakSet<ReviewTicket>();
-/** Tickets that own a ledger round (and so may be refunded once). */
 const ledgerTickets = new WeakSet<ReviewTicket>();
 
-/** Consume `ticket` once; true only for the first consumption of a ticket this module issued. */
 export function consumeReviewTicket(ticket: ReviewTicket | undefined): boolean {
   if (ticket === undefined) return false;
   return liveTickets.delete(ticket);
 }
 
-/** A ticket with no ledger write: user-typed mentions and same-round hook continuations. */
 export function issueExemptTicket(reason: ExemptReason): ReviewTicket {
   const ticket: ReviewTicket = Object.freeze({
     roundId: `exempt-${randomUUID()}`,
@@ -290,8 +254,6 @@ export function issueExemptTicket(reason: ExemptReason): ReviewTicket {
   return ticket;
 }
 
-// --- Store ---------------------------------------------------------------
-
 export function defaultReviewRoundsDir(): string {
   return join(getAgentDir(), "choco-pi", "task-reviews");
 }
@@ -302,7 +264,6 @@ function reasonOf(error: Error): string {
   return error.message.replace(/\s+/g, " ").slice(0, 200);
 }
 
-/** Per-file in-process mutex chains (shared by every store instance in this process). */
 const fileChains = new Map<string, Promise<void>>();
 
 function serialize<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -318,22 +279,11 @@ function serialize<T>(key: string, fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-/** Test seams for the lock; production callers pass nothing. */
 export interface LockOptions {
   timeoutMs?: number;
-  /** Runs after a lock was judged stale and before it is removed. */
   beforeStaleRemoval?: () => Promise<void>;
 }
 
-/**
- * Take the cross-process lock and resolve its owner token. The token is the
- * lock file's content: stale recovery removes the lock only while it still
- * holds the token that was judged stale, and {@link releaseLock} removes it
- * only while it holds the caller's token, so neither can delete a lock another
- * writer has since created. A residual window of one filesystem call between
- * the token re-read and the unlink remains (plain files offer no atomic
- * compare-and-delete); it needs a lock older than LOCK_STALE_MS to open.
- */
 export async function acquireLock(lockPath: string, options: LockOptions = {}): Promise<string> {
   const token = `${process.pid}:${randomUUID()}`;
   const deadline = Date.now() + (options.timeoutMs ?? LOCK_TIMEOUT_MS);
@@ -343,11 +293,11 @@ export async function acquireLock(lockPath: string, options: LockOptions = {}): 
     let stale = false;
     try {
       observed = await readTextIfExists(lockPath);
-      if (observed === undefined) continue; // vanished — retry immediately
+      if (observed === undefined) continue;
       const info = await stat(lockPath);
       stale = Date.now() - info.mtimeMs > LOCK_STALE_MS;
     } catch {
-      continue; // lock vanished between read and stat — retry immediately
+      continue;
     }
     if (stale) {
       await options.beforeStaleRemoval?.();
@@ -360,7 +310,6 @@ export async function acquireLock(lockPath: string, options: LockOptions = {}): 
   }
 }
 
-/** Remove the lock only while it still carries `token`. */
 export async function releaseLock(lockPath: string, token: string): Promise<void> {
   const current = await readTextIfExists(lockPath).catch(() => undefined);
   if (current === token) await unlink(lockPath).catch(() => undefined);
@@ -425,9 +374,7 @@ export class ReviewRoundStore {
     try {
       const parsed = JSON.parse(text);
       if (isLedger(parsed)) data = parsed;
-    } catch {
-      /* falls through to the invalid-ledger error */
-    }
+    } catch {}
     if (data === undefined || data.rootSessionId !== rootSessionId) {
       throw new LedgerUnavailableError("ledger file is invalid or has an unsupported schema");
     }
@@ -450,7 +397,6 @@ export class ReviewRoundStore {
     }
   }
 
-  /** Lock, read, mutate, write, unlock. Throws {@link LedgerUnavailableError} on any I/O or state problem. */
   private async mutate<T>(
     rootSessionId: string,
     roundClass: RoundClass,
@@ -488,11 +434,6 @@ export class ReviewRoundStore {
     });
   }
 
-  /**
-   * Reserve a round for a review or verification role (the class follows
-   * `agentType`; an ungated type is treated as review). The round stays
-   * counted unless {@link release}d.
-   */
   async admit(request: AdmitRequest): Promise<AdmitResult> {
     const roundClass = roundClassOf(request.agentType) ?? "review";
     const p = POLICIES[roundClass];
@@ -570,7 +511,6 @@ export class ReviewRoundStore {
           changed: true,
         };
       }).then((result) => {
-        // Registered only after the ledger write succeeded: a failed write yields no ticket.
         if (result.ok) {
           liveTickets.add(result.ticket);
           ledgerTickets.add(result.ticket);
@@ -589,11 +529,6 @@ export class ReviewRoundStore {
     }
   }
 
-  /**
-   * Refund a round whose launch threw synchronously. Idempotent; the ticket becomes
-   * unconsumable. If the ledger cannot be updated the round stays counted (fail closed).
-   * Resolves whether a refund was recorded.
-   */
   async release(ticket: ReviewTicket): Promise<boolean> {
     liveTickets.delete(ticket);
     if (!ledgerTickets.delete(ticket)) return false;
@@ -614,11 +549,6 @@ export class ReviewRoundStore {
     }
   }
 
-  /**
-   * User-authorized extra rounds for one work task (and the session ceiling).
-   * Creates the task's entry when absent: a task refused at the session ceiling
-   * has none, and this grant is the only way past that refusal.
-   */
   async grant(
     rootSessionId: string,
     workTask: string,
@@ -671,7 +601,6 @@ export class ReviewRoundStore {
     }
   }
 
-  /** One line per work task plus the session total, or the empty-ledger message. */
   async summary(rootSessionId: string, roundClass: RoundClass = "review"): Promise<string> {
     const p = POLICIES[roundClass];
     try {

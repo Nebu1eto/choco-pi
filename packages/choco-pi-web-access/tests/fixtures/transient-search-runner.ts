@@ -16,7 +16,6 @@ const ScenarioSchema = obj({
   transport: TransportSchema,
   failure: union([lit("cancel"), int({ minimum: 100, maximum: 599 })]),
 });
-// One child runs every scenario of one transport, so that transport's key env stays per child.
 const isScenarioList = compile(arr(ScenarioSchema, { minItems: 1 })).check;
 
 type Scenario = Static<typeof ScenarioSchema>;
@@ -71,7 +70,6 @@ function requestUrl(input: string | URL | Request): string {
   return input instanceof Request ? input.url : String(input);
 }
 
-// Each scenario gets a fresh event bus, search scope, session, abort controller and counters.
 async function runScenario(scenario: Scenario, index: number): Promise<ScenarioResult> {
   const provider = providerFor(scenario.transport);
   const responseStatus = scenario.failure === "cancel" ? 500 : scenario.failure;

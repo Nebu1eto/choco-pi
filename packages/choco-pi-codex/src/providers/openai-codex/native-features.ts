@@ -2,7 +2,6 @@ import { arr, compile, lit, obj, oneOf, opt, str, unknown } from "@earendil-work
 import { nativeRuntime } from "./native-runtime.ts";
 import type { ProtocolValue, ResponsesBody, ProviderOutputItem } from "./types.ts";
 
-// Tool items are open wire objects: only the members read below are checked.
 const toolValidator = compile(
   obj(
     {
@@ -28,8 +27,6 @@ const asyncExecValidator = compile(
   ),
 );
 
-/** Unconsumed automatic generations must not have executed server-hosted actions. */
-/** GPT-6 family models (Astra, Sol, Luna), GPT-6.1 Sol, and GPT-6.2 Astra and Sol accept mid-turn steering and async tool calls. */
 export function supportsNativeResponsesModel(modelId: string | undefined): boolean {
   return (
     modelId !== undefined &&
@@ -48,7 +45,6 @@ export function supportsNativeSteeringTools(body: ResponsesBody): boolean {
   return (body.tools ?? []).every(clientOwned);
 }
 
-/** The flag belongs to the direct client exec tool, never hosted PTC or nested calls. */
 export function withAsyncCodeMode(body: ResponsesBody, enabled: boolean): ResponsesBody {
   if (!enabled || !supportsNativeResponsesModel(body.model) || !body.tools) return body;
   if (
@@ -75,7 +71,6 @@ export function withAsyncCodeMode(body: ResponsesBody, enabled: boolean): Respon
   return { ...body, tools: body.tools.map(decorate) };
 }
 
-// Hints are consumed only inside Pi-approved exec dispatch, never used to execute a tool early.
 const asyncCalls = nativeRuntime.asyncCalls;
 
 export function rememberAsyncCodeModeCalls(

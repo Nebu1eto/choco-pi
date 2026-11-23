@@ -1,12 +1,3 @@
-/**
- * choco-pi-code-mode Pi extension entry.
- *
- * Alone, it registers universal Code Mode for every provider
- * (`src/standalone.ts`). Composed with a provider that owns Code Mode
- * (choco-pi-codex, which loads first in the default profile and attaches its
- * OpenAI ports), it finds that owner through the host slot and registers
- * nothing, so every Code Mode and core tool is registered exactly once.
- */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { claimCodeModeHost, probeCodeModeHostOwner } from "./host-slot.ts";
 import { registerStandaloneCodeMode } from "./standalone.ts";

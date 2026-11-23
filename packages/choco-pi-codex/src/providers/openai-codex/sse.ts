@@ -142,7 +142,6 @@ export async function* parseSSE(
       const complete = trailingCarriageReturn ? buffer.slice(0, -1) : buffer;
       buffer =
         complete.replace(/\r\n/g, "\n").replace(/\r/g, "\n") + (trailingCarriageReturn ? "\r" : "");
-      // Treat EOF as terminating the residual SSE frame.
       if (done && buffer.trim()) buffer += "\n\n";
       let idx = buffer.indexOf("\n\n");
       while (idx !== -1) {
@@ -158,9 +157,7 @@ export async function* parseSSE(
             try {
               const parsed: object = JSON.parse(data);
               if (isCodexStreamEvent(parsed)) yield parsed;
-            } catch {
-              // Codex ignores malformed individual events and keeps the live stream.
-            }
+            } catch {}
           }
         }
         idx = buffer.indexOf("\n\n");
@@ -171,13 +168,9 @@ export async function* parseSSE(
     signal?.removeEventListener("abort", onAbort);
     try {
       await reader.cancel();
-    } catch {
-      // ignore cancellation errors
-    }
+    } catch {}
     try {
       reader.releaseLock();
-    } catch {
-      // ignore lock release errors
-    }
+    } catch {}
   }
 }

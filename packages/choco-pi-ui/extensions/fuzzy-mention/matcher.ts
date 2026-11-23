@@ -20,7 +20,6 @@ function isSubsequence(query: string, candidate: string): boolean {
   return query.length === 0;
 }
 
-/** Classify a case-insensitive file-mention match by its strongest match kind. */
 export function matchFileMention(query: string, path: string): FileMentionMatchKind | undefined {
   const normalizedQuery = query.toLocaleLowerCase();
   const normalizedPath = path.toLocaleLowerCase();
@@ -33,11 +32,6 @@ function pathDepth(path: string): number {
   return path.split("/").length - 1;
 }
 
-/**
- * Rank paths by exact prefix, contiguous substring, then subsequence. Within a
- * class, shallower and shorter paths win; lexical order makes the final tie
- * deterministic across `rg --files` versions and filesystems.
- */
 export function rankFileMentions(
   query: string,
   paths: readonly string[],

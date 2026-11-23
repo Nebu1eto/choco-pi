@@ -12,10 +12,6 @@ export function formatCascadeNeighborDiagnostics(
   const inconclusive = neighbors.filter(
     (n) => n.inconclusive === true && n.diagnostics.length === 0,
   );
-  // #1459: a neighbour whose scanner never looked at it is not a clean leaf. It
-  // is also not `inconclusive` — the language server answered — so it gets its
-  // own honest line instead of being folded into either bucket. Only the
-  // zero-diagnostic case needs saying: a neighbour with findings already renders.
   const uncovered = neighbors.filter(
     (n) =>
       n.diagnostics.length === 0 &&
@@ -61,17 +57,6 @@ export function formatCascadeNeighborDiagnostics(
   return out;
 }
 
-/**
- * Build the turn-end `CascadeRun` for a neighbour whose diagnostics landed only
- * AFTER its cascade touch skipped the in-lane wait (#1023's `resolved-found`
- * quiet-window outcome; #1444 made native TS7 take that same path). Returns
- * `undefined` when there is nothing agent-facing to say — no ERROR-severity
- * diagnostics, or nothing the formatter renders.
- *
- * Lives here rather than inline in the quiet-window callback so the delivery
- * path (reconcile → run → turn_end) is testable end to end; index.ts only wires
- * it to `runtime.appendCascadeRun`.
- */
 export function buildResolvedFoundCascadeRun(
   cwd: string,
   neighbor: { filePath: string; diagnostics: LSPDiagnostic[] },

@@ -23,7 +23,6 @@ export const SHELL_VIEWER_MAX_LINES = 2_000;
 export const SHELL_VIEWER_MAX_CHARS = 262_144;
 const ESC = String.fromCharCode(0x1b);
 const BEL = String.fromCharCode(0x07);
-/** CSI, OSC (BEL or ST), DCS/SOS/PM/APC (ST), and single-byte Fe escape sequences. */
 export const TERMINAL_ESCAPE_PATTERN = new RegExp(
   String.raw`${ESC}(?:\[[0-?]*[ -/]*[@-~]|\][^${BEL}]*?(?:${BEL}|${ESC}\\)|[PX^_][\s\S]*?${ESC}\\|[@-_])`,
   "g",
@@ -205,9 +204,6 @@ export class ShellOutputViewer implements Component {
     if (width < 8) return [];
     const inner = width - 4;
     const notice = this.actionNotice ?? this.readNotice;
-    // Frame rows: border, status, two pane labels, divider, divider, help, border, plus the
-    // command rows. On a short terminal the command yields so the help and confirmation rows
-    // stay visible; a long command wraps across at most a third of the remaining rows.
     const maxHeight = Math.floor((this.tui.terminal.rows * 70) / 100);
     const showCommand = maxHeight >= 12;
     const contentRows = maxHeight - (notice || this.evicted ? 9 : 8);
@@ -401,7 +397,6 @@ export class ShellOutputViewer implements Component {
     this.done(undefined);
   }
 
-  /** Wrap "$ <command>" under its prompt, clipping with an ellipsis only beyond maxRows. */
   private commandLines(inner: number, maxRows: number): string[] {
     const width = Math.max(1, inner - 2);
     const wrapped = wrapTextWithAnsi(sanitizeShellText(this.shell.command), width);

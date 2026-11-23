@@ -4,7 +4,6 @@ import { PrototypeTurn, type PrototypeMode, type PrototypeTransport } from "./pr
 
 export const prototypeProvider = "choco-codex-prototype";
 
-/** Explicitly loaded experiment. No registered-tool bridge, host mutation, or Code Mode. */
 export function prototypeExtension(options: {
   mode: PrototypeMode;
   connect: (signal: AbortSignal) => Promise<PrototypeTransport>;
@@ -27,11 +26,9 @@ export function prototypeExtension(options: {
     pi.on("input", (event, ctx) => {
       if (ctx.model?.provider !== prototypeProvider || event.streamingBehavior !== "steer") return;
       if (active && !event.images?.length && active.steer(event.text)) {
-        // Persist explicitly as experiment metadata, not a fabricated normal Pi user turn.
         pi.appendEntry("codex-prototype-steer", { text: event.text });
         return { action: "handled" };
       }
-      // Do not silently downgrade unsupported input into delayed steering.
       pi.appendEntry("codex-prototype-rejected-input", {
         reason: "prototype_steering_unavailable",
       });

@@ -1,5 +1,3 @@
-/** Owns the generic atomic-write `.tmp-<pid>-<threadId>-<seq>` namespace. */
-
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { threadId } from "node:worker_threads";
@@ -67,13 +65,10 @@ export async function sweepOwnStagingFiles(
         try {
           await fs.promises.rm(path.join(directory, entry.name), { force: true });
           result.removed++;
-        } catch {
-          /* leave it for the next bounded sweep */
-        }
+        } catch {}
       }
       result.truncated ||= reachedEntryCap;
     } catch {
-      /* best-effort directory scan */
     } finally {
       await handle.close().catch(() => {});
     }

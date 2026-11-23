@@ -164,7 +164,6 @@ class FixtureSocket implements WebSocketLike {
 
 const withoutResponsesLite = { useResponsesLite: () => false };
 
-/** Decode a fake-fetch request body, inflating zstd when the request declares it. */
 async function decodeRequestBody(init: RequestInit | undefined): Promise<ResponsesBody> {
   const headers = new Headers(init?.headers);
   const bytes = Buffer.from(await new Response(init?.body).arrayBuffer());
@@ -175,7 +174,6 @@ async function decodeRequestBody(init: RequestInit | undefined): Promise<Respons
   return body;
 }
 
-/** A cached-WebSocket foreground turn whose payload hook replaces the input and instructions. */
 function foregroundTurn(
   input: readonly unknown[],
   turn: {
@@ -437,7 +435,6 @@ test("isolated SSE preparation cannot corrupt concurrent cached-WebSocket foregr
       false,
     );
     assert.equal(FixtureSocket.sockets[0]?.readyState, 3);
-    // SSE fallback remains scoped and sticky across adoption; unrelated cache stays reusable.
     FixtureSocket.failNext = true;
     installCodexBackgroundCheckpoint({
       sessionId: lane,
@@ -539,7 +536,6 @@ async function sseRequestAttempts(sessionId: string, lane: { backgroundCompactio
 }
 
 test("SSE request retries keep the foreground budget; only the background lane honors maxRetries", async () => {
-  // The SDK always passes retry.provider.maxRetries; foreground 5xx request retries predate it.
   assert.deepEqual(
     await sseRequestAttempts("foreground-retry-lane", { backgroundCompactionLane: false }),
     {

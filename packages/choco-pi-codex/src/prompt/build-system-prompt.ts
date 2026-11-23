@@ -218,7 +218,6 @@ function skillRootOf(skill: PromptSkill): string {
   return skill.filePath.replace(/[\\/][^\\/]+[\\/]SKILL\.md$/, "");
 }
 
-/** First sentence of a skill description, bounded so the index stays one line per skill. */
 function compactSkillDescription(description: string): string {
   const firstSentence = description.trim().split(/(?<=[.!?])\s+/, 1)[0] ?? "";
   const words = firstSentence.split(/\s+/).filter((word) => word.length > 0);
@@ -228,8 +227,6 @@ function compactSkillDescription(description: string): string {
 
 function buildSkillsSection(skills: PromptSkill[]): string {
   if (skills.length === 0) return "";
-  // Group by root so every skill name resolves to exactly one SKILL.md path
-  // without repeating the absolute path per skill.
   const skillsByRoot = new Map<string, PromptSkill[]>();
   for (const skill of skills) {
     const root = skillRootOf(skill);
@@ -458,7 +455,6 @@ function buildHeavyCodexSystemPrompt(
   return prompt.replace(/\n{3,}/g, "\n\n").trim();
 }
 
-// Sole owner of Pi-Codex core system-prompt construction; see this directory's AGENTS.md.
 export function buildCodexSystemPrompt(
   basePrompt: string,
   options: {

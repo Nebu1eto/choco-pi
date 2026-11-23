@@ -1,6 +1,3 @@
-/**
- * Structural search and rule queries over files: predicate evaluation, match collection, file walks, and the regex fallback.
- */
 import type { LspBoundaryValue } from "../runtime-guards.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -20,17 +17,6 @@ import {
   type TreeSitterNode,
 } from "./shared.ts";
 
-// --- Structural Search ---
-
-/**
- * Search for a structural pattern in files
- *
- * @param pattern - Pattern with metavariables (e.g., "console.log($MSG)")
- * @param languageId - Language ID (typescript, python, etc.)
- * @param rootDir - Directory to search
- * @param options - Search options
- * @returns Array of matches with captures
- */
 export async function structuralSearch(
   core: TreeSitterClientInternals,
   pattern: string,
@@ -52,7 +38,6 @@ export async function structuralSearch(
     dbg(core, `Failed to load queries for ${rootDir}: ${err}`);
   }
 
-  // Compile pattern into tree-sitter query
   dbg(core, `Compiling pattern: ${pattern.slice(0, 50)}...`);
   const compiled = await compileQuery(core, pattern, languageId);
   if (!compiled) {
@@ -61,7 +46,6 @@ export async function structuralSearch(
   }
   dbg(core, `Pattern compiled, metavars: ${compiled.metavars.join(", ")}`);
 
-  // Collect source files
   const files = collectFiles(rootDir, languageId, options.fileFilter);
   dbg(core, `Scanning ${files.length} files...`);
 
@@ -87,11 +71,6 @@ export async function structuralSearch(
   return matches.slice(0, maxResults);
 }
 
-/**
- * Run a preloaded query definition against a single file.
- *
- * Optimized for dispatch runner usage to avoid per-query directory scans.
- */
 export async function runQueryOnFile(
   core: TreeSitterClientInternals,
   queryDef: TreeSitterQuery,
@@ -105,12 +84,6 @@ export async function runQueryOnFile(
     if (!ok) return [];
   }
 
-  // Compile against the language the FILE is parsed as, never the query's
-  // own `language:` key. A Query is bound to the grammar it compiled
-  // against; run it on a tree from another grammar and tree-sitter returns
-  // zero matches forever — which is what the javascript→typescript rule
-  // merge had been doing (31 queries per JS file, structurally unable to
-  // fire). `getQueryCacheKey` already namespaces by language.
   const compiled = await compileRawQuery(
     core,
     queryDef.id,
@@ -138,18 +111,6 @@ export async function runQueryOnFile(
   return matches.slice(0, maxResults);
 }
 
-/**
- * Run a whole rule set against one file in a SINGLE tree walk (#675).
- *
- * Calling `runQueryOnFile` per rule re-walks the tree once per rule — ~34
- * walks per file on a project scan, measured at 3.3× the cost of one
- * combined query for byte-identical matches. Patterns are concatenated in
- * rule order and `match.patternIndex` maps back to the owning rule, so
- * per-rule metavars, predicates, post-filters and caps still apply and
- * results stay grouped in rule order. Rules that don't compile against this
- * language are dropped individually (never poisoning the batch), and a
- * combined query that fails to compile falls back to per-rule execution.
- */
 export async function runQueriesOnFile(
   core: TreeSitterClientInternals,
   queryDefs: TreeSitterQuery[],
@@ -167,7 +128,6 @@ export async function runQueriesOnFile(
 
   const batch = await compileQueryBatch(core, queryDefs, languageId);
   if (!batch) {
-    // Fallback: one walk per rule, preserving rule order.
     const results: Array<{
       queryDef: TreeSitterQuery;
       match: StructuralMatch;
@@ -244,30 +204,6 @@ export async function runQueriesOnFile(
   return results;
 }
 
-/**
- * Typed accessor for `query.textPredicates`. If the property is missing or the
- * wrong shape — e.g. a future web-tree-sitter upgrade renames or removes it —
- * `query.textPredicates?.[i] ?? []` would silently mean "no predicates for this
- * pattern," passing every match through unfiltered. That's a silent fail-open on
- * #match?/#eq? predicates that rules rely on for correctness, and because this
- * runs for every match of every query, it would zero out ALL structural matches
- * across every language while choco-pi-lsp reports "no issues found." Fail loud (log
- * once per client instance, record a degradation so it reaches the user) and
- * closed (report the query has no usable predicates) instead of guessing.
- *
- * No WeakSet short-circuit for already-known-bad queries here (#1523 review
- * R1): `Array.isArray` is O(1), so memoizing it buys nothing, and a
- * process-lifetime WeakSet would make the SAME cached Query object (the query
- * cache is LRU-evicted, never cleared) skip straight past
- * `recordDegradationOnce` on every call after the first — which is exactly
- * what made the degradation record fail to re-arm across a session boundary
- * for a query the cache kept warm. `recordDegradationOnce` itself is called
- * unconditionally on every invalid check; the ledger's own once-per-kind/
- * subject dedupe (cleared by resetDegradationLedger, which handleSessionStart
- * calls first thing — clients/runtime-session.ts) is the single source of
- * truth for "how often does this actually get recorded."
- */
-// biome-ignore lint/suspicious/noExplicitAny: web-tree-sitter Query instances
 function hasValidTextPredicates(core: TreeSitterClientInternals, query: any): boolean {
   const valid = Array.isArray(query?.textPredicates);
   if (!valid) {
@@ -283,9 +219,6 @@ function hasValidTextPredicates(core: TreeSitterClientInternals, query: any): bo
         metadata: { textPredicatesType: describeQueryPredicateValue(query?.textPredicates) },
       });
     }
-    // User-facing signal (#1523 review F1). Called unconditionally on every
-    // invalid check (not gated by a client-lifetime latch) so it re-arms
-    // every session, per the R1 fix above.
     recordDegradationOnce({
       kind: "query-predicates-invalid",
       subject: "web-tree-sitter",
@@ -298,39 +231,22 @@ function hasValidTextPredicates(core: TreeSitterClientInternals, query: any): bo
   return valid;
 }
 
-/**
- * Evaluate text predicates (#match?, #eq?) for a query match. web-tree-sitter
- * 0.25's `Query.matches()` DOES apply these predicates itself (probed on the
- * shipped grammars — see clients/tree-sitter-symbol-extractor.ts), so this is a
- * belt-and-braces re-filter, not a workaround for missing enforcement. It also
- * doubles as the fail-closed guard (#1523): if `query.textPredicates` is ever
- * missing or malformed, this drops the match instead of assuming it already
- * passed upstream.
- */
-// biome-ignore lint/suspicious/noExplicitAny: web-tree-sitter types
 function evaluatePredicates(core: TreeSitterClientInternals, query: any, match: any): boolean {
   if (!hasValidTextPredicates(core, query)) return false;
-  // `?.` guards a post-validation removal of the property (e.g. a later
-  // mutation strips it after the first successful check) so the read can't
-  // throw here — an uncaught throw would be swallowed by the outer try/catch
-  // in searchFileWithQuery and silently zero out matches for the whole file.
 
   const predicates: Array<(captures: LspBoundaryValue) => boolean> =
     query.textPredicates?.[match.patternIndex] ?? [];
   return predicates.every((fn) => fn(match.captures));
 }
 
-/** Search a single file using tree-sitter Query */
 async function searchFileWithQuery(
   core: TreeSitterClientInternals,
   filePath: string,
-  // biome-ignore lint/suspicious/noExplicitAny: Query type from web-tree-sitter
   query: any,
   metavars: string[],
   languageId: string,
   _originalPattern?: string,
   postFilter?: string,
-  // biome-ignore lint/suspicious/noExplicitAny: Post filter params
   postFilterParams?: any,
   contentOverride?: string,
 ): Promise<StructuralMatch[]> {
@@ -349,9 +265,6 @@ async function searchFileWithQuery(
           }
         }
 
-        // Belt-and-braces re-check of #match?/#eq? predicates (web-tree-sitter
-        // 0.25's Query.matches() already applies them) plus the fail-closed
-        // guard for a malformed query.textPredicates (see evaluatePredicates).
         if (!evaluatePredicates(core, query, match)) {
           continue;
         }
@@ -395,7 +308,6 @@ async function searchFileWithQuery(
   return matches;
 }
 
-/** Collect source files for a language */
 function collectFiles(
   dir: string,
   languageId: string,
@@ -406,10 +318,6 @@ function collectFiles(
   const rootDir = path.resolve(dir);
   const ignoreMatcher = getProjectIgnoreMatcher(rootDir);
 
-  // Hard cap on the walk itself (not just result collection). The per-file
-  // `maxResults` break upstream only stops gathering matches *after* the walk
-  // has already enumerated the whole tree — so a misrooted structuralSearch
-  // would still synchronously read every directory. Bound the walk (#262).
   const scan = (d: string) => {
     if (files.length >= TREE_SITTER_MAX_SCAN_FILES) return;
     try {
@@ -435,7 +343,6 @@ function collectFiles(
   return files;
 }
 
-/** Get file extensions for a language */
 function getExtensionsForLanguage(languageId: string): string[] {
   interface MappingValues extends Record<string, string[]> {}
   const mapping: MappingValues = {
@@ -456,12 +363,6 @@ function getExtensionsForLanguage(languageId: string): string[] {
   return mapping[languageId] || [];
 }
 
-// --- Simplified Pattern Search (regex fallback) ---
-
-/**
- * Fallback structural search using regex when tree-sitter unavailable
- * Less accurate but works without WASM dependencies
- */
 export function regexStructuralSearch(
   pattern: string,
   files: string[],
@@ -470,13 +371,11 @@ export function regexStructuralSearch(
   const matches: StructuralMatch[] = [];
   const maxResults = options.maxResults ?? 50;
 
-  // Extract pattern structure for regex
-  // "console.log($MSG)" -> /console\.log\(([^)]+)\)/
   const regexPattern = pattern
     .replace(/\\/g, "\\\\")
     .replace(/\./g, "\\.")
-    .replace(/\$\$\$[A-Z_][A-Z0-9_]*/g, "(.*?)") // variadic - non-greedy
-    .replace(/\$[A-Z_][A-Z0-9_]*/g, "([^,)]+)"); // single - capture group
+    .replace(/\$\$\$[A-Z_][A-Z0-9_]*/g, "(.*?)")
+    .replace(/\$[A-Z_][A-Z0-9_]*/g, "([^,)]+)");
 
   try {
     const regex = new RegExp(regexPattern, "g");
@@ -493,7 +392,6 @@ export function regexStructuralSearch(
           const match = regex.exec(lines[i]);
           if (match) {
             const captures: Record<string, string> = {};
-            // Extract captures
             for (let j = 1; j < match.length; j++) {
               captures[`$${j}`] = match[j];
             }
@@ -511,9 +409,7 @@ export function regexStructuralSearch(
         }
       } catch {}
     }
-  } catch {
-    // Invalid regex
-  }
+  } catch {}
 
   return matches;
 }

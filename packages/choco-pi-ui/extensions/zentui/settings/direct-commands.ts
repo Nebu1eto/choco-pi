@@ -94,8 +94,6 @@ function directSection(args: string): SettingsSection | undefined {
     return "userMessages";
   }
   if (normalized === "working-line" || normalized === "working line") return "workingLine";
-  // Bare `statusline` opens the footer rows; with an action word it is the
-  // direct enable/disable/toggle operation parsed before this.
   if (normalized === "statusline" || normalized === "status-line" || normalized === "status line")
     return "footer";
   return undefined;
@@ -187,13 +185,6 @@ function applyDirectOperation(
   }
 }
 
-/**
- * Handles the non-dialog `/preferences` arguments (footer format template and
- * direct enable/disable/toggle operations). Returns `{ open: false }` when the
- * arguments were fully handled, `{ open: true, section }` to open the dialog,
- * or `undefined` when the arguments are not recognized — the host reports the
- * combined usage so its own argument grammar stays visible.
- */
 export function resolveZentuiPreferencesArgs(
   args: string,
   deps: SettingsCommandDeps,
@@ -216,11 +207,6 @@ export function resolveZentuiPreferencesArgs(
   return resolved;
 }
 
-/**
- * Runs the follow-up flow for a panel outcome outside the dialog and reports
- * where the reopened dialog should focus. `undefined` means the outcome is
- * not one of this panel's own and belongs to a host section.
- */
 export async function runZentuiPreferencesOutcome(
   outcome: string,
   deps: SettingsCommandDeps,

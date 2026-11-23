@@ -1,8 +1,3 @@
-/**
- * Review-only record changes made from the full-screen review. Cursor,
- * folds and search belong to the shared changes view
- * (`lib/changes/view/line-cursor.ts`).
- */
 import { propertiesWhen } from "../../lib/runtime-values.ts";
 import type { CommentPosition } from "../../lib/changes/view/line-cursor.ts";
 import { buildCommentAnchor } from "../core/anchor.ts";
@@ -22,10 +17,6 @@ export type CommitCommentInput = {
   timestamp: string;
 };
 
-/**
- * The record with the draft added as a comment, anchored by a snippet of
- * `hunk` as displayed (revealed context included). An empty draft adds nothing.
- */
 export function commitComment(
   record: ReviewRecord,
   draft: CommentDraft,

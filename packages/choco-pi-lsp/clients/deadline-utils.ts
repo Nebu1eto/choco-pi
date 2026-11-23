@@ -1,23 +1,3 @@
-/**
- * One implementation of the "race a promise against a timer" pattern that had
- * drifted into near-identical copies (#366): `withTimeout` (clients/lsp) and
- * `withBudget` (read-expansion).
- *
- * The differences between them were real — timeout can *reject* or *resolve
- * undefined*, and the raced promise's own rejection can *propagate* or be
- * *swallowed* — so they are kept as named adapters over one core. Consolidating
- * fixes two latent bugs the copies had: `withBudget` did not suppress the loser
- * promise's late rejection (an unhandled rejection if the timer won first), and
- * a deadline-based copy never cleared its timer.
- */
-
-/**
- * Combine multiple abort signals into one that aborts when ANY of them does.
- * Returns the single signal unchanged when only one is live, and `undefined`
- * when none are — so callers can pass it straight through. Used so a tool honors
- * both its tool-call `signal` positional and the turn-wired `ctx.signal` (Escape),
- * and to fold in a wall-clock ceiling via `AbortSignal.timeout`.
- */
 export function combineAbortSignals(
   ...signals: (AbortSignal | undefined)[]
 ): AbortSignal | undefined {
@@ -37,26 +17,12 @@ export function combineAbortSignals(
 }
 
 export interface DeadlineOptions {
-  /** Duration budget in ms. Provide this OR `deadlineAt`. */
   ms?: number;
-  /** Absolute deadline (`Date.now()`-based). Provide this OR `ms`. */
   deadlineAt?: number;
-  /**
-   * What happens when the timer wins first:
-   *  - `"reject"` (default): reject with `Error("Timeout after <ms>ms")`.
-   *  - `"undefined"`: resolve to `undefined`.
-   */
   onTimeout?: "reject" | "undefined";
-  /**
-   * What happens if `promise` itself rejects:
-   *  - `"propagate"` (default): rethrow the rejection.
-   *  - `"undefined"`: swallow it and resolve to `undefined`.
-   */
   onReject?: "propagate" | "undefined";
 }
 
-// reject-on-timeout + propagate-rejection can never yield `undefined`, so it
-// keeps the precise `Promise<T>` return; any undefined-producing mode is `T | undefined`.
 export function withDeadline<T>(
   promise: Promise<T>,
   options: { ms?: number; deadlineAt?: number; onTimeout?: "reject"; onReject?: "propagate" },
@@ -73,13 +39,6 @@ export function withDeadline<T>(
   const onReject = options.onReject ?? "propagate";
   const ms = options.ms ?? (options.deadlineAt !== undefined ? options.deadlineAt - Date.now() : 0);
 
-  // Past deadline / non-positive budget: settle immediately, no timer. This
-  // branch returns before the race below ever runs, so — same reason as the
-  // loser-leg catch a few lines down — `promise` needs its own no-op catch
-  // here too: without it, a `promise` that eventually rejects (the caller
-  // already invoked it; this function only decides how long to wait on it)
-  // surfaces as an unhandled rejection instead of being silently superseded
-  // by the immediate timeout/undefined settlement.
   if (ms <= 0) {
     promise.catch(() => {});
     return onTimeout === "undefined"
@@ -87,9 +46,6 @@ export function withDeadline<T>(
       : Promise.reject(new Error(`Timeout after ${Math.max(0, ms)}ms`));
   }
 
-  // Base promise with rejection handled per `onReject`. In propagate mode we
-  // still attach a no-op catch so that if the timer wins the race, the loser
-  // promise's later rejection does not surface as an unhandled rejection.
   const base: Promise<T | undefined> =
     onReject === "undefined" ? promise.catch(() => undefined) : promise;
   if (onReject === "propagate") promise.catch(() => {});
@@ -107,19 +63,10 @@ export function withDeadline<T>(
   });
 }
 
-/**
- * Resolve `promise`, or reject with `Error("Timeout after <ms>ms")` once
- * `timeoutMs` elapses. The raced promise's own rejection propagates.
- */
 export function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return withDeadline(promise, { ms: timeoutMs });
 }
 
-/**
- * Resolve `promise`, or `undefined` once `budgetMs` elapses (a non-positive
- * budget resolves `undefined` immediately). The raced promise's own rejection
- * propagates.
- */
 export function withBudget<T>(promise: Promise<T>, budgetMs: number): Promise<T | undefined> {
   return withDeadline(promise, { ms: budgetMs, onTimeout: "undefined" });
 }

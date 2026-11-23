@@ -128,8 +128,6 @@ export async function executeTool<P, T>(
     await resourceScheduler.read("session-lifecycle", async () => await ensureReady(ctx, signal));
     throwIfAborted(signal);
     if (AUTO_OBSERVE_TOOLS.has(tool) && !operation.currentCapture) {
-      // Semantic observation only reads the accessibility tree: it disables OCR,
-      // image capture, focus changes, and every action delivery path.
       await performObserve({ mode: "semantic" }, signal);
       throwIfAborted(signal);
     }

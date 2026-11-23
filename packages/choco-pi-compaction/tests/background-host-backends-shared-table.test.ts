@@ -25,13 +25,6 @@ const MODEL: Model<Api> = {
   maxTokens: 128_000,
 };
 
-/**
- * Pi loads every extension copy as its own module instance, so a subagent
- * child's copy of backends.ts resolves through the default factories the main
- * session's copy registered first. The resolving-owner table must be shared,
- * or the text backend fails with "No background compaction owner ... is
- * resolving backends".
- */
 test("a second module copy resolves the text backend registered by the first", async () => {
   const runtime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
@@ -64,9 +57,7 @@ test("a second module copy resolves the text backend registered by the first", a
   };
   const options = { createTextSummarizer: () => undefined };
 
-  // The first copy registers the process-global default factories.
   await resolveBackends(spec, options);
-  // A fresh module instance stands in for the subagent child's copy.
   const copy: typeof import("../src/background-host/backends.ts") = await import(
     `../src/background-host/backends.ts?copy=${Date.now()}`
   );
@@ -76,7 +67,6 @@ test("a second module copy resolves the text backend registered by the first", a
   assert.ok(backends.has(TEXT_BACKEND_ID));
 });
 
-/** A backend that only carries its id; selection never calls it for these lanes. */
 function stubBackend(id: string): Backend {
   return {
     id,
@@ -95,11 +85,6 @@ const CODEX_MODEL: Model<Api> = {
   baseUrl: "https://chatgpt.com/backend-api",
 };
 
-/**
- * A Codex transport is Codex-owned only while Codex's native compaction is on.
- * With `responsesCompaction` off Codex's handler abstains, so the text lane
- * serves the session instead of no lane at all.
- */
 test("a Codex transport selects the text lane with native off and the Codex lane with native on", async () => {
   const runtime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),

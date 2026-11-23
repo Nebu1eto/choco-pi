@@ -1,10 +1,3 @@
-/**
- * Lifecycle safety around the awaited summarization call.
- *
- * A compaction that is aborted, or whose session is replaced while the request
- * is in flight, must never commit a checkpoint onto the session it no longer
- * belongs to.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
@@ -76,7 +69,6 @@ test("L3: aborting mid-call commits nothing and reports an aborted compaction", 
 test("L3: a session shutdown during the call cancels instead of committing", async () => {
   let host: CompactionHost | undefined;
   const script: CompactionScript = () => {
-    // Invalidate the handler's generation while its request is in flight.
     const active = host;
     if (active) {
       void active.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });

@@ -65,7 +65,6 @@ test("loadContext quotes the working tree for working-tree sources, capped and c
   const past = await store.loadContext("a.txt", 59, 70);
   assert.deepEqual(past.excerpt, { kind: "lines", from: 59, lines: ["work 59", "work 60"] });
 
-  // Cached for the revision: an edit the store has not refreshed for is not seen.
   await writeFile(join(root, "a.txt"), numbered(60, "edited"));
   assert.deepEqual((await store.loadContext("a.txt", 3, 5)).excerpt, first.excerpt);
   const next = await ready(store);

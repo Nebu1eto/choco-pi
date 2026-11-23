@@ -44,7 +44,6 @@ export function renderWriteStdinCall(
   if (commandPreview) {
     text += `${theme.fg("dim", " · ")}${theme.fg("muted", commandPreview)}`;
   }
-  // Keep the session fallback only when we do not have a stable command display.
   if (!commandPreview) {
     text += `${theme.fg("dim", " ")}${theme.fg("muted", `#${sessionId}`)}`;
   }

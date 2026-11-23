@@ -1,21 +1,6 @@
-/**
- * GitHub release asset selection, including derived HashiCorp release assets.
- */
 import { TOOLS, type ToolDefinition } from "./tool-catalog.ts";
 import { getArchiveBinaryCandidates, getGitHubInstalledBinaryName } from "./tool-resolution.ts";
 
-/**
- * GitHub-release tools that ship an asset for **every** supported
- * platform/arch combo (linux/darwin/win32 × x64/arm64). This is the set the
- * full asset-matrix test (tests/clients/installer/github-release.test.ts)
- * iterates, so membership must stay in lockstep with the registry — the
- * tool-registry-consistency test enforces that every `installStrategy: "github"`
- * entry resolving all six combos appears here, and vice versa.
- *
- * `swiftlint` is deliberately absent: it has no Windows asset (macOS + Linux
- * only), so it cannot satisfy the full matrix and is covered by the weaker
- * "at least one platform" guard instead.
- */
 export const GITHUB_TOOLS = [
   "shellcheck",
   "shfmt",
@@ -43,11 +28,6 @@ export const GITHUB_TOOLS = [
 ] as const;
 export type GitHubToolId = (typeof GITHUB_TOOLS)[number];
 
-/**
- * Resolve the GitHub asset filename substring for a tool on a given platform/arch.
- * Returns undefined if the tool has no GitHub spec or no asset for the platform.
- * Exported for testing only.
- */
 export function resolveGitHubAsset(
   toolId: GitHubToolId,
   platform: string,
@@ -80,9 +60,6 @@ export function resolveGitHubArchiveBinaryCandidates(
 
 type DownloadAsset = { name: string; browser_download_url: string };
 
-// Signature/checksum siblings a release publishes next to the real asset. A
-// bare-binary tool's substring IS the whole asset name, so `includes` alone
-// matches `<asset>.asc` too and would install a signature file as the binary.
 const ASSET_SIDECAR_SUFFIXES = [
   ".asc",
   ".sig",

@@ -25,7 +25,6 @@ function addedFile(lineCount: number): DiffFile {
         lines: Array.from({ length: lineCount }, (_, index) => ({
           kind: "add" as const,
           newLine: index + 1,
-          // Short lines keep the whole file under maxFileBytes, so only the line limit applies.
           text: `let a = ${index % 10};`,
         })),
       },
@@ -33,7 +32,6 @@ function addedFile(lineCount: number): DiffFile {
   };
 }
 
-/** Escapes can only come from the highlighter: the plain styler adds none. */
 function hasEscapes(lines: readonly string[]): boolean {
   return lines.some((line) => line.includes("\u001b"));
 }

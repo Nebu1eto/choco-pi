@@ -8,8 +8,6 @@ import {
 } from "./live/background-compaction/artifacts.ts";
 import { matches } from "./live/background-compaction/schema-check.ts";
 
-// Regression: an embedded recursive schema needs its $defs on the compiled root;
-// without hoisting, pi-schema throws "Unresolved $ref #/$defs/Input".
 test("recursive artifact schemas embed inside object schemas", () => {
   const lane = withArtifactDefs(obj({ compaction: InputSchema }, { open: true }));
   assert.equal(matches(lane, { compaction: { a: [1, "x", null, { b: true }] }, extra: 1 }), true);

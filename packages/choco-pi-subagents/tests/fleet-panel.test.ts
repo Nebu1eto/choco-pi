@@ -208,7 +208,6 @@ function mount(
     },
     custom<T>(): Promise<T> {
       // SAFETY: No test invokes the generic custom viewer result; the fixture
-      // only satisfies the UI surface used by FleetPanel.
       return Promise.resolve(undefined as T);
     },
   });
@@ -224,7 +223,6 @@ function mount(
     notices,
     statuses,
     press: (key: string) => handler?.(key),
-    /** A left click on the panel line showing `text`. */
     click(text: string, clickCount = 1, type: "click" | "press" = "click") {
       const y = (component?.render(options.width ?? 120) ?? []).findIndex((line) =>
         stripTerminalSequences(line).includes(text),
@@ -499,8 +497,6 @@ test("running detail row keeps the closing paren styled after nested token color
   try {
     const text = view.text();
     assert.match(text, /12\.9k \(/);
-    // Every foreground reset inside the row must re-enter the dim style, so the
-    // separators and trailing ")" never fall back to the default foreground.
     assert.ok(text.includes(`2%${ANSI_FOREGROUND_RESET}${ANSI_DIM} `));
     assert.ok(text.includes(`⇊1${ANSI_FOREGROUND_RESET}${ANSI_DIM})`));
   } finally {

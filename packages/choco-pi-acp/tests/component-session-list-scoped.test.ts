@@ -76,7 +76,6 @@ test("PiAcpAgent: listSessions defaults to lastSessionCwd when cwd param is omit
     const conn = new FakeAgentSideConnection();
     const agent = new PiAcpAgent(asAgentConn(conn));
 
-    // This test sets the agent's private cwd cache to a real project directory before listing.
     Object.assign(agent, { lastSessionCwd: projectA } satisfies AgentCwdState);
 
     const listed = await agent.listSessions({});

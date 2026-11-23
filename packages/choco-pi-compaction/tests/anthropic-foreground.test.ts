@@ -1,14 +1,3 @@
-/**
- * Foreground Anthropic server-side compaction through a real
- * `createAgentSession` (INSTALLED Anthropic adapter, fake transports, no
- * network): the host's own compaction is answered with a signed block, every
- * failure falls back to the local summarizer with a single notice, replay
- * carries the block first with the beta, and a replay rejection turns
- * server-side off for the rest of the session (background lane included).
- * The scripted lane answers every request with a distinct block, so equality
- * with the replayed block proves which lane answer was persisted; lane request
- * bodies are checked against turns the test writes out.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -57,7 +46,6 @@ import { hostParams } from "./schema-bridge.ts";
 
 const OAUTH_KEY = "sk-ant-oat01-foreground-non-secret-placeholder";
 
-/** Session IDs the (fake) subagent runner reports as live children. */
 const CHILD_IDS = new Set<string>();
 Object.defineProperty(globalThis, Symbol.for("pi-subagents:manager"), {
   value: { isChildSessionId: (id: string) => CHILD_IDS.has(id) },
@@ -75,7 +63,6 @@ const MODEL: Model<"anthropic-messages"> = {
   contextWindow: 200_000,
   maxTokens: 4_096,
 };
-/** The scripted lane's answer to its `index`-th request: a distinct signed block each time. */
 function blockFor(index: number) {
   return {
     type: "compaction",
@@ -130,7 +117,6 @@ function messageStart(inputTokens = 0): Frame {
 }
 
 function laneFrames(options: {
-  /** Answer with `blockFor(block)`. */
   readonly block?: number;
   readonly stopReason: string;
   readonly text?: string;
@@ -165,7 +151,6 @@ function compactionResponse(index = 0): Response {
   return sse(laneFrames({ block: index, stopReason: "compaction" }));
 }
 
-/** A lane that answers its n-th request with `blockFor(n)`. */
 function nativeLane(): RecordingFetch {
   return recordingFetch((index) => compactionResponse(index));
 }
@@ -176,10 +161,6 @@ const isCompactionBlock = compile(obj({ type: lit("compaction"), content: str() 
 const isTypedBlocks = compile(arr(obj({ type: str() }, open))).check;
 const isStringContent = compile(str()).check;
 
-/**
- * The test's own reading of a wire request: one `<role>:<text>` line per
- * message, a block other than text shown as `[type]` (`[compaction:<content>]`).
- */
 function turnsOf(sent: { readonly body: WireBody | undefined } | undefined): string[] {
   return (sent?.body?.messages ?? []).map((message) => {
     const content: unknown = message.content;
@@ -205,7 +186,6 @@ function errorResponse(status: number, error: JsonObject): Response {
   });
 }
 
-/** Tool the auto-compaction rig's model calls; each result is a distinct marker. */
 const STEP_TOOL = defineTool({
   name: "step",
   label: "step",
@@ -216,7 +196,6 @@ const STEP_TOOL = defineTool({
   },
 });
 
-/** A `step` tool call reporting `inputTokens` of context (drives the host threshold). */
 function toolUseResponse(label: string, inputTokens: number): Response {
   return sse([
     messageStart(inputTokens),
@@ -318,11 +297,8 @@ interface RigOptions {
   readonly apiKey?: string;
   readonly baseUrl?: string;
   readonly keepRecentTokens?: number;
-  /** Register the session as a subagent child before its extensions bind. */
   readonly child?: boolean;
-  /** Host auto-compaction on (threshold at turn ends) and the `step` tool registered. */
   readonly autoCompaction?: boolean;
-  /** Background sidecar file and injected text summarizer. */
   readonly background?: {
     readonly sidecar: (dir: string) => Promise<string>;
     readonly summarizer: TextSummarizer;
@@ -348,7 +324,6 @@ async function createRig(options: RigOptions): Promise<Rig> {
     api: "anthropic-messages",
     apiKey: options.apiKey ?? OAUTH_KEY,
     models: [model],
-    // Uncaptured path (choco-pi mode): the installed adapter on the same fake transport.
     streamSimple: (active, context, streamOptions) => {
       assert.equal(active.id, model.id);
       return installedStreamSimple(model, context, {
@@ -440,14 +415,12 @@ function noticesOf(rig: Rig): string[] {
   return rig.notices.filter((notice) => notice.startsWith(NOTICE_PREFIX));
 }
 
-/** Foreground: every request answers with text; the local summary is recognizable. */
 function textForeground(): RecordingFetch {
   return recordingFetch((index) =>
     textResponse(index === 0 ? "FG-ANSWER" : `FG-LOCAL-SUMMARY-${index}`),
   );
 }
 
-/** The seeded turns plus the first prompt, as the lane must receive them (system excluded). */
 const LANE_PREFIX_TURNS = [
   "user:FG-PREFIX-A",
   "assistant:FG-PREFIX-B",
@@ -455,7 +428,6 @@ const LANE_PREFIX_TURNS = [
   "assistant:FG-KEPT-D",
   "user:FG-GO",
 ];
-/** The first replay after compaction: the block, then the kept tail and the new prompt. */
 const REPLAY_TURNS = [
   "assistant:[compaction:FOREGROUND synthetic native summary 0]",
   "assistant:FG-ANSWER",
@@ -476,7 +448,6 @@ test(
       assert.equal(foreground.sent.length, 1);
       const result = await rig.session.compact("FG custom focus");
       assert.equal(lane.sent.length, 1, "one lane request");
-      // Prefix fidelity: the lane carries the captured turns before the cut, as written here.
       assert.deepEqual(turnsOf(lane.sent[0]), LANE_PREFIX_TURNS);
       assert.deepEqual(lane.sent[0]?.body?.system, foreground.sent[0]?.body?.system);
       assert.equal(lane.sent[0]?.body?.model, MODEL.id);
@@ -509,7 +480,6 @@ test(
       assert.ok(parseBetaHeader(replay.headers.get("anthropic-beta")).includes(COMPACT_BETA));
       assert.deepEqual(turnsOf(replay), REPLAY_TURNS);
 
-      // A second compaction persists and replays the second answer, not the first.
       await rig.session.compact();
       assert.equal(lane.sent.length, 2);
       assert.equal(laneCompaction(lane.sent[1])?.instructions, undefined, "no focus this time");
@@ -546,7 +516,6 @@ test(
     const rig = await createRig({ foreground, lane, keepRecentTokens: 100 });
     try {
       await rig.session.prompt("FG-GO");
-      // A long prompt: the host keeps it (and the short answer after it) and cuts before it.
       const next = `FG-NEXT ${"detail ".repeat(800)}`;
       await rig.session.prompt(next);
       await rig.session.compact();
@@ -583,7 +552,6 @@ test(
   },
   async () => {
     let summarized = 0;
-    // Held until the run ends, so no boundary adopts it and the host compaction must.
     let release = (): void => undefined;
     const released = new Promise<void>((resolve) => {
       release = resolve;
@@ -601,7 +569,6 @@ test(
         };
       },
     };
-    // Low usage arms the background owner; the next, high usage crosses its threshold.
     const foreground = recordingFetch((index) =>
       textResponse(`FG-ANSWER-${index}`, index === 0 ? 1_000 : 180_000),
     );
@@ -711,7 +678,6 @@ for (const item of FAILURES) {
           "the fallback record carries the original trigger",
         );
         assert.equal(noticesOf(rig).length, 1);
-        // A `/compact` is a user action: its fallback is told every time (D6/U-ANTH 8).
         await rig.session.prompt("FG-AGAIN");
         await rig.session.compact();
         assert.equal(compactions(rig.manager).length, 2);
@@ -738,7 +704,6 @@ test(
       assert.equal(lane.sent.length, 1, "cooling down: no second lane request");
       assert.equal(compactions(rig.manager).length, 2);
       assert.equal(noticesOf(rig).length, 2, "each /compact fallback is told");
-      // The cooling gate reports the reason that cooled it.
       assert.equal(noticesOf(rig)[1], noticesOf(rig)[0]);
     } finally {
       await rig.dispose();
@@ -858,7 +823,6 @@ test(
         },
       );
 
-      // Later requests carry the summary text, not the block or the beta.
       await rig.session.prompt("FG-AFTER");
       const after = foreground.sent.at(-1);
       assert.ok(after?.body);
@@ -869,7 +833,6 @@ test(
       );
       assert.ok(after.text.includes(blockFor(0).content), "summary text sent instead");
 
-      // Later compactions are local, with no lane request and no new notice.
       const laneBefore = lane.sent.length;
       await rig.session.compact();
       assert.equal(lane.sent.length, laneBefore);
@@ -913,7 +876,6 @@ test(
       background: {
         sidecar: async (dir) => {
           const path = join(dir, "background-compaction.json");
-          // Manual-only: the usage threshold is never crossed.
           await writeFile(
             path,
             JSON.stringify({
@@ -962,7 +924,6 @@ test(
       assert.equal(disables.length, 1, JSON.stringify(laneRecordsOf(rig.manager.getEntries())));
       assert.equal(disables[0]?.checkpointEntryId, checkpoint.id);
 
-      // The background lane is off too: the next manual compaction sends no lane request.
       await rig.session.prompt("FG-AFTER");
       await rig.session.compact();
       await settledCount(2);
@@ -1006,13 +967,11 @@ test(
       assert.equal(childLane.sent.length, 1, "the child's own lane request");
       assert.equal(result.summary, blockFor(0).content);
       assert.ok(isAnthropicDetails(compactions(child.manager)[0]?.details));
-      // The child's replay binding sends its own checkpoint first.
       await child.session.prompt("FG-CHILD-NEXT");
       assert.deepEqual(childForeground.sent.at(-1)?.body?.messages[0], {
         role: "assistant",
         content: [blockFor(0)],
       });
-      // A rejection turns server-side off for the child only.
       rejectChild = true;
       await child.session.prompt("FG-CHILD-REJECTED");
       assert.equal(noticesOf(child).length, 1);
@@ -1060,8 +1019,6 @@ test(
   { timeout: 60_000 },
   async () => {
     const TURNS = 4;
-    // Each tool turn reports a context over the host threshold, so the host
-    // compacts at every turn end, between a tool result and the next request.
     const foreground = recordingFetch((index) =>
       index < TURNS ? toolUseResponse(`t${index}`, 190_000) : textResponse("FG-DONE", 10),
     );
@@ -1088,8 +1045,6 @@ test(
           "a compaction never keeps a compaction entry",
         );
       }
-      // Each lane request summarizes the newest window: an earlier tool result
-      // already summarized is not sent again, and no two requests repeat a cut.
       const cuts = native.map((entry) =>
         isAnthropicDetails(entry.details) ? entry.details.cut.cutEntryId : "",
       );
@@ -1101,8 +1056,6 @@ test(
       assert.equal(foreground.sent.at(-1)?.text.includes("STEP-RESULT-t0"), false);
       assert.deepEqual(noticesOf(rig), []);
 
-      // A session that already retains an older compaction entry (written
-      // before this fix) still maps: the invisible entry carries no wire key.
       const [older, newer] = native.slice(-2);
       assert.ok(older && newer);
       const mapping = mapWireToEntries(

@@ -1,4 +1,3 @@
-/** Manual, billable real-Pi RPC probe. Never run by the unit suite. */
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { cp, mkdir, mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
@@ -253,10 +252,8 @@ async function snapshot(): Promise<void> {
 }
 
 try {
-  // Reserve evidence before any billable work; an existing capture is never overwritten.
   evidence = await open(capture, "wx", 0o600);
   await Promise.all([mkdir(agentDir), mkdir(workspace), mkdir(sessions)]);
-  // Copies, never symlinks: token refresh and settings writes remain isolated.
   for (const name of [
     "settings.json",
     "auth.json",
@@ -371,7 +368,6 @@ export default function (pi: ExtensionAPI) {
           value.id &&
           ["select", "input", "editor", "confirm"].includes(value.method ?? "")
         ) {
-          // Never approve non-probe dialogs automatically.
           const response = value.title?.startsWith("RPC probe ")
             ? value.method === "confirm"
               ? { confirmed: true }
@@ -389,7 +385,6 @@ export default function (pi: ExtensionAPI) {
       failure = error instanceof Error ? error : new Error(String(error));
     }
   });
-  // Drain diagnostics; stderr is not part of the JSONL protocol.
   owner.stderr?.on("data", () => {});
   await command("get_state");
   const commands = await command("get_commands");
@@ -512,7 +507,6 @@ export default function (pi: ExtensionAPI) {
     if (evidence) await evidence.writeFile(`${lines.join("\n")}\n`);
   } finally {
     await evidence?.close();
-    // Shutdown hooks can still finish writing after Pi exits; retry directory races.
     await rm(scratch, { recursive: true, force: true, maxRetries: 8, retryDelay: 125 });
   }
 }

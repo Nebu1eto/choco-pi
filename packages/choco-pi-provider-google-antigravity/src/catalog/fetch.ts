@@ -2,8 +2,6 @@ import { arr, bool, compile, map, num, obj, opt, str } from "@earendil-works/pi-
 import type { Static } from "@earendil-works/pi-schema";
 import { postV1Internal, type FetchLike } from "../client/http.ts";
 
-// FetchAvailableModelsResponse as the v1internal JSON transcoding renders it (camelCase). Only
-// the members the catalog reads are declared; everything else is ignored.
 const ModelDetailsSchema = obj(
   {
     displayName: opt(str()),
@@ -79,7 +77,6 @@ export interface FetchAvailableModelsOptions {
   timeoutMs?: number | undefined;
 }
 
-/** POST v1internal:fetchAvailableModels {project}, schema-validated. */
 export function fetchAvailableModels(
   options: FetchAvailableModelsOptions,
 ): Promise<FetchAvailableModelsResponse> {

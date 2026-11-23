@@ -6,17 +6,6 @@ import { describePath } from "../session-status.ts";
 import { isJsonRecord, isNumber, isString, type RuntimeValue } from "./runtime-values.ts";
 import type { ReportRow } from "./host-bridge/report-schema.ts";
 
-/**
- * Session accounting for the `/status` Session Info block.
- *
- * Pi's own `/session` command computes these numbers inside interactive mode,
- * where no extension can reach them, so the arithmetic is reproduced here from
- * the session entries every extension already receives. Two additions matter:
- * the totals cover every sub-agent this session spawned, and the main agent's
- * share stays visible next to theirs instead of merging into one figure.
- */
-
-/** The five numbers every usage record carries, summed over a set of messages. */
 export type UsageTotals = {
   input: number;
   output: number;
@@ -25,7 +14,6 @@ export type UsageTotals = {
   cost: number;
 };
 
-/** Cost and token volume attributed to one `provider/model` key. */
 export type CostEntry = { key: string; cost: number; tokens: number };
 
 export type MessageCounts = {
@@ -36,10 +24,8 @@ export type MessageCounts = {
   toolResults: number;
 };
 
-/** Prompt tokens re-billed because a cache read was expected but did not happen. */
 export type CacheWaste = { missedTokens: number; missedCost: number; missCount: number };
 
-/** What one model charges per million tokens for a cache read. */
 export type CachePriceSource = {
   find(provider: string, modelId: string): { cost: { cacheRead: number } } | undefined;
 };
@@ -52,15 +38,12 @@ export type MainUsage = {
 };
 
 export type SubagentUsage = {
-  /** Agents with a readable transcript; each contributed at least one message. */
   agents: number;
   totals: UsageTotals;
   breakdown: CostEntry[];
-  /** Transcript directories the numbers were read from. Empty means nothing was found. */
   directories: string[];
 };
 
-/** The minimum a usage record must carry to be counted. */
 type UsageRecord = {
   input: number;
   output: number;
@@ -85,7 +68,6 @@ export function totalTokens(totals: UsageTotals): number {
   return totals.input + totals.output + totals.cacheRead + totals.cacheWrite;
 }
 
-/** Bucket key for usage that no assistant message accounts for. */
 const OTHER_USAGE_KEY = "Tools/summaries";
 
 function accumulate(byKey: Map<string, UsageTotals>, key: string, usage: UsageRecord): void {
@@ -104,12 +86,6 @@ function toBreakdown(byKey: Map<string, UsageTotals>): CostEntry[] {
     .sort((left, right) => right.cost - left.cost);
 }
 
-/**
- * Message counts, token totals, and per-model cost for the current session
- * branch. Usage that belongs to no assistant message — tool executions,
- * compaction and branch summaries — is grouped separately so the breakdown
- * still reconciles with the total.
- */
 export function summarizeMainUsage(entries: readonly SessionEntry[]): MainUsage {
   const counts: MessageCounts = { total: 0, user: 0, assistant: 0, toolCalls: 0, toolResults: 0 };
   const totals = createUsageTotals();
@@ -168,21 +144,11 @@ export function summarizeMainUsage(entries: readonly SessionEntry[]): MainUsage 
   };
 }
 
-/** Per-turn misses at or below this are cache breakpoint granularity, not waste. */
 const CACHE_NOISE_FLOOR_TOKENS = 1024;
-/** Near-complete hits can vary slightly with prompt boundaries without a material cache collapse. */
 const CACHE_MISS_MATERIALITY_RATIO = 0.01;
 
 type PreviousRequest = { promptTokens: number; reportedCache: boolean };
 
-/**
- * Prompt tokens that were already in the previous turn's prompt but were billed
- * again instead of read from cache, and the extra dollars that cost.
- *
- * Compaction and branch summaries reset the comparison: the next prompt is new
- * content, not re-billed content. A model switch is not exempt, because it does
- * re-bill the whole prompt.
- */
 export function computeCacheWaste(
   entries: readonly SessionEntry[],
   models: CachePriceSource,
@@ -200,16 +166,12 @@ export function computeCacheWaste(
     const usage = message.usage;
     const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
     const cacheActivity = usage.cacheRead + usage.cacheWrite;
-    // A zero-cache turn only counts once caching was reported at least once:
-    // on a provider that never caches it means nothing.
     if (previous && promptTokens > 0 && (cacheActivity > 0 || previous.reportedCache)) {
       const reusableTokens = Math.min(previous.promptTokens, promptTokens);
       const missed = reusableTokens - usage.cacheRead;
       const isMaterialMiss =
         missed > CACHE_NOISE_FLOOR_TOKENS && missed / reusableTokens > CACHE_MISS_MATERIALITY_RATIO;
       if (isMaterialMiss) {
-        // The missed tokens landed in the input or cacheWrite buckets, so this
-        // message's own cost breakdown gives the rate that was actually paid.
         const paidTokens = usage.input + usage.cacheWrite;
         const paidPerToken =
           paidTokens > 0 ? (usage.cost.input + usage.cost.cacheWrite) / paidTokens : 0;
@@ -233,7 +195,6 @@ export function computeCacheWaste(
   return waste;
 }
 
-/** Read a usage record out of parsed transcript JSON, or reject it. */
 function readUsage(value: RuntimeValue): UsageRecord | undefined {
   if (!isJsonRecord(value)) return undefined;
   const cost = value["cost"];
@@ -260,7 +221,6 @@ function readUsage(value: RuntimeValue): UsageRecord | undefined {
   };
 }
 
-/** The `provider/model` key an assistant transcript line was billed under. */
 function transcriptModelKey(message: RuntimeValue): string {
   if (!isJsonRecord(message)) return OTHER_USAGE_KEY;
   const provider = message["provider"];
@@ -270,16 +230,6 @@ function transcriptModelKey(message: RuntimeValue): string {
   return `${provider}/${model}`;
 }
 
-/**
- * Sub-agent transcript directories for one root session.
- *
- * choco-pi-subagents writes every agent's turns to
- * `<tmp>/choco-pi-subagents-<uid>/<encoded-cwd>/<rootSessionId>/tasks/<agentId>.output`.
- * Nested agents inherit the root session id, so they file alongside their
- * ancestors. The encoded cwd is not always the orchestrator's own — a nested
- * spawn encodes its config root, which differs inside a worktree — so every
- * encoded-cwd directory is checked for this session id rather than just one.
- */
 export function subagentTranscriptDirs(sessionId: string): string[] {
   if (sessionId.length === 0 || sessionId.includes("/") || sessionId.includes("\\")) return [];
   const root = path.join(tmpdir(), `choco-pi-subagents-${process.getuid?.() ?? 0}`);
@@ -296,7 +246,6 @@ export function subagentTranscriptDirs(sessionId: string): string[] {
     .filter((dir) => existsSync(dir));
 }
 
-/** Transcript files by agent id; the largest wins if an id somehow appears twice. */
 function transcriptFiles(directories: readonly string[]): Map<string, string> {
   const byAgent = new Map<string, { file: string; size: number }>();
   for (const directory of directories) {
@@ -323,19 +272,6 @@ function transcriptFiles(directories: readonly string[]): Map<string, string> {
   return new Map([...byAgent].map(([agentId, entry]) => [agentId, entry.file]));
 }
 
-/**
- * Token and cost totals for every sub-agent spawned under one root session,
- * reconstructed from the transcripts those agents streamed to disk.
- *
- * Reconstructed rather than live: the sub-agent manager publishes no roster,
- * and its in-memory records are evicted minutes after an agent finishes and are
- * gone entirely after a resume. The transcripts outlive all of that and carry
- * each assistant message's own `usage.cost`, which is the same figure the
- * provider billed. They are still only as complete as the writer: an agent that
- * runs with `output_transcript` off leaves no file, a `/btw` side conversation
- * never gets one, and a running agent's current turn is not written until the
- * turn ends.
- */
 export function summarizeSubagentUsage(sessionId: string): SubagentUsage {
   const directories = subagentTranscriptDirs(sessionId);
   const totals = createUsageTotals();
@@ -351,9 +287,6 @@ export function summarizeSubagentUsage(sessionId: string): SubagentUsage {
     }
     let counted = false;
     for (const line of contents.split("\n")) {
-      // Tool-result turns carry the bulk of a transcript and never carry usage.
-      // Skipping them before JSON.parse keeps a large session's scan well under
-      // the time it takes to paint the tab.
       if (line.length === 0 || !line.includes('"usage"')) continue;
       let parsed: RuntimeValue;
       try {
@@ -376,7 +309,6 @@ export function summarizeSubagentUsage(sessionId: string): SubagentUsage {
   return { agents, totals, breakdown: toBreakdown(byKey), directories };
 }
 
-/** Pi's compact token scale, matching the footer and `/session`. */
 export function formatTokens(count: number): string {
   if (count < 1000) return count.toString();
   if (count < 10_000) return `${(count / 1000).toFixed(1)}k`;
@@ -389,14 +321,12 @@ export function formatCost(amount: number): string {
   return `$${amount.toFixed(2)}`;
 }
 
-/** Compact token display for the status overlay, with one decimal at every scale. */
 function formatCompactTokens(count: number): string {
   if (count < 1000) return count.toString();
   if (count < 1_000_000) return `${(count / 1000).toFixed(1)}k`;
   return `${(count / 1_000_000).toFixed(1)}M`;
 }
 
-/** Theme hooks used by the rendered block; omitted when the surface is plain text. */
 export type SessionInfoStyle = {
   fg(color: string, text: string): string;
   bold(text: string): string;
@@ -405,13 +335,11 @@ export type SessionInfoStyle = {
 export type SessionInfoInput = {
   sessionName: string | undefined;
   sessionFile: string | undefined;
-  /** Current project directory, used to shorten a persisted session path. */
   cwd?: string;
   sessionId: string;
   main: MainUsage;
   cacheWaste: CacheWaste;
   subagents: SubagentUsage;
-  /** True when the sub-agent manager reports work still in flight. */
   subagentsRunning: boolean;
   cacheWarming: {
     summary: string;
@@ -492,17 +420,6 @@ function costEntryLine(entry: CostEntry, paint: Painter, prefix: string, indent 
   )} ${paint.dim(`· ${formatCompactTokens(entry.tokens)} tok`)}`;
 }
 
-/**
- * The Session Info block: identity, message counts, token split, and cost.
- *
- * The cost section splits into the main agent and its sub-agents whenever any
- * sub-agent usage was found, so neither figure hides inside the other. With no
- * sub-agents it collapses to the per-model breakdown alone.
- *
- * The footnotes below the block explain how the sub-agent figure was obtained;
- * they are detail rather than state, so the concise Status tab leaves them out
- * and only the expanded view prints them.
- */
 export function formatSessionInfo(
   input: SessionInfoInput,
   style?: SessionInfoStyle,
@@ -530,9 +447,6 @@ export function formatSessionInfo(
     )}`,
   );
 
-  // "Input" is the whole prompt volume. The cached/uncached split is the only
-  // provider-independent way to break it down; cache writes are a detail of the
-  // uncached part.
   const totals = input.main.totals;
   const promptTokens = totals.input + totals.cacheRead + totals.cacheWrite;
   const tokenLine = [
@@ -605,11 +519,6 @@ export function formatSessionInfo(
   return lines.join("\n");
 }
 
-/**
- * What the sub-agent figure does not cover. Stated inline because the number is
- * reconstructed from transcripts, and a reader comparing it against a provider
- * invoice needs to know which runs were never written down.
- */
 function subagentNotes(input: SessionInfoInput): string[] {
   const sub = input.subagents;
   const notes: string[] = [];
@@ -626,11 +535,6 @@ function subagentNotes(input: SessionInfoInput): string[] {
   return notes;
 }
 
-/**
- * The Session Info block as label/value rows for structured host reports. The
- * figures and wording match the expanded formatSessionInfo; the cost breakdown
- * and sub-agent footnotes become the Cost row's hint.
- */
 export function sessionInfoRows(input: SessionInfoInput): ReportRow[] {
   const paint = painter(undefined);
   const rows: ReportRow[] = [];

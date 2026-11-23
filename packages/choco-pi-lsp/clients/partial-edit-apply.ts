@@ -14,14 +14,10 @@ type ReplaceOnceResultContract = {
   changed: boolean;
 };
 
-// A single edit element of the host edit tool ({ oldText, newText }). Pinned to
-// the SDK's EditToolInput so a host schema rename (e.g. oldText -> old_text) is a
-// compile error here rather than a silent runtime mismatch (#257 / refs #2).
 type HostEdit = EditToolInput["edits"][number];
 
 export interface PartiallyApplicableEdit {
   oldText: HostEdit["oldText"];
-  // Widened vs the host: choco-pi-lsp models a pure deletion as an absent newText.
   newText: HostEdit["newText"] | undefined;
   originalIndex: number;
 }
@@ -31,7 +27,6 @@ export interface PartialEditApplyResult {
   appliedTotal?: number;
   appliedIndices: string;
   postEditOutput?: string;
-  /** Present for the instrumented read-guard path. */
   skippedCount?: number;
   skippedTotal?: number;
   skippedIndices?: string;
@@ -51,26 +46,15 @@ function replaceOnce(content: string, oldText: string, newText: string): Replace
   };
 }
 
-/**
- * Applies already-resolved oldText edits from the preflight path, then invokes
- * the caller's normal post-edit bookkeeping/pipeline hook. The edits are exact
- * LF-normalized replacements; entries that no longer match are skipped rather
- * than logged as applied.
- */
 export async function applyPartiallyApplicableEdits(args: {
   filePath: string;
   edits: PartiallyApplicableEdit[];
   afterWrite?: () => Promise<string | undefined>;
-  /** Read-guard preflight summary, reused rather than re-shaped here. */
   summary?: ReadGuardEditBatchSummary;
   correlationId?: string;
 }): Promise<PartialEditApplyResult> {
   const startedAt = Date.now();
   const raw = fs.readFileSync(args.filePath, "utf-8");
-  // Detect + restore line endings the way the host edit tool does:
-  // first-occurrence-wins detection (not "any CRLF present") and lone-CR -> LF
-  // normalization, so this self-apply path can't diverge from how the host
-  // would have written the same edits (#257).
   const ending = detectLineEnding(raw);
   let content = normalizeToLF(raw);
   const applied: number[] = [];
@@ -129,8 +113,6 @@ export async function applyPartiallyApplicableEdits(args: {
       postEditOutput = await args.afterWrite();
       postEditStatus = "succeeded";
     } catch (error) {
-      // The write is committed. Preserve the existing caller behavior for
-      // uninstrumented callers; the read-guard path records and handles it.
       postEditStatus = "failed";
       if (!args.summary && !args.correlationId) throw error;
     }

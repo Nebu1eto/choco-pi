@@ -1,19 +1,3 @@
-/**
- * Tier-B request logger: a Unix-socket pass-through between Pi and the real dev helper daemon.
- *
- * The native helper keeps no request log, so Pi talks to this proxy (`PI_CU_SOCKET_PATH`) and the
- * proxy forwards every byte unchanged to the helper socket. Each request line becomes one log row
- * in arrival order, in the fake daemon's shape: the request fields plus `origin`, `seq`, `at`, and,
- * once answered, `respondedAt` and `response` (the reply without `id`; `cancel` rows carry `ack`).
- * Replies to observation commands are summarized, never stored whole (no outlines or images).
- *
- * `--cancel-typetext-after-ms <ms>` (S4 only): if a `typeText` act is still unanswered after
- * `<ms>`, the proxy sends the helper the same `cancel {target: requestId}` the TS transport sends
- * on timeout, logged with `origin:"harness"`.
- *
- * Usage: node --experimental-strip-types proxy.ts --listen <sock> --upstream <sock> --log <jsonl>
- *        [--cancel-typetext-after-ms <ms>]
- */
 import { randomUUID } from "node:crypto";
 import { rm, writeFile } from "node:fs/promises";
 import { connect, createServer, type Socket } from "node:net";
@@ -44,7 +28,6 @@ function parse(argv: string[]): Options {
   return { listen, upstream, log, cancelAfterMs };
 }
 
-/** Reply without `id`; observation replies keep only status, error, and the look id. */
 function recorded(cmd: string, reply: JsonObject): JsonObject {
   const { id: _id, ...rest } = reply;
   if (fullReplies.has(cmd)) return rest;
@@ -73,7 +56,6 @@ async function main(): Promise<void> {
   const options = parse(process.argv.slice(2));
   const rows: JsonObject[] = [];
   let seq = 0;
-  // Serialized full rewrites keep request order and attach late replies in place.
   let writing: Promise<void> = Promise.resolve();
   const flush = (): Promise<void> => {
     const snapshot = rows.map((row) => JSON.stringify(row)).join("\n");
@@ -169,8 +151,6 @@ async function main(): Promise<void> {
       }
       void flush();
     });
-    // Pi half-closes after its reply; a destroyed client (transport interrupt) still lets the
-    // helper finish so its late reply is logged, bounded by the helper closing or 120 s.
     client.on("end", () => upstream.end());
     client.on("close", () => {
       const timer = setTimeout(() => upstream.destroy(), 120_000);

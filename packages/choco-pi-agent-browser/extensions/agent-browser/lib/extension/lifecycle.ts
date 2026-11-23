@@ -169,16 +169,12 @@ export function registerExtensionLifecycleHandlers(
     for (const reservation of state.recordingSessionTombstonesToPersist.values()) {
       try {
         appendRecordingReservationTransition(pi, { reservation, state: "closed" });
-      } catch {
-        // Best-effort durable tombstone persistence during session shutdown.
-      }
+      } catch {}
     }
     for (const reservation of state.activeRecordingReservations.values()) {
       try {
         appendRecordingReservationTransition(pi, { reservation, state: "active" });
-      } catch {
-        // Best-effort durable recording persistence during session shutdown.
-      }
+      } catch {}
     }
     state.sessionPageState.reset();
     state.traceOwners = new Map<string, TraceOwner>();
@@ -199,8 +195,6 @@ export function registerExtensionLifecycleHandlers(
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
-    // A run started by a custom message keeps the latest user prompt's decision,
-    // so its system prompt matches the user run before it.
     const prompt =
       event.messageType === "user"
         ? event.prompt

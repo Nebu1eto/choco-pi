@@ -340,12 +340,10 @@ function isIdentifier(value: string | undefined): value is string {
   return Boolean(value && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value));
 }
 
-/** Names compared ignoring case and separators, so `SymbolSearch` finds `symbol_search`. */
 function toolKey(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-/** Rank of a candidate name for a requested one, nearest first; -1 when it is not close. */
 function toolRank(requested: string, name: string): number {
   const wanted = toolKey(requested);
   const candidate = toolKey(name);

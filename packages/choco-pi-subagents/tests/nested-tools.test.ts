@@ -50,12 +50,10 @@ test("nested Agent exposes name and forwards it to the manager alias option", as
   });
   assert.match(JSON.stringify(agentTool.parameters), /"name":/, "nested Agent schema accepts name");
 
-  // A real host context with no parent model, so only an explicit model can satisfy the gate.
   const hostCtx = toolContext(
     env.context({ cwd: "/tmp/choco-pi-nested-name-test", model: undefined }),
   );
 
-  // requireExplicitModel (default on): no model/thinking → refusal, no spawn.
   const refused = await agentTool.execute(
     "call-refused",
     {
@@ -397,8 +395,6 @@ test("nested result wait still propagates non-abort rejections", async () => {
     compactionCount: 0,
     parentAgentId: parent.id,
   } satisfies AgentRecord;
-  // Tool construction awaits a registry load before the read below observes
-  // this rejection; mark it handled so the gap is not an unhandled rejection.
   child.promise.catch(() => undefined);
   const manager = {
     spawn: () => assert.fail("result read must not spawn"),

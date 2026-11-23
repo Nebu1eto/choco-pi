@@ -1,24 +1,12 @@
-/**
- * Pure context-window policy: turns the user's soft-cap and auto-compaction
- * presets and a model's native window into the effective window and
- * compaction point. No I/O; the caller supplies every input, including the
- * native-compaction budget read from the global hook.
- */
 import { compile, int, num, obj } from "@earendil-works/pi-schema";
 import { isJsonRecord, type RuntimeValue } from "./runtime-values.ts";
 
-/** A preset token count, or `"unlimited"` for the model's own limit. */
 export type PresetTokens = number | "unlimited";
 
-/** Below this native window the policy stays out and Pi's own trigger governs. */
 export const MIN_POLICY_WINDOW = 64_000;
-/** Pi's default `compaction.reserveTokens`, used when settings do not set it. */
 export const DEFAULT_HOST_RESERVE_TOKENS = 16_384;
-/** Extra space above the host reserve that the headroom never drops below. */
 export const HEADROOM_MARGIN_TOKENS = 8_000;
-/** Upper bound of the headroom in tokens. */
 export const HEADROOM_MAX_TOKENS = 100_000;
-/** Fraction of the effective window kept free before compaction. */
 export const HEADROOM_RATIO = 0.15;
 
 export interface ContextPolicyInput {
@@ -26,7 +14,6 @@ export interface ContextPolicyInput {
   softCap: PresetTokens;
   compactionPoint: PresetTokens;
   hostReserve?: number;
-  /** Native-compaction budget for this model, when a provider publishes one. */
   budget?: number;
 }
 
@@ -35,19 +22,15 @@ export type ContextPolicy =
   | {
       apply: true;
       cap: number;
-      /** Token count past which the cap requests compaction; absent disables it. */
       compactAt?: number;
       headroom: number;
     };
 
-/** Headroom for a window: `15% × cap`, clamped to `[hostReserve + 8_000, 100_000]`. */
 export function computeHeadroom(
   cap: number,
   hostReserve: number = DEFAULT_HOST_RESERVE_TOKENS,
 ): number {
   const minimum = hostReserve + HEADROOM_MARGIN_TOKENS;
-  // The floor wins over the maximum when a large host reserve exceeds it: the
-  // host reserve must always fit between the compaction point and the window.
   return Math.max(minimum, Math.min(HEADROOM_MAX_TOKENS, Math.round(HEADROOM_RATIO * cap)));
 }
 
@@ -60,11 +43,6 @@ function presetPoint(cap: number, headroom: number, compactionPoint: PresetToken
   return compactionPoint === "unlimited" || compactionPoint >= ceiling ? ceiling : compactionPoint;
 }
 
-/**
- * Clamp a compaction point below the native-compaction budget, keeping
- * `headroom` free under it. A budget that leaves no positive point is ignored
- * rather than producing a point that would compact on every turn.
- */
 function clampToBudget(point: number, headroom: number, budget: number | undefined): number {
   if (budget === undefined) return point;
   const ceiling = budget - headroom;
@@ -89,17 +67,7 @@ export function computeContextPolicy(input: ContextPolicyInput): ContextPolicy {
   return { apply: true, cap, compactAt: validPoint(point, cap), headroom };
 }
 
-/**
- * Property under which the cap records a model's native window on the model
- * object itself. A capped `contextWindow` must never be mistaken for the
- * native one, yet capped objects outlive this module: registry objects survive
- * an extension reload, the host copies them with object spread, and its models
- * store persists them with `structuredClone` and restores them in the next
- * process. The record is therefore a plain, enumerable, string-keyed value
- * that every one of those copies carries.
- */
 export const NATIVE_CONTEXT_WINDOW_KEY = "chocoPiNativeContextWindow";
-/** Record key used before the record had to survive copies; still read so a reload keeps it. */
 const LEGACY_NATIVE_CONTEXT_WINDOW_SYMBOL = Symbol.for("choco-pi.native-context-window");
 
 const NativeWindowSchema = int({ exclusiveMinimum: 0 });
@@ -107,14 +75,12 @@ const isNativeWindow = compile(NativeWindowSchema).check;
 const NativeWindowRecordSchema = obj(
   {
     native: NativeWindowSchema,
-    /** The window the cap left on the object when it wrote the record. */
     applied: NativeWindowSchema,
   },
   { open: true },
 );
 const nativeWindowRecord = compile(NativeWindowRecordSchema);
 
-/** The part of a model object the native-window record attaches to. */
 export interface ContextWindowOwner {
   readonly contextWindow?: number;
 }
@@ -123,12 +89,6 @@ function ownValue(model: ContextWindowOwner, key: string | symbol): RuntimeValue
   return Object.getOwnPropertyDescriptor(model, key)?.value;
 }
 
-/**
- * The recorded native window of `model`, or `undefined` when none was
- * recorded. A record only holds while the window is still one the cap left
- * (the cap or the native window); a copy that set its own window, such as a
- * models.json override, is native at that window.
- */
 export function readNativeContextWindow(model: ContextWindowOwner): number | undefined {
   const record = ownValue(model, NATIVE_CONTEXT_WINDOW_KEY);
   if (nativeWindowRecord.check(record)) {
@@ -140,10 +100,6 @@ export function readNativeContextWindow(model: ContextWindowOwner): number | und
   return isNativeWindow(legacy) ? legacy : undefined;
 }
 
-/**
- * Record `nativeWindow` on `model` together with its current window, which the
- * caller has already set; later records overwrite earlier ones.
- */
 export function recordNativeContextWindow(model: ContextWindowOwner, nativeWindow: number): void {
   Object.defineProperty(model, NATIVE_CONTEXT_WINDOW_KEY, {
     value: {
@@ -156,10 +112,6 @@ export function recordNativeContextWindow(model: ContextWindowOwner, nativeWindo
   });
 }
 
-/**
- * Global hook a provider package publishes to bound the compaction point by
- * the provider's native compaction budget. Consumers only read it.
- */
 export const NATIVE_COMPACTION_BUDGET_SYMBOL = Symbol.for("choco-pi.native-compaction-budget");
 
 export interface BudgetModel {
@@ -178,11 +130,6 @@ function isNativeCompactionBudgetHook<T>(value: T): value is T & NativeCompactio
   return isJsonRecord(value) && value.version === 1 && value.budgetFor instanceof Function;
 }
 
-/**
- * The published native-compaction budget for `model`, or `undefined` when no
- * valid hook is published, the hook declines, throws, or returns anything but
- * a positive finite number.
- */
 export function readNativeCompactionBudget(model: BudgetModel): number | undefined {
   const found: unknown = Object.getOwnPropertyDescriptor(
     globalThis,

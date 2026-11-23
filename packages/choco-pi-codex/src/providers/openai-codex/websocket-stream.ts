@@ -128,8 +128,6 @@ export async function processWebSocketStream<TApi extends Api>(
     Boolean(entry && options.sessionId);
   const useCachedContext =
     transport === "websocket-cached" || transport === "auto" || nativeEnabled;
-  // ChatGPT Codex Responses rejects `store: true` ("Store must be set to false").
-  // WebSocket continuation still works via connection-scoped previous_response_id state.
   const fullBody = body;
   const cachedRequest =
     useCachedContext && entry
@@ -183,7 +181,6 @@ export async function processWebSocketStream<TApi extends Api>(
     if ((!native && previousNative) || preparation.kind === "reconnect") {
       (native ?? previousNative)?.close();
       releaseOnce({ keep: false });
-      // Keep the user's ordinary Pi-queued message. Discard only unconsumed server generation.
       return await processWebSocketStream(
         url,
         body,
@@ -280,9 +277,6 @@ export async function processWebSocketStream<TApi extends Api>(
           lastResponseItems: responseItems,
         };
       }
-      // A transient socket means another request already owns this session lane.
-      // Its concurrent history has no canonical ordering, so only the retained
-      // cached lane may advance the baseline used by later compaction.
       if (entry) {
         recordCanonicalSessionResponse({
           sessionId: options?.sessionId,

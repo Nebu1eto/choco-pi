@@ -1,4 +1,3 @@
-/** The header texts that name a change source and its totals. */
 import type { DiffSnapshot, DiffSource } from "../git/model.ts";
 import { sanitizeTerminalText as safe } from "../terminal-text.ts";
 import { plural } from "./rows.ts";
@@ -10,7 +9,6 @@ export function sourceLabel(source: DiffSource): string {
   return `Changes ${source.turnOnly ? "in" : "since"} ${safe(source.label)}`;
 }
 
-/** Where a session snapshot's comparison starts; undefined for every other source. */
 export function baselineText(snapshot: DiffSnapshot): string | undefined {
   if (snapshot.source.kind !== "session") return undefined;
   const baseline = snapshot.baseline;
@@ -24,7 +22,6 @@ export function emptyMessage(snapshot: DiffSnapshot): string {
     const baseline = snapshot.baseline;
     const why =
       baseline?.kind === "none" ? safe(baseline.reason) : "No changes in this session yet.";
-    // The way forward: the working tree may still hold changes made outside this session.
     const hint = "/diff source uncommitted shows every uncommitted change.";
     return why.includes("/diff source uncommitted") ? why : `${why} ${hint}`;
   }

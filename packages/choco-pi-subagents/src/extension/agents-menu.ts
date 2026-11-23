@@ -1,6 +1,3 @@
-/**
- * The /agents menu.
- */
 import { type ModelRegistry, resolveModel } from "../model-resolver.ts";
 import { getAgentConfig, getAllTypes, BUILTIN_TOOL_NAMES } from "../agent-types.ts";
 import {
@@ -34,29 +31,17 @@ import { isWorktreeIsolationEnabled } from "../worktree.ts";
 import { getModelLabelFromConfig } from "./helpers.ts";
 import type { SubagentsRuntime } from "./runtime.ts";
 
-/** The /agents interactive menu: listing, detail, eject, enable/disable, and creation wizards. */
 export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
-  // ---- /agents interactive menu ----
-
-  // Directory resolution and the frontmatter edits live in agent-file-toggle.ts
-  // so they are reachable from tests — this command handler is only registered
-  // through `registerCommand`, which every test mocks.
-
   function getModelLabel(type: string, registry?: ModelRegistry): string {
     const cfg = getAgentConfig(type);
-    if (!cfg?.model) return "inherit"; // no model configured → really inherits parent
+    if (!cfg?.model) return "inherit";
     const label = getModelLabelFromConfig(cfg.model);
     if (!registry) return label;
     const resolution = resolveModel(cfg.model, registry);
     switch (resolution.tag) {
-      // Configured but unresolvable: the runtime silently falls back to the parent
-      // model, so flag it (and the fallback) rather than hiding the config.
       case "error":
         return `${label} (unavailable, fallback: inherit)`;
       case "resolved": {
-        // Surface what it actually resolved to when that differs from the config —
-        // e.g. a provider fallback or a looser version pin. Cosmetic separator/date
-        // differences are normalized away so an effectively-identical match stays quiet.
         const resolvedFull = `${resolution.model.provider}/${resolution.model.id}`;
         const norm = (s: string) =>
           s
@@ -73,10 +58,8 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
     if (!(await rt.revival.refreshAgentsForSession())) return;
     const allNames = getAllTypes();
 
-    // Build select options
     const options: string[] = [];
 
-    // Running agents entry (only if there are active agents)
     const agents = rt.core.manager.listAgents().filter((a) => !a.parentAgentId);
     if (agents.length > 0) {
       const running = agents.filter((a) => a.status === "running" || a.status === "queued").length;
@@ -84,18 +67,15 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
       options.push(`Running agents (${agents.length}) — ${running} running, ${done} done`);
     }
 
-    // Agent types list
     if (allNames.length > 0) {
       options.push(`Agent types (${allNames.length})`);
     }
 
-    // Scheduled jobs entry (always present when scheduler is active)
     if (rt.scheduling.scheduler.isActive()) {
       const jobCount = rt.scheduling.scheduler.list().length;
       options.push(`Scheduled jobs (${jobCount})`);
     }
 
-    // Actions
     options.push("Create new agent");
     options.push("Settings");
 
@@ -113,11 +93,6 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
     const choice = await ctx.ui.select("Agents", options);
     if (!choice) return;
 
-    // In the TUI, Esc from a sub-screen returns to this menu and Esc here
-    // leaves. RPC hosts have no Esc: cancelling a dialog is their only exit,
-    // and their "stop" aborts the model run but not this command, so a
-    // re-shown menu would trap the user. Sub-screens there carry their own
-    // "Back" row; a cancel ends the command.
     const reopen = ctx.mode === "tui" ? () => showAgentsMenu(ctx) : async () => {};
 
     if (choice.startsWith("Running agents (")) {
@@ -138,7 +113,6 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
     }
   }
 
-  /** Resolves true when the user chose "Back" (headless) rather than cancelling. */
   async function showAllAgentsList(ctx: ExtensionCommandContext): Promise<boolean> {
     const allNames = getAllTypes();
     if (allNames.length === 0) {
@@ -146,8 +120,6 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
       return false;
     }
 
-    // Source indicators: defaults unmarked, custom agents get • (project) or ◦ (global)
-    // Disabled agents get ✕ prefix
     const sourceIndicator = (cfg: AgentConfig | undefined) => {
       const disabled = cfg?.enabled === false;
       if (cfg?.source === "project") return disabled ? "✕• " : "•  ";
@@ -156,23 +128,16 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
       return "   ";
     };
 
-    // One row per agent (name in the left column, model on the right); the
-    // full description renders below the highlighted row via SettingsList,
-    // exactly like the Settings menu — so long descriptions never wrap the list.
     const items: SettingItem[] = allNames.map((name) => {
       const cfg = getAgentConfig(name);
       const disabled = cfg?.enabled === false;
       const model = getModelLabel(name, ctx.modelRegistry);
-      // What the role declares and which file it came from, so a workspace
-      // file shadowing a global role is visible here, not only at spawn.
       const declared = describeRoleDeclaration(cfg);
       return {
         id: name,
         label: `${sourceIndicator(cfg)}${name}`,
         currentValue: model,
         description: `${disabled ? "(disabled)" : (cfg?.description ?? name)}\n${declared}`,
-        // Single-value list so Enter "activates" the row (fires onChange with the
-        // agent's id) without offering anything to actually cycle.
         values: [model],
       };
     });
@@ -187,7 +152,6 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
     if (hasDisabled) legendParts.push("✕ = disabled");
 
     if (ctx.mode !== "tui") {
-      // RPC hosts get dialogs but not the settings-list component.
       const picked = await pickAgentType(ctx.ui, items);
       if (picked === BACK) return true;
       if (picked !== undefined && getAgentConfig(picked)) {
@@ -203,8 +167,8 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
         items,
         Math.min(items.length, 12),
         slTheme,
-        (id) => done(id), // Enter/Space on a row → return that agent's name
-        () => done(undefined), // Esc → cancel
+        (id) => done(id),
+        () => done(undefined),
       );
       const container = new Container();
       container.addChild(new Text("Agent types", 0, 0));
@@ -233,9 +197,6 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
       return false;
     }
 
-    // Numbered + item-paired. Two same-type agents spawned together with the
-    // same description render identically here, and resolving the choice by
-    // string match would open whichever came first.
     const record = await selectItem(ctx.ui, "Running agents", agents, (a) => {
       const dn = getDisplayName(a.type);
       const dur = formatDuration(a.startedAt, a.completedAt);
@@ -244,8 +205,6 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
     if (!record) return false;
 
     const focused = await viewAgentConversation(ctx, record);
-    // Back-navigation re-shows the list, but a focus request must propagate all
-    // the way through the parent Agents menu or its selector steals the first Esc.
     return continueRunningAgentNavigation(focused, () => showRunningAgents(ctx));
   }
 
@@ -291,8 +250,6 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
           {
             onFocus: () => {
               focusRequested = true;
-              // Close this modal first: leaving it mounted makes Esc dismiss the
-              // overlay instead of exiting focus (the double-Esc defect).
               done(undefined);
               queueMicrotask(() => rt.views.focus.focus(record, tui, theme));
             },
@@ -320,18 +277,14 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
 
     let menuOptions: string[];
     if (disabled && file) {
-      // Disabled agent with a file — offer Enable
       menuOptions = isDefault
         ? ["Enable", "Edit", "Reset to default", "Delete", "Back"]
         : ["Enable", "Edit", "Delete", "Back"];
     } else if (isDefault && !file) {
-      // Default agent with no .md override
       menuOptions = ["Eject (export as .md)", "Disable", "Back"];
     } else if (isDefault && file) {
-      // Default agent with .md override (ejected)
       menuOptions = ["Edit", "Disable", "Reset to default", "Delete", "Back"];
     } else {
-      // User-defined agent
       menuOptions = ["Edit", "Disable", "Delete", "Back"];
     }
 
@@ -377,11 +330,6 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
     }
   }
 
-  /**
-   * Create `targetDir` and report whether `targetPath` already exists, for the
-   * /agents file flows. Resolves `undefined` when the session changed during
-   * the I/O, so the caller stops before touching `ctx` again.
-   */
   async function prepareAgentTarget(
     targetDir: string,
     targetPath: string,
@@ -392,7 +340,6 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
     return generation === rt.state.revivalGeneration ? exists : undefined;
   }
 
-  /** Eject a default agent: write its embedded config as a .md file. */
   async function ejectAgent(ctx: ExtensionCommandContext, name: string, cfg: AgentConfig) {
     const location = await ctx.ui.select("Choose location", [
       "Project (.pi/agents/)",
@@ -419,11 +366,9 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
     ctx.ui.notify(`Ejected ${name} to ${targetPath}`, "info");
   }
 
-  /** Disable an agent: set enabled: false in its .md file, or create a stub for built-in defaults. */
   async function disableAgent(ctx: ExtensionCommandContext, name: string) {
     const file = await locateAgentFile(name, getAgentConfig(name)?.sourcePath);
     if (file) {
-      // Existing file — set enabled: false in frontmatter (idempotent)
       const content = await readFile(file.path, "utf-8");
       const { content: updated, outcome } = disableInContent(content);
       if (outcome === "already-disabled") {
@@ -431,8 +376,6 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
         return;
       }
       if (outcome === "no-frontmatter") {
-        // Nothing to edit — say so rather than rewriting the file unchanged and
-        // reporting success for a change that never happened.
         ctx.ui.notify(`Cannot disable ${name}: ${file.path} has no frontmatter block.`, "error");
         return;
       }
@@ -442,7 +385,6 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
       return;
     }
 
-    // No file (built-in default) — create a stub
     const location = await ctx.ui.select("Choose location", [
       "Project (.pi/agents/)",
       `Personal (${personalAgentsDir()})`,
@@ -458,7 +400,6 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
     ctx.ui.notify(`Disabled ${name} (${targetPath})`, "info");
   }
 
-  /** Enable a disabled agent by removing enabled: false from its frontmatter. */
   async function enableAgent(ctx: ExtensionCommandContext, name: string) {
     const file = await locateAgentFile(name, getAgentConfig(name)?.sourcePath);
     if (!file) return;
@@ -466,12 +407,9 @@ export function installAgentsMenu(pi: ExtensionAPI, rt: SubagentsRuntime) {
     const content = await readFile(file.path, "utf-8");
     const { content: updated, changed } = enableInContent(content);
     if (!changed && !isEmptyStub(updated)) {
-      // The file carries no `enabled: false` to remove, so it was never disabled
-      // by us — reporting success here would hide a no-op.
       ctx.ui.notify(`${name} is not disabled in ${file.path}.`, "info");
       return;
     }
-    // If the file was just a stub ("---\n---\n"), delete it to restore the built-in default
     if (isEmptyStub(updated)) {
       await unlink(file.path);
       if (!(await rt.revival.refreshAgentsForSession())) return;
@@ -550,10 +488,6 @@ run_in_background: <true or false to fix this agent's run mode. Omit to follow t
 output_transcript: <false to write no transcript file or path for this agent. Independent of persist_session. Default: true>
 isolated: <true for no extension/MCP tools, only built-in tools. Default: false>
 memory: <"user" (global), "project" (per-project), or "local" (gitignored per-project) for persistent memory. Omit for none>${
-      // Offering the field on a project that turned worktrees off would bake a
-      // request that is refused at spawn time into a file that outlives the
-      // session — the #231 pathology (models fill the fields they are shown)
-      // one layer up. Built per invocation, so this read is live.
       isWorktreeIsolationEnabled()
         ? `\nisolation: <"worktree" to run in isolated git worktree; "off" to refuse one even when the caller asks. Omit for normal>`
         : ""
@@ -607,15 +541,12 @@ Write the file with your file-writing tool (write, or apply_patch inside exec in
   }
 
   async function showManualWizard(ctx: ExtensionCommandContext, targetDir: string) {
-    // 1. Name
     const name = await ctx.ui.input("Agent name (filename, no spaces)");
     if (!name) return;
 
-    // 2. Description
     const description = await ctx.ui.input("Description (one line)");
     if (!description) return;
 
-    // 3. Tools
     const toolChoice = await ctx.ui.select("Tools", [
       "all",
       "none",
@@ -640,7 +571,6 @@ Write the file with your file-writing tool (write, or apply_patch inside exec in
       tools = customTools;
     }
 
-    // 4. Model
     const modelChoice = await ctx.ui.select("Model", [
       "inherit (parent model)",
       "haiku",
@@ -658,12 +588,9 @@ Write the file with your file-writing tool (write, or apply_patch inside exec in
       model = (await ctx.ui.input("Model (provider/modelId)")) || undefined;
     }
 
-    // 5. Thinking
-    // "inherit" is a UI-only pseudo-choice (omit the field); the rest mirror pi.
     const thinkingChoice = await ctx.ui.select("Thinking level", ["inherit", ...THINKING_LEVELS]);
     if (!thinkingChoice) return;
 
-    // 6. System prompt
     const systemPrompt = await ctx.ui.editor("System prompt", "");
     if (systemPrompt === undefined) return;
 

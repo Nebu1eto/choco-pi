@@ -30,20 +30,16 @@ export const AGENT_LANGUAGE_KEY = "agentLanguage";
 export const AGENT_STYLE_KEY = "agentStyle";
 export const AGENT_PERSONA_KEY = "agentPersona";
 export const AGENT_ON_USAGE_LIMIT_KEY = "agentOnUsageLimit";
-/** Global default for new sessions' Daybreak request; seeds only default-source state. */
 export const DAYBREAK_DEFAULT_KEY = "daybreakDefault";
 export type DaybreakPreference = boolean | "auto";
 export const DEFAULT_DAYBREAK = false;
 
-/** Default startup/auto-open status for the /diff panel. */
 export const DIFF_PANE_DEFAULT_KEY = "diffPaneDefault";
 export type DiffPaneDefault = "on" | "off" | "auto";
 export const DIFF_PANE_DEFAULT_VALUES: readonly DiffPaneDefault[] = ["on", "off", "auto"];
 export const DEFAULT_DIFF_PANE_DEFAULT: DiffPaneDefault = "auto";
 
-/** Soft context window applied to large-window models; see lib/context-policy.ts. */
 export const CONTEXT_SOFT_CAP_KEY = "contextSoftCap";
-/** Token count past which the context cap requests compaction. */
 export const AUTO_COMPACTION_POINT_KEY = "autoCompactionPoint";
 export type ContextPreset = "strictest" | "strict" | "standard" | "permissive" | "unlimited";
 export type ContextSoftCap = ContextPreset;
@@ -57,7 +53,6 @@ export const CONTEXT_PRESET_VALUES: readonly ContextPreset[] = [
 ];
 export const DEFAULT_CONTEXT_SOFT_CAP: ContextSoftCap = "permissive";
 export const DEFAULT_AUTO_COMPACTION_POINT: AutoCompactionPoint = "standard";
-/** Token counts per preset; `unlimited` defers to the model's own window. */
 export const CONTEXT_SOFT_CAP_TOKENS = {
   strictest: 250_000,
   strict: 400_000,
@@ -99,9 +94,7 @@ export function parseAutoCompactionPoint(value: RuntimeValue): AutoCompactionPoi
   return parseContextPreset(value);
 }
 export const PERSONA_MESSAGE_TYPE = "choco-pi-agent-persona";
-/** Hidden per-run reminder of the configured response language. */
 export const LANGUAGE_MESSAGE_TYPE = "choco-pi-agent-language";
-/** Style in effect when `agentStyle` is unset or empty. */
 export const DEFAULT_STYLE = "balanced";
 export const PERSONA_DEFINITIONS_HEADING = "## Agent persona";
 export const SESSION_AUTO_NAME_KEY = "sessionAutoName";
@@ -114,20 +107,14 @@ export const AGENT_PREFERENCES_MARKER_END = "</choco_pi_agent_preferences>";
 export const USER_STYLES_DIR_NAME = "agent-styles";
 export const PREFERENCES_PROVIDER_SYMBOL = Symbol.for("choco-pi.preferences-provider");
 
-/** The language directive line shared by the agent prompt and every side prompt that must honor it. */
 export function renderPreferredLanguageLine(language: string): string {
   return `Preferred response language: ${language}`;
 }
 
-/**
- * The per-run language reminder. Its text depends only on the language so the
- * hidden message stays byte-identical across turns and keeps the prompt cache.
- */
 export function renderLanguageReminder(language: string): string {
   return `Reply in ${language} unless the user explicitly names another language; writing in another language is not such a request.`;
 }
 
-/** The style name in effect: the configured one, or {@link DEFAULT_STYLE} when unset or empty. */
 export function effectiveStyleName(style: string | undefined): string {
   return style === undefined || style === "" ? DEFAULT_STYLE : style;
 }
@@ -148,15 +135,10 @@ const PRESET_STYLES_DIR = fileURLToPath(new URL("../agent-preferences/styles/", 
 
 export interface AgentPreferences {
   persona: Persona;
-  /** Always set by the readers; optional so partial fallbacks stay valid. */
   onUsageLimit?: OnUsageLimit;
-  /** Always set by the readers; optional so partial fallbacks stay valid. */
   daybreak?: DaybreakPreference;
-  /** Always set by the readers; optional so partial fallbacks stay valid. */
   diffPaneDefault?: DiffPaneDefault;
-  /** Always set by the readers; optional so partial fallbacks stay valid. */
   contextSoftCap?: ContextSoftCap;
-  /** Always set by the readers; optional so partial fallbacks stay valid. */
   autoCompactionPoint?: AutoCompactionPoint;
   language?: string;
   style?: string;
@@ -165,7 +147,6 @@ export interface AgentPreferences {
   promptSuggestion?: boolean;
 }
 
-/** Preferences as read from the settings file, with every defaulted key resolved. */
 export interface ResolvedAgentPreferences extends AgentPreferences {
   onUsageLimit: OnUsageLimit;
   daybreak: DaybreakPreference;
@@ -195,13 +176,6 @@ export type AgentPreferenceChange = {
 
 type AgentPreferenceChangeListener = (change: AgentPreferenceChange) => void;
 
-/**
- * Pi evaluates every extension through its own module loader without a shared
- * module cache, so each extension runs its own copy of this file. The listener
- * set lives on `globalThis` so a write from one copy (the preferences dialog)
- * reaches subscribers in every other copy (context cap, usage-limit policy,
- * Daybreak default).
- */
 const AGENT_PREFERENCE_LISTENERS_SYMBOL = Symbol.for("choco-pi.agent-preference-listeners");
 
 function isRuntimeSet<Value>(value: Value): value is Value & Set<RuntimeValue> {
@@ -240,13 +214,10 @@ export function onAgentPreferenceChange(listener: AgentPreferenceChangeListener)
 
 function emitAgentPreferenceChange(change: AgentPreferenceChange): void {
   for (const listener of agentPreferenceChangeListeners()) {
-    // The set is shared across module copies; skip anything that is not callable.
     if (!isAgentPreferenceChangeListener(listener)) continue;
     try {
       listener(change);
-    } catch {
-      // A preference observer must not interrupt persistence or other observers.
-    }
+    } catch {}
   }
 }
 
@@ -362,7 +333,6 @@ export function readAgentPreferences(agentDir: string = getAgentDir()): Resolved
   return preferencesFromSettings(readSettingsObject(agentDir));
 }
 
-/** Non-blocking variant of {@link readAgentPreferences} with identical semantics. */
 export async function readAgentPreferencesAsync(
   agentDir: string = getAgentDir(),
 ): Promise<ResolvedAgentPreferences> {
@@ -464,11 +434,6 @@ async function writeSettingsObject(agentDir: string, settings: JsonRecord): Prom
 
 let pendingWrites: Promise<void> = Promise.resolve();
 
-/**
- * Runs one read-modify-write cycle after every previously queued cycle, so
- * concurrent writers never drop each other's keys or share the temporary file.
- * Resolves to whether the file changed.
- */
 function queueSettingsUpdate<Key extends keyof AgentPreferenceValues>(
   key: Key,
   value: AgentPreferenceValues[Key] | undefined,
@@ -494,10 +459,6 @@ function queueSettingsUpdate<Key extends keyof AgentPreferenceValues>(
   return write;
 }
 
-/**
- * Sets one agent preference in the global settings file, preserving every
- * other key. `undefined` deletes the key. Writes are serialized in-process.
- */
 export async function writeAgentPreference<Key extends keyof AgentPreferenceValues>(
   key: Key,
   value: AgentPreferenceValues[Key] | undefined,
@@ -506,10 +467,6 @@ export async function writeAgentPreference<Key extends keyof AgentPreferenceValu
   await queueSettingsUpdate(key, value, agentDir, false);
 }
 
-/**
- * Like {@link writeAgentPreference}, but compares inside the write queue and
- * resolves `false` without writing when the stored value already matches.
- */
 export function writeAgentPreferenceIfChanged<Key extends keyof AgentPreferenceValues>(
   key: Key,
   value: AgentPreferenceValues[Key] | undefined,
@@ -518,7 +475,6 @@ export function writeAgentPreferenceIfChanged<Key extends keyof AgentPreferenceV
   return queueSettingsUpdate(key, value, agentDir, true);
 }
 
-/** Resolves once every agent preference write queued so far has settled. */
 export function flushAgentPreferenceWrites(): Promise<void> {
   return pendingWrites;
 }
@@ -529,11 +485,6 @@ export interface AgentStyleDocument {
   body: string;
 }
 
-/**
- * Parses a style file with optional `---` frontmatter holding `name` and
- * `description`. Malformed or missing frontmatter falls back to the file
- * name and treats the whole document as the body.
- */
 export function parseAgentStyleDocument(raw: string, fallbackName: string): AgentStyleDocument {
   const frontmatter = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
   if (!frontmatter || frontmatter.index !== 0) {
@@ -568,11 +519,6 @@ function listStyleFiles(dir: string): string[] {
   }
 }
 
-/**
- * Discovers agent styles from the built-in presets and the user's global
- * `agent-styles` directory. A user style replaces a preset with the same
- * name. Unreadable files and directories are skipped.
- */
 export function discoverAgentStyles(
   agentDir: string = getAgentDir(),
   presetDir: string = PRESET_STYLES_DIR,
@@ -586,9 +532,7 @@ export function discoverAgentStyles(
           path.basename(filePath, ".md"),
         );
         styles.set(document.name, { ...document, filePath, source });
-      } catch {
-        // An unreadable style file is skipped, never fatal.
-      }
+      } catch {}
     }
   };
   collect(presetDir, "preset");
@@ -604,16 +548,6 @@ export function resolveAgentStyle(
   return discoverAgentStyles(agentDir, presetDir).find((style) => style.name === name);
 }
 
-/**
- * Builds the per-turn system-prompt block for the configured agent
- * preferences, or `undefined` when nothing applies. An unset style resolves
- * to {@link DEFAULT_STYLE}; a configured but unresolved style contributes
- * nothing to the block.
- *
- * The block closes with a precedence note because it is appended after the
- * project context: without it, this user-level configuration would silently
- * outrank a path-scoped project instruction that fixes an artifact's language.
- */
 export function buildAgentPreferencesBlock(
   preferences: AgentPreferences,
   resolveStyle: (name: string) => AgentStyle | undefined,
@@ -639,15 +573,9 @@ export function buildAgentPreferencesBlock(
   return `${AGENT_PREFERENCES_MARKER}\n${blocks.join("\n\n")}\n${AGENT_PREFERENCES_MARKER_END}`;
 }
 
-/** Outcome strings the panel emits that the agent section owns use this prefix. */
 export const AGENT_OUTCOME_PREFIX = "agent:";
 export const AGENT_LANGUAGE_CUSTOM_OUTCOME = `${AGENT_OUTCOME_PREFIX}language-custom`;
 
-/**
- * What the panel does after an extra-section row changed. `outcome` asks the
- * host to close the dialog and run a follow-up flow (for example a text
- * input), matching the panel's built-in edit outcomes.
- */
 export type PreferencesSectionChange =
   | { kind: "update" }
   | { kind: "rebuild" }
@@ -656,25 +584,16 @@ export type PreferencesSectionChange =
 export interface PreferencesExtraSection {
   id: string;
   label: string;
-  /**
-   * When set, the section contributes no tab of its own and its rows are
-   * appended to the named section, built-in or host-provided.
-   */
   mergeInto?: string;
   buildItems: () => SettingItem[];
   handleChange: (id: string, newValue: string) => PreferencesSectionChange;
 }
 
-/**
- * One headed block of a preferences tab. Entries are row ids, or
- * `section:<source id>` for every remaining row of one source section.
- */
 export interface PreferencesLayoutGroup {
   label?: string;
   rows: readonly string[];
 }
 
-/** One tab of the host layout the preferences panel renders. */
 export interface PreferencesLayoutTab {
   id: string;
   label: string;
@@ -685,20 +604,10 @@ export interface PreferencesPanelHandle {
   render: (width: number) => string[];
   invalidate: () => void;
   handleInput: (data: string) => void;
-  /**
-   * Mouse input in the panel's coordinates; the result never takes keyboard
-   * focus from the host.
-   */
   handleMouse?: (event: TuiMouseEvent) => TuiMouseEventResult | undefined;
   dispose: () => void;
   getActiveSection: () => string;
-  /** True while a row's submenu owns the panel and needs every key. */
   hasOpenSubmenu?: () => boolean;
-  /**
-   * True while the panel's full-text search owns the filter field. Like an
-   * open submenu, the filter needs every key: digits and Tab type into the
-   * query instead of switching tabs.
-   */
   hasActiveSearch?: () => boolean;
 }
 
@@ -707,11 +616,6 @@ export interface PreferencesOutcomeFocus {
   focusId?: string;
 }
 
-/**
- * Structural view of the preferences-tab provider that choco-pi-ui publishes
- * on the global registry. The profile must not import the package, so both
- * sides type this boundary independently over `Symbol.for`.
- */
 export interface PreferencesProvider {
   createPanel: (options: {
     ctx: RuntimeValue;
@@ -727,9 +631,7 @@ export interface PreferencesProvider {
     openInitialSubmenu?: boolean;
     onOutcome: (outcome: string) => void;
   }) => PreferencesPanelHandle;
-  /** Returns the section/focus to reopen at, or `undefined` when the outcome is not recognized. */
   runOutcome: (outcome: string, ctx: RuntimeValue) => Promise<PreferencesOutcomeFocus | undefined>;
-  /** Handles direct arguments; `open: false` means no dialog should be shown. */
   resolveArgs: (
     args: string,
     ctx: RuntimeValue,

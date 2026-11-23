@@ -6,12 +6,8 @@ import { PiAcpSession } from "../src/acp/session.ts";
 import { decodePiRpcEvent } from "../src/pi-rpc/protocol.ts";
 import { FakeAgentSideConnection, FakePiRpcProcess, asAgentConn } from "./helpers-fakes.ts";
 
-// Zed appends consecutive agent text chunks to one rendered block, so distinct outputs
-// must be separated by a paragraph break while one streamed message stays byte-exact.
-
 const SEP = "\n\n";
 
-/** A session manager that always resolves to one prepared session. */
 class SingleSessionManager implements SessionManagerLike {
   private readonly session: PiAcpSession;
 
@@ -60,13 +56,10 @@ function newSession(
 function agentFor(conn: FakeAgentSideConnection, session: PiAcpSession): PiAcpAgent {
   const agent = new PiAcpAgent(asAgentConn(conn));
   const sessions: SessionManagerLike = new SingleSessionManager(session);
-  // `sessions` is private to `PiAcpAgent`; `Object.assign` installs the fake through
-  // the same property without weakening any declared type.
   Object.assign(agent, { sessions });
   return agent;
 }
 
-/** One line per thread-visible update: text verbatim, thoughts prefixed, others bracketed. */
 function describe(notification: SessionNotification): string | undefined {
   const { update } = notification;
   if (
@@ -76,7 +69,6 @@ function describe(notification: SessionNotification): string | undefined {
     const body = update.content.type === "text" ? update.content.text : `<${update.content.type}>`;
     return update.sessionUpdate === "agent_thought_chunk" ? `thought:${body}` : body;
   }
-  // Queue depth and similar metadata never render in the message stream.
   if (update.sessionUpdate === "session_info_update") return undefined;
   return `[${update.sessionUpdate}]`;
 }
@@ -112,7 +104,6 @@ function thinkingDelta(proc: FakePiRpcProcess, delta: string): void {
   proc.emit({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta } });
 }
 
-/** Pi brackets each message with these events; the adapter decodes them as unknown events. */
 function messageEnd(proc: FakePiRpcProcess): void {
   proc.emit(decodePiRpcEvent({ type: "message_end", message: { role: "assistant" } }));
 }
@@ -125,7 +116,6 @@ async function drain(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
-/** Wait until the agent has handed the `count`th prompt to Pi. */
 async function promptSent(proc: FakePiRpcProcess, count: number): Promise<void> {
   for (let i = 0; i < 50 && proc.prompts.length < count; i += 1) await drain();
   assert.equal(proc.prompts.length, count, "the prompt reached Pi");
@@ -157,7 +147,6 @@ test("separation: notification then streamed assistant text", async () => {
   textDelta(proc, "lo");
   await drain();
 
-  // Only the first chunk of the message is separated; the second continues it exactly.
   assert.deepEqual(transcript(conn), ["Loaded 3 skills", `${SEP}Hel`, "lo"]);
 });
 
@@ -212,7 +201,6 @@ test("separation: the adapter's credential warning then anything that follows", 
   assert.ok(warning.length > 0 && !warning.startsWith(SEP), "the warning comes first, unprefixed");
   assert.equal(lines[1], `${SEP}cred: no value (cancelled)`);
   assert.equal(lines[2], `${SEP}Continuing.`);
-  // The credential check itself is unchanged: the request is cancelled, nothing is sent.
   assert.deepEqual(proc.extensionUiResponses.slice(0, 1), [{ id: "cred", cancelled: true }]);
 });
 
@@ -261,11 +249,9 @@ test("separation: thought chunks and message chunks are separate channels", asyn
 
   assert.deepEqual(transcript(conn), [
     "thought:plan",
-    // A thought and the answer that follows render as separate blocks already.
     "answer",
     `${SEP}note`,
     "thought:more",
-    // Two distinct thoughts on the same channel are separated like messages.
     `thought:${SEP}again`,
     "done",
   ]);
@@ -352,7 +338,6 @@ test("separation: two prompts in a row, each starting without a leading blank", 
   proc.emit({ type: "agent_settled" });
   assert.equal((await second).stopReason, "end_turn");
 
-  // The client renders each prompt as its own entry, so the separator state resets.
   assert.deepEqual(transcript(conn), ["N1", `${SEP}Answer one`, "N2", `${SEP}Answer two`]);
 });
 

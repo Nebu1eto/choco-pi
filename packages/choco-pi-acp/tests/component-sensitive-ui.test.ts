@@ -14,8 +14,6 @@ import { PiAcpSession } from "../src/acp/session.ts";
 import type { PiExtensionUiRequestEvent } from "../src/pi-rpc/protocol.ts";
 import { FakePiRpcProcess, type AcpConnectionLike } from "./helpers-fakes.ts";
 
-// The adapter's credential-prompt guard (SENSITIVE_UI_REQUEST in src/acp/session.ts) matches
-// these words case-insensitively at word boundaries. Each one also occurs in ordinary code.
 const AUTH_WARNING = /Pi requested sensitive authentication or credential input/u;
 
 class RecordingConnection implements AcpConnectionLike {
@@ -67,7 +65,6 @@ function request(proc: FakePiRpcProcess, event: UiRequest): string {
   return id;
 }
 
-/** Text of every agent message chunk, in order. */
 function chunkTexts(conn: RecordingConnection): string[] {
   const texts: string[] = [];
   for (const { update } of conn.updates) {
@@ -82,7 +79,6 @@ function sensitiveWarnings(conn: RecordingConnection): number {
   return chunkTexts(conn).filter((text) => AUTH_WARNING.test(text)).length;
 }
 
-/** A /review-assist headless summary in the shape renderHeadlessReview produces. */
 function reviewNotification(changedLine: string): string {
   return [
     "Review: branch main..HEAD",
@@ -110,8 +106,6 @@ function reviewNotification(changedLine: string): string {
 
 test("display-only messages that quote source are shown, not replaced by an auth warning", async () => {
   const { proc, conn } = setup();
-  // The /diff inline list (a file named auth.ts), a subagent message quoting code,
-  // and a review whose diff contains a line that reads like a credential prompt.
   const diffList =
     "Uncommitted changes on main: 2 files\n M src/auth.ts +3 -1\n A src/token-store.ts +40";
   const subagent = 'Subagent reviewer: fixed `if (!password) throw new Error("login required")`';
@@ -125,7 +119,6 @@ test("display-only messages that quote source are shown, not replaced by an auth
   request(proc, { method: "setStatus", message: status });
   await drain();
 
-  // Each notification after the first starts with a paragraph break separating it.
   const texts = chunkTexts(conn).map((text) => text.trimStart());
   assert.equal(sensitiveWarnings(conn), 0);
   assert.equal(

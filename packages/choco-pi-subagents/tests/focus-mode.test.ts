@@ -521,8 +521,6 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
   assert.match(focusedRender, /MERMAID RENDERED/);
   assert.doesNotMatch(focusedRender, /ORCHESTRATOR CONVERSATION/);
   assert.equal(widgets.has("subagent-focus"), true);
-  // With the FleetView switcher up, the above-editor indicator stays silent —
-  // it would only repeat the switcher. It speaks when the switcher is off.
   const indicator = widgets.get("subagent-focus");
   const renderIndicator = (): string[] => {
     if (!(indicator instanceof Function)) return [];
@@ -565,7 +563,6 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
   assert.deepEqual(resumeCalls, [{ id: "agent-7", message: "follow up" }]);
   assert.match(notifications.at(-1) ?? "", /Resuming/);
 
-  // A session-less completed record cannot be resumed; the draft is restored.
   const realSession = record.session;
   record.session = undefined;
   editor.setText("must not reach main");
@@ -575,8 +572,6 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
   assert.match(notifications.at(-1) ?? "", /cannot be steered/);
   record.session = realSession;
 
-  // Esc no longer leaves focus — the FleetView switcher owns that transition —
-  // and it must not reach the orchestrator editor either.
   editor.setText("still focused");
   editor.handleInput("\x1b");
   assert.deepEqual(controller.getState(), { kind: "agent", agentId: "agent-7" });
@@ -585,7 +580,6 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
   assert.equal(orchestratorInputs.includes("\x1b"), false, "Esc is swallowed while focused");
   editor.setText("");
 
-  // With no switcher rendered, Esc stays the escape hatch.
   switcherUp = false;
   assert.match(renderIndicator()[0] ?? "", /Esc returns to main/);
   editor.handleInput("\x1b");
@@ -685,8 +679,8 @@ test("/exit at a focused prompt stops the agent instead of quitting pi", () => {
 
 test("focus switch isolates expansion, dequeue, pending UI, subscriptions, and input ownership", (t) => {
   const originalKeybindings = getKeybindings();
-  const focusedKey = "\x05"; // ctrl+e, configured below instead of relying on Ctrl+O.
-  const dequeueKey = "\x04"; // ctrl+d, configured below instead of relying on the host default.
+  const focusedKey = "\x05";
+  const dequeueKey = "\x04";
   setKeybindings(
     new KeybindingsManager(
       {

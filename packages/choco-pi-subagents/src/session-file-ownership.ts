@@ -1,19 +1,8 @@
-/**
- * session-file-ownership.ts — process-wide ownership of child session files.
- *
- * Two live writers on one session JSONL corrupt it. A revival (or a resume
- * after /reload) must therefore claim the child file first, and a claim held
- * by an outgoing extension instance must block until that instance releases
- * it. State lives on `globalThis` so it survives module re-import on /reload
- * within the same process; it is validated structurally on every read.
- */
-
 import { resolve } from "node:path";
 import { type HostValue, isHostObject } from "./value-guards.ts";
 
 const OWNERS_SYMBOL = Symbol.for("choco-pi-subagents:session-file-owners");
 
-/** Members of a registry found on `globalThis`, unvalidated until checked. */
 interface OwnershipRegistryCandidate {
   version?: HostValue;
   claim?: HostValue;
@@ -22,10 +11,6 @@ interface OwnershipRegistryCandidate {
   onRelease?: HostValue;
 }
 
-/**
- * Structural check of a registry another instance published: the version and
- * callable members (signatures are not checkable at run time).
- */
 function isOwnershipRegistry(value: HostValue): value is OwnershipRegistry {
   if (!isHostObject(value)) return false;
   const candidate: OwnershipRegistryCandidate = value;
@@ -106,23 +91,16 @@ function key(file: string): string {
   return resolve(file);
 }
 
-/**
- * Claim `file` for `ownerToken`. Returns true when now owned by this token
- * (including an existing claim by the same token), false when another owner
- * holds it. Empty paths or tokens are never claimable.
- */
 export function claimSessionFile(file: string, ownerToken: string): boolean {
   if (file === "" || ownerToken === "") return false;
   return registry().claim(key(file), ownerToken);
 }
 
-/** Release `file` if `ownerToken` owns it; a non-owner release is ignored. */
 export function releaseSessionFile(file: string, ownerToken: string): void {
   if (file === "" || ownerToken === "") return;
   registry().release(key(file), ownerToken);
 }
 
-/** Current owner token of `file`, if any. */
 export function sessionFileOwner(file: string): string | undefined {
   if (file === "") return undefined;
   return registry().owner(key(file));
@@ -130,13 +108,6 @@ export function sessionFileOwner(file: string): string | undefined {
 
 export type SessionFileWaitOutcome = "released" | "timeout" | "aborted";
 
-/**
- * Wait until `file` has no owner. Resolves "released" immediately when it is
- * unowned. The result is advisory: another claimer may win the file between
- * release and the caller's continuation, so callers must still check
- * `claimSessionFile`'s return value. Settles exactly once and always clears
- * its timer, abort listener, and release listener.
- */
 export function waitForSessionFileRelease(
   file: string,
   options: { timeoutMs: number; signal?: AbortSignal },

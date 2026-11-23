@@ -57,7 +57,6 @@ function snapshot(files: FileSummary[], overrides: Partial<DiffSnapshot> = {}): 
 
 type Spy = NativeDiffReaders & { oldPaths: string[]; newPaths: string[] };
 
-/** Every read returns text that names the path, or SECRET for any sensitive-looking name. */
 function spyReaders(content: (path: string, side: "old" | "new") => SideRead): Spy {
   const oldPaths: string[] = [];
   const newPaths: string[] = [];
@@ -458,10 +457,6 @@ test("the hint is not counted for another source, a non-empty session, or a clos
   });
   assert.equal(target.sent.length, 1, "nothing is sent after the session closed");
 });
-
-// ---------------------------------------------------------------------------
-// Real git: the store's file list plus git and filesystem reads.
-// ---------------------------------------------------------------------------
 
 const execFileAsync = promisify(execFile);
 const FIXTURE_ENV = {

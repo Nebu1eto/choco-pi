@@ -1,10 +1,3 @@
-/**
- * Background compaction admission on large-window models.
- *
- * Covers the effective input budget, the rendered-prompt estimate and its
- * usage calibration, oversized details, cooldown reporting, the reasoning
- * output reserve, and the provider token-counter override.
- */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -92,7 +85,6 @@ function assistant(
   };
 }
 
-/** Branch builder that chains parent IDs. */
 class Branch {
   readonly entries: SessionEntry[] = [];
 
@@ -120,10 +112,6 @@ class Branch {
   }
 }
 
-/**
- * One user turn of `calls` tool calls with untruncated `resultChars` results,
- * a final reply, and a next user message that stays retained.
- */
 function largeToolBranch(calls: number, resultChars: number, finalPromptTokens = 0): Branch {
   const branch = new Branch();
   branch.add({ role: "user", content: "Audit every module", timestamp: 0 });
@@ -180,7 +168,6 @@ interface AdmissionFixtureOptions {
   readonly tokenCounter?: { readonly counter: TokenCounter; readonly model: ModelRef };
 }
 
-/** Coordinator over a real frozen snapshot of `entries`, with production admission. */
 function admissionFixture(entries: readonly SessionEntry[], options: AdmissionFixtureOptions) {
   const backend = new FakeBackend();
   const sink = fakeAppendRecordSink();
@@ -233,12 +220,7 @@ async function prepareOnce(f: ReturnType<typeof admissionFixture>): Promise<void
 
 const GLM_BUDGET: ModelBudget = { contextWindow: GLM_WINDOW, maxTokens: 65_536, reasoning: true };
 
-// ---------------------------------------------------------------------------
-// A1: large-window admission with default settings
-// ---------------------------------------------------------------------------
-
 test("A1: a 524288-window prefix over the old 200k raw estimate is admitted with default settings", async () => {
-  // 120 untruncated 20k-char tool results: ~600k raw tokens, ~60k rendered.
   const branch = largeToolBranch(120, 20_000);
   const snapshot = freeze(branch.entries);
   assert.ok(snapshot.tokenEstimate > 515_000, "raw estimate exceeds even the window budget");
@@ -261,10 +243,6 @@ test("A1: a 524288-window prefix over the old 200k raw estimate is admitted with
     ratio: 0.25,
   });
 });
-
-// ---------------------------------------------------------------------------
-// A2: oversized admission carries a detail and never cools the scope
-// ---------------------------------------------------------------------------
 
 test("A2: an admission refusal names prompt and budget and an immediate retry is not quota", async () => {
   const branch = largeToolBranch(120, 20_000);
@@ -338,10 +316,6 @@ test("A2: every text-backend oversized failure carries a detail code", async () 
     assert.deepEqual(result, { ok: false, reason: "oversized", retryable: false, detail });
   }
 });
-
-// ---------------------------------------------------------------------------
-// A3: usage calibration
-// ---------------------------------------------------------------------------
 
 function calibrationBranch(promptTokens: number) {
   const branch = new Branch();
@@ -444,7 +418,6 @@ test("A3: without usage the estimate falls back to chars/4", () => {
 });
 
 test("A3: a frozen snapshot applies the calibrated ratio to the rendered prompt", () => {
-  // The final reply measured 300k prompt tokens over ~2.4M raw chars: ratio 0.125 -> clamped 1/6.
   const calibrated = freeze(largeToolBranch(120, 20_000, 300_000).entries);
   assert.equal(calibrated.estimateSource, "usage-calibrated");
   assert.equal(calibrated.estimateRatio, MIN_TOKENS_PER_CHAR);
@@ -459,10 +432,6 @@ test("A3: a frozen snapshot applies the calibrated ratio to the rendered prompt"
   assert.equal(unmeasured.estimateSource, "chars");
   assert.ok(measured.promptTokenEstimate > unmeasured.promptTokenEstimate);
 });
-
-// ---------------------------------------------------------------------------
-// A4: summary truncation and reasoning output headroom
-// ---------------------------------------------------------------------------
 
 test("A4: a reasoning model's summary cap rises to the reasoning cap, bounded by the model cap", async () => {
   const snapshot = freeze(largeToolBranch(4, 200).entries);
@@ -546,10 +515,6 @@ test("A4: a length stop from the provider is oversized with summary-truncated", 
     detail: "summary-truncated",
   });
 });
-
-// ---------------------------------------------------------------------------
-// Token counter contract: override and fallback
-// ---------------------------------------------------------------------------
 
 class FakeCounter implements TokenCounter {
   readonly inputs: Parameters<TokenCounter["countTokens"]>[0][] = [];

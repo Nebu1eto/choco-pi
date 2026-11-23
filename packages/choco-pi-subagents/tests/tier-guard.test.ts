@@ -170,7 +170,6 @@ test("chooseVariant uses the variant only when available, in scope, and same-pro
     variantNote(granted),
     /using anthropic\/claude-mythos-5-2 instead of anthropic\/claude-fable-5-2/,
   );
-  // The entitlement filter leaves Mythos out of getAvailable() for an account without access.
   const denied = chooseVariant(FABLE_52, VARIANTS, variantRegistry([FABLE_52]), inScope);
   assert.deepEqual(denied, { model: FABLE_52 });
   assert.equal(variantNote(denied), "");
@@ -183,7 +182,6 @@ test("chooseVariant uses the variant only when available, in scope, and same-pro
     chooseVariant(FABLE_52, crossProvider, variantRegistry([FABLE_52, MYTHOS_52]), inScope),
     { model: FABLE_52 },
   );
-  // Mythos itself, or a model without a variant, is kept.
   assert.deepEqual(
     chooseVariant(MYTHOS_52, VARIANTS, variantRegistry([FABLE_52, MYTHOS_52]), inScope),
     { model: MYTHOS_52 },
@@ -205,7 +203,6 @@ for (const granted of [true, false]) {
     t.mock.method(registry, "find", (provider: string, id: string) =>
       provider === "anthropic" && id === mythos.id ? mythos : realFind(provider, id),
     );
-    // An authenticated account: Fable is available, Mythos only with access.
     t.mock.method(registry, "getAvailable", () =>
       granted ? [...realAvailable(), fable, mythos] : [...realAvailable(), fable],
     );

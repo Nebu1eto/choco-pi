@@ -64,8 +64,6 @@ function segmentLaunchesAgentBrowser(tokens: string[]): boolean {
   return DIRECT_AGENT_BROWSER_EXECUTABLE_PATTERN.test(executableToken);
 }
 
-// Best-effort detection for common direct launches only. This is an ergonomics guard,
-// not a general-purpose bash parser or security boundary.
 export function looksLikeDirectAgentBrowserBash(command: string): boolean {
   let currentToken = "";
   let quoteState: ShellQuoteState;

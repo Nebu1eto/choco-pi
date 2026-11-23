@@ -22,14 +22,12 @@ import { sessionIdForOwner } from "./host-provider.ts";
 import { recordLaneRequest, requestOrigin } from "./live-transport.ts";
 import { capturingFetch } from "./transport-capture.ts";
 
-/** Synthetic signed block the scripted lane issues; the fake server accepts it on replay. */
 const NATIVE_BLOCK = {
   type: "compaction",
   content: "HARNESS-NATIVE-CHECKPOINT",
   signature: "harness-synthetic-native-signature-never-record-verbatim",
 } as const;
 export const NATIVE_SIGNATURE = NATIVE_BLOCK.signature;
-/** The on-demand lane asks for a summary through the top-level `compaction` field. */
 const LaneRequestSchema = obj(
   { compaction: obj({ type: lit("summarize") }, { open: true }) },
   { open: true },
@@ -64,7 +62,6 @@ function compactionFrames(model: Model<"anthropic-messages">): SseFrame[] {
   ];
 }
 
-/** Scripted lane HTTP response: one signed compaction block with fixed iteration usage. */
 function laneResponse(
   recorder: Recorder,
   model: Model<"anthropic-messages">,
@@ -86,12 +83,6 @@ function laneResponse(
   return sseResponse(compactionFrames(model));
 }
 
-/**
- * Offline global fetch for the foreground server-side path, whose lane uses
- * production's default transport (global fetch): a native compaction request
- * to the model origin gets the scripted block, everything else goes to
- * `fallback` (the blocker).
- */
 export function scriptedLaneFetch(
   recorder: Recorder,
   model: Model<"anthropic-messages">,
@@ -108,7 +99,6 @@ export function scriptedLaneFetch(
   };
 }
 
-/** Real production backend + installed adapter; only the lane HTTP response is scripted. */
 export function installAnthropicFakeFactory(
   recorder: Recorder,
   model: Model<"anthropic-messages">,
@@ -130,7 +120,6 @@ export function installAnthropicFakeFactory(
       ownerGeneration: context.ownerGeneration,
       backendId: ANTHROPIC_BACKEND_ID,
     });
-    // Mirrors production's default factory: captures are keyed by raw session ID.
     const sessionId = sessionIdForOwner(context.ownerKey);
     return createAnthropicNativeBackend({
       gate: new AnthropicCapabilityGate({

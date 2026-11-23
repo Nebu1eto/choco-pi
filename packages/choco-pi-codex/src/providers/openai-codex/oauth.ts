@@ -34,7 +34,6 @@ type OAuthCallbacks = Parameters<NonNullable<ProviderConfig["oauth"]>["login"]>[
 type DeviceAuthToken = { authorization_code: string; code_verifier: string };
 
 type JwtPayload = JsonObject;
-// OAuth wire payloads are open JSON objects: unknown members are ignored.
 const jwtPayloadValidator = compile(map(unknown()));
 const jwtAuthValidator = compile(obj({ chatgpt_account_id: opt(str()) }, { open: true }));
 const tokenResponseValidator = compile(

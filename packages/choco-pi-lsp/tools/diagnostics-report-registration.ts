@@ -22,7 +22,6 @@ interface DiagnosticsExecutable {
   execute: DiagnosticsExecute;
 }
 
-/** Register diagnostics_report metadata eagerly while loading its analysis graph on first use. */
 export function createLensDiagnosticsTool(
   cacheManager: CacheManager,
   getCwd: () => string,

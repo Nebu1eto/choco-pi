@@ -1,12 +1,10 @@
 import { type BoundaryValue, isBoundaryRecord, isNumber } from "../../boundary.ts";
 import { stringField, toolResultText, type PiToolResult } from "../../pi-rpc/protocol.ts";
 
-/** Read `key` from an undecoded value without deciding what the field holds. */
 function propertyValue(value: BoundaryValue, key: string): BoundaryValue {
   return isBoundaryRecord(value) ? value[key] : undefined;
 }
 
-/** Read `key` from an undecoded value when it holds any number, including non-finite ones. */
 function anyNumberField(value: BoundaryValue, key: string): number | undefined {
   const field = propertyValue(value, key);
   return isNumber(field) ? field : undefined;
@@ -17,17 +15,14 @@ export function toolResultToText(result: PiToolResult): string {
 
   const details = propertyValue(result, "details");
 
-  // pi's edit tool returns a terse success message in content and the full unified diff in details.diff.
   const diff = stringField(details, "diff");
   if (diff !== undefined && diff.trim()) {
     return diff;
   }
 
-  // pi tool results generally look like: { content: [{type:"text", text:"..."}], details: {...} }
   const blocks = toolResultText(result);
   if (blocks) return blocks;
 
-  // The bash tool frequently returns stdout/stderr in `details` rather than content blocks.
   const stdout =
     stringField(details, "stdout") ??
     stringField(result, "stdout") ??

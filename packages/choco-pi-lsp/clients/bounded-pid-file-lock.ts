@@ -40,9 +40,7 @@ function quarantinePath(lockPath: string, token: string): string {
 async function restoreQuarantinedLock(lockPath: string, quarantined: string): Promise<void> {
   try {
     await fsp.rename(quarantined, lockPath);
-  } catch {
-    // A replacement owner may already hold the canonical name. Never overwrite it.
-  }
+  } catch {}
 }
 
 async function releaseQuarantineLock(lockPath: string, token: string): Promise<void> {
@@ -144,11 +142,6 @@ async function tryAcquireQuarantineLock(
   return null;
 }
 
-/**
- * Async directory-lock variant for commits that may span awaited I/O. Stale
- * owners are renamed aside before inspection/removal; token-checked release
- * likewise renames first, so a late owner can never delete its replacement.
- */
 export async function acquireQuarantinePidFileLock(
   lockPath: string,
   options: QuarantinePidFileLockOptions & { onContention?: "throw" },
@@ -181,15 +174,6 @@ export async function acquireQuarantinePidFileLock(
   }
 }
 
-/**
- * Acquire a bounded synchronous cross-process file lock.
- *
- * PID liveness cannot distinguish a recycled PID from the original owner. A
- * recycled PID can therefore make a stale lock look live, but only for the
- * caller's bounded wait. OS start-time validation would require a platform-
- * specific subprocess on this synchronous behavior-gating path; the unique
- * token instead prevents a late release from deleting a replacement lock.
- */
 interface BoundedPidFileLockOptions {
   waitMs: number;
   retryMs: number;
@@ -224,9 +208,7 @@ export function acquireBoundedPidFileLock(
           if (fs.readFileSync(lockPath, "utf8") === token) {
             fs.unlinkSync(lockPath);
           }
-        } catch {
-          // Protected write completed; cleanup is best-effort.
-        }
+        } catch {}
       };
     } catch (error) {
       if (!hasErrorCode(error) || error.code !== "EEXIST") throw error;

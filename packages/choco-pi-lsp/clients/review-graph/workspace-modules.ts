@@ -1,10 +1,4 @@
 import type { RuntimeValue } from "../../tools/runtime-values.ts";
-/**
- * Workspace / monorepo module scanner
- *
- * Detects monorepo structure from common manifest files and builds a
- * module-level dependency graph for cascade downstream analysis.
- */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -28,13 +22,11 @@ export interface WorkspaceModule {
 export interface ModuleGraph {
   root: string;
   modules: Map<string, WorkspaceModule>;
-  /** module name → dependent module names */
   dependents: Map<string, string[]>;
 }
 
 type WorkspaceType = "pnpm" | "npm" | "cargo" | "go";
 
-// Cap on candidate sub-directories probed per workspace glob level (#262).
 const MAX_WORKSPACE_CANDIDATES = 5_000;
 
 type PackageJson = {
@@ -70,15 +62,6 @@ function readJsonSafe(filePath: string): RuntimeValue {
   }
 }
 
-/**
- * Presence checks for the four workspace-manifest markers are sourced from
- * the shared workspace-topology marker index (#806) — one `readdir` pass at
- * `cwd` collects them alongside `.choco-pi-lsp.json`/`tsconfig.json` other
- * consumers need for the SAME directory, instead of four independent
- * `existsSync` probes. Manifest CONTENT (workspace globs, the `[workspace]`
- * TOML section, the `workspaces` package.json field) is still read and
- * parsed here — the topology index only answers "is the marker present".
- */
 function detectWorkspaceType(cwd: string): WorkspaceType | null {
   const markers = getWorkspaceManifestMarkers(cwd);
   if (markers.hasPnpmWorkspaceYaml) return "pnpm";
@@ -124,7 +107,6 @@ function expandWorkspacePattern(cwd: string, pattern: string): string[] {
       : [];
   }
 
-  // Support the common workspace forms: packages/* and apps/*.
   const prefix = normalized.slice(0, starIndex).replace(/\/$/, "");
   const baseDir = path.resolve(cwd, prefix || ".");
   let entries: fs.Dirent[] = [];
@@ -134,27 +116,23 @@ function expandWorkspacePattern(cwd: string, pattern: string): string[] {
     return [];
   }
   const ignoreMatcher = getProjectIgnoreMatcher(cwd);
-  return (
-    entries
-      .filter((entry) => {
-        const fullPath = path.join(baseDir, entry.name);
-        return (
-          entry.isDirectory() &&
-          !isExcludedDirName(entry.name) &&
-          !ignoreMatcher.isIgnored(fullPath, true)
-        );
-      })
-      // Bound the manifest-probe fan-out so a pathological single directory
-      // can't trigger an unbounded existsSync sweep (#262).
-      .slice(0, MAX_WORKSPACE_CANDIDATES)
-      .map((entry) => path.join(baseDir, entry.name))
-      .filter(
-        (root) =>
-          fs.existsSync(path.join(root, "package.json")) ||
-          fs.existsSync(path.join(root, "Cargo.toml")) ||
-          fs.existsSync(path.join(root, "go.mod")),
-      )
-  );
+  return entries
+    .filter((entry) => {
+      const fullPath = path.join(baseDir, entry.name);
+      return (
+        entry.isDirectory() &&
+        !isExcludedDirName(entry.name) &&
+        !ignoreMatcher.isIgnored(fullPath, true)
+      );
+    })
+    .slice(0, MAX_WORKSPACE_CANDIDATES)
+    .map((entry) => path.join(baseDir, entry.name))
+    .filter(
+      (root) =>
+        fs.existsSync(path.join(root, "package.json")) ||
+        fs.existsSync(path.join(root, "Cargo.toml")) ||
+        fs.existsSync(path.join(root, "go.mod")),
+    );
 }
 
 function depsFromPackageJson(pkgJson: PackageJson): string[] {
@@ -180,7 +158,6 @@ function extractYamlList(content: string, key: string): string[] {
       if (value) values.push(value);
       continue;
     }
-    // A new top-level key ends the list.
     if (!rawLine.startsWith(" ") && !rawLine.startsWith("\t")) break;
   }
   return values;
@@ -383,10 +360,6 @@ function buildDependents(modules: WorkspaceModule[]): Map<string, string[]> {
 
 let _moduleGraphCache: { cwd: string; graph: ModuleGraph } | null = null;
 
-/**
- * Build a module-level dependency graph for the workspace at cwd.
- * Cached per session (cleared when cwd changes).
- */
 export function buildModuleGraph(cwd: string): ModuleGraph | null {
   if (_moduleGraphCache && _moduleGraphCache.cwd === cwd) {
     return _moduleGraphCache.graph;
@@ -429,9 +402,6 @@ export function clearModuleGraphCache(): void {
   _moduleSourceFilesMemo.clear();
 }
 
-/**
- * Find the module that owns a given file path.
- */
 export function findModuleForPath(
   graph: ModuleGraph,
   filePath: string,
@@ -446,9 +416,6 @@ export function findModuleForPath(
   return best;
 }
 
-/**
- * Get all transitive downstream dependent module names for a given module.
- */
 export function getDownstreamModules(graph: ModuleGraph, moduleName: string): string[] {
   const downstream = new Set<string>();
   const queue = [moduleName];
@@ -464,27 +431,6 @@ export function getDownstreamModules(graph: ModuleGraph, moduleName: string): st
   return [...downstream];
 }
 
-/**
- * Memo for {@link getModuleSourceFiles} (#1137 remnant, #1318 slice 2). The
- * sole caller is the cascade's per-downstream-module loop
- * (`review-graph/query.ts`), which runs on EVERY edited file — so a monorepo
- * edit re-walked every downstream module's directory tree (recursive
- * `readdirSync`, depth ≤4) even though module file lists almost never change.
- * Keyed by normalized module root; bounded by the workspace's module count
- * (itself bounded by the glob-expansion caps above). Invalidation rides
- * existing freshness seams, no new scheme:
- * - every directory the walk VISITED is re-stat'd by mtimeMs (the repo's
- *   cheap freshness tier, same class as the ancestor-directory-mtime
- *   validation in project-config discovery) — a file add/remove/rename in any
- *   directory that contributed to the result changes that dir's mtime. Recent
- *   stamps are treated as unverifiable because filesystem mtime granularity
- *   can alias a write with the preceding walk;
- * - the ignore matcher is compared by object identity —
- *   `getProjectIgnoreMatcher` returns a fresh object whenever a
- *   `.gitignore`/`.choco-pi-lsp.json`/global-config input's size:mtimeMs changes,
- *   so ignore-rule edits re-walk too.
- * Cleared with the module-graph cache (`clearModuleGraphCache`).
- */
 interface ModuleSourceFilesMemoEntry {
   files: string[];
   maxFiles: number;
@@ -507,10 +453,6 @@ function isMemoEntryFresh(entry: ModuleSourceFilesMemoEntry): boolean {
   return true;
 }
 
-/**
- * Get representative source files in a module. Memoized per module root (see
- * above) — the returned array is a copy; mutating it does not affect the memo.
- */
 export function getModuleSourceFiles(moduleRoot: string, maxFiles = 20): string[] {
   const root = normalizeMapKey(moduleRoot);
   const ignoreMatcher = getProjectIgnoreMatcher(root);
@@ -535,8 +477,6 @@ export function getModuleSourceFiles(moduleRoot: string, maxFiles = 20): string[
     } catch {
       return;
     }
-    // Stamp AFTER the readdir: a change landing between readdir and stat
-    // records the newer mtime, so validation re-walks (fail-safe direction).
     try {
       dirs.push({
         dir,

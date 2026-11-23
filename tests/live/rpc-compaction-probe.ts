@@ -1,32 +1,3 @@
-/**
- * Manual, billable real-Pi RPC probe for compaction. Never run by the unit suite.
- *
- * Spawns `pi --mode rpc` as a separate process with its own agent directory and
- * drives one matrix cell per (background on/off) x (point manual/auto) for one
- * model and one compaction logic (`server-side` or `choco-pi`):
- *   - manual: RPC `compact` without and with instructions (`/compact <focus>`),
- *     each with one follow-up prompt. Every case expects the logic's native lane
- *     (server-side) or text (choco-pi); the Anthropic lane applies instructions
- *     itself (D9), the Codex lane forwards them as a developer item (A1) and xAI
- *     sends them as `instructions`. A Codex or xAI manual request is answered by
- *     the foreground handler even with background on (routes.ts `manualLanes`).
- *     Server-side cells add `captures-cleared-before-compact` (RPC `set_model` to a
- *     second model of the provider and back, then `compact`: captures survive,
- *     D8), Codex `model-switch-replay` (one turn on gpt-6-sol over the Luna
- *     checkpoint, then back) and, where the foreground answers, `resume-then-compact`
- *     (a fresh process `switch_session`s to the same file and compacts with no
- *     turn, then after one turn compacts again);
- *   - auto: the context cap's compaction point (presets from `--soft-cap` and
- *     `--compaction-point`, `reserveTokens` calibrated so a short seed crosses it).
- * Every case checks the lane journal (`choco-compaction-lane`): a record for each
- * observed fallback or cancel; each cell ends with a journal case (fewer than
- * MAX_LANE_RECORDS records, all schema-valid, none credential-looking).
- * Evidence is the RPC event stream, the session entries, and the in-process
- * coordinator/capture status; no UI. Any errored assistant turn fails its case,
- * and an errored seed turn or a runaway usage stop (budget.ts) aborts the run.
- *
- * Usage: `node tests/live/rpc-compaction-probe.ts --help`.
- */
 import assert from "node:assert/strict";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -104,10 +75,6 @@ import {
   USAGE,
 } from "./rpc-compaction-probe-config.ts";
 
-// ---------------------------------------------------------------------------
-// Wire and entry schemas
-// ---------------------------------------------------------------------------
-
 const WireSchema = obj(
   {
     type: str(),
@@ -164,19 +131,16 @@ const CompactionEntrySchema = obj(
 );
 export type CompactionEntry = Static<typeof CompactionEntrySchema>;
 const CandidateDetailsSchema = obj({ candidateId: str({ minLength: 1 }) }, { open: true });
-/** Text-lane checkpoints carry a frozen-prefix `background` block; native lanes do not. */
 const BackgroundBlockSchema = obj(
   { background: obj({ mode: str() }, { open: true }) },
   { open: true },
 );
 const OwnerKeySchema = obj({ ownerKey: str() }, { open: true });
 const StrategySchema = obj({ strategy: str() }, { open: true });
-/** `choco-compaction-candidate` record (background/contract.ts CandidateRecordSchema). */
 const CandidateRecordDataSchema = obj(
   { candidateId: str({ minLength: 1 }), backendId: str({ minLength: 1 }) },
   { open: true },
 );
-/** Anthropic server-side checkpoint (anthropic/details.ts): signed block from the lane. */
 const AnthropicNativeDetailsSchema = obj(
   {
     strategy: lit("anthropic-compaction-on-demand-v1"),
@@ -192,7 +156,6 @@ const AnthropicNativeDetailsSchema = obj(
   },
   { open: true },
 );
-/** Codex server-side checkpoint (choco-pi-codex adapter/compaction/types.ts). */
 const CodexNativeDetailsSchema = obj(
   {
     strategy: lit("openai-responses-compaction-v2"),
@@ -234,20 +197,13 @@ const ProbeStatusSchema = obj(
     rows: arr(StatusRowSchema),
     captures: arr(obj({ status: num(), mapped: bool(), endpoint: str() }, { open: true })),
     refusals: num(),
-    /** xAI wire captures of the session (xai/capture.ts), same fields. */
     xaiCaptures: arr(obj({ status: num(), mapped: bool(), endpoint: str() }, { open: true })),
     window: NullableNumber,
     nativeWindow: NullableNumber,
     cap: NullableNumber,
     compactAt: NullableNumber,
-    /** First 80 characters of `system[0].text` in the latest Anthropic wire capture. */
     captureSystemHead: NullableString,
-    /** The same from the latest `before_provider_request` payload. */
     requestSystemHead: NullableString,
-    /**
-     * The latest Codex WebSocket `response.create` frames this process sent
-     * (oldest first): booleans and counts only, never item content.
-     */
     codexSends: arr(
       obj(
         {
@@ -256,7 +212,6 @@ const ProbeStatusSchema = obj(
           prewarm: bool(),
           previousResponseId: bool(),
           compactionItems: num(),
-          /** SHA-256 digests of the frame's encrypted compaction items (never the items). */
           itemDigests: arr(str()),
         },
         { open: true },
@@ -267,7 +222,6 @@ const ProbeStatusSchema = obj(
 );
 export type CodexSend = ProbeStatus["codexSends"][number];
 type ProbeStatus = Static<typeof ProbeStatusSchema>;
-/** The codex sidecar: only its `compaction` member is reported. */
 const CodexSidecarSchema = obj({ compaction: unknown() }, { open: true });
 const SidecarSchema = obj(
   { prepareAt: num(), hysteresis: num(), reserveTokens: num() },
@@ -287,13 +241,10 @@ type Command = {
   message?: string;
   customInstructions?: string;
   cancelled?: boolean;
-  /** `set_model`. */
   provider?: string;
   modelId?: string;
-  /** `switch_session`. */
   sessionPath?: string;
 };
-/** Provider-reported usage on an assistant `message_end` (pi-ai Usage). */
 const UsageMessageSchema = obj(
   {
     role: lit("assistant"),
@@ -313,11 +264,6 @@ type UsageMessage = Static<typeof UsageMessageSchema>;
 const SessionFileSchema = obj({ sessionFile: str({ minLength: 1 }) }, { open: true });
 const SwitchResultSchema = obj({ cancelled: bool() }, { open: true });
 
-// ---------------------------------------------------------------------------
-// Pure verdicts (exported for the harness unit test)
-// ---------------------------------------------------------------------------
-
-/** An encrypted Responses compaction item (choco-pi-codex compactedWindow and wire input). */
 const EncryptedItemSchema = obj(
   {
     type: oneOf(["compaction", "compaction_summary"]),
@@ -327,11 +273,6 @@ const EncryptedItemSchema = obj(
 );
 const CompactedWindowSchema = obj({ compactedWindow: arr(unknown()) }, { open: true });
 
-/**
- * SHA-256 digests of the encrypted compaction items of a checkpoint's
- * `details.compactedWindow`, the same digest the probe extension keeps per
- * sent frame (`encryptedDigests` in `probeExtensionSource`).
- */
 export function checkpointDigests(entry: CompactionEntry): string[] {
   const { details } = entry;
   if (!matches(CompactedWindowSchema, details)) return [];
@@ -342,7 +283,6 @@ export function checkpointDigests(entry: CompactionEntry): string[] {
   );
 }
 
-/** A checkpoint frozen before the model switch: its entry id and encrypted-item digests. */
 export interface FrozenCheckpoint {
   readonly entryId: string;
   readonly digests: readonly string[];
@@ -351,11 +291,8 @@ export interface FrozenCheckpoint {
 export interface ModelSwitchEvidence {
   readonly variant: "foreground" | "background";
   readonly frozen: FrozenCheckpoint;
-  /** The first generating frame for the switch target. */
   readonly frame: CodexSend | undefined;
-  /** The branch's latest compaction entry id right after the switched turn. */
   readonly latestAfterSwitch: string | null;
-  /** Lane-journal records the case appended (switched and back turns). */
   readonly laneData: readonly unknown[];
   readonly switchedAway: boolean;
   readonly switchedBack: boolean;
@@ -367,23 +304,12 @@ export interface ModelSwitchVerdict {
   readonly verdict: "pass" | "fail";
   readonly failures: string[];
   readonly frameCarriesCheckpointItem: boolean;
-  /** Replay fallback records naming the frozen checkpoint. */
   readonly replayFallbackRecords: number;
-  /** Checkpoint ids named by replay fallback records other than the frozen one. */
   readonly otherReplayCheckpoints: string[];
   readonly journalRecords: string[];
   readonly journalProblems: string[];
 }
 
-/**
- * Plan Q5 verdict. The frame and the journal are judged against the
- * checkpoint frozen before `set_model` (A), never the latest one at status
- * time: a replacement checkpoint (B) installed during the switched turn,
- * whose item alone reaches the frame, must not pass for A. Background: every
- * encrypted item of A on the first target frame, a codex replay fallback
- * record naming A, none naming another checkpoint, and A still the latest
- * checkpoint after the switched turn.
- */
 export function modelSwitchVerdict(evidence: ModelSwitchEvidence): ModelSwitchVerdict {
   const { frozen, frame } = evidence;
   const background = evidence.variant === "background";
@@ -446,25 +372,17 @@ export function modelSwitchVerdict(evidence: ModelSwitchEvidence): ModelSwitchVe
   };
 }
 
-/** Aborted compactions among `records`: every `compaction_end` with `aborted: true`, errored or not. */
 export function abortedCompactions(records: readonly WireRecord[]): number {
   return records.filter((value) => value.type === "compaction_end" && value.aborted === true)
     .length;
 }
 
-/** An auto case's journal verdict. */
 export interface JournalVerdict {
   readonly verdict: "pass" | "fail";
   readonly problems: string[];
   readonly records: string[];
 }
 
-/**
- * Journal verdict of an auto case over every wire record from the case start
- * through the completed follow-up turn: one `cancel` record per aborted
- * compaction (with or without an error) and one `fallback` record when the
- * adopted checkpoint has another strategy than the lane's.
- */
 export function autoJournalVerdict(
   records: readonly WireRecord[],
   observedFallback: boolean,
@@ -482,21 +400,11 @@ export function autoJournalVerdict(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Options and evidence
-// ---------------------------------------------------------------------------
-
 const checkout = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-/**
- * The run's state, set by `main()` only when this file is the entry point. An
- * import (the harness unit test reads the exported verdicts) parses no CLI,
- * spawns nothing and writes nothing.
- */
 interface RunState {
   readonly options: ProbeOptions;
   readonly cells: ReturnType<typeof resolveCells>;
 }
-/** The live run's resources (no dry run). */
 interface LiveState {
   readonly launcher: string;
   readonly capture: string;
@@ -517,9 +425,7 @@ function opts(): ProbeOptions {
   return run().options;
 }
 const STATUS_PREFIX = "PROBE-STATUS ";
-/** The Codex model the model-switch case replays the Luna checkpoint on (approved). */
 const CODEX_SWITCH_TARGET = "openai-codex/gpt-6-sol";
-/** Why the captures-cleared case cannot run: no approved second model of the provider. */
 function noSwitchModel(): string {
   return `captures-cleared-before-compact needs a second approved ${opts().provider} model and none is approved: pass --switch-model <approved ${opts().provider} model> (add it to APPROVED_LIVE_MODELS, or to SWITCH_ONLY_LIVE_MODELS in tests/live/background-compaction/budget.ts once the user approves it)`;
 }
@@ -580,7 +486,6 @@ async function dryRun(): Promise<void> {
       );
     write(`  case names: ${caseNames(cell).join(", ")}`);
     if (cell.point === "auto") {
-      // Example points only: the live run calibrates and logs its own.
       const plan = planAuto(opts(), DRY_RUN_CALIBRATION);
       const sidecar = parseSidecar(
         (
@@ -619,12 +524,10 @@ async function dryRun(): Promise<void> {
 const runFile = promisify(execFile);
 type DetailValue = string | number | boolean | null | readonly string[];
 type Detail = { readonly [key: string]: DetailValue };
-/** Signatures stay in the protected session file; evidence keeps their length only. */
 function redact<T>(key: string, value: T): T | string {
   return key === "signature" && isString(value) ? `<redacted:${value.length}>` : value;
 }
 let logQueue: Promise<void> = Promise.resolve();
-/** Serialized appends: concurrent FileHandle writes could interleave records. */
 function log<T extends object>(record: T): void {
   const line = `${JSON.stringify({ at: Date.now(), ...record }, redact)}\n`;
   logQueue = logQueue.then(async () => {
@@ -632,16 +535,10 @@ function log<T extends object>(record: T): void {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Pi process
-// ---------------------------------------------------------------------------
-
 interface Session {
   readonly label: string;
-  /** Scratch directory name of this launch; a relaunch with it reuses agent, workspace and sessions. */
   readonly dir: string;
   readonly records: WireRecord[];
-  /** The background sidecar this launch wrote (preparer prepareAt/reserveTokens). */
   readonly sidecar: Sidecar;
   command(type: string, extra?: Partial<Command>): Promise<WireRecord>;
   waitFor(predicate: (value: WireRecord) => boolean, since: number): Promise<WireRecord>;
@@ -657,12 +554,6 @@ function probeExtensionSource(hostReserve: number): string {
     cap: join(checkout, "profile/extensions/model-context-cap.ts"),
     policy: join(checkout, "profile/extensions/lib/context-policy.ts"),
   };
-  // Codex traffic rides choco-pi-codex's WebSocket. Its modules load per
-  // extension (jiti, no module cache), so their in-memory request state is
-  // not readable from here; the frames are observed at `WebSocket.send`
-  // instead (the transport resolves `globalThis.WebSocket` per connection
-  // when no proxy is configured; behind a proxy it uses undici's and nothing
-  // is observed). Only digests of encrypted items are kept in memory.
   const codexSendsKey = "choco-pi.rpc-probe.codex-sends";
   const settings = {
     softCap: opts().softCap,
@@ -783,15 +674,10 @@ export default function (pi: ExtensionAPI) {
 `;
 }
 
-// ---------------------------------------------------------------------------
-// Runaway stop (budget.ts LIVE_EXPECTATIONS, per cell)
-// ---------------------------------------------------------------------------
-
 class RunawayError extends Error {
   override name = "RunawayError";
 }
 
-/** Provider-reported assistant usage of the current cell (all of its launches). */
 const cellUsage = { requests: 0, inputTokens: 0, outputTokens: 0 };
 let cellBudget: { readonly key: string; readonly expected: Expectation } | undefined;
 
@@ -811,7 +697,6 @@ function startCellBudget(cell: Cell): void {
   });
 }
 
-/** Counts one assistant message_end; returns the runaway error once usage passes the stop. */
 function countUsage(message: UsageMessage): RunawayError | undefined {
   const { usage } = message;
   cellUsage.requests += 1;
@@ -838,7 +723,6 @@ async function launch(label: string, settings: LaunchSettings, reuse?: string): 
   const workspace = join(scratch, dir, "workspace");
   const sessionsDir = join(scratch, dir, "sessions");
   const probeExtension = join(agentDir, "probe-compaction-status.ts");
-  // A relaunch keeps the launch's agent dir, workspace and session files as they are.
   if (reuse === undefined) {
     await Promise.all([
       mkdir(join(agentDir, "extensions"), { recursive: true }),
@@ -1002,10 +886,6 @@ async function launch(label: string, settings: LaunchSettings, reuse?: string): 
   return session;
 }
 
-// ---------------------------------------------------------------------------
-// Evidence readers
-// ---------------------------------------------------------------------------
-
 async function allEntries(session: Session): Promise<{ entries: Entry[]; branch: Entry[] }> {
   const result = await session.command("get_entries");
   assert.equal(result.success, true, "get_entries failed");
@@ -1041,7 +921,6 @@ function strategyOf(entry: CompactionEntry): string | null {
   return matches(StrategySchema, entry.details) ? entry.details.strategy : null;
 }
 
-/** Backend id persisted by the coordinator's candidate record for `candidateId`. */
 function recordedBackend(entries: readonly Entry[], candidateId: string): string | null {
   for (const entry of entries) {
     if (entry.type !== "custom" || entry.customType !== "choco-compaction-candidate") continue;
@@ -1051,11 +930,6 @@ function recordedBackend(entries: readonly Entry[], candidateId: string): string
   return null;
 }
 
-/**
- * Errored assistant turns (stopReason "error" or an errorMessage) and compaction
- * errors since `since`. Every assistant message record counts: `message_end`,
- * `turn_end` and `agent_end.messages`; one message seen in several records counts once.
- */
 interface ErrorTally {
   readonly count: number;
   readonly first: string | null;
@@ -1109,7 +983,6 @@ async function prompt(session: Session, text: string): Promise<void> {
       await session.waitFor((value) => value.type === "agent_end", since);
       break;
     }
-    // The host reports idle slightly before it accepts the next prompt; retry briefly.
     assert.ok(attempt < 20, `prompt failed: ${response.error ?? ""}`);
     await delay(250);
   }
@@ -1121,7 +994,6 @@ class SeedTurnError extends Error {
 }
 
 const FILLER = "The quick brown fox jumps over the lazy dog. ".repeat(60);
-/** Seed turns must succeed: an errored seed aborts the whole run with the provider's message. */
 async function seed(session: Session, turns: number, tag: string, from = 0): Promise<void> {
   for (let index = from; index < from + turns; index += 1) {
     const since = session.records.length;
@@ -1155,7 +1027,6 @@ async function probeStatus(session: Session): Promise<ProbeStatus> {
 
 const READY_STATES: readonly string[] = ["ready", "adopting", "installed"];
 const FAILED_STATES: readonly string[] = ["failed", "canceled", "discarded-stale"];
-/** Poll until a candidate not in `prior` reaches ready (or a terminal failure). */
 async function waitForNewCandidate(
   session: Session,
   prior: ReadonlySet<string>,
@@ -1202,10 +1073,6 @@ function compactionEvents(session: Session, since: number): string[] {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Checkpoint provenance
-// ---------------------------------------------------------------------------
-
 type DetailMap = Map<string, DetailValue>;
 
 interface Provenance {
@@ -1213,13 +1080,6 @@ interface Provenance {
   readonly detail: DetailMap;
 }
 
-/**
- * Who produced `entry`, against what the cell's logic claims. Background:
- * the candidate's persisted record names the backend. Foreground server-side:
- * the lane's own details (signed Anthropic block, or Codex compacted window
- * plus its display entry) on an extension-supplied checkpoint. Anthropic lanes
- * also need a 200 wire capture, the only input they cut from.
- */
 async function provenance(
   session: Session,
   entry: CompactionEntry,
@@ -1247,7 +1107,6 @@ async function provenance(
   } else {
     checks.set("noCandidate", candidate === null);
     if (lane !== undefined) {
-      // The host records a hook-supplied compaction as `fromHook`.
       checks.set("fromHook", entry.fromHook === true);
       if (lane.strategy === "anthropic-compaction-on-demand-v1") {
         checks.set("signedBlock", matches(AnthropicNativeDetailsSchema, entry.details));
@@ -1281,11 +1140,6 @@ async function provenance(
   return { pass: failed.length === 0, detail };
 }
 
-// ---------------------------------------------------------------------------
-// Cases
-// ---------------------------------------------------------------------------
-
-/** `not-run`: a cell after the first failing cell (the run stops there). */
 type Outcome = "pass" | "fail" | "unprovable" | "not-run";
 interface CaseResult {
   readonly cell: string;
@@ -1305,25 +1159,16 @@ function laneFor(): NativeLane | undefined {
   return opts().logic === "server-side" ? nativeLaneFor(opts().provider) : undefined;
 }
 
-/** The lane a manual case expects and whether a background candidate or the foreground serves it. */
 interface CaseLane {
   readonly lane: NativeLane | undefined;
   readonly background: boolean;
 }
 
-/**
- * The lane one manual case must be served by: the logic's lane, with or
- * without instructions (D9: the Anthropic lane applies them; A1: Codex
- * forwards them; xAI sends them as `instructions`). With background on, the
- * background host answers through a candidate unless the lane is answered in
- * the foreground (Codex owners get no manual lane, xAI has no backend).
- */
 function caseLane(cell: Cell): CaseLane {
   const lane = laneFor();
   return { lane, background: cell.background && lane?.manualForeground !== true };
 }
 
-/** Every `notify` message the session showed since `since`. */
 function noticesSince(session: Session, since: number): string[] {
   return session.records
     .slice(since)
@@ -1332,7 +1177,6 @@ function noticesSince(session: Session, since: number): string[] {
     );
 }
 
-/** Lane-journal records appended since `start` (a record count), checked against `requirements`. */
 async function journalSince(
   session: Session,
   start: number,
@@ -1346,14 +1190,6 @@ async function journalCount(session: Session): Promise<number> {
   return laneRecordData((await allEntries(session)).entries).length;
 }
 
-/**
- * The identity line on the outbound request, read after the first seed turn.
- * Anthropic only: the source is the latest wire capture's `system[0].text`
- * (the exact sent body; server-side logic) and the probe's own
- * `before_provider_request` hook (the payload handed to the transport; every
- * logic). Each source present must start with the line, and at least one must
- * be present. Only the first 80 characters are read; no headers.
- */
 async function identityProof(session: Session): Promise<Provenance> {
   if (opts().provider !== "anthropic")
     return {
@@ -1378,7 +1214,6 @@ async function identityProof(session: Session): Promise<Provenance> {
   };
 }
 
-/** Seed `turns` turns, proving the identity line on the first request. */
 async function seedWithIdentity(session: Session, cell: Cell, turns: number): Promise<Provenance> {
   await seed(session, 1, "SEED");
   const identity = await identityProof(session);
@@ -1387,17 +1222,13 @@ async function seedWithIdentity(session: Session, cell: Cell, turns: number): Pr
   return identity;
 }
 
-/** Case preconditions and journal requirements beyond the per-outcome records. */
 interface CaseOptions {
-  /** Detail and verdict gathered before the compact. */
   readonly pre?: { readonly pass: boolean; readonly detail: DetailMap };
-  /** Lane-journal requirements on the records the case appends. */
   readonly journal?: JournalRequirements;
 }
 
 const FOCUS_INSTRUCTIONS = "FOCUS-MARKER list every SEED index you saw";
 
-/** Journal requirements of `/compact <focus>` (A1): never ignored; Codex and xAI journal the forwarding. */
 function focusJournal(lane: NativeLane | undefined): JournalRequirements {
   const forwarded =
     lane?.strategy === "openai-responses-compaction-v2" ||
@@ -1449,7 +1280,6 @@ async function manualCase(
       response.success === true && response.data === undefined && commandEvents.length === 0;
     detail.set("accepted", accepted);
     if (!accepted) {
-      // The host ran or refused the compaction itself: no candidate to wait for.
       await prompt(session, `AFTER-${name}: reply with exactly ACK-AFTER`);
       const errors = errorsSince(session, since);
       detail.set("erroredTurns", errors.count);
@@ -1468,8 +1298,6 @@ async function manualCase(
     detail.set("followUpEvents", compactionEvents(session, promptSince));
     entry = await waitForNewCompaction(session, before, 30_000);
     detail.set("adopted", entry !== undefined);
-    // An idle session adopts a ready checkpoint at once ("installed"); a busy
-    // one holds it "ready" until the next prompt or turn end.
     const settled = row.state === "ready" || row.state === "installed";
     pass = settled && entry !== undefined;
     if (entry !== undefined) {
@@ -1497,12 +1325,8 @@ async function manualCase(
       pass &&= proof.pass;
     }
   }
-  // A record for every observed fallback (a native cell committed another
-  // strategy) and cancel (the compact failed or aborted).
   const observedFallback =
     lane !== undefined && entry !== undefined && strategyOf(entry) !== lane.strategy;
-  // One cancel per aborted compaction; a failed RPC with none aborted is one.
-  // Through the follow-up turn; an aborted compaction counts with or without an error.
   const aborts = abortedCompactions(session.records.slice(commandSince));
   const cancels = Math.max(aborts, response.success === true ? 0 : 1);
   const journal = await journalSince(session, journalStart, {
@@ -1522,8 +1346,6 @@ async function manualCase(
   record(cell, name, pass && identity.pass && errors.count === 0 ? "pass" : "fail", detail);
 }
 
-/** `<provider>/<id>` split for RPC `set_model`. */
-/** RPC `set_model` arguments. */
 interface ModelSelection {
   readonly provider: string;
   readonly modelId: string;
@@ -1534,11 +1356,6 @@ function modelParts(model: string): ModelSelection {
   return { provider: model.slice(0, separator), modelId: model.slice(separator + 1) };
 }
 
-/**
- * Captures survive a model switch of the same session (D8): RPC `set_model`
- * to a second model of the provider and straight back (no prompt in between),
- * then `compact`, which the native lane must answer with no `no-capture` record.
- */
 async function capturesClearedCase(session: Session, cell: Cell, identity: Provenance) {
   const name = `${cell.key}:captures-cleared-before-compact`;
   const target = opts().switchModel;
@@ -1570,7 +1387,6 @@ async function capturesClearedCase(session: Session, cell: Cell, identity: Prove
   });
 }
 
-/** `details.background.providerScope` of a background Codex checkpoint (choco-pi-codex types.ts). */
 const BackgroundScopeSchema = obj(
   {
     background: obj(
@@ -1583,7 +1399,6 @@ const BackgroundScopeSchema = obj(
   { open: true },
 );
 
-/** The auto cell runs the background model-switch case: Codex, background on. */
 function backgroundSwitchApplies(cell: Cell): boolean {
   return (
     cell.point === "auto" &&
@@ -1592,7 +1407,6 @@ function backgroundSwitchApplies(cell: Cell): boolean {
   );
 }
 
-/** The first generating Codex frame for `modelId` sent after frame `afterSeq`. */
 function firstFrameFor(
   status: ProbeStatus,
   modelId: string,
@@ -1603,28 +1417,6 @@ function firstFrameFor(
   );
 }
 
-/**
- * Codex model-only mismatch (plan Q5, D12): one turn on gpt-6-sol over the
- * subject's Codex checkpoint must be replayed through the foreground path
- * (same account) and accepted by the server, then one turn back on the
- * subject. A local refusal or a provider rejection fails the case.
- *
- * - `foreground` (manual cells): the latest checkpoint is the foreground
- *   lane's; the frame's replay item is recorded, not required.
- * - `background` (Codex auto cell, background on): the latest checkpoint must
- *   be a background one carrying `details.background.providerScope` for the
- *   subject, so `refreshIntegration` (choco-pi-codex background-compaction.ts)
- *   takes `useForegroundReplay`: a `replay`/`fallback` record from
- *   `codex-native-v2` to `codex-foreground`, reason `incompatible`, detail
- *   `model`, naming the checkpoint. The first gpt-6-sol frame must carry every
- *   encrypted item of that checkpoint, and it must still be the latest one
- *   after the switched turn (`modelSwitchVerdict`).
- *
- * The checkpoint's id and encrypted-item digests are frozen before
- * `set_model`; nothing is compared against a later checkpoint.
- *
- * A failed precondition records the failure without prompting.
- */
 async function modelSwitchReplayCase(
   session: Session,
   cell: Cell,
@@ -1663,7 +1455,6 @@ async function modelSwitchReplayCase(
     record(cell, name, "fail", detail);
     return;
   }
-  // Frozen before set_model: the frame and the journal are judged against A only.
   const frozen: FrozenCheckpoint = {
     entryId: latest.id,
     digests: checkpointDigests(latest),
@@ -1675,7 +1466,6 @@ async function modelSwitchReplayCase(
   await prompt(session, "SWITCHED-TURN: reply with exactly ACK-SWITCHED");
   const awayErrors = errorsSince(session, since);
   const shown = noticesSince(session, awaySince);
-  // Read before the next Luna turn replaces the latest frames or adopts another checkpoint.
   const frame = firstFrameFor(await probeStatus(session), target.modelId, framesBefore);
   const latestAfterSwitch = compactions((await allEntries(session)).branch).at(-1)?.id ?? null;
   const backSince = session.records.length;
@@ -1718,24 +1508,8 @@ async function modelSwitchReplayCase(
   record(cell, name, verdict.verdict, detail);
 }
 
-/** What the first compact after a resume must do, per lane. */
 type ResumeExpectation = "native" | "guard-cancel" | "local-fallback";
 
-/**
- * A fresh process `switch_session`s to the same session file and compacts
- * with no turn, then runs one turn and compacts again (native).
- *
- * - xAI (captures needed, opaque checkpoint): the guard cancels with
- *   OPAQUE_GUARD_NOTICE and journals `cancel`/`opaque-checkpoint`.
- * - Anthropic (captures needed, the signed block is replayable text): the
- *   local summarizer answers with a fallback notice and a `fallback` record.
- * - Codex (no capture needed: the foreground serializes the resumed branch,
- *   choco-pi-codex adapter/compaction/compaction.ts
- *   `serializeActiveSessionToResponsesInput`): native at once. (The plan
- *   expected a guard cancel here; the probe records what the server does.)
- *
- * `holder.current` is replaced by the resumed session as soon as it exists.
- */
 async function resumeThenCompactCase(
   holder: { current: Session },
   cell: Cell,
@@ -1770,7 +1544,6 @@ async function resumeThenCompactCase(
     : opaque
       ? "guard-cancel"
       : "local-fallback";
-  // Stage 1: compact with no turn in this process.
   const before = compactions(branch).length;
   const since = resumed.records.length;
   const first = await resumed.command("compact");
@@ -1803,7 +1576,6 @@ async function resumeThenCompactCase(
     requirements = { events: ["fallback"] };
   }
   const journal = await journalSince(resumed, journalStart, requirements);
-  // Stage 2: one turn (a fresh capture), then the native lane answers.
   const turnSince = resumed.records.length;
   await prompt(resumed, "RESUME-TURN: reply with exactly ACK-RESUME");
   const beforeSecond = await branchCompactionCount(resumed);
@@ -1844,12 +1616,6 @@ async function resumeThenCompactCase(
   record(cell, name, pass ? "pass" : "fail", detail);
 }
 
-/**
- * Cell-wide journal: fewer than MAX_LANE_RECORDS records, all valid, none
- * credential-looking, and no notice any of the cell's processes showed looks
- * like a credential (the probe's own status output excluded). `sessions[0]`
- * holds the journal (the latest process of the cell).
- */
 async function journalCellCase(sessions: readonly Session[], cell: Cell): Promise<void> {
   const [current] = sessions;
   assert.ok(current !== undefined, "journal case needs a session");
@@ -1870,7 +1636,6 @@ async function journalCellCase(sessions: readonly Session[], cell: Cell): Promis
   });
 }
 
-/** Optional manual cases of a server-side cell, in run order. */
 function extraManualCases(cell: Cell): string[] {
   const lane = laneFor();
   if (lane === undefined) return [];
@@ -1910,7 +1675,6 @@ async function runManualCell(cell: Cell): Promise<void> {
   }
 }
 
-/** Effective window and per-turn growth from a throwaway process with the cell's presets. */
 async function calibrate(cell: Cell): Promise<Calibration> {
   const session = await launch(`${cell.key}:calibrate`, {
     background: false,
@@ -1963,7 +1727,6 @@ async function runAutoCell(cell: Cell): Promise<void> {
     for (let index = 0; index < 12 && !fired; index += 1) {
       const turnSince = session.records.length;
       await prompt(session, `AUTO-SEED-${index}: ${FILLER}\nReply with exactly: ACK-${index}`);
-      // The cap compacts from agent_settled; let that start before reading idle state.
       await delay(1000);
       await waitIdle(session);
       const status = await probeStatus(session);
@@ -1977,18 +1740,13 @@ async function runAutoCell(cell: Cell): Promise<void> {
       if (errorsSince(session, since).count > 0) break;
     }
     const entry = fired ? await waitForNewCompaction(session, before, 60_000) : undefined;
-    // Read the coordinator before the follow-up turn can start another candidate.
     const adoptedStatus = entry === undefined ? undefined : await probeStatus(session);
     await prompt(session, "AFTER-AUTO: reply with exactly ACK-AUTO");
-    // Observed through the completed follow-up: a compaction it aborts needs its record too.
     const events = compactionEvents(session, since);
-    // The probe never sends RPC `compact` here; a "manual" reason is ctx.compact() from the cap.
     const compactRpcCalls = session.records
       .slice(since)
       .filter((value) => value.type === "response" && value.command === "compact").length;
     const point = start.compactAt;
-    // The cap's point fires through ctx.compact() ("manual"); without a cap
-    // (window < 64k) Pi's own threshold (window - reserve) is the auto point.
     const expectedReason = point !== null ? "manual" : "threshold";
     const capPoint = point ?? plan.hostThreshold;
     const window = start.window ?? plan.window;
@@ -2019,12 +1777,6 @@ async function runAutoCell(cell: Cell): Promise<void> {
     ]);
     let pass = fired && entry !== undefined && compactRpcCalls === 0;
     if (cell.background) {
-      // Background adoption precedes the cap by design: the preparer requests a
-      // candidate at preparePoint and adopts it at the next boundary once ready,
-      // so the cap point need not be crossed. The coordinator status carries no
-      // route field; the automatic (threshold) route is attributed by a new
-      // candidate with no customInstructions, no RPC `compact` in the case, the
-      // entry naming that candidate, and pre-adoption usage at or past preparePoint.
       const row = adoptedStatus?.rows.find(
         (item) => candidate !== null && item.candidateId === candidate,
       );
@@ -2075,8 +1827,6 @@ async function runAutoCell(cell: Cell): Promise<void> {
       for (const [key, value] of proof.detail) detail.set(key, value);
       pass &&= proof.pass;
     }
-    // A record for every observed fallback (another strategy than the
-    // lane's) and every aborted compaction, as in the manual cases.
     const observedFallback =
       lane !== undefined && entry !== undefined && strategyOf(entry) !== lane.strategy;
     const journal = autoJournalVerdict(
@@ -2114,7 +1864,6 @@ function caseNames(cell: Cell): string[] {
   ];
 }
 
-/** Why a server-side cell cannot prove its lane, or undefined when it can. */
 function unprovableReason(cell: Cell): string | undefined {
   if (opts().logic !== "server-side") return undefined;
   const lane = laneFor();
@@ -2125,11 +1874,6 @@ function unprovableReason(cell: Cell): string | undefined {
   return undefined;
 }
 
-// ---------------------------------------------------------------------------
-// Run
-// ---------------------------------------------------------------------------
-
-/** Parses the CLI, then dry-runs or runs every cell; exits on `--help`, a bad CLI or a dry run. */
 async function main(): Promise<void> {
   let parsed: ReturnType<typeof parseCli>;
   try {
@@ -2156,7 +1900,6 @@ async function main(): Promise<void> {
   const scratch = await mkdtemp(join(tmpdir(), "choco-pi-rpc-compaction-"));
   const evidence = await open(capture, "wx", 0o600);
   liveState = { launcher, capture, scratch, evidence };
-  /** Why the run stopped: a seed or runaway abort, or the first cell with a failed case. */
   let stopped: string | undefined;
   try {
     log({
@@ -2165,7 +1908,6 @@ async function main(): Promise<void> {
     });
     for (const cell of cells) {
       if (stopped !== undefined) {
-        // No further paid cell runs after a failure.
         for (const name of caseNames(cell))
           record(cell, name, "not-run", { reason: `run stopped: ${stopped}` });
         continue;
@@ -2233,6 +1975,5 @@ async function main(): Promise<void> {
   process.exitCode = totals.pass === cells.length ? 0 : 1;
 }
 
-/** The resolved entry script, or undefined (a REPL or `-e`). */
 const entryScript = process.argv[1] === undefined ? undefined : await realpath(process.argv[1]);
 if (entryScript === fileURLToPath(import.meta.url)) await main();

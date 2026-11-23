@@ -37,10 +37,6 @@ export function registerCodexTools(
   pi: ExtensionAPI,
   runtime: CodexExtensionRuntime,
   options: {
-    /**
-     * Register apply_patch, exec_command, write_stdin and view_image. False when
-     * the standalone choco-pi-code-mode extension already registered them.
-     */
     coreTools?: boolean;
   } = {},
 ): CodexToolRegistration {

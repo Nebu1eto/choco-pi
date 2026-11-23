@@ -97,7 +97,6 @@ test("every transition of a background run is journaled with its fields", async 
   runs[1].resolve(done(session, "second done"));
   await flush();
 
-  // Spawn and start share one tick for an immediate start, so `queued` coalesces.
   assert.deepEqual(statusesOf(entries, first), ["running", "completed"]);
   assert.deepEqual(statusesOf(entries, second), ["queued", "running", "completed"]);
   for (const entry of entries) {
@@ -201,7 +200,6 @@ test("an explicit stop journals stopped with stoppedByUser; shutdown stops are n
   const stopping = lastOf(entries, stopped)?.agent;
   assert.equal(stopping?.status, "stopped");
   assert.equal(stopping?.stoppedByUser, true);
-  // The run settles later; its terminal text is journaled without a status change.
   runs[0].resolve({ responseText: "partial", session, aborted: true, steered: false });
   await flush();
   const settled = lastOf(entries, stopped)?.agent;

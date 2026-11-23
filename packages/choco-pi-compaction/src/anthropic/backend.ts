@@ -1,12 +1,3 @@
-/**
- * Anthropic native on-demand compaction backend
- * (`anthropic-compaction-on-demand-v1`).
- *
- * Preparation summarizes the frozen prefix of an actually transmitted request
- * (a transport capture) on an isolated lane. Cut legality is decided from the
- * captured wire roles only: the captured
- * messages are never stripped, edited or reordered to manufacture a legal cut.
- */
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 
 import { type BearerAuth, bearerCredentialOf } from "../auth.ts";
@@ -48,10 +39,6 @@ import {
 
 export const ANTHROPIC_BACKEND_ID = "anthropic-native";
 
-// ---------------------------------------------------------------------------
-// Cut legality (wire roles only, never edits the wire)
-// ---------------------------------------------------------------------------
-
 type WireCutVerdict =
   | "legal"
   | "first-kept-system"
@@ -60,14 +47,6 @@ type WireCutVerdict =
   | "open-tool-call"
   | "out-of-range";
 
-/**
- * Legality of keeping `wire[cut..]` after summarizing `wire[0..cut)`. The
- * replayed block is an assistant message, so the first kept message must be a
- * `user` message that differs in role from the last summarized one; it is
- * never a mid-conversation `system` message; no tool call is open at the cut.
- * Summarizing the whole captured request (trailing system messages included)
- * is legal.
- */
 export function judgeWireCut(wire: readonly WireMessage[], cut: number): WireCutVerdict {
   if (cut < 1 || cut > wire.length) return "out-of-range";
   const prefix = wire.slice(0, cut);
@@ -85,9 +64,7 @@ export function judgeWireCut(wire: readonly WireMessage[], cut: number): WireCut
 type CutResolution =
   | {
       readonly ok: true;
-      /** Wire messages summarized: `capture.body.messages.slice(0, prefixLength)`. */
       readonly prefixLength: number;
-      /** Next projected entry after the cut when the capture already had one. */
       readonly projectedSuccessor: string | undefined;
       readonly unmappedPrefixKeys: number;
       readonly keptThinking: boolean;
@@ -105,11 +82,6 @@ function refused(
   return { ok: false, reason, code };
 }
 
-/**
- * Map an entry-level cut (`cutEntryId` = last summarized entry) onto the
- * captured wire and judge it. Ambiguous alignment across the cut, gaps in the
- * summarized prefix and kept content the capture cannot place all refuse.
- */
 export function resolveEntryCut(capture: WireCapture, cutEntryId: string): CutResolution {
   const mapping = capture.mapping;
   if (mapping === undefined) return refused("incompatible", "unmapped-capture");
@@ -161,23 +133,10 @@ export function resolveEntryCut(capture: WireCapture, cutEntryId: string): CutRe
   };
 }
 
-/**
- * Latest legal entry cut at or before `preferredCutEntryId` in the capture's
- * projection, else "defer". For coordinators selecting a native cut.
- */
 export function chooseLegalCutEntry(
   capture: WireCapture,
   preferredCutEntryId: string,
   options: {
-    /**
-     * Whether the branch being cut holds an entry after the capture's last
-     * projected entry, so a cut at the capture's tail still retains something
-     * the capture cannot see. A capture is taken when its request is sent, so
-     * once that turn ends the branch extends past it by at least the assistant
-     * reply. Each caller computes this from the branch it cuts; without such an
-     * entry a tail cut has nothing to retain and `prepare` refuses it with
-     * `no-retained-entry`.
-     */
     readonly branchExtendsCapture?: boolean;
   } = {},
 ): string | "defer" {
@@ -185,11 +144,6 @@ export function chooseLegalCutEntry(
   return first.done === true ? "defer" : first.value;
 }
 
-/**
- * Every legal entry cut at or before `preferredCutEntryId` in the capture's
- * projection, latest first, under {@link chooseLegalCutEntry}'s rules. A caller
- * that cannot use one cut (the branch refuses it) walks on to the next.
- */
 export function* legalCutEntries(
   capture: WireCapture,
   preferredCutEntryId: string,
@@ -207,7 +161,6 @@ export function* legalCutEntries(
   }
 }
 
-/** Wire-capture match: exact provider and model, and equal normalized base URLs; a scope without baseUrl never matches. */
 export function captureMatchesWireScope(capture: WireCapture, scope: ProviderScope): boolean {
   return (
     capture.provider === scope.provider &&
@@ -217,7 +170,6 @@ export function captureMatchesWireScope(capture: WireCapture, scope: ProviderSco
   );
 }
 
-/** Newest successfully answered, mapped capture of this scope whose projection holds the cut. */
 export function selectCapture(
   captures: readonly WireCapture[],
   cutEntryId: string,
@@ -237,12 +189,6 @@ export function selectCapture(
   return undefined;
 }
 
-/**
- * Whether `sessionId` holds a usable capture for `scope`: an HTTP 200 answer
- * to a mapped request of the same provider, model and endpoint. The capture
- * ring holds only such captures; the scope still has to match (a capture of
- * another model cannot be cut for this one). No cut is checked.
- */
 export function hasUsableCapture(sessionId: string, scope: ProviderScope): boolean {
   return capturesFor(sessionId).some(
     (capture) =>
@@ -252,19 +198,10 @@ export function hasUsableCapture(sessionId: string, scope: ProviderScope): boole
   );
 }
 
-/**
- * The Anthropic auth mode of a resolved credential, header-aware (D10): the
- * API key, else an `Authorization: Bearer` header's token.
- */
 export function authModeFromAuth(auth: BearerAuth | undefined): "oauth" | "api-key" | undefined {
   return authModeOf(bearerCredentialOf(auth));
 }
 
-// ---------------------------------------------------------------------------
-// Backend
-// ---------------------------------------------------------------------------
-
-/** Structurally compatible with `ModelRegistry.getApiKeyAndHeaders` results. */
 type LaneAuthResolution =
   | {
       readonly ok: true;
@@ -277,19 +214,12 @@ type LaneAuthResolution =
 
 export interface AnthropicBackendDeps {
   readonly gate: AnthropicCapabilityGate;
-  /** e.g. `(scope) => ctx.modelRegistry.find(scope.provider, scope.model)`. */
   readonly resolveModel: (scope: ProviderScope) => Model<Api> | undefined;
-  /** e.g. `(model) => ctx.modelRegistry.getApiKeyAndHeaders(model)`; resolved per request, kept in memory only. */
   readonly resolveAuth: (model: Model<Api>) => Promise<LaneAuthResolution>;
-  /** Capture lookup when `snapshot.backendCapture` is absent. */
   readonly findCapture: (snapshot: FrozenSnapshot) => WireCapture | undefined;
   readonly fetch?: typeof globalThis.fetch;
   readonly stream?: LaneStream;
   readonly now?: () => number;
-  /**
-   * Whether a replay rejection turned Anthropic server-side compaction off for
-   * the owner's session (D7); the lane then reports itself unsupported.
-   */
   readonly disabled?: () => boolean;
 }
 
@@ -308,7 +238,6 @@ function isAnthropicMessagesModel(model: Model<Api>): model is Model<"anthropic-
   return model.api === "anthropic-messages";
 }
 
-/** Approximate request tokens from its serialized size (4 bytes per token). */
 function estimateTokens(text: string): number {
   return Math.ceil(Buffer.byteLength(text) / 4);
 }
@@ -358,9 +287,6 @@ class AnthropicNativeBackend implements Backend<AnthropicDetails> {
     },
   ): Promise<PreparedCheckpoint<AnthropicDetails> | PrepareFailure> {
     const { candidateId } = options;
-    // The frozen prefix ends at the cut; the snapshot's first retained branch
-    // entry (when carried) follows it, so a cut at the capture's tail still
-    // names the entry it retains even though the capture never saw it.
     const firstKept = readFirstKeptEntryId(snapshot);
     const entryIds = snapshot.entries.map((entry) => entry.id);
     if (firstKept !== undefined) entryIds.push(firstKept);
@@ -371,7 +297,6 @@ class AnthropicNativeBackend implements Backend<AnthropicDetails> {
       entryIds,
       signal: options.signal,
       budget: options.budget,
-      // `/compact <focus>`: the lane applies it as `compaction.instructions` (D9).
       instructions: options.customInstructions,
     });
     if (!outcome.ok) return outcome.failure;
@@ -393,22 +318,13 @@ class AnthropicNativeBackend implements Backend<AnthropicDetails> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// One native compaction request (shared by the background backend and the
-// foreground session_before_compact path)
-// ---------------------------------------------------------------------------
-
 export interface NativeCompactionRequest {
   readonly scope: ProviderScope;
-  /** Resolved after the capability check; undefined when no usable capture exists. */
   readonly capture: () => WireCapture | undefined;
-  /** Last summarized entry. */
   readonly cutEntryId: string;
-  /** Branch entry IDs in order; the entry after the cut is the first kept one. */
   readonly entryIds: readonly string[];
   readonly signal: AbortSignal;
   readonly budget: PreparationBudget;
-  /** Custom summarization prompt (`compaction.instructions`). */
   readonly instructions?: string;
 }
 
@@ -421,7 +337,6 @@ export type NativeCompactionOutcome =
   | {
       readonly ok: false;
       readonly failure: PrepareFailure;
-      /** The lane's typed failure when a request was sent. */
       readonly lane?: LaneFailure;
     };
 
@@ -436,7 +351,6 @@ interface ResolvedNativeRequest {
   readonly firstKeptEntryId: string;
 }
 
-/** Every local refusal, decided before credentials are read or a request is sent. */
 function resolveNativeRequest(
   deps: AnthropicBackendDeps,
   request: NativeCompactionRequest,
@@ -463,7 +377,6 @@ function resolveNativeRequest(
   const cutPosition = entryIds.indexOf(cutEntryId);
   const firstKeptEntryId =
     (cutPosition >= 0 ? entryIds[cutPosition + 1] : undefined) ?? cut.projectedSuccessor;
-  // No retained entry exists yet: defer before any request (never a null pointer).
   if (firstKeptEntryId === undefined || firstKeptEntryId === cutEntryId) {
     return prepareFailure("no-legal-cut", true, undefined, "no-retained-entry");
   }
@@ -477,11 +390,6 @@ function resolveNativeRequest(
   return { scope: { ...scope, authMode }, capture, cut, firstKeptEntryId };
 }
 
-/**
- * Summarize the captured wire prefix before `cutEntryId` on the isolated lane.
- * Records failures and success on the capability gate. Never throws for
- * provider or transport failures.
- */
 export async function runNativeCompaction(
   deps: AnthropicBackendDeps,
   request: NativeCompactionRequest,
@@ -584,7 +492,6 @@ export function createAnthropicNativeBackend(
   return new AnthropicNativeBackend(deps);
 }
 
-/** Registry factory; `depsFor` closes over the owner's host capabilities. */
 export function anthropicBackendFactory(
   depsFor: (context: BackendFactoryContext) => AnthropicBackendDeps,
 ): BackendFactory {

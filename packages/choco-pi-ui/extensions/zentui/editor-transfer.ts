@@ -20,10 +20,6 @@ export type EditorTransferResult =
   | { ok: true }
   | { ok: false; reason: EditorTransferFailureReason };
 
-/**
- * Prepare the active editor's public expanded text before Pi replaces its factory.
- * This intentionally transfers prompt contents only; editor-private state is never inspected.
- */
 export function replaceEditorComponentWithExpandedText<Factory>(
   ui: EditorTransferUi<Factory>,
   factory: Factory | undefined,

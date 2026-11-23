@@ -1,52 +1,17 @@
-/**
- * Housekeeping for saved review records: a review record whose file was last
- * modified more than seven days ago is removed, whether or not it still holds
- * unsent comments. Age is the file's mtime only; the record's own updatedAt
- * field is ignored because the owner asked for last-modification age, and a
- * record whose mtime lies in the future is treated as new.
- *
- * Only exact review records are removed: regular files directly under
- * `<base>/<repo-key>/` whose name and JSON content match what the store
- * writes. Everything else, including symlinks at any level, nested
- * directories, temporary files and unparsable files, is left alone and
- * counted. The base directory itself is never removed, and a symlinked base
- * stops the pass before anything is listed.
- *
- * A record this session opens, saves or lists is never removed by this
- * session's pass: protection is checked again after every step up to the
- * unlink of the moved file, and a protected record is put back. While the
- * pass holds a record under its private name, this session's store reads wait
- * for it to be settled (`ReviewCleanupSession.watch`). Between two Pi
- * processes nothing is shared: another session's pass does not know this
- * session's protection and may remove a record untouched for seven days that
- * this session has open, and a read here during the moment another session's
- * pass holds a record reports it absent. Both need a record nobody has saved
- * for seven days, which the seven-day rule already gives up.
- */
 import { randomUUID } from "node:crypto";
 import { link, lstat, opendir, readFile, rename, rmdir, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { isString, type RuntimeValue } from "../../lib/runtime-values.ts";
 
-/** A record older than this, measured from its file mtime, is removed. */
 export const REVIEW_RECORD_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-/**
- * Directory entries examined (lstat'ed) per pass. Entries beyond the cap are
- * left for a later session's pass; each pass visits entries in random order,
- * so later passes reach the remainder.
- */
 export const REVIEW_CLEANUP_MAX_ENTRIES = 1000;
 
-/** Names read from any one directory listing; bounds memory for huge directories. */
 export const REVIEW_CLEANUP_MAX_LISTED = 10_000;
 
-/** A record-shaped file larger than this is not read and is left alone. */
 export const REVIEW_RECORD_MAX_BYTES = 16 * 1024 * 1024;
 
-/** `repoKey()` output: a readable label, a dash, and a SHA-256 hex digest. */
 const REPOSITORY_DIRECTORY = /^[A-Za-z0-9._-]+-[0-9a-f]{64}$/;
-/** `targetKey()` output plus `.json`; temporary write files never match. */
 const RECORD_FILE = /^(?:session|session-turn|branch|pr)-[0-9a-f]{64}\.json$/;
 
 export type ReviewCleanupEntryKind = "file" | "directory" | "symlink" | "other";
@@ -59,19 +24,13 @@ export type ReviewCleanupEntry = {
   mtimeMs: number;
 };
 
-/** Asynchronous filesystem seam; tests substitute failing or racing operations. */
 export type ReviewCleanupFileSystem = {
-  /** Describe the entry itself without following a symlink. */
   lstat(path: string): Promise<ReviewCleanupEntry>;
-  /** Return up to `limit` entry names of a directory. */
   list(path: string, limit: number): Promise<string[]>;
   readFile(path: string): Promise<string>;
-  /** Atomic move; exactly one of several concurrent moves of a path succeeds. */
   rename(from: string, to: string): Promise<void>;
-  /** Create `to` as another name of `from`; fails with EEXIST rather than replacing. */
   link(from: string, to: string): Promise<void>;
   unlink(path: string): Promise<void>;
-  /** Remove an empty directory; fails when it is not empty. */
   rmdir(path: string): Promise<void>;
 };
 
@@ -90,7 +49,6 @@ export const nodeReviewCleanupFileSystem: ReviewCleanupFileSystem = {
   async list(path, limit) {
     const names: string[] = [];
     if (limit <= 0) return names;
-    // Leaving the loop early closes the directory handle.
     for await (const entry of await opendir(path)) {
       names.push(entry.name);
       if (names.length >= limit) break;
@@ -104,30 +62,19 @@ export const nodeReviewCleanupFileSystem: ReviewCleanupFileSystem = {
   rmdir: (path) => rmdir(path),
 };
 
-/** Counts from one pass; nothing is shown to the user. */
 export type ReviewCleanupResult = {
   removed: number;
   removedDirectories: number;
-  /** Records not older than the threshold, including a future mtime. */
   young: number;
-  /** Old records this session opened, saved, or listed. */
   protectedRecords: number;
-  /** Old records modified or replaced after the pass examined them. */
   changed: number;
-  /** Entries that disappeared during the pass. */
   vanished: number;
-  /** Entries that are not review records by name or type, including symlinks. */
   foreign: number;
-  /** Record-named files that are oversized or whose content is not a record of this store. */
   invalid: number;
-  /** Per-entry filesystem or callback failures, all contained. */
   errors: number;
   examined: number;
-  /** The entry cap stopped the pass; the remainder waits for a later pass. */
   capped: boolean;
-  /** The session ended (or was replaced) during the pass. */
   interrupted: boolean;
-  /** Why nothing under the base was examined. */
   skippedBase?: "missing" | "symlink" | "not-directory" | "error";
 };
 
@@ -135,19 +82,11 @@ export type ReviewRecordCheck = (text: string, repository: string, fileName: str
 
 export type ReviewCleanupOptions = {
   baseDirectory: string;
-  /** True only for content the store itself would have written under that name. */
   isRecord: ReviewRecordCheck;
-  /** Pass clock in epoch milliseconds. */
   now?: number | undefined;
   maxEntries?: number | undefined;
   isProtected?: ((repository: string, fileName: string) => boolean) | undefined;
-  /**
-   * Called as a record is moved to its private quarantine name; the returned
-   * function is called once the record is settled again (deleted or put back),
-   * whatever happens. Lets the session's own reads wait for a record they miss.
-   */
   onQuarantine?: ((repository: string, fileName: string) => () => void) | undefined;
-  /** Owner/generation check; the pass stops as soon as it returns false. */
   isCurrent?: (() => boolean) | undefined;
   fileSystem?: ReviewCleanupFileSystem | undefined;
   random?: (() => number) | undefined;
@@ -190,11 +129,6 @@ function shuffle(names: string[], random: () => number): string[] {
 
 class Interrupted extends Error {}
 
-/**
- * Run one bounded clean-up pass. Never throws: every failure is counted and
- * the remaining entries continue. Removal re-checks the base, repository
- * directory and file identity and mtime immediately before unlinking.
- */
 export async function cleanupReviewRecords(
   options: ReviewCleanupOptions,
 ): Promise<ReviewCleanupResult> {
@@ -278,8 +212,6 @@ export async function cleanupReviewRecords(
       result.invalid += 1;
       return false;
     }
-    // Re-check immediately before removal: the layout must be unchanged and
-    // no other session may have rewritten (renamed over) or touched the file.
     if (!(await guarded(base, baseEntry)) || !(await guarded(directory, repositoryEntry))) {
       result.changed += 1;
       return false;
@@ -302,17 +234,11 @@ export async function cleanupReviewRecords(
       return false;
     }
     live();
-    // Concurrent unlinks of one path can both report success (APFS), so
-    // first take the file under a private name: rename is exclusive, and the
-    // moved inode is then verified before it is deleted. This step finishes
-    // even if the session ends meanwhile, so nothing is left half-moved.
     const quarantine = join(directory, `.${fileName}.${randomUUID()}.cleanup`);
     let release: () => void = () => {};
     try {
       release = options.onQuarantine?.(repository, fileName) ?? release;
-    } catch {
-      // Read coordination is a courtesy to this session's reads; the pass goes on.
-    }
+    } catch {}
     try {
       try {
         await fileSystem.rename(path, quarantine);
@@ -328,19 +254,10 @@ export async function cleanupReviewRecords(
     } finally {
       try {
         release();
-      } catch {
-        // As above.
-      }
+      } catch {}
     }
   }
 
-  /**
-   * Delete the moved file if it is the examined one and still unprotected;
-   * otherwise put it back. Protection is checked again after every await up
-   * to the unlink: this session may open, save or list the record while the
-   * rename or the check of the moved file is pending. Protection that arrives
-   * once the unlink has been issued is too late; the record is gone.
-   */
   async function removeQuarantined(
     repository: string,
     fileName: string,
@@ -374,18 +291,12 @@ export async function cleanupReviewRecords(
         result.errors += 1;
       }
     } else {
-      // Another session saved this record after the re-check.
       result.changed += 1;
     }
     await restore(path, quarantine);
     return false;
   }
 
-  /**
-   * Give the moved file its record name back without replacing a newer save
-   * (link never overwrites), then drop the private name. If the link fails for
-   * any other reason the private name is kept so no data is lost.
-   */
   async function restore(path: string, quarantine: string): Promise<void> {
     try {
       await fileSystem.link(quarantine, path);
@@ -417,7 +328,6 @@ export async function cleanupReviewRecords(
     } catch (error) {
       if (error instanceof Interrupted) throw error;
       const code = errorCode(error);
-      // A concurrent save or another session's pass got there first.
       if (code !== "ENOENT" && code !== "ENOTEMPTY" && code !== "EEXIST") result.errors += 1;
     }
   }
@@ -505,37 +415,19 @@ export async function cleanupReviewRecords(
   return result;
 }
 
-/** At most one pass per session, stoppable when the session shuts down. */
-/**
- * What this session's pass moved aside in one repository while a read was
- * running. A read that misses a record waits for `settled(fileName)` and reads
- * again: the record is then either back under its name or deleted.
- */
 export type ReviewQuarantineWatch = {
-  /** Record file names moved aside since the watch began (or held when it began). */
   names(): readonly string[];
-  /** Resolves once `fileName` is no longer held; at once when it never was. */
   settled(fileName: string): Promise<void>;
   close(): void;
 };
 
 export type ReviewCleanupSession = {
-  /**
-   * Schedule this session's pass on first call; later calls only add their
-   * protection predicate. Never throws and never delays the caller.
-   */
   start(
     baseDirectory: string,
     isProtected: (repository: string, fileName: string) => boolean,
   ): void;
-  /** End the session: cancel a scheduled pass and stop a running one at its next await. */
   stop(): void;
-  /** The pass result, or undefined when no pass ran or it was cancelled before starting. */
   settled(): Promise<ReviewCleanupResult | undefined>;
-  /**
-   * Watch the records this session's pass moves aside in `repository`. Only
-   * this process's pass is seen; another Pi process's pass is not.
-   */
   watch?(repository: string): ReviewQuarantineWatch;
 };
 
@@ -551,12 +443,6 @@ export function createReviewCleanupSession(
   options: ReviewCleanupSessionOptions,
 ): ReviewCleanupSession {
   const protections = new Set<(repository: string, fileName: string) => boolean>();
-  /**
-   * Records held in quarantine now, by "repository/fileName": the promise a
-   * read waits on and the function that settles it. Settled when the pass
-   * settles the record, and all at once by `stop()`, so no read outlives the
-   * session's pass even if a file-system step never finishes.
-   */
   const held = new Map<string, { settled: Promise<void>; release: () => void }>();
   const watchers = new Set<{ repository: string; seen: Map<string, Promise<void>> }>();
   let generation = 0;
@@ -568,7 +454,6 @@ export function createReviewCleanupSession(
 
   function isProtected(repository: string, fileName: string): boolean {
     for (const protection of protections) {
-      // A failing predicate protects: keeping a record is always safe.
       try {
         if (protection(repository, fileName)) return true;
       } catch {
@@ -579,7 +464,6 @@ export function createReviewCleanupSession(
   }
 
   function onQuarantine(repository: string, fileName: string): () => void {
-    // After stop() nothing is reported as held: reads proceed at once.
     if (stopped) return () => {};
     let release: () => void = () => {};
     const settled = new Promise<void>((resolveSettled) => {
@@ -606,8 +490,6 @@ export function createReviewCleanupSession(
       const isCurrent = () => owner === generation;
       pass = new Promise((resolvePass) => {
         finish = resolvePass;
-        // Deferred and unref'ed: the first screen is not delayed and a pending
-        // pass never keeps the process alive.
         timer = setTimeout(() => {
           timer = undefined;
           if (!isCurrent()) {
@@ -640,8 +522,6 @@ export function createReviewCleanupSession(
       started = true;
       stopped = true;
       generation += 1;
-      // Release every read waiting on a record the pass holds; the pass may still
-      // finish its step, but no read waits for it any longer.
       for (const entry of held.values()) entry.release();
       held.clear();
       for (const watcher of watchers) {

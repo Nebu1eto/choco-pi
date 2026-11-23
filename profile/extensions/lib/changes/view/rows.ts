@@ -1,12 +1,3 @@
-/**
- * One file row and the short texts around it, shared by the changes pane
- * (`/diff`) and the interactive review (`/review-assist`). The pane's layout
- * is the reference: `▾ M path  badges  +3 -1`, with the path shortened by
- * {@link fitPath} so the file name survives.
- *
- * Pure: every function takes its data and width as arguments. Untrusted names
- * are sanitised here, once, so callers pass raw paths.
- */
 import { sliceByColumn, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { FileBody, FileStatus, FileSummary } from "../git/model.ts";
 import type { DiffStyler } from "../render/diff-render.ts";
@@ -25,7 +16,6 @@ export type PaneColor =
   | "success"
   | "text";
 
-/** Pi's `Theme` satisfies this; tests pass `plainPaneStyler`. */
 export type PaneStyler = Omit<DiffStyler, "fg"> & {
   fg(color: PaneColor, text: string): string;
   bold(text: string): string;
@@ -52,7 +42,6 @@ export function statusLetter(status: FileStatus): string {
   return STATUS_LETTERS[status];
 }
 
-/** Shorten `text` to `width` columns by replacing its middle with an ellipsis. */
 export function middleTruncate(text: string, width: number): string {
   if (width <= 0) return "";
   const total = visibleWidth(text);
@@ -69,16 +58,11 @@ export function displayPath(file: FileSummary): string {
   return file.oldPath && file.oldPath !== file.path ? `${file.oldPath} → ${file.path}` : file.path;
 }
 
-/** The extension a name keeps when it is cut: `.ts` of `changes-view.ts`; empty without one. */
 function extensionOf(name: string): string {
   const dot = name.lastIndexOf(".");
   return dot > 0 ? name.slice(dot) : "";
 }
 
-/**
- * A file name cut to `width` columns in its middle, keeping its extension
- * whole when there is room for it and one character in front.
- */
 function cutName(name: string, width: number): string {
   const total = visibleWidth(name);
   if (total <= width) return name;
@@ -94,14 +78,6 @@ function cutName(name: string, width: number): string {
   return `${start}…${end}`;
 }
 
-/**
- * `path` shortened to `width` display columns so its file name survives:
- * the full path; else its first segment, `…` and as many of the trailing
- * directories as fit before the name (`.pi/…/view/changes-view.ts`); else
- * the first segment, `…` and the name (`.pi/…/changes-view.ts`); else
- * `…/name`; and as a last resort the name cut in its middle, keeping its
- * extension.
- */
 export function fitPath(path: string, width: number): string {
   if (width <= 0) return "";
   if (visibleWidth(path) <= width) return path;
@@ -110,7 +86,6 @@ export function fitPath(path: string, width: number): string {
   if (segments.length >= 3) {
     const first = segments[0] ?? "";
     const directories = segments.slice(1, -1);
-    // Every directory kept is the full path; it did not fit, so at least one goes.
     for (let kept = directories.length - 1; kept >= 0; kept -= 1) {
       const tail = [...directories.slice(directories.length - kept), name].join("/");
       const candidate = `${first}/…/${tail}`;
@@ -124,12 +99,6 @@ export function fitPath(path: string, width: number): string {
   return cutName(name, width);
 }
 
-/**
- * A renamed file's `old → new` in `width` columns: in full; else the old
- * path shortened to its name; else the old name and the new path shortened
- * by {@link fitPath}; else both cut, the old name to at most a third of the
- * room; below 12 columns the new path alone (the row's `R` says it moved).
- */
 export function fitRename(oldPath: string, path: string, width: number): string {
   if (width <= 0) return "";
   const full = `${oldPath} → ${path}`;
@@ -148,21 +117,18 @@ export function fitRename(oldPath: string, path: string, width: number): string 
   return `${oldPart}${arrow}${fitPath(path, width - visibleWidth(oldPart) - arrow.length)}`;
 }
 
-/** A file row's path text in `width` columns, each name made terminal-safe. */
 export function fittedFilePath(file: FileSummary, width: number): string {
   return file.oldPath && file.oldPath !== file.path
     ? fitRename(safe(file.oldPath), safe(file.path), width)
     : fitPath(safe(file.path), width);
 }
 
-/** {@link displayPath} with each name made terminal-safe (the arrow is ours). */
 export function terminalPath(file: FileSummary): string {
   return file.oldPath && file.oldPath !== file.path
     ? `${safe(file.oldPath)} → ${safe(file.path)}`
     : safe(file.path);
 }
 
-/** `+12 -3`, `bin`, or empty when git did not count lines. */
 export function countsText(file: FileSummary): string {
   if (file.binary) return "bin";
   if (file.additions === null && file.deletions === null) return "";
@@ -175,14 +141,8 @@ function styledCounts(file: FileSummary, styler: PaneStyler): string {
   return `${styler.fg("toolDiffAdded", `+${file.additions ?? 0}`)} ${styler.fg("toolDiffRemoved", `-${file.deletions ?? 0}`)}`;
 }
 
-/** A short marker after the path, such as a finding or note count. */
 export type RowBadge = { text: string; color: PaneColor };
 
-/**
- * One file row without the selection marker column:
- * `▸ M path/to/file.ts  ⚑2 ✎1  +3 -1`, with the path shortened by
- * {@link fitPath} so the badges and counts stay right-aligned in `width` columns.
- */
 export function fileRow(
   file: FileSummary,
   expanded: boolean,
@@ -223,7 +183,6 @@ export function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
-/** One explanatory line for a file body that has no hunks to show. */
 export function bodyNotice(body: FileBody): string | undefined {
   switch (body.kind) {
     case "text":

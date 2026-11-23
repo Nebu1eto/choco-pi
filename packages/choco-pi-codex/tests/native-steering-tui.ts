@@ -1,4 +1,3 @@
-/** Opt-in dedicated interactive Pi process. Run inside a disposable PTY/tmux pane. */
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
 import { createNativeHost } from "./native-host-support.ts";
 

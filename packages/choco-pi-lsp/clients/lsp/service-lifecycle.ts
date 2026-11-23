@@ -1,16 +1,9 @@
-/**
- * Shutdown and status reporting for {@link LSPService}.
- *
- * Extracted from `clients/lsp/index.ts`; behavior is unchanged.
- */
-
 import { logLatency } from "../latency-logger.ts";
 import type { LSPPullFailure, LSPShutdownOptions } from "./client.ts";
 import { LSP_SERVERS } from "./server.ts";
 import { checkDestroyed, clearTypeScriptIdleTimer } from "./service-clients.ts";
 import type { LSPServiceInternals } from "./service-internals.ts";
 
-/** Implements {@link LSPService.shutdown}. */
 export async function shutdown(
   core: LSPServiceInternals,
   options: LSPShutdownOptions = {},
@@ -22,9 +15,6 @@ export async function shutdown(
     clearTypeScriptIdleTimer(core, key);
   }
 
-  // Belt-and-braces: wait for any in-flight spawns so that Guard 1/2 in
-  // spawnClient can observe isDestroyed and clean up. Skip on the
-  // process-exiting path — the event loop is closing and we must not block.
   if (!options.processExiting && core.state.inFlight.size > 0) {
     const pending = Array.from(core.state.inFlight.values());
     core.state.inFlight.clear();
@@ -38,16 +28,7 @@ export async function shutdown(
     core.state.inFlight.clear();
   }
 
-  // Count alive clients BEFORE tearing them down — gives a meaningful
-  // snapshot of what was released by this reset (post-teardown the count
-  // would always be zero, which is useless for root-cause analysis).
   const aliveClients = core.service.getAliveClientCount();
-  // Start every client teardown before awaiting any of them. A non-fast
-  // process-tree kill can spend its grace period per client, so awaiting in
-  // map order makes the reset tail O(clientCount * grace) instead of the
-  // maximum individual teardown. allSettled preserves the per-client
-  // best-effort contract: one failure must not prevent other clients from
-  // finishing, and the caller still waits for every teardown to settle.
   await Promise.allSettled(
     Array.from(core.state.clients.values(), (client) =>
       Promise.resolve().then(() => client.shutdown(options)),
@@ -68,20 +49,12 @@ export async function shutdown(
   });
   core.state.clients.clear();
   core.state.broken.clear();
-  // #1459: every gated client is gone, so no outstanding-write record can
-  // describe a live one. The gate's identity check already neutralises a stale
-  // entry; clearing keeps the map honest rather than relying on that.
   core.outstandingAuxNotifyWrites.clear();
-  // #1714: same reasoning — a backlog count belongs to a client generation,
-  // and every client is gone. `session_start` reaches this through the service
-  // reset, so the pacing state re-arms with the session rather than living for
-  // the process.
   core.auxNotifyInflight.clear();
   core.workspaceProbeLogged.clear();
   core.warmStartLogged.clear();
 }
 
-/** Implements {@link LSPService.getStatus}. */
 export function getStatus(core: LSPServiceInternals): Array<{
   serverId: string;
   root: string;
@@ -102,7 +75,6 @@ export function getStatus(core: LSPServiceInternals): Array<{
   });
 }
 
-/** Implements {@link LSPService.getBrokenStatus}. */
 export function getBrokenStatus(core: LSPServiceInternals): Array<{
   serverId: string;
   root: string;
@@ -116,14 +88,6 @@ export function getBrokenStatus(core: LSPServiceInternals): Array<{
     return {
       serverId: separator >= 0 ? key.slice(0, separator) : key,
       root: separator >= 0 ? key.slice(separator + 1) : "",
-      // #1127/#1142: spawn/init failures, consecutive early post-init
-      // exits, and the windowed-rate stream all feed the same breaker
-      // (see `runtimeExitCounts`/`runtimeExitWindow` docs). Sum spawn/init
-      // failures with the LARGER of the two runtime-exit streams — a
-      // single <60s death feeds BOTH runtimeExitCounts and the window, so
-      // `max` avoids double-counting them, while still surfacing a
-      // windowed-only trip (whose runtimeExitCounts may be 0) instead of
-      // misreporting `failures: 0` behind a permanent-disable.
       failures:
         (core.failureCounts.get(key) ?? 0) +
         Math.max(
@@ -136,7 +100,6 @@ export function getBrokenStatus(core: LSPServiceInternals): Array<{
   });
 }
 
-/** Implements {@link LSPService.getAliveClientCount}. */
 export function getAliveClientCount(core: LSPServiceInternals): number {
   let count = 0;
   for (const client of core.state.clients.values()) {
@@ -145,7 +108,6 @@ export function getAliveClientCount(core: LSPServiceInternals): number {
   return count;
 }
 
-/** Implements {@link LSPService.getAliveServerIds}. */
 export function getAliveServerIds(core: LSPServiceInternals): string[] {
   const primary: string[] = [];
   const aux: string[] = [];

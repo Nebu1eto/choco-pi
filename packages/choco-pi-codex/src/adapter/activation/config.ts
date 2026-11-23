@@ -20,9 +20,6 @@ export type V2UserMessageRetention = 16 | 32 | 64;
 export const MIN_NOTEBOOK_HEAP_MIB = 256;
 export const MAX_NOTEBOOK_HEAP_MIB = 65_536;
 
-// Pi 1.4.0 removed gpt-5.5 and gpt-5.3-codex-spark from openai-codex: they always fail for
-// ChatGPT accounts. gpt-5.4-mini is retired from this list. A saved value naming any of
-// them normalizes to the default.
 export const WEB_SEARCH_MODELS: readonly WebSearchModel[] = [
   "gpt-6.1-terra",
   "gpt-6.1-sol",
@@ -182,9 +179,6 @@ export function normalizeCustomRustBinariesDir(value: BoundaryValue): string {
   return optionalString(value) ?? "";
 }
 
-// Retired upstream keys (`voice.*`, `ui.backgroundShell*`) are not read: the
-// normalizer drops them, and writes merge into the existing document, so a
-// legacy file keeps them untouched.
 export function normalizeCodexConversionConfig(value: BoundaryValue): CodexConversionConfig {
   if (!isObject(value)) return structuredClone(DEFAULT_CODEX_CONVERSION_CONFIG);
   const prompt = isObject(value["prompt"]) ? value["prompt"] : {};

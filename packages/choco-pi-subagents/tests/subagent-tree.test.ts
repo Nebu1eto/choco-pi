@@ -34,7 +34,6 @@ function record(id: string, options: Partial<AgentRecord> = {}): AgentRecord {
   return { ...base, ...options };
 }
 
-/** A model the live-session fixture runs on; nothing calls its provider. */
 const liveModel: Model<Api> = {
   id: "claude-x",
   name: "Claude X",
@@ -48,7 +47,6 @@ const liveModel: Model<Api> = {
   maxTokens: 32_000,
 };
 
-/** `session` is the live session of the top record, when a test reads its model. */
 function nestedFixture(session?: AgentSession): AgentRecord[] {
   return [
     record("top", {
@@ -194,8 +192,6 @@ test("children never inherit the root-only tree tools", () => {
   assert.deepEqual(gate.sessionTools, ["read"]);
 });
 
-// ---- registered production tools ----
-
 function resultText(result: Awaited<ReturnType<ToolDefinition["execute"]>>): string {
   const first = result.content[0];
   return first?.type === "text" ? first.text : "";
@@ -204,9 +200,7 @@ function resultText(result: Awaited<ReturnType<ToolDefinition["execute"]>>): str
 test("registered tree and status tools read records without consuming results", async (t) => {
   const fixture = await createSdkFixture(undefined, [subagentsExtension]);
   t.after(() => fixture.session.dispose());
-  // refreshOnCreate is off in the SDK fixture; populate availability offline.
   await fixture.ctx.modelRegistry.refresh({ allowNetwork: false });
-  // The child run fails deterministically at the runner seam, before any provider call.
   const runner: AgentManagerRunner = {
     runAgent: async () => {
       throw new Error("tree probe failure");

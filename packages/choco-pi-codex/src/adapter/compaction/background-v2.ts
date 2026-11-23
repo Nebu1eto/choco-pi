@@ -50,7 +50,6 @@ import {
 
 export const CODEX_BACKGROUND_BACKEND_ID = "codex-native-v2";
 
-/** Full canonical request, not the last WebSocket delta; captured before preparation. */
 interface CodexBackgroundCapture {
   readonly sessionId: string;
   readonly providerScope: ProviderScope;
@@ -73,7 +72,6 @@ export function isCodexBackgroundCapture<T>(value: T): value is T & CodexBackgro
   );
 }
 
-/** Why a capture at the cut was refused; surfaces as the failure's detail code. */
 export type CodexCaptureRefusal =
   | "no-base-url"
   | "unsupported-scope"
@@ -93,10 +91,6 @@ export type CodexCaptureResult =
   | { readonly ok: true; readonly capture: CodexBackgroundCapture }
   | { readonly ok: false; readonly refusal: CodexCaptureRefusal };
 
-/**
- * Synchronous capture at the cut. The cut must be a prefix of the canonical history (it may end
- * before the latest response); the captured input is the canonical items for that prefix.
- */
 export function captureCodexBackgroundRequest(args: {
   sessionId: string;
   providerScope: ProviderScope;
@@ -107,7 +101,6 @@ export function captureCodexBackgroundRequest(args: {
   return result.ok ? result.capture : undefined;
 }
 
-/** `captureCodexBackgroundRequest` with the refusal named. */
 export function resolveCodexBackgroundCapture(args: {
   sessionId: string;
   providerScope: ProviderScope;
@@ -147,12 +140,6 @@ export interface CodexBackgroundBackendOptions {
   ) => Promise<NativeCompactionRuntime | PrepareFailure>;
   readonly isCurrent: (ownerKey: string, generation: number, scope: ProviderScope) => boolean;
   readonly fetch?: typeof globalThis.fetch;
-  /**
-   * Token budget of the retained user messages in the checkpoint window: the
-   * user's `compaction.v2UserMessageRetention` (thousands) * 1000, the same
-   * multiplier as the foreground. Read once per preparation, before its first
-   * await. Absent: the 64K default.
-   */
   readonly userMessageRetentionTokens?: (() => number) | undefined;
 }
 export { codexBackgroundAccountScope };
@@ -164,20 +151,13 @@ function supportedScope(scope: ProviderScope): boolean {
     isCanonicalCodexBaseUrl(scope.baseUrl)
   );
 }
-/** Cooldown before retrying after rejected credentials. */
 const AUTH_RETRY_AFTER_MS = 60_000;
-/** Cooldown before retrying an endpoint, model or request shape the lane cannot use. */
 const UNSUPPORTED_RETRY_AFTER_MS = 60_000;
-/** Cooldown for HTTP 429 when the provider sent no usable Retry-After. */
 const RATE_LIMIT_DEFAULT_RETRY_AFTER_MS = 60_000;
-/** Short backoff after the preparation deadline elapsed. */
 const TIMEOUT_RETRY_AFTER_MS = 1_000;
-/** Largest delay `setTimeout` accepts without overflowing to an immediate timer. */
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
-/** Conservative UTF-8 bytes-per-token ratio for the pre-flight input estimate. */
 const ESTIMATED_BYTES_PER_TOKEN = 4;
 
-/** Terminal failure: the scheduler must not retry this candidate. */
 function rejected(reason: PrepareFailure["reason"]): PrepareFailure {
   return { ok: false, reason, retryable: false };
 }
@@ -237,7 +217,6 @@ function withAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-/** Tracks open function/custom-tool groups; false when the input cannot form a legal cut. */
 function acceptLegalCutItem(
   item: ResponsesBody["input"][number],
   open: Set<string>,
@@ -255,12 +234,10 @@ function acceptLegalCutItem(
   return true;
 }
 
-/** Undefined when the captured input can be cut; otherwise the reason it cannot. */
 function illegalCaptureDetail(snapshot: FrozenSnapshot): string | undefined {
   const capture = snapshot.backendCapture;
   if (!isCodexBackgroundCapture(capture)) return "no-capture";
   if (!jsonEqual(capture.providerScope, snapshot.providerScope)) return "scope-mismatch";
-  // Never summarize an open function/custom-tool group or an in-progress message.
   const open = new Set<string>();
   const seen = new Set<string>();
   for (const item of capture.body.input) {
@@ -272,7 +249,6 @@ function illegalCaptureDetail(snapshot: FrozenSnapshot): string | undefined {
 type PrepareRequest = Parameters<Backend<BackgroundNativeCompactionDetails>["prepare"]>[1];
 type PrepareResult = Awaited<ReturnType<Backend<BackgroundNativeCompactionDetails>["prepare"]>>;
 
-/** Every input/settings/identity scalar detached before the first await. */
 interface FrozenPreparation {
   readonly ownerKey: string;
   readonly ownerGeneration: number;
@@ -289,7 +265,6 @@ interface FrozenPreparation {
   readonly laneSessionId: string;
   readonly remainingMs: number;
   readonly retentionTokens: number | undefined;
-  /** `/compact <focus>` of a manual candidate; forwarded as the compaction request's focus item. */
   readonly customInstructions: string | undefined;
 }
 
@@ -327,7 +302,6 @@ function withoutTurnStateHeader<T>(
   );
 }
 
-/** Fresh lane identity and prompt cache key; stale foreground turn-state hints are dropped. */
 function isolateLaneRequest(body: ResponsesBody, captureSessionId: string): string {
   const laneSessionId = `${captureSessionId}:background-compaction:${randomUUID()}`;
   body.prompt_cache_key = randomUUID();
@@ -391,7 +365,6 @@ function freezePreparation(
   };
 }
 
-/** Caller cancellation, the preparation deadline, and lane teardown share one signal. */
 interface PreparationLane {
   readonly callerSignal: AbortSignal;
   readonly deadlineSignal: AbortSignal;
@@ -420,7 +393,6 @@ function stopFailure(lane: PreparationLane): PrepareFailure | undefined {
   if (lane.deadlineSignal.aborted) return timeoutFailure();
   return undefined;
 }
-/** The post-await currency check: cancellation, deadline, then owner/scope. */
 function interruptedFailure(
   lane: PreparationLane,
   isOwnerCurrent: () => boolean,
@@ -461,7 +433,6 @@ function validateRuntime(
   if (accountScope !== scope.accountScope) return rejected("incompatible");
   return undefined;
 }
-/** Stale foreground turn-state hints never reach the detached lane's headers. */
 function freezeLaneRuntime(runtime: NativeCompactionRuntime): NativeCompactionRuntime {
   return {
     ...runtime,
@@ -599,7 +570,6 @@ async function prepareBackgroundCheckpoint(
   }
 }
 
-/** Backend only: the coordinator owns scheduling, persistence and commit observation. */
 export function createCodexBackgroundBackend(
   options: CodexBackgroundBackendOptions,
 ): Backend<BackgroundNativeCompactionDetails> {
@@ -620,7 +590,6 @@ export function createCodexBackgroundBackend(
   };
 }
 
-/** Call only after the coordinator's commit acknowledgment; fail closed on reload/switch. */
 export function installCodexBackgroundCheckpoint(args: {
   readonly sessionId: string;
   readonly committedEntryId: string;
@@ -657,7 +626,6 @@ export function installCodexBackgroundCheckpoint(args: {
   };
 }
 
-/** Mandatory compatibility guard for committed checkpoints, even when preparation is disabled. */
 export function buildCodexBackgroundReplay(
   details: BackgroundNativeCompactionDetails,
   scope: ProviderScope,

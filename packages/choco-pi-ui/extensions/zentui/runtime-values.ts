@@ -1,10 +1,7 @@
 import { compile, str } from "@earendil-works/pi-schema";
 
-// oxlint anti-slop/no-runtime-typeof forbids typeof here, so these guards use instanceof, identity and a pi-schema string check.
-// The former schema's Static collapsed to this: every JS value, including functions and symbols.
 export type BoundaryValue = {} | null | undefined;
 
-/** An undecoded object keyed by arbitrary strings. */
 interface KeyedValues<Value> {
   [key: string]: Value;
 }
@@ -44,7 +41,6 @@ export function isString(value: BoundaryValue): value is string {
 }
 
 export function isNumber(value: BoundaryValue): value is number {
-  // Admits NaN and +/-Infinity, as the previous helper did.
   return (
     Number.isFinite(value) ||
     Number.isNaN(value) ||
@@ -58,13 +54,11 @@ export function isBoolean(value: BoundaryValue): value is boolean {
 }
 
 export function isBigInt(value: BoundaryValue): value is bigint {
-  // The identity check rejects already-boxed BigInt wrappers.
   const boxed = Object(value);
   return boxed !== value && boxed instanceof BigInt;
 }
 
 export function isSymbol(value: BoundaryValue): value is symbol {
-  // The identity check rejects already-boxed Symbol wrappers.
   const boxed = Object(value);
   return boxed !== value && boxed instanceof Symbol;
 }

@@ -509,13 +509,6 @@ export function thirdPartyStatusSettingFromId(
     : undefined;
 }
 
-/**
- * Statuses that always get a row, whether or not they are on screen right now.
- *
- * A status only appears in the active map while its extension publishes one:
- * the sub-agent status exists only while agents run, so an active-only list
- * would offer its switch exactly when it is too late to reach for it.
- */
 const knownExtensionStatuses: ReadonlyArray<{
   key: string;
   label: string;
@@ -554,8 +547,6 @@ function buildExtensionsItems(
     currentValue: config.components.footer.styles.starship.extensionStatuses.defaultPlacement,
     values: extensionStatusPlacementValues,
   };
-  // Configured keys are listed too: a status switched off stops publishing
-  // eventually, and a row that vanishes with it would strand its own override.
   const keys = [
     ...new Set([
       ...knownExtensionStatuses.map((status) => status.key),
@@ -579,8 +570,6 @@ function buildExtensionsItems(
           values: featureStateValues,
         },
       ];
-      // Where and how to draw a hidden status is a question about nothing, so
-      // the two rows below only exist while it is shown.
       if (placement === "off") return items;
       items.push({
         id: thirdPartyStatusSettingId(key, "placement"),
@@ -639,5 +628,3 @@ export function buildSectionItems(
       return [];
   }
 }
-
-/** A host section that owns a tab rather than merging into another one. */

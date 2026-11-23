@@ -36,7 +36,6 @@ import {
 
 export type CodexAccessPrograms = { cyber: "daybreak_blue" | "daybreak_red" };
 
-/** Opaque per-request ownership token; only tickets minted here can enable the wire field. */
 export type CodexDaybreakTicket = Readonly<{ sessionId: string }>;
 
 export type CodexDaybreakCredentials = Readonly<{
@@ -82,9 +81,6 @@ const OUTCOMES: ReadonlySet<unknown> = new Set<DaybreakOutcome>([
   "security-key-required",
 ]);
 
-// Bridge, controller and state come from live host objects whose members may sit on the prototype,
-// and function members cannot be described as JSON, so these are shallow property guards (shape
-// only, like the TypeBox object schemas they replace).
 function isDaybreakState<Value>(value: Value): value is Value & DaybreakState {
   return (
     isJsonObject(value) &&
@@ -169,17 +165,10 @@ function decisionFrom(
   });
 }
 
-/** True only for Codex subscription transport on the canonical ChatGPT backend. */
 export function isDaybreakEligibleModel(model: DaybreakModel | null | undefined): boolean {
   return isCanonicalCodexSubscriptionModel(model);
 }
 
-/**
- * Synchronous status snapshot. Carries the controller's latest reported outcome; with a model,
- * a requested-on state on an ineligible model reports `auth-not-eligible`. Never enables the wire.
- * `signIn` (optional, default false) marks api.openai.com subscription sign-in: a requested
- * state then reports `auth-not-eligible` with `OPENAI_SIGN_IN_DAYBREAK_REASON`.
- */
 export function snapshotCodexDaybreakDecision(
   sessionId: string | undefined,
   model?: DaybreakModel | null,
@@ -219,11 +208,6 @@ function frozenCredentials(
   });
 }
 
-/**
- * A completed entitlement entry is stale after a set-on transition: requested went false->true,
- * or the revision moved while on (an off->on cycle between requests). The first observation of
- * a controller is not a transition, so a new same-account session reuses the shared cache.
- */
 function observeToggleOn(controller: DaybreakController, state: DaybreakState): boolean {
   const previous = observations.get(controller);
   observations.set(
@@ -234,12 +218,10 @@ function observeToggleOn(controller: DaybreakController, state: DaybreakState): 
   return !previous.requested || previous.revision !== state.revision;
 }
 
-/** Freezes the session's Daybreak owner, state, and credentials before any asynchronous work. */
 export function beginCodexDaybreakRequest(input: {
   sessionId: string | undefined;
   model: DaybreakModel;
   credentials?: CodexDaybreakCredentials | undefined;
-  /** Eager probes also invalidate on model/session replacement, without mutating the request. */
   isCurrent?: (() => boolean) | undefined;
 }): CodexDaybreakTicket {
   const sessionId = input.sessionId ?? "";
@@ -266,7 +248,6 @@ function ownerCurrent(controller: DaybreakController | undefined, decision: Code
   return controllerState(controller, decision.sessionId)?.generation === decision.generation;
 }
 
-/** Identity, generation, and revision all still match the frozen decision. */
 export function isCurrentCodexDaybreakDecision(decision: CodexDaybreakDecision): boolean {
   const owner = genuineDecisions.get(decision);
   if (!owner || owner.isCurrent?.() === false) return false;
@@ -290,20 +271,12 @@ async function resolveTicket(record: TicketRecord): Promise<CodexDaybreakDecisio
       ? daybreakAccount(credentials.apiKey, record.model.baseUrl)
       : undefined;
   const owner: DecisionOwner = { controller: record.controller, isCurrent: record.isCurrent };
-  // Off never performs a lookup.
   if (!record.controller || !state?.requested)
     return publish(owner, decisionFrom(sessionId, state, "off"));
   if (!credentials || !account)
     return publish(owner, decisionFrom(sessionId, state, "auth-not-eligible"));
   const modelId = record.model.id ?? "";
-  // A toggle-on transition drops both lookup caches before any lookup, so the catalog is re-read.
   if (record.turnedOn) invalidateCodexDaybreakAccount(account);
-  // Codex's own contract (observed in codex-cli 0.161): the model catalog plus the toggle is the
-  // gate. If the selected model advertises a Daybreak program, the request carries it; like
-  // upstream, the `response.completed.access_programs` echo is never read; a refusal arrives as a
-  // `cyber_policy` error. `verified_access` only chooses red over blue; it is not a gate for
-  // either `on` or `auto`, because it reports "inactive" (empty grants) for accounts the
-  // backend still serves Daybreak to (observed live 2026-10-15 on a Daybreak Blue account).
   const availability = await lookupCodexDaybreakModelSupport(account, credentials, modelId, "any");
   if (availability !== "supported")
     return publish(
@@ -318,8 +291,6 @@ async function resolveTicket(record: TicketRecord): Promise<CodexDaybreakDecisio
   if (record.isCurrent?.() === false || !ownerCurrent(owner.controller, checked))
     return publish(owner, checked);
   const result = await lookupCodexDaybreakEntitlement(account, credentials, record.turnedOn);
-  // The only verified_access answer that blocks: no grant, and OpenAI requires a hardware
-  // security key sign-in for this credential. Re-login replaces the token and the cache.
   if (result.entitlement === "security-key-required")
     return publish(owner, decisionFrom(sessionId, state, "security-key-required"));
   const preferred: DaybreakTargetProgram =
@@ -342,10 +313,6 @@ async function resolveTicket(record: TicketRecord): Promise<CodexDaybreakDecisio
   return publish(owner, decisionFrom(sessionId, state, outcome));
 }
 
-/**
- * Resolves a ticket's effective Daybreak result once; retries reuse the same frozen result.
- * Forged or missing tickets resolve to `undefined` so finalizers omit the field.
- */
 export function resolveCodexDaybreakTicket(
   ticket: CodexDaybreakTicket | undefined,
 ): Promise<CodexDaybreakDecision | undefined> {
@@ -364,10 +331,6 @@ export function withoutCodexAccessPrograms<Body extends AccessProgramsCarrier>(b
   return copy;
 }
 
-/**
- * Final wire authority: always removes any inbound `access_programs`, then writes the frozen
- * Daybreak program only for a genuine decision whose owner identity and generation are current.
- */
 export function applyCodexDaybreakAccessPrograms<Body extends AccessProgramsCarrier>(
   body: Body,
   decision: CodexDaybreakDecision | undefined,

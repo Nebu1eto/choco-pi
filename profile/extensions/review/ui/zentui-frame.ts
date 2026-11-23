@@ -6,32 +6,6 @@ import {
   isString,
   type RuntimeValue,
 } from "../../lib/runtime-values.ts";
-/**
- * Optional zentui chrome for the review view's input editors.
- *
- * pi-tui's `Editor` keeps every editing behaviour and renders its own two rule
- * rows around the text. zentui exposes its editor decoration as pure functions,
- * so this adapter hands them the text rows and lets zentui draw the chrome
- * instead: the input looks like the prompt the user types into for the rest of
- * the session.
- *
- * zentui decorates the session prompt in the style the user configured, so this
- * adapter follows the same setting. `opencode` and `opencode-copy-friendly` go
- * through `renderPolishedEditorFrame`, which draws the rails and the model,
- * provider, and thinking row under the text; `minimalist` goes through
- * `renderMinimalistFrame`, which draws a box with the same labels on its
- * borders. The review passes the chat's model and effort so those labels read
- * the same way the main prompt's do.
- *
- * An open completion list is passed separately. zentui draws it inside the
- * frame through its own `renderFramedAutocompleteRows`, below the text and
- * above the closing border, which is where the prompt shows it.
- *
- * zentui is an optional package. Missing installation, changed exports, an
- * unreadable config, or a throwing renderer all degrade to the unframed editor,
- * with the completion rows kept below it exactly as pi-tui emitted them.
- * A zentui too old to export the polished renderer keeps the boxed frame.
- */
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
@@ -48,38 +22,27 @@ import { parseEditorRule } from "./review-input.ts";
 
 export { resolveZentuiFile };
 
-/** Model and effort the metadata row names, as the review knows them. */
 export type FrameModel = {
-  /** Model id without its provider, e.g. `claude-opus-5`. */
   label: string;
-  /** Raw provider id, e.g. `anthropic`; zentui prints its display name. */
   provider?: string;
   thinkingLevel?: string;
 };
 
 export type FrameOptions = {
   width: number;
-  /** Raw `Editor.render()` output, including the rule row above and below the text. */
   editorLines: string[];
-  /** Completion rows to draw inside the frame. Empty or absent when no list is open. */
   autocompleteLines?: string[];
-  /** Working directory the frame labels; the review root of the diff being read. */
   cwd: string;
   uiTheme: Theme;
-  /** Omitted while no session backs the input; the row then names no model. */
   model?: FrameModel;
 };
 
 export type ZentuiFrameAdapter = {
-  /** True when zentui loaded and its config could be read. */
   available: boolean;
-  /** Width to render the editor at, leaving room for the frame's side borders. */
   editorWidth(fullWidth: number): number;
-  /** Reframe editor lines. Returns them unchanged whenever framing is not possible. */
   frame(options: FrameOptions): string[];
 };
 
-/** Loader type for dependency injection in tests. */
 export type ZentuiLoader = () => Promise<ZentuiModules | undefined>;
 
 type MinimalistEditorMetadata = {
@@ -101,7 +64,6 @@ type MinimalistEditorMetadata = {
 
 type ZentuiConfig = Record<string, RuntimeValue>;
 
-/** zentui's editor metadata fields, as `renderPolishedEditorFrame` reads them. */
 type PolishedEditorMeta = {
   modelLabel: string;
   modelId?: string;
@@ -110,10 +72,6 @@ type PolishedEditorMeta = {
   sessionName?: string;
 };
 
-/**
- * zentui's shape as this adapter uses it. It is declared locally and checked at
- * runtime: zentui's own sources are never part of this project's type program.
- */
 export type ZentuiModules = {
   renderMinimalistFrame: (options: {
     width: number;
@@ -126,7 +84,6 @@ export type ZentuiModules = {
     config: ZentuiConfig;
   }) => string[];
   loadConfig: () => ZentuiConfig;
-  /** Absent in a zentui older than the polished frame export. */
   renderPolishedEditorFrame?: (options: {
     width: number;
     editorLines: string[];
@@ -137,18 +94,10 @@ export type ZentuiModules = {
     modelMeta: PolishedEditorMeta;
     thinkingLevel?: string;
   }) => string[];
-  /** Turns a provider id into the display name the prompt shows. */
   formatProviderLabel?: (provider: string | undefined) => string;
 };
 
-/** Frame border consumes 4 columns (│ plus a space on each side). */
 export const FRAME_BORDER_WIDTH = 4;
-/**
- * The frame emits a top and a bottom border row. They replace the two rule rows
- * pi-tui's `Editor` already renders, so framing costs no extra terminal rows.
- * An open completion list adds one separator row on top of its own rows; the
- * view measures the rendered result rather than assuming a fixed height.
- */
 export const FRAME_BORDER_ROWS = 2;
 
 function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
@@ -159,14 +108,12 @@ function isStringArray(value: RuntimeValue): value is string[] {
   return Array.isArray(value) && value.every((entry) => isString(entry));
 }
 
-/** What the view would have shown with no zentui at all. */
 function unframed(options: FrameOptions): string[] {
   return options.autocompleteLines?.length
     ? [...options.editorLines, ...options.autocompleteLines]
     : options.editorLines;
 }
 
-/** Accept a candidate only when it still has the exports this adapter calls. */
 function validateModules(candidate: RuntimeValue): ZentuiModules | undefined {
   if (!isRecord(candidate)) return undefined;
   const renderMinimalistFrame = candidate["renderMinimalistFrame"];
@@ -215,27 +162,17 @@ const defaultLoader: ZentuiLoader = async () => {
   });
 };
 
-/** The editor section of a zentui config, or an empty record when absent. */
 function editorConfig(config: ZentuiConfig): Record<string, RuntimeValue> {
   const components = config["components"];
   const editor = isRecord(components) ? components["editor"] : undefined;
   return isRecord(editor) ? editor : {};
 }
 
-/**
- * The style zentui decorates the session prompt with. `opencode` is zentui's
- * own default, so an absent setting must decorate the review the same way.
- */
 function editorStyle(config: ZentuiConfig): string {
   const style = editorConfig(config)["style"];
   return isString(style) ? style : "opencode";
 }
 
-/**
- * Columns the polished styles spend on chrome left of the text: the rail icon
- * plus its trailing space, or the prompt icon for the copy-friendly style,
- * which moves the rail below the text and prefixes the first row instead.
- */
 function polishedRailWidth(config: ZentuiConfig): number {
   const icons = config["icons"];
   const icon = (name: string): string => {
@@ -249,7 +186,6 @@ function polishedRailWidth(config: ZentuiConfig): number {
   return visibleWidth(icon("rail")) + 1;
 }
 
-/** Honour the user's zentui setting for the "↑ n more" labels; default on. */
 function viewportIndicatorsEnabled(config: ZentuiConfig): boolean {
   const enabled = editorConfig(config)["viewportIndicators"];
   return isBoolean(enabled) ? enabled : true;
@@ -269,7 +205,6 @@ export async function createZentuiFrameAdapter(
   let zentui: ZentuiModules | undefined;
   let config: ZentuiConfig;
   try {
-    // Injected loaders are validated too: the shape is checked, never trusted.
     zentui = validateModules(await loader());
   } catch {
     return createFallbackAdapter();
@@ -284,9 +219,6 @@ export async function createZentuiFrameAdapter(
   }
   const viewportIndicators = viewportIndicatorsEnabled(config);
   const modules = zentui;
-  // The polished styles are how zentui decorates the session prompt unless the
-  // user chose the box, so they are what the review must reproduce. A zentui
-  // without that export can still draw the box.
   const polished =
     editorStyle(config) !== "minimalist" && modules.renderPolishedEditorFrame
       ? { render: modules.renderPolishedEditorFrame, railWidth: polishedRailWidth(config) }
@@ -343,11 +275,7 @@ export async function createZentuiFrameAdapter(
           editorLines: text,
           ...propertiesWhen(autocompleteLines?.length, () => ({ autocompleteLines })),
           ...propertiesWhen(above.count || below.count, () => ({ viewport })),
-          // Empty: zentui reads this only to flag its shell mode, which
-          // a review comment box does not have.
           inputText: "",
-          // The review root is both the directory shown and the project
-          // the diff belongs to, so every path style resolves to it.
           metadata: {
             cwd,
             projectRoot: cwd,

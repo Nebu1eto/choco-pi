@@ -34,7 +34,6 @@ import {
 
 const TOKEN = "fake-access-token-value";
 const API_KEY = JSON.stringify({ token: TOKEN, project_id: "aicode-consumers" });
-/** An obviously fake raw Gemini API key, the shape Pi's inherited google API-key auth resolves. */
 const GEMINI_KEY = "AIzaFAKE-gemini-api-key-for-tests";
 const ENDPOINTS = ["https://primary.invalid", "https://secondary.invalid"];
 const NOW = Date.parse("2026-11-22T00:00:00.000Z");
@@ -440,7 +439,6 @@ test("a missing or malformed credential is an auth error before any request", as
     "auth",
   );
   assert.doesNotMatch(error.message, /not-json/);
-  // A raw Gemini key resolved while the snapshot still reports OAuth is refused the same way.
   const raw = setup(fake.fetch, fakeRegistry(true, GEMINI_KEY, "oauth"));
   const rawError = await expectSearchError(
     search({ query: "q", provider: "google" }, { scope: raw.scope }),

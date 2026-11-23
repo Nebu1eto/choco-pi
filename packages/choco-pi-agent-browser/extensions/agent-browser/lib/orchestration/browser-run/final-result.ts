@@ -857,7 +857,6 @@ function buildResultNextActions(options: FinalResultInput): AgentBrowserNextActi
   return nextActions.length > 0 ? nextActions : undefined;
 }
 
-/** Recomputes the failure diagnostic with the CLI-supplied error code, which the recovery state does not see. */
 function withFinalDiagnostic(options: FinalResultInput): FinalResultInput {
   const { categoryDetails } = options;
   if (options.succeeded || categoryDetails.failureCategory === undefined) return options;
@@ -878,7 +877,6 @@ function withFinalDiagnostic(options: FinalResultInput): FinalResultInput {
   };
 }
 
-/** Keeps JSON-mode failures parseable while exposing the diagnostic to the model. */
 export function addDiagnosticToJsonContent(
   content: AgentBrowserToolResult["content"],
   diagnostic: FinalResultInput["categoryDetails"]["diagnostic"],

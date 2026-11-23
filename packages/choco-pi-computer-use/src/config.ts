@@ -8,20 +8,8 @@ export interface ComputerUseConfig {
   headless: boolean;
   cursor_overlay: boolean;
   managed_browser: "helium" | "chrome";
-  /**
-   * Host-issued foreground grant: bundle ids (or "*") whose actions may use
-   * foreground delivery. Only config files and the environment set it; no tool
-   * parameter can, so a model can never grant itself focus-stealing input.
-   */
   foreground_grant: string[];
-  /**
-   * What happens after a background refusal that proved nothing was delivered
-   * and no grant covers the app: "ask" prompts once per app in an interactive
-   * TUI session; "always" grants that app for the session without asking (an
-   * explicit user opt-in, any host mode); "off" never prompts.
-   */
   foreground_prompt: ForegroundPromptMode;
-  /** Return focus to the user's previous frontmost app after granted foreground input. */
   restore_focus: boolean;
 }
 
@@ -147,7 +135,6 @@ function readEnv(): Partial<ComputerUseConfig> {
   return out;
 }
 
-/** Path of the user-level config file, the only file "Always allow" writes. */
 export function userComputerUseConfigPath(): string {
   return path.join(getAgentDir(), "extensions", "pi-computer-use.json");
 }
@@ -184,16 +171,9 @@ export function isBrowserUseEnabled(): boolean {
   return activeConfig.browser_use;
 }
 
-/**
- * Session grants and denials: issued only by the user answering the host's
- * grant prompt, never by a tool parameter. Keyed by trimmed bundle id; cleared
- * on session start and shutdown (which also bumps the generation so a prompt
- * answered after its session ended grants nothing).
- */
 const sessionGrants = new Set<string>();
 const sessionDenials = new Set<string>();
 let sessionGrantEpoch = 0;
-/** Mode chosen by the user with `/computer-use grant` for this session; wins over files and env. */
 let sessionPromptMode: ForegroundPromptMode | undefined;
 
 export function setSessionForegroundPromptMode(mode: ForegroundPromptMode): void {
@@ -204,7 +184,6 @@ export function getSessionForegroundPromptMode(): ForegroundPromptMode | undefin
   return sessionPromptMode;
 }
 
-/** The effective prompt mode: the session choice, else the loaded config. */
 export function foregroundPromptMode(): ForegroundPromptMode {
   return sessionPromptMode ?? activeConfig.foreground_prompt;
 }
@@ -253,7 +232,6 @@ export function clearSessionGrants(): void {
   sessionGrantEpoch += 1;
 }
 
-/** True when the host-issued grant names this bundle id exactly or is "*", or the user granted it for this session. */
 export function foregroundGrantCovers(bundleId: string | undefined): boolean {
   const grant = activeConfig.foreground_grant;
   if (grant.includes("*")) return true;

@@ -1,6 +1,3 @@
-/**
- * Tool status reporting across all catalog entries.
- */
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -37,9 +34,6 @@ export interface ToolStatus {
   strategy: ToolDefinition["installStrategy"];
 }
 
-/**
- * Get detailed status for all tools
- */
 export async function getAllToolStatuses(): Promise<ToolStatus[]> {
   const statuses: ToolStatus[] = [];
 
@@ -52,8 +46,6 @@ export async function getAllToolStatuses(): Promise<ToolStatus[]> {
       strategy: tool.installStrategy,
     };
 
-    // 0. Tree-bundle archives resolve ONLY to their extract dir — never via a
-    // PATH/global probe (the runtime may be present while the bundle is absent).
     if (tool.installStrategy === "archive" && !tool.archive?.launcher) {
       const bundleDir = await getArchiveTreeBundlePath(tool);
       if (bundleDir) {
@@ -65,12 +57,10 @@ export async function getAllToolStatuses(): Promise<ToolStatus[]> {
       continue;
     }
 
-    // 1. Check if in PATH (global)
     if (await isCommandAvailable(tool.checkCommand, tool.checkArgs)) {
       status.installed = true;
       status.source = "global-path";
       status.path = tool.checkCommand;
-      // Try to get version
       const versionResult = await new Promise<string>((resolve) => {
         let proc: ReturnType<typeof spawn>;
         try {
@@ -80,8 +70,6 @@ export async function getAllToolStatuses(): Promise<ToolStatus[]> {
             timeout: 5000,
           });
         } catch {
-          // SYNCHRONOUS spawn throw (Windows `spawn UNKNOWN`/EINVAL, the
-          // pidusage bug class, #533) — best-effort, resolve empty version.
           resolve("");
           return;
         }
@@ -96,7 +84,6 @@ export async function getAllToolStatuses(): Promise<ToolStatus[]> {
       continue;
     }
 
-    // 2. Check npm global
     if (tool.installStrategy === "npm") {
       const npmPath = await findNpmGlobalToolPath(tool.binaryName || tool.id);
       if (npmPath) {
@@ -108,7 +95,6 @@ export async function getAllToolStatuses(): Promise<ToolStatus[]> {
       }
     }
 
-    // 3. Check pip user install
     if (tool.installStrategy === "pip") {
       const pipPath = await findPipUserToolPath(tool.binaryName || tool.id);
       if (pipPath) {
@@ -120,7 +106,6 @@ export async function getAllToolStatuses(): Promise<ToolStatus[]> {
       }
     }
 
-    // 4. Check managed bin (~/.choco-pi-lsp/bin/) — github releases + maven/archive launchers
     if (
       tool.installStrategy === "github" ||
       tool.installStrategy === "maven" ||
@@ -141,7 +126,6 @@ export async function getAllToolStatuses(): Promise<ToolStatus[]> {
       }
     }
 
-    // 5. Check choco-pi-lsp auto-install (~/.choco-pi-lsp/tools/)
     const localBase = path.join(TOOLS_DIR, "node_modules", ".bin", tool.binaryName || tool.id);
     const localPath = installerPlatform() === "win32" ? `${localBase}.cmd` : localBase;
     try {
@@ -153,11 +137,8 @@ export async function getAllToolStatuses(): Promise<ToolStatus[]> {
         statuses.push(status);
         continue;
       }
-    } catch {
-      // fall through to not-installed
-    }
+    } catch {}
 
-    // 6. Not installed - will use npx fallback if npm strategy
     if (tool.installStrategy === "npm") {
       status.source = "npx-fallback";
     }
@@ -168,9 +149,6 @@ export async function getAllToolStatuses(): Promise<ToolStatus[]> {
   return statuses;
 }
 
-/**
- * Check if a tool is installed (globally or locally)
- */
 export async function isToolInstalled(toolId: string): Promise<boolean> {
   return (await getToolPath(toolId)) !== undefined;
 }

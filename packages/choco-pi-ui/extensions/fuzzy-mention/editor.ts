@@ -93,18 +93,11 @@ export class FuzzyFileMentionProvider implements AutocompleteProvider {
     }
     if (!this.isCurrent() || options.signal.aborted) return null;
 
-    // No description: pi-tui's SelectList clamps the primary column to a fixed
-    // 32 cells whenever a description is present (and the layout knob is
-    // private), which truncates paths regardless of terminal width. Without a
-    // description the path gets the full editor width.
     const items: FileMentionItem[] = rankFileMentions(mention.query, paths).map(({ path }) => ({
       value: mentionValue(path),
       label: path,
       [FILE_MENTION_ITEM]: true,
     }));
-    // Mention contexts are shared with the base provider: merge its rows
-    // (agent mentions, other registered providers) above fuzzy file rows so
-    // enabling fuzzy completion never suppresses other @ completions.
     const baseSuggestions = await this.base.getSuggestions(lines, cursorLine, cursorCol, options);
     if (!this.isCurrent() || options.signal.aborted) return null;
     if (baseSuggestions && baseSuggestions.items.length > 0) {
@@ -123,8 +116,6 @@ export class FuzzyFileMentionProvider implements AutocompleteProvider {
     prefix: string,
   ): { lines: string[]; cursorLine: number; cursorCol: number } {
     // SAFETY: FILE_MENTION_ITEM is a module-private symbol assigned only to
-    // items this provider constructed; on foreign items the read yields
-    // undefined, so the branch stays false.
     if ((item as FileMentionItem)[FILE_MENTION_ITEM]) {
       return applyFileMention(lines, cursorLine, cursorCol, item.value, prefix);
     }
@@ -137,12 +128,6 @@ export class FuzzyFileMentionProvider implements AutocompleteProvider {
   }
 }
 
-/**
- * Full public custom-editor component. `CustomEditor` retains Pi's application
- * keybindings while its pi-tui `Editor` base retains history, multiline input,
- * paste markers, slash completion, and submit semantics. This class owns only
- * the provider that feeds the inherited completion popover.
- */
 export class FuzzyMentionEditor extends CustomEditor {
   private readonly mentionOptions: FuzzyMentionEditorOptions;
 

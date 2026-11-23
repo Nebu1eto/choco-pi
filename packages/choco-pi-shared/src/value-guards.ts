@@ -9,10 +9,6 @@ import {
 
 type NumOptions = NonNullable<Parameters<typeof num>[0]>;
 
-/**
- * Finite number schema for in-process values. pi-schema `num()` accepts NaN and +/-Infinity;
- * supplying explicit bounds rejects non-finite numbers.
- */
 export function finiteNum(options: NumOptions = {}) {
   return num({ minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE, ...options });
 }

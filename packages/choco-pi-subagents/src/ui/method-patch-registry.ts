@@ -62,12 +62,6 @@ function installWrapper(target: PatchTarget, record: PatchRecord): void {
   });
 }
 
-/**
- * Add an instance-scoped method adapter without discarding an adapter already
- * installed by another extension. Cleanup restores only while this wrapper is
- * still outermost; if another adapter wrapped it later, cleanup merely
- * deactivates this behavior so the newer adapter remains intact.
- */
 export function installMethodPatch<Target extends object>(
   targetValue: Target,
   method: PatchMethod,

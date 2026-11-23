@@ -1,12 +1,3 @@
-/**
- * Background compaction wired into the real host.
- *
- * Every scenario drives the installed SDK (`createAgentSession`) with a
- * scripted fake provider and the package's real extension entry. Background
- * summarization uses an injected text summarizer bound to the session's
- * provider scope, so no request leaves the process and the host summarizer is
- * counted separately.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -87,7 +78,6 @@ const ENABLED_SIDECAR = JSON.stringify({
 const CONTEXT_WINDOW = 100_000;
 const HIGH_USAGE = 60_000;
 
-/** Pi's (patched) typed-command handler, invoked the way the interactive mode does. */
 interface TypedCompactPrototype {
   handleCompactCommand: (
     this: CompactCommandHost & { clearStatusIndicator(): void },
@@ -95,14 +85,12 @@ interface TypedCompactPrototype {
   ) => Promise<void>;
 }
 
-/** Type `/compact` into the TUI: run the prototype method on the rig's session. */
 async function typeCompact(rig: Rig, customInstructions?: string): Promise<void> {
   const prototype: object = InteractiveMode.prototype;
   // SAFETY: the test reaches the private method the bridge swaps.
   const handler = (prototype as TypedCompactPrototype).handleCompactCommand;
   await handler.call({ session: rig.session, clearStatusIndicator: () => {} }, customInstructions);
 }
-/** Background on, but the usage threshold is never crossed: only /compact starts a preparation. */
 const MANUAL_ONLY_SIDECAR = JSON.stringify({
   enabled: true,
   text: true,
@@ -141,18 +129,14 @@ interface Rig {
   readonly compactEvents: CompactEvent[];
   readonly notices: BackgroundAdoptionNotice[];
   backgroundCalls(): number;
-  /** Prompt text of every background summarizer pass, in order. */
   readonly backgroundPrompts: string[];
   aborts(): number;
   dispose(): Promise<void>;
 }
 
 interface RigOptions {
-  /** Sidecar file text, written verbatim. */
   readonly sidecar: string;
-  /** Extensions loaded before the compaction extension. */
   readonly firstExtensions?: readonly ExtensionFactory[];
-  /** Extensions loaded after the compaction extension. */
   readonly extraExtensions?: readonly ExtensionFactory[];
   readonly respond: Responder;
   readonly dir: string;
@@ -161,7 +145,6 @@ interface RigOptions {
   readonly hostCompaction?: HostOptions["compaction"];
   readonly summarizerGate?: Gate;
   readonly baseUrl?: string;
-  /** Admit the rig's fake model to the Anthropic native lane (no capture is ever produced). */
   readonly anthropicAllowList?: readonly AnthropicSupportEntry[];
 }
 
@@ -192,14 +175,12 @@ function textSummarizer(
   };
 }
 
-/** What the compaction extension under test reported. */
 interface RigLog {
   readonly compactEvents: CompactEvent[];
   backgroundCalls: number;
   readonly backgroundPrompts: string[];
 }
 
-/** The real compaction extension reading `settingsFile`, with an injected background summarizer. */
 function compactionExtension(
   settingsFile: string,
   log: RigLog,
@@ -314,10 +295,8 @@ async function withDir(run: (dir: string) => Promise<void>): Promise<void> {
   }
 }
 
-/** A session_start hook that records UI notices instead of showing them. */
 function recordNotices(notices: string[]): ExtensionFactory {
   return (pi) => {
-    // Instrument the session's UI before the compaction extension starts.
     pi.on("session_start", (_event, ctx) => {
       ctx.ui.notify = (message) => {
         notices.push(message);
@@ -330,7 +309,6 @@ interface SettledContext {
   ctx: ExtensionContext | undefined;
 }
 
-/** Records the context of the latest agent_settled event. */
 function recordSettledContext(holder: SettledContext): ExtensionFactory {
   return (pi) => {
     pi.on("agent_settled", (_event, ctx) => {
@@ -343,7 +321,6 @@ interface RigRef {
   current: Rig | undefined;
 }
 
-/** R0 crosses the threshold; R1 waits for the ready candidate so its boundary adopts. */
 function boundaryResponder(ref: RigRef): Responder {
   return async (index) => {
     if (index === 0) return reply("R0", { tool: true, usageInput: HIGH_USAGE });
@@ -360,7 +337,6 @@ interface IdleProbe {
   entryBeforeFirstNext: boolean;
 }
 
-/** Records whether the checkpoint was committed before the next prompt's first request. */
 function idleResponder(probe: IdleProbe): Responder {
   return async (index) => {
     if (index === 1 && probe.rig) probe.entryBeforeFirstNext = ownEntries(probe.rig).length === 1;
@@ -370,7 +346,6 @@ function idleResponder(probe: IdleProbe): Responder {
 
 const replyHigh: Responder = async (index) => reply(`R${index}`, { usageInput: HIGH_USAGE });
 
-/** Mark a session ID as a subagent child (through the subagents manager slot) while run executes. */
 async function asChildSession(childId: string, run: () => Promise<void>): Promise<void> {
   const key = Symbol.for("pi-subagents:manager");
   const previous = Object.getOwnPropertyDescriptor(globalThis, key);
@@ -546,7 +521,6 @@ test(
         assert.deepEqual(rig.compactEvents, [
           { reason: "manual", fromExtension: true, entryId: entry.id },
         ]);
-        // The host saw ctx.compact() as manual; the checkpoint records the real route.
         assert.equal(triggerOfDetails(entry.details), "idle");
         const signal = getBackgroundAdoptionSignal();
         const sessionId = rig.manager.getSessionId();
@@ -576,7 +550,6 @@ test(
         dir,
         sidecar: ENABLED_SIDECAR,
         summarizerGate,
-        // The host's own preparation finds nothing to compact under this policy.
         hostCompaction: { enabled: false, keepRecentTokens: 1_000_000, reserveTokens: 16_384 },
         respond: async (index) =>
           index === 1
@@ -622,7 +595,6 @@ test(
         const plain = getCoordinator(rig.ownerKey)?.status().candidateId;
         await assert.rejects(rig.session.compact("Focus on the audit"), /Compaction cancelled/);
         await waitFor(() => stateOf(rig) === "ready", "candidate ready");
-        // Hook path: the checkpoint is adopted when the next prompt arrives, before it is sent.
         await rig.session.prompt("NEXT-PROMPT");
         await waitFor(() => stateOf(rig) === "installed", "focused candidate installed");
         const status = getCoordinator(rig.ownerKey)?.status();
@@ -667,7 +639,6 @@ test(
             hostEvents.push(event.type);
           }
         });
-        // The programmatic compact resolves at once instead of blocking on the summarizer.
         assert.equal(await rig.session.compact(), undefined);
         unsubscribe();
         assert.deepEqual(hostEvents, [], "no host compaction started");
@@ -679,11 +650,9 @@ test(
           notices.some((notice) => notice.includes("continuing in the background")),
           "the user is told the compaction continues",
         );
-        // A second /compact during the same preparation attaches to it.
         assert.equal(await rig.session.compact(), undefined);
         assert.equal(rig.backgroundCalls(), 1, "no second paid preparation");
         summarizerGate.open();
-        // Nothing cancelled a host compaction, so the idle session adopts as soon as it is ready.
         await waitFor(() => stateOf(rig) === "installed", "installed candidate");
         const own = ownEntries(rig);
         assert.equal(own.length, 1, "the ready checkpoint was adopted without a prompt");
@@ -767,7 +736,6 @@ test(
           reply(`R${index}`, { usageInput: index === 0 ? HIGH_USAGE : 20_000 }),
       });
       try {
-        // The precondition of the text fallback: no opaque server-side checkpoint is latest.
         assert.equal(opaqueCheckpointOf(rig.manager.getBranch()), undefined);
         await rig.session.prompt("GO");
         assert.equal(getCoordinator(rig.ownerKey)?.status().state, "idle");
@@ -795,7 +763,6 @@ test(
   async () => {
     await withDir(async (dir) => {
       const model = fakeModel(CONTEXT_WINDOW);
-      // A resumed session whose newest checkpoint is an opaque xAI record this model cannot replay.
       const manager = SessionManager.inMemory(dir);
       manager.appendMessage({ role: "user", content: PREFIX_A, timestamp: Date.now() });
       const kept = manager.appendMessage(reply("OPAQUE-PREFIX-B"));
@@ -823,14 +790,10 @@ test(
       });
       try {
         assert.equal(opaqueCheckpointOf(rig.manager.getBranch())?.entryId, checkpointId);
-        // The turn itself is refused at the provider boundary: nothing is sent over the record.
         await rig.session.prompt("GO");
         const callsBefore = rig.calls.length;
         const noticesBefore = notices.length;
-        // The manual route evaluates the opaque guard before starting anything: no
-        // "continuing in the background" progress notice, only the refusal.
         assert.equal(await rig.session.compact(), undefined);
-        // Nothing was started, so nothing may report later either.
         await new Promise((resolve) => setTimeout(resolve, 50));
         assert.deepEqual(
           notices.slice(noticesBefore),
@@ -883,7 +846,6 @@ test(
         dir,
         sidecar: ENABLED_SIDECAR,
         summarizerGate,
-        // Host threshold at 70k; the preparer fires at 50k (prepareAt 0.5 of the window).
         hostCompaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 30_000 },
         respond: async (index) =>
           reply(`R${index}`, { usageInput: index === 0 ? HIGH_USAGE : 75_000 }),
@@ -891,7 +853,6 @@ test(
       try {
         await rig.session.prompt("GO");
         assert.equal(stateOf(rig), "preparing", "the preparer is still running");
-        // Finish the background summary only after the host has reached its threshold.
         setTimeout(() => summarizerGate.open(), 200);
         await rig.session.prompt("PAST-THRESHOLD");
         await waitFor(() => stateOf(rig) === "installed", "background candidate adopted");
@@ -935,8 +896,6 @@ test(
           outcome.resolve,
         );
         assert.equal(started, true);
-        // The adoption waits for the next prompt's input hook: model-context-cap calls this
-        // from agent_settled, where a host compaction would race a prompt Pi defers.
         assert.equal(ownEntries(rig).length, 0, "not adopted inside the caller's event");
         const calls = rig.calls.length;
         await rig.session.prompt("AFTER-CAP");
@@ -1050,7 +1009,6 @@ test(
         await rig.session.prompt("GO");
         summarizerGate.open();
         await waitFor(() => stateOf(rig) === "ready", "ready candidate");
-        // Ready candidate: the host compaction runs and its hook adopts the checkpoint.
         await typeCompact(rig);
         assert.equal(stateOf(rig), "installed");
         assert.equal(ownEntries(rig).length, 1);
@@ -1059,7 +1017,6 @@ test(
           rig.compactEvents.map((event) => [event.reason, event.fromExtension]),
           [["manual", true]],
         );
-        // Custom instructions: the text lane with the focus applied, no host compaction.
         await rig.session.prompt("MORE");
         await typeCompact(rig, "Focus on the audit");
         await waitFor(() => stateOf(rig) === "installed", "focused candidate installed");
@@ -1077,13 +1034,11 @@ test(
   },
 );
 
-/** The host's own compaction events, recorded until `stop` is called. */
 interface HostCompactionLog {
   readonly events: string[];
   stop(): void;
 }
 
-/** Record the host's own compaction events on `rig` until the returned stop is called. */
 function recordHostCompactions(rig: Rig): HostCompactionLog {
   const events: string[] = [];
   const stop = rig.session.subscribe((event) => {
@@ -1198,7 +1153,6 @@ test(
         await started.opened;
         assert.equal(rig.session.isIdle, false, "a run is active");
         const host = recordHostCompactions(rig);
-        // The host's compact aborts the run; its hook still defers a plain request.
         await assert.rejects(rig.session.compact(), /Compaction cancelled/);
         host.stop();
         assert.equal(host.events[0], "compaction_start", "the host compaction started");
@@ -1319,7 +1273,6 @@ test(
         await first.dispose();
       }
       assert.ok(file);
-      // The same session reopened against another endpoint of the provider.
       const second = await createRig({
         dir,
         manager: SessionManager.open(file, dir, dir),

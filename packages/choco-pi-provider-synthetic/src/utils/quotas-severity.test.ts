@@ -11,12 +11,10 @@ import {
   toWindows,
 } from "./quotas-severity";
 
-// Helper to create a QuotaWindow with sensible defaults
 function makeWindow(
   overrides: Partial<QuotaWindow> & Pick<QuotaWindow, "usedPercent">,
 ): QuotaWindow {
   const windowSeconds = overrides.windowSeconds ?? 3600;
-  // resetsAt defaults to 30 minutes from now (50% through a 1h window)
   const resetsAt = overrides.resetsAt ?? new Date(Date.now() + windowSeconds * 500);
   return {
     id: "test",
@@ -71,7 +69,7 @@ describe("getPacePercent", () => {
     const w = makeWindow({
       usedPercent: 50,
       windowSeconds: 3600,
-      resetsAt: new Date(Date.now() + 1800 * 1000), // 30 min remaining
+      resetsAt: new Date(Date.now() + 1800 * 1000),
     });
     const pace = getPacePercent(w);
     assert(pace, "pace should not be null");
@@ -82,7 +80,7 @@ describe("getPacePercent", () => {
     const w = makeWindow({
       usedPercent: 50,
       windowSeconds: 3600,
-      resetsAt: new Date(Date.now() + 7200 * 1000), // way past
+      resetsAt: new Date(Date.now() + 7200 * 1000),
     });
     expect(getPacePercent(w)).toBe(0);
   });
@@ -94,14 +92,12 @@ describe("getProjectedPercent", () => {
   });
 
   it("projects based on pace", () => {
-    // 50% used, 25% through window => projected 200%
     expect(getProjectedPercent(50, 25)).toBe(200);
   });
 
   it("uses minimum pace of 5", () => {
-    // Very low pace should not blow up projection
-    expect(getProjectedPercent(1, 0)).toBe(20); // 1 / 5 * 100
-    expect(getProjectedPercent(1, 1)).toBe(20); // clamped to 5
+    expect(getProjectedPercent(1, 0)).toBe(20);
+    expect(getProjectedPercent(1, 1)).toBe(20);
   });
 });
 
@@ -149,14 +145,12 @@ describe("assessWindow", () => {
         showPace: true,
         paceScale: 1,
         windowSeconds: 3600,
-        resetsAt: new Date(Date.now() + 1800 * 1000), // 50% through
+        resetsAt: new Date(Date.now() + 1800 * 1000),
       });
       expect(assessWindow(w).severity).toBe("none");
     });
 
     it("returns warning when projected exceeds warn threshold", () => {
-      // 50% used, 50% through => projected 100%, well above warn at 50% progress (190)
-      // But usedFloor at 50% progress is 20.5, so 50% > 20.5 => passes floor check
       const w = makeWindow({
         usedPercent: 50,
         showPace: true,
@@ -165,16 +159,10 @@ describe("assessWindow", () => {
         resetsAt: new Date(Date.now() + 1800 * 1000),
       });
       const result = assessWindow(w);
-      // projected = 50 / 50 * 100 = 100
-      // At 50% progress: warn = 260 - (260-120)*0.5 = 190, high = 232.5, critical = 285
-      // 100 < 190 => none actually. Let me pick better numbers.
       expect(result.severity).toBe("none");
     });
 
     it("returns warning when projected exceeds dynamic warn threshold", () => {
-      // 95% used, 50% through => projected 190%
-      // At 50% progress: warn = 190, so 190 >= 190 => warning
-      // usedFloor at 50% = 20.5, 95 >= 20.5 => passes
       const w = makeWindow({
         usedPercent: 95,
         showPace: true,
@@ -191,13 +179,12 @@ describe("assessWindow", () => {
         usedPercent: 95,
         showPace: true,
         paceScale: 1 / 7,
-        windowSeconds: 7 * 24 * 3600, // 1 week
-        resetsAt: new Date(Date.now() + 6 * 24 * 3600 * 1000), // 6 days remaining
+        windowSeconds: 7 * 24 * 3600,
+        resetsAt: new Date(Date.now() + 6 * 24 * 3600 * 1000),
       });
       const result = assessWindow(w);
-      // With paceScale applied, projected should be much higher
       assert(result.pacePercent, "pacePercent should not be null");
-      expect(result.pacePercent).toBeLessThan(15); // scaled down
+      expect(result.pacePercent).toBeLessThan(15);
       expect(result.projectedPercent).toBeGreaterThan(500);
       expect(result.severity).toBe("critical");
     });
@@ -222,7 +209,6 @@ describe("assessWindow", () => {
     });
 
     it("does not use pace when showPace is false", () => {
-      // Same timestamps but showPace: false
       const w = makeWindow({
         usedPercent: 50,
         showPace: false,
@@ -232,30 +218,22 @@ describe("assessWindow", () => {
       const result = assessWindow(w);
       expect(result.pacePercent).toBeNull();
       expect(result.progress).toBeNull();
-      // Static thresholds: 50% < 80 => none
       expect(result.severity).toBe("none");
     });
 
     it("suppresses warning when usage is below usedFloor", () => {
-      // Early window: raw pace ~10%, with paceScale=1 => progress=0.1
-      // usedFloor at 10% progress = 33 - (33-8)*0.1 = 33 - 2.5 = 30.5
-      // If used = 15% (< 30.5), projected might exceed warn but floor blocks it
       const w = makeWindow({
         usedPercent: 15,
         showPace: true,
         paceScale: 1,
         windowSeconds: 3600,
-        // 10% through: 54 min remaining
         resetsAt: new Date(Date.now() + 54 * 60 * 1000),
       });
       const result = assessWindow(w);
-      // projected = 15 / 10 * 100 = 150, which exceeds warn at 10% progress (246)
-      // But usedFloor = 30.5, and 15 < 30.5 => suppressed
       expect(result.severity).toBe("none");
     });
 
     it("allows warning when usage exceeds usedFloor", () => {
-      // Same timing but higher usage
       const w = makeWindow({
         usedPercent: 50,
         showPace: true,
@@ -264,9 +242,6 @@ describe("assessWindow", () => {
         resetsAt: new Date(Date.now() + 54 * 60 * 1000),
       });
       const result = assessWindow(w);
-      // projected = 50 / 10 * 100 = 500
-      // warn at 10% progress = 246, high = 282.5, critical = 357
-      // 500 >= 357 => critical, usedFloor = 30.5, 50 >= 30.5 => passes
       expect(result.severity).toBe("critical");
     });
   });
@@ -303,7 +278,6 @@ describe("assessWindow", () => {
     });
 
     it("suppresses warning when projection is stable (refill covers burn)", () => {
-      // Raw usage is 92% (would be high), but the quota is recovering.
       const w = makeWindow({
         id: "rollingFiveHourLimit",
         usedPercent: 92,
@@ -313,7 +287,6 @@ describe("assessWindow", () => {
     });
 
     it("uses projected usedPercent for the threshold decision", () => {
-      // Raw usage 82% (would warn), but projected over the horizon is 86%.
       const w = makeWindow({
         id: "rollingFiveHourLimit",
         usedPercent: 82,
@@ -344,8 +317,6 @@ describe("assessWindow", () => {
     });
 
     it("does not warn when projected is below the warning threshold", () => {
-      // The imminent-tick bounce: raw 82% would warn, but the refill-aware
-      // projection says usage will be 79% -> no warning.
       const w = makeWindow({
         id: "rollingFiveHourLimit",
         usedPercent: 82,
@@ -355,14 +326,11 @@ describe("assessWindow", () => {
     });
 
     it("ignores a projection for an unrelated window id", () => {
-      // Projection keyed to a different window should not affect this one.
       const w = makeWindow({
         id: "rollingFiveHourLimit",
         usedPercent: 50,
         showPace: false,
       });
-      // assessWindow takes the projection directly (not a map), so this just
-      // confirms a low projected value yields none.
       expect(assessWindow(w, projected(50)).severity).toBe("none");
     });
 

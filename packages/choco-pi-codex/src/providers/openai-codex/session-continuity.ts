@@ -188,7 +188,6 @@ export function resolveCanonicalCompactionPromptInput(
   return result;
 }
 
-/** Why a background cut could not be aligned with the canonical history. */
 export type CanonicalCompactionPrefixDecision =
   | Exclude<CodexCompactionReplayDecision, "not_applicable">
   | "empty_cut";
@@ -198,10 +197,6 @@ interface CanonicalCompactionPrefixResult {
   decision: CanonicalCompactionPrefixDecision;
 }
 
-/**
- * A cut shorter than the recorded baseline must equal the canonical materialized input
- * item-by-item from the responses-lite request prefix; the result is that canonical prefix.
- */
 function replayCanonicalPrefix(
   state: CanonicalSessionState,
   preparedInput: readonly ProtocolValue[],
@@ -224,10 +219,6 @@ function replayCanonicalPrefix(
   };
 }
 
-/**
- * Background cuts may end before the latest response. A cut covering the whole baseline keeps
- * the foreground replay; a shorter one must be a proper prefix of the canonical history.
- */
 export function resolveCanonicalCompactionPrefixInput(
   sessionId: string,
   model: string,

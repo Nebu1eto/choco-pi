@@ -142,7 +142,6 @@ function requestIdOf(bus: FakeBus): string {
   return revoke.requestId;
 }
 
-/** Participants that acknowledge and settle synchronously inside the handler. */
 function syncParticipants(bus: FakeBus, channel: string, data: BusData): void {
   if (channel === STOP_REVOKE_CHANNEL && isRevokePayload(data)) {
     bus.emit(

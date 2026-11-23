@@ -9,23 +9,15 @@ import {
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
-/** Longest a provider stays closed on one report; a later report can re-close it. */
 export const MAX_CLOSE_MS = 24 * HOUR_MS;
-/** A Codex usage-limit entry further than this from the failure describes another failure. */
 export const CODEX_ENTRY_WINDOW_MS = 60_000;
 
-/**
- * Host non-retryable provider-limit pattern, copied verbatim from
- * `@earendil-works/pi-ai/dist/utils/retry.js` (`NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN`).
- */
 const BILLING_PATTERN =
   /GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|available balance|insufficient_quota|out of budget|quota exceeded|billing/i;
 const CODEX_LIMIT_PATTERN =
   /Codex usage limit reached|hit your ChatGPT usage limit|usage_limit_reached/i;
-/** `Resets in ~12m.`, `Resets in ~1.5h.`, `Try again in ~5 min.` (codex `errors.ts`). */
 const CODEX_RESET_PATTERN = /~(\d+(?:\.\d+)?) ?(min|m|hours?|h)\b/i;
 const ANTHROPIC_LIMIT_PATTERN = /^429\b|rate_limit_error/;
-/** `provider-retry.js` wrapper: `Server requested Ns retry delay (max: Ms). <message>`. */
 const RETRY_DELAY_WRAPPER_PATTERN =
   /^Server requested (\d+)s retry delay \(max: \d+s\)\. ?([\s\S]*)$/;
 const SYNTHETIC_LIMIT_PATTERN = /^429\b/;
@@ -192,10 +184,6 @@ for (const classifier of BUILTIN_CLASSIFIERS) {
   registerUsageLimitClassifier(classifier);
 }
 
-/**
- * Classifies a settled provider error via registered classifiers. Returns
- * `undefined` when the message is not a usage limit.
- */
 export function classifyUsageLimit(
   input: ClassifyUsageLimitInput,
 ): UsageLimitClassification | undefined {

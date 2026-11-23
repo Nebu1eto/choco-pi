@@ -22,11 +22,6 @@ interface PhpstanOutput {
   errors: string[];
 }
 
-// phpstan analyses the target file PLUS its dependency closure and keys errors
-// by the real file in `output.files`. Attribute each diagnostic to that key
-// (resolved against cwd) rather than blanket-stamping ctx.filePath — otherwise a
-// cross-file regression is mis-located onto the edited file (#265 A3). We do NOT
-// filter to the edited file: surfacing the cross-file impact is the point.
 export function parsePhpstanJson(raw: string, fallbackPath: string, cwd: string): Diagnostic[] {
   try {
     const output: PhpstanOutput = JSON.parse(raw);
@@ -80,7 +75,6 @@ const phpstanRunner: RunnerDefinition = {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
 
-    // Only run if phpstan config present — avoids noisy defaults on unconfigured projects
     if (!hasPhpstanConfig(cwd)) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
@@ -95,7 +89,6 @@ const phpstanRunner: RunnerDefinition = {
       { timeout: 30000, cwd },
     );
 
-    // phpstan exits 0 = no errors, 1 = errors found, 2 = fatal
     if (result.status === 2 || result.error) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }

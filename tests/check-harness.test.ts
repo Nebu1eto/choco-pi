@@ -507,14 +507,12 @@ test("built-in policy keeps codemode and tool search disabled and MCP enabled", 
         /project settings disable builtin:codemode and builtin:tool-search and enable built-in MCP/,
     },
     {
-      // The pre-change profile: Pi's built-in tool_search would be replaced with a startup warning.
       extensions: ["-builtin:codemode"],
       loaded: noneLoaded,
       status: "warn",
       detail: /does not disable builtin:tool-search/,
     },
     {
-      // Pi applies project entries in order, so a later + re-enables the built-in.
       extensions: [
         "-builtin:codemode",
         "-builtin:tool-search",
@@ -627,7 +625,6 @@ test("without project settings, the agent settings supply the profile policy", a
       await checkHarness({ mode: "automatic", configRoot, agentDir, nodeVersion: "v24.0.0" })
     ).checks.find((entry) => entry.id === id);
 
-  // As an install leaves them: bundled packages by absolute path, plus the user's own.
   await write({
     packages: [path.join(configRoot, "..", "packages", "choco-pi-lsp"), "npm:user-package@1.0.0"],
     extensions: [path.join(configRoot, "extensions"), "-builtin:codemode", "-builtin:tool-search"],
@@ -639,7 +636,6 @@ test("without project settings, the agent settings supply the profile policy", a
   assert.equal((await status("builtin-extensions"))?.status, "pass");
   assert.match((await status("builtin-extensions"))?.detail ?? "", /^agent settings disable/);
 
-  // Without bundled packages the profile was never installed.
   await write({ packages: ["npm:user-package@1.0.0"], extensions: ["-builtin:codemode"] });
   assert.equal((await status("packages"))?.status, "fail");
   assert.match((await status("packages"))?.detail ?? "", /lists no packages under/);

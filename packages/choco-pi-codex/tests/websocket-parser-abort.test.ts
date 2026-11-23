@@ -74,7 +74,6 @@ for (const stop of ["abort", "idle timeout", "return", "pending return"] as cons
     const controller = new AbortController();
     const state = createCodexTurnState();
     const delayed = delayedMetadata();
-    // Deliberately use the shared capture directly to independently test parser ownership.
     const iterator = parseWebSocket(socket, controller.signal, 25, state.capture)[
       Symbol.asyncIterator
     ]();

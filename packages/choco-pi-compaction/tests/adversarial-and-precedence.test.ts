@@ -1,10 +1,3 @@
-/**
- * Input framing and normalizer behavior.
- *
- * Adversarial text reaches the summarizer unchanged, framed as data, and the
- * normalizer only fills empty sections: it never edits, adds, or reorders the
- * model's own content.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -66,8 +59,6 @@ test("S4: injected text is carried verbatim inside the evidence block", () => {
       tail: [{ role: "user", content: injection, timestamp: 0 }],
       customInstructions: undefined,
     });
-    // The closing tag can itself appear in injected text, so the block is the
-    // span between the first opening tag and the last closing tag.
     const start = prompt.indexOf("<current-state-evidence>\n");
     const end = prompt.lastIndexOf("</current-state-evidence>");
     assert.ok(start >= 0 && end > start);

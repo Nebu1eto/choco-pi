@@ -1,21 +1,3 @@
-/**
- * Foreground xAI server-side compaction.
- *
- * Answers the host's own `session_before_compact` for an admitted Grok model
- * with an opaque compaction item from `POST /v1/responses/compact`, cut at the
- * latest legal wire position at or before the host's cut. A failure returns
- * undefined so the local summarizer answers the same compaction; a manual
- * (`/compact`) fallback is reported every time, an automatic one once per
- * session and transition. A successful attempt that forwarded a `/compact`
- * focus is journaled silently (`instructions-forwarded`). A cancelled or auth-failed attempt
- * instead answers `{ cancel: true }` so the host reports the failure
- * (`foreground-failure.ts`); a combination still cooling down after an auth
- * failure (`auth-cooling`, the gate's verdict, no credential read failed now)
- * falls back with a notice instead. One attempt. Runs in main and subagent
- * child sessions alike, reading only its own context and session state.
- * Fallbacks, cancels and a resumed checkpoint without captures are journaled
- * through the optional `announce` seam.
- */
 import type {
   ExtensionContext,
   SessionBeforeCompactEvent,
@@ -44,17 +26,11 @@ import { findActiveXaiCheckpoint } from "./replay.ts";
 import { hostTriggerOf, type CompactionTrigger } from "../trigger.ts";
 import { readSessionId } from "../shared/session.ts";
 
-/** Upper bound on one foreground compaction request. */
 const FOREGROUND_TIMEOUT_MS = 300_000;
 const FOREGROUND_MAX_RESULT_BYTES = 1_048_576;
 const NOTICE_PREFIX = "xAI server-side compaction";
-/** Bound on the silent-fallback dedupe memo (cleared when reached). */
 const MAX_JOURNALED_FALLBACKS = 256;
 
-/**
- * Journal one lane record and notify per policy (`background-host/notices.ts`
- * `announce`, bound to the registration). `always` shows `text` verbatim.
- */
 export type XaiAnnounce = (
   ctx: ExtensionContext,
   record: AnnouncedRecord,
@@ -68,19 +44,15 @@ export interface XaiForegroundDeps {
   readonly session: AnthropicServerSideSession;
   readonly mode: () => XaiCompactionMode;
   readonly codexCompaction: () => CodexCompactionSnapshot | undefined;
-  /** Registration lifecycle; any change invalidates an in-flight compaction. */
   readonly generation: () => number;
-  /** Captures of a session, oldest first. */
   readonly captures: (sessionId: string) => readonly XaiWireCapture[];
   readonly fetch?: typeof globalThis.fetch;
   readonly now?: () => number;
-  /** Journal seam; without it notices are shown directly and nothing is journaled. */
   readonly announce?: XaiAnnounce;
 }
 
 type ForegroundModel = NonNullable<ExtensionContext["model"]>;
 
-/** Host scalars snapshotted before the first await. */
 interface ForegroundRun {
   readonly ctx: ExtensionContext;
   readonly sessionId: string;
@@ -89,16 +61,13 @@ interface ForegroundRun {
   readonly registry: ExtensionContext["modelRegistry"];
   readonly preparation: SessionBeforeCompactEvent["preparation"];
   readonly branchEntryIds: readonly string[];
-  /** The branch's newest compaction entry; a capture sent before it is stale. */
   readonly latestCompactionId: string | undefined;
   readonly instructions: string | undefined;
   readonly route: LaneRoute;
-  /** The host's reason, journaled on the fallback record and stamped on the checkpoint. */
   readonly trigger: CompactionTrigger;
   readonly signal: AbortSignal;
 }
 
-/** Local fallback reasons: a coordinator failure, no usable capture, or an auth cooldown verdict. */
 type FallbackReason = FailureReason | "no-capture" | "auth-cooling";
 
 type Attempt =
@@ -107,7 +76,6 @@ type Attempt =
   | {
       readonly kind: "fallback";
       readonly reason: FallbackReason;
-      /** The compact request carried the user's `/compact` instructions to xAI. */
       readonly forwarded?: boolean;
     };
 
@@ -125,7 +93,6 @@ function show(ctx: ExtensionContext, text: string): void {
   }
 }
 
-/** Journal (when wired) and notify per policy; unwired, only the notice is shown. */
 function report(
   deps: XaiForegroundDeps,
   ctx: ExtensionContext,
@@ -141,12 +108,10 @@ function report(
   if (policy !== "silent") show(ctx, text);
 }
 
-/** Whether a `/compact` focus is present (blank instructions are not forwarded). */
 function hasInstructions(instructions: string | undefined): boolean {
   return instructions !== undefined && instructions.trim().length > 0;
 }
 
-/** A foreground attempt record before its event is chosen. */
 type AttemptRecord = Omit<AnnouncedRecord, "event">;
 
 function fallbackRecord(
@@ -172,7 +137,6 @@ function fallbackRecord(
 
 type FallbackAttempt = Extract<Attempt, { readonly kind: "fallback" }>;
 
-/** A native compaction that carried the user's `/compact` focus to xAI: journaled silently. */
 function journalForwarded(deps: XaiForegroundDeps, run: ForegroundRun): void {
   report(
     deps,
@@ -193,16 +157,13 @@ function journalForwarded(deps: XaiForegroundDeps, run: ForegroundRun): void {
   );
 }
 
-/** `session_before_compact` handler; undefined means the local summarizer answers. */
 export function createXaiForegroundCompactHandler(
   deps: XaiForegroundDeps,
 ): (
   event: SessionBeforeCompactEvent,
   ctx: ExtensionContext,
 ) => Promise<SessionBeforeCompactResult | undefined> {
-  /** Sessions whose resumed checkpoint without captures was journaled (once per session). */
   const resumed = new Set<string>();
-  /** Silent fallbacks already journaled, per session and record (D4: once per transition). */
   const journaled = new Set<string>();
   return async (event, ctx) => {
     const run = snapshotRun(deps, event, ctx, resumed);
@@ -216,12 +177,10 @@ export function createXaiForegroundCompactHandler(
     const reason = attempt.reason;
     const record = fallbackRecord(deps, run, attempt);
     if (reason !== "auth-cooling" && surfacesForegroundFailure(reason)) {
-      // Cancelled or auth-failed: the host fails this compaction instead of summarizing.
       report(deps, ctx, { ...record, event: "cancel" }, surfacedFailureMessage(reason), "always");
       return SURFACED_FAILURE_RESULT;
     }
     if (reason === "auth-cooling") {
-      // Every cooled-down attempt is told: the user may be waiting for the login to work again.
       report(
         deps,
         ctx,
@@ -233,11 +192,9 @@ export function createXaiForegroundCompactHandler(
     }
     const message = `not used for this compaction (${reason}); the local summarizer answers instead.`;
     if (record.route === "manual") {
-      // A user action is answered every time: one notice and one record per `/compact`.
       report(deps, ctx, { ...record, event: "fallback" }, message, "always");
       return undefined;
     }
-    // Automatic routes: once per session and transition (D4).
     const key = [run.sessionId, record.route, record.reason, record.detail ?? ""].join("|");
     if (journaled.has(key)) return undefined;
     if (journaled.size >= MAX_JOURNALED_FALLBACKS) journaled.clear();
@@ -264,7 +221,6 @@ function snapshotRun(
   deps.session.bind(sessionId);
   if (deps.session.isDisabled(sessionId)) return undefined;
   noteResumeWithoutCaptures(deps, { ctx, sessionId, branch: event.branchEntries, resumed });
-  // Static policy first (either auth mode): an unsupported model or endpoint never reads credentials.
   if (!xaiGateAdmitsModel(deps.gate, model)) return undefined;
   return {
     ctx,
@@ -282,12 +238,6 @@ function snapshotRun(
   };
 }
 
-/**
- * A committed xAI checkpoint with no capture in this process (a resumed
- * session, a new registration, a mode or model switch back): the native lane
- * cannot compact until a turn is captured. Journaled once per session, without
- * a notice; what the user sees is the guard on the compaction attempt.
- */
 function noteResumeWithoutCaptures(
   deps: XaiForegroundDeps,
   input: {
@@ -329,7 +279,6 @@ function isCurrent(deps: XaiForegroundDeps, run: ForegroundRun): boolean {
   );
 }
 
-/** The capture entry the host's cut maps to (entry before the first kept one, or the capture tail). */
 function preferredCut(
   capture: XaiWireCapture,
   firstKeptEntryId: string,
@@ -361,8 +310,6 @@ function chooseCapture(
     const capture = captures[index];
     if (capture === undefined || capture.status !== 200) continue;
     if (!xaiCaptureMatchesScope(capture, scope)) continue;
-    // A capture from before the newest compaction maps only already-compacted history;
-    // cutting it re-compacts the same prefix and the cut never advances.
     if (!capturedSince(capture.mapping, run.latestCompactionId)) continue;
     matched = true;
     const preferred = preferredCut(capture, run.preparation.firstKeptEntryId, run.branchEntryIds);
@@ -384,14 +331,12 @@ async function attemptCompaction(deps: XaiForegroundDeps, run: ForegroundRun): P
     model: run.model.id,
     baseUrl: auth.baseUrl ?? run.model.baseUrl,
   };
-  // Header-aware (D10): the same classification as the backend's resolveRequest.
   const authMode = xaiAuthModeFromAuth(auth);
   if (authMode === undefined) return fallback("auth");
   scope.authMode = authMode;
   const verdict = deps.gate.check(scope);
   if (!verdict.supported) {
     if (verdict.reason === "unsupported") return ABSTAIN;
-    // A cooldown after an earlier auth failure: no credential failed now, so fall back locally.
     return fallback(verdict.reason === "auth" ? "auth-cooling" : verdict.reason);
   }
   const choice = chooseCapture(deps.captures(run.sessionId), scope, run);
@@ -412,7 +357,6 @@ async function attemptCompaction(deps: XaiForegroundDeps, run: ForegroundRun): P
   );
   if (!isCurrent(deps, run)) return ABSTAIN;
   if (!outcome.ok) {
-    // The request reached xAI (a client outcome exists) with the user's focus in `instructions`.
     const forwarded = outcome.client !== undefined && hasInstructions(run.instructions);
     return { kind: "fallback", reason: outcome.failure.reason, forwarded };
   }

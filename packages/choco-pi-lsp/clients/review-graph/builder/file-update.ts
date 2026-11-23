@@ -1,6 +1,3 @@
-/**
- * Per-file graph mutation: file nodes, C/C++ include edges, removing and re-adding a file, and deferred symbol edges.
- */
 import { isRuntimeString } from "../../../tools/runtime-values.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -102,8 +99,6 @@ function addCxxIncludeEdges(
     const source = parseLocalCxxInclude(line);
     if (!source) continue;
     const target = resolveCxxInclude(cwd, filePath, source);
-    // #694: same ignore-gate as the tree-sitter import loop above — an
-    // untracked-AND-gitignored include target never becomes a node.
     if (!target || ignoredIds?.has(target)) continue;
     const languageId = mapKindToTreeSitterLanguage("cxx", target) ?? "cpp";
     const toNode = ensureFileNode(graph, target, cwd, languageId);
@@ -137,7 +132,6 @@ export function removeFileOwnedGraphData(graph: ReviewGraph, filePath: string): 
       preservedIncomingSymbolEdges.push({ ...edge });
       return false;
     }
-    // Preserve importer edges to the stable file node id; the node is re-added below.
     if (toRemoved && edge.to === fileNodeId) return true;
     return !toRemoved;
   });
@@ -155,8 +149,6 @@ export async function addFileToGraph(
 ): Promise<void> {
   const kind = detectFileKind(file);
   if (!kind || !MAIN_KINDS.has(kind)) return;
-  // #260: tests aren't graph-relevant — guard the per-file chokepoint too so
-  // the incremental/cascade path (a changed *.test.ts) never adds them either.
   if (detectFileRole(file) === "test") return;
   const contentHash = isRuntimeString(contentOverride)
     ? reviewGraphIrContentHash(contentOverride)
@@ -165,12 +157,6 @@ export async function addFileToGraph(
     ? getFreshReviewGraphFileIr(cwd, file, contentHash)?.structural
     : undefined;
   if (kind === "jsts") {
-    // Release content ONLY when this builder seeded it. The incremental
-    // per-edit path receives the LIVE dispatch FactStore (via the
-    // fire-and-forget blast-radius build), and the dispatch still reads
-    // file.content after its runner groups settle — inline suppressions,
-    // dispositions, and fact rules would race a delete and silently see
-    // undefined. Content the dispatch put there is the dispatch's to free.
     const dispatchOwnsContent =
       facts.getFileFact<string>(file, "file.content") !== undefined && contentOverride == null;
     try {
@@ -186,8 +172,6 @@ export async function addFileToGraph(
       }
       addJsTsFile(graph, cwd, file, facts, ignoredIds);
     } finally {
-      // The graph has copied every durable value it needs. Keep derived facts
-      // available to callers, but do not retain full source in a shared store.
       if (!dispatchOwnsContent) facts.deleteFileFact(file, "file.content");
     }
     return;
@@ -201,13 +185,6 @@ export async function addFileToGraph(
   const extracted =
     irExtracted ?? (await extractTreeSitterSymbols(file, languageId, contentOverride));
   addTreeSitterFile(graph, cwd, file, languageId, extracted, ignoredIds);
-  // Zero symbols consults the warm/open LSP fallback REGARDLESS of whether
-  // the symbols came from shared IR or direct extraction (#955 review): a
-  // degraded extractor (defs query failed to compile — init() deliberately
-  // succeeds, the documented kotlin case) yields parsed-true/empty, and
-  // treating that as authoritative would silently lose a whole language's
-  // symbols whenever a scan preceded the build. For genuinely empty files
-  // the fallback is a no-op unless the file is open in a warm client.
   if (extracted.symbols.length === 0) {
     const lspSymbols = await getOpenDocumentSymbols(file);
     const added = lspSymbols ? addLspFallbackSymbols(graph, file, languageId, lspSymbols) : 0;
@@ -248,18 +225,12 @@ export interface GraphFileImportChange {
 }
 
 export interface GraphImportDelta {
-  /** buildGeneration of the predecessor graph this delta was computed
-   * against. A consumer holding an index cached at any OTHER generation must
-   * NOT reuse/patch with this delta — generations minted by other call sites
-   * (mcp analyze, lens-map, session warm builds) carry import changes this
-   * one-step delta does not cover (#939 review). */
   fromGeneration: number | undefined;
   changes: GraphFileImportChange[];
 }
 
 export const _graphImportChanges = new WeakMap<ReviewGraph, GraphImportDelta>();
 
-/** One-step import-edge delta produced by this exact returned graph instance. */
 export function getGraphImportChanges(graph: ReviewGraph): GraphImportDelta | undefined {
   return _graphImportChanges.get(graph);
 }
@@ -268,8 +239,6 @@ function importTargetsForFile(graph: ReviewGraph, filePath: string): string[] {
   const normalized = normalizeMapKey(filePath);
   const fileNodeId = graph.fileNodes.get(normalized) ?? `file:${normalized}`;
   const targets = new Set<string>();
-  // Cached graph snapshots intentionally omit derived indexes; read the
-  // canonical edge collection so the delta is correct before the first rebuild.
   for (const edge of graph.edges) {
     if (edge.from !== fileNodeId) continue;
     if (edge.kind !== "imports") continue;
@@ -326,11 +295,6 @@ export function resolveDeferredSymbolEdges(graph: ReviewGraph, rebuild = true): 
     const targetNode = graph.nodes.get(edge.to);
     if (!targetNode?.metadata?.unresolvedName) return edge;
     const candidates = symbolNameToIds.get(targetNode.symbolName ?? "") ?? [];
-    // refs #655 phase 2 ("import" tier): the calling file's own imports named
-    // exactly which in-project file this bare callee comes from (see
-    // `addJsTsFile`'s `importHintFile`). Narrow to that file BEFORE the
-    // graph-wide uniqueness check — a name that's ambiguous project-wide can
-    // still be unambiguous once scoped to the one file it was imported from.
     // SAFETY: The fact-store, parser, or cache producer establishes this review-graph shape; adjacent checks reject unavailable values.
     const importHintFile = edge.metadata?.importHintFile as string | undefined;
     if (importHintFile) {
@@ -340,14 +304,8 @@ export function resolveDeferredSymbolEdges(graph: ReviewGraph, rebuild = true): 
       }
     }
     if (candidates.length === 1) {
-      // Exactly one same-named real symbol exists graph-wide: the bare-name
-      // match is provably unambiguous (refs #655 — resolution confidence).
       return { ...edge, to: candidates[0], resolution: "exact" };
     }
-    // 0 or 2+ candidates (and no import hint narrowed it): stays on the
-    // unresolved placeholder, resolution stays "name-only" (set at edge
-    // creation) — a consumer must not treat this edge's target as a
-    // confirmed graph node.
     return edge;
   });
   if (rebuild) rebuildIndexes(graph);

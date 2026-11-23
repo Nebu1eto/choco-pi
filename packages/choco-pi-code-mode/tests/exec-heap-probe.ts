@@ -1,6 +1,3 @@
-// Child-process probe for exec-session-buffer-bound.test.ts; run with --expose-gc.
-// Prints one JSON line: the live (post-GC) heap growth while a large producer runs,
-// the heap still retained once it finished, and the exec result fields the test checks.
 import v8 from "node:v8";
 
 import { createExecSessionManager } from "../src/tools/exec/session-manager.ts";
@@ -16,9 +13,6 @@ collect();
 const base = used();
 let liveMax = 0;
 let next = 32 * MB;
-// Sampled peaks include garbage the collector has not reached yet, so they track GC
-// pacing, not memory the host must hold. Collect whenever growth crosses the next
-// step and keep only what survives.
 const sampler = setInterval(() => {
   if (used() - base <= next) return;
   collect();

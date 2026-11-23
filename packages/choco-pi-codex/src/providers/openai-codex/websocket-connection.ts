@@ -40,8 +40,6 @@ interface CloseEventLike {
   reason?: unknown;
 }
 
-// The former all-optional TypeBox object schemas accepted any non-array object (live event and
-// Error instances included) and read members through the prototype, so these stay shallow guards.
 function hasErrorCode<T>(value: T): value is T & ErrorCodeLike {
   return isJsonObject(value);
 }
@@ -81,7 +79,6 @@ async function getWebSocketConstructor(
           Array.isArray(options) || isString(options) ? { protocols: options } : { ...options };
         const socketOptions = proxy ? { ...baseOptions, proxy } : baseOptions;
         // SAFETY: Bun's WebSocket constructor accepts this runtime-checked protocols/options union,
-        // including its proxy extension, although the host WebSocket overload omits that extension.
         super(url, socketOptions as never);
       }
     };
@@ -94,7 +91,6 @@ async function getWebSocketConstructor(
     const ctor = globalThis.WebSocket;
     if (!isFunction(ctor)) return null;
     // SAFETY: The runtime function check establishes a WebSocket constructor; the adapter only
-    // relies on the standard send, close, readyState, and event-listener members.
     return ctor as WebSocketConstructorLike;
   }
   const proxyUrl = proxy;
@@ -109,7 +105,6 @@ async function getWebSocketConstructor(
         Array.isArray(options) || isString(options) ? { protocols: options } : { ...options };
       const dispatcher = new ProxyAgent(proxyUrl);
       // SAFETY: Undici accepts dispatcher alongside the checked protocols/options union, while its
-      // public constructor overload does not expose this proxy-specific combination.
       super(socketUrl, { ...baseOptions, dispatcher } as never);
       let dispatcherClosed = false;
       const closeDispatcher = () => {
@@ -190,9 +185,7 @@ export function isWebSocketReusable(socket: WebSocketLike): boolean {
 export function closeWebSocketSilently(socket: WebSocketLike, code = 1000, reason = "done"): void {
   try {
     socket.close(code, reason);
-  } catch {
-    // ignore close errors
-  }
+  } catch {}
 }
 
 class NestedWebSocketError extends Error {

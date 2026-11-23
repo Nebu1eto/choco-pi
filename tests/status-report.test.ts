@@ -77,7 +77,6 @@ function fixture(mode: "rpc" | "tui" = "rpc") {
     }),
     modelRegistry: {
       find: () => undefined,
-      // No provider is connected, so /usage never reaches the network.
       getProviderAuthStatus: () => ({ configured: false }),
       getApiKeyForProvider: async () => undefined,
     },
@@ -597,7 +596,6 @@ test("profile markers written before structured reports still validate", () => {
   );
 });
 
-/** Whether `value` matches `schema`, narrowing like the compiled validator's check. */
 function checkSchema<S extends JsonSchema>(schema: S, value: RuntimeValue): value is Static<S> {
   return compile(schema).check(value);
 }

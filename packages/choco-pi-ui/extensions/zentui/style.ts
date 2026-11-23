@@ -227,11 +227,6 @@ function mapThemeColor(styleTokens: string[]): string | undefined {
   return fallback;
 }
 
-/**
- * Colorize text using a theme color token or hex color.
- * Non-hex values are passed directly to `theme.fg()`; invalid tokens fall back
- * to unstyled text so a config typo does not break rendering.
- */
 export function colorize(theme: ThemeLike, color: ColorSpec, text: string): string {
   if (isHexColor(color)) {
     return `${hexToAnsi(color)}${text}\x1b[39m`;
@@ -239,10 +234,6 @@ export function colorize(theme: ThemeLike, color: ColorSpec, text: string): stri
   return safeThemeFg(theme, color, text);
 }
 
-/**
- * Render text with Starship-style terminal styling strings (e.g. "bold red", "fg:202",
- * "bg:blue", "underline bg:#bf5700").
- */
 function isSafeSgrParameters(parameters: string): boolean {
   const tokens = parameters.split(";");
   if (tokens.some((token) => !/^\d+$/.test(token))) return false;
@@ -282,7 +273,6 @@ function isSafeSgrParameters(parameters: string): boolean {
   return true;
 }
 
-/** Accept only the bounded SGR subset emitted by Zentui's supported style tokens. */
 export function isSafeSgrStylePrefix(value: BoundaryValue): value is string {
   if (!isString(value) || value.length === 0 || value.length > MAX_SAFE_SGR_PREFIX_CODE_UNITS) {
     return false;
@@ -321,10 +311,6 @@ export function renderTerminalStyle(style: string, text: string): string {
   return codes.length ? `\x1b[${codes.join(";")}m${text}\x1b[0m` : text;
 }
 
-/**
- * Apply Starship-style terminal styling first, falling back to Pi theme tokens for
- * legacy config values such as "accent" or "syntaxKeyword".
- */
 export function renderStyle(theme: ThemeLike, style: ColorSpec, text: string): string {
   if (style.trim() === "") return text;
   const styled = renderTerminalStyle(style, text);

@@ -1,41 +1,27 @@
-/**
- * prompts.ts — System prompt builder for agents.
- */
-
 import type { AgentConfig, EnvInfo } from "./types.ts";
 
-/** Tools a read-only side conversation may use; mirrors agent-runner's static allowlist. */
 export const READ_ONLY_SIDE_CONVERSATION_TOOLS = ["read", "find", "ls"] as const;
 
-/** Capability restriction shared by BTW twins and legacy read-only agents. */
 const READ_ONLY_SIDE_CONVERSATION_BLOCK = `<read_only_side_conversation>
 You are answering a parallel side conversation owned by the main orchestrator.
 Use the inherited conversation only as context. Do not edit files, run commands, delegate work, or alter the main conversation.
 You may inspect the project with read, find, and ls when needed, then answer the user's question directly.
 </read_only_side_conversation>`;
 
-/** Preserve the main agent identity while adding the BTW capability restriction. */
 export function buildReadOnlySideConversationPrompt(parentSystemPrompt: string): string {
   return `${parentSystemPrompt}\n\n${READ_ONLY_SIDE_CONVERSATION_BLOCK}`;
 }
 
-/**
- * The tools a child can actually call, which the sub-agent guidance names.
- * `codeMode` is true when Code Mode's `exec` is active; `tools` then also
- * holds the tools callable inside `exec`.
- */
 export interface ToolSurface {
   codeMode: boolean;
   tools: readonly string[];
 }
 
-/** The surface assumed when a caller supplies none: Pi's default file tools. */
 const DEFAULT_TOOL_SURFACE: ToolSurface = {
   codeMode: false,
   tools: ["read", "bash", "edit", "write", "find", "ls"],
 };
 
-/** Lines naming file tools, in a fixed order so equal surfaces give byte-identical text. */
 const NORMAL_TOOL_LINES: ReadonlyArray<readonly [string, string]> = [
   ["read", "Use the read tool instead of cat/head/tail"],
   ["edit", "Use the edit tool instead of sed/awk"],
@@ -44,11 +30,6 @@ const NORMAL_TOOL_LINES: ReadonlyArray<readonly [string, string]> = [
   ["grep", "Use the grep tool instead of bash grep/rg for content search"],
 ];
 
-/**
- * Tool guidance for the sub-agent block. It names only tools in `surface`, and
- * the same mode and tool set always give the same text, because the block sits
- * in the cached prompt prefix.
- */
 export function buildToolGuidance(surface: ToolSurface): string[] {
   const has = new Set(surface.tools);
   const lines: string[] = [];
@@ -74,43 +55,15 @@ export function buildToolGuidance(surface: ToolSurface): string[] {
   return lines;
 }
 
-/** Extra sections to inject into the system prompt (memory, skills, etc.). */
 export interface PromptExtras {
-  /** Persistent memory content to inject (first 200 lines of MEMORY.md + instructions). */
   memoryBlock?: string;
-  /** Preloaded skill contents to inject. */
   skillBlocks?: { name: string; content: string }[];
-  /**
-   * Parent directory the worktree copy was created from. Set only for
-   * `isolation: "worktree"` spawns — triggers the block that tells the agent
-   * to stay in the copy.
-   */
   worktreeBase?: string;
-  /** Restrict this run to read-only side-conversation behavior. */
   readOnly?: boolean;
-  /** Line naming the lineage's scratch directory; added to the environment block. */
   scratchLine?: string;
-  /** The child's callable tools, for the append-mode guidance; Pi's defaults when absent. */
   toolSurface?: ToolSurface;
 }
 
-/**
- * Build the system prompt for an agent from its config.
- *
- * - "replace" mode: env header + config.systemPrompt (full control, no parent identity)
- * - "append" mode: parent system prompt + sub-agent context + env header + config.systemPrompt
- * - "append" with empty systemPrompt: pure parent clone
- *
- * Both modes include an `<active_agent name="${config.name}"/>` tag so downstream
- * extensions (e.g. permission/policy systems) can resolve per-agent policy
- * inside the child session by parsing the system prompt. In replace mode the tag
- * is prepended; in append mode it follows the shared inherited content so the
- * parent prompt forms an identical, cacheable byte prefix with the parent
- * session (the LLM's KV cache can then reuse those tokens across every spawn).
- *
- * @param parentSystemPrompt  The parent agent's effective system prompt (for append mode).
- * @param extras  Optional extra sections to inject (memory, preloaded skills).
- */
 export function buildAgentPrompt(
   config: AgentConfig,
   cwd: string,
@@ -125,10 +78,6 @@ Working directory: ${cwd}
 ${env.isGitRepo ? `Git repository: yes\nBranch: ${env.branch}` : "Not a git repository"}
 Platform: ${env.platform}${extras?.scratchLine ? `\n${extras.scratchLine}` : ""}`;
 
-  // A worktree agent is told its cwd twice: by the env block above (the copy)
-  // and by whatever names the main checkout — the inherited parent prompt in
-  // append mode, or the task prompt in either mode. It follows the latter and
-  // works in the shared tree (#187), so resolve the contradiction explicitly.
   const worktreeBlock = extras?.worktreeBase
     ? `\n\n<worktree_isolation>
 Your working directory is an isolated git worktree copy of ${extras.worktreeBase}.
@@ -136,7 +85,6 @@ Work only inside it — never in ${extras.worktreeBase}, even if other instructi
 </worktree_isolation>`
     : "";
 
-  // Build optional extras suffix
   const extraSections: string[] = [];
   if (extras?.memoryBlock) {
     extraSections.push(extras.memoryBlock);
@@ -169,11 +117,6 @@ ${toolLines}- Make independent tool calls in parallel
       ? `\n\n<agent_instructions>\n${config.systemPrompt}\n</agent_instructions>`
       : "";
 
-    // Place shared/stable content first so the LLM's KV cache can reuse the
-    // inherited prefix across all subagent invocations. The parent prompt is
-    // placed verbatim (no wrapper tag) so it forms an identical byte prefix
-    // with the parent session, maximising KV cache hits. The <active_agent>
-    // tag and env block vary per call and are placed after the cached prefix.
     return (
       identity +
       "\n\n" +
@@ -187,7 +130,6 @@ ${toolLines}- Make independent tool calls in parallel
     );
   }
 
-  // "replace" mode — env header + the config's full system prompt
   const replaceHeader = `You are a pi coding agent sub-agent.
 You have been invoked to handle a specific task autonomously.
 
@@ -198,7 +140,6 @@ ${envBlock}`;
   );
 }
 
-/** Fallback base prompt when parent system prompt is unavailable in append mode. */
 const genericBase = `# Role
 You are a general-purpose coding agent for complex, multi-step tasks.
 You have full access to read, write, edit files, and execute commands.

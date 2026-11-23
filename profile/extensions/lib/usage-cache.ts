@@ -5,18 +5,6 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-/**
- * Cache and client-side throttle for provider quota endpoints.
- *
- * Quota endpoints are cheap to read but rate limited by the provider, and every
- * open Usage tab in every session polls them. This module keeps the last good
- * response per endpoint, spaces live requests out, backs off after a 429 or a
- * 5xx, and serves the stored snapshot while the endpoint is unavailable. The
- * store is shared through a file, so sibling sessions and restarts inherit both
- * the snapshot and the backoff instead of hammering the endpoint again.
- */
-
-/** The shared usage cache file under Pi's agent directory. */
 export function usageCachePath(env: PiPathEnv = process.env, home: string = homedir()): string {
   return join(piAgentDir(env, home), "choco-pi", "usage-cache.json");
 }
@@ -25,15 +13,11 @@ export const DEFAULT_USAGE_CACHE_PATH = usageCachePath();
 
 const CACHE_VERSION = 1;
 const REQUEST_TIMEOUT_MS = 10_000;
-/** First backoff step after a retryable failure; doubles per consecutive failure. */
 const RETRY_BASE_MS = 60_000;
-/** Longest backoff this module applies on its own. */
 const RETRY_CAP_MS = 15 * 60_000;
-/** Cap on a provider-supplied `Retry-After`, which is honoured beyond the local cap. */
 const RETRY_AFTER_CAP_MS = 60 * 60_000;
 const MAX_RETRY_STEPS = 4;
 
-/** A provider response that did not arrive, carrying the status the endpoint reported. */
 export class UsageHttpError extends Error {
   readonly status: number;
   readonly retryAfterMs: number | undefined;
@@ -46,9 +30,7 @@ export class UsageHttpError extends Error {
   }
 }
 
-/** No live request ran because the client-side gate is still closed. */
 export class UsageThrottledError extends Error {
-  /** Epoch ms at which a live request is allowed again. */
   readonly retryAt: number;
 
   constructor(retryAt: number, reason?: string) {
@@ -59,20 +41,10 @@ export class UsageThrottledError extends Error {
 }
 
 export type UsageCacheEntry = {
-  /** Last successful response and the epoch ms it arrived; absent until one succeeds. */
   snapshot?: { payload: RuntimeValue; storedAt: number };
-  /**
-   * The response `snapshot` replaced. A provider whose quota refills instead of
-   * resetting can only be paced by comparing two readings, and the live one is
-   * fetched at most once a minute, so the older reading is kept rather than
-   * recomputed on every paint.
-   */
   previous?: { payload: RuntimeValue; storedAt: number };
-  /** Earliest epoch ms at which a live request may run again. */
   nextAttemptAt: number;
-  /** Consecutive failures, which drive the backoff step. */
   failures: number;
-  /** Message of the most recent failure, shown next to a served snapshot. */
   lastError?: string;
 };
 
@@ -82,21 +54,15 @@ export type UsageCacheStorage = {
 };
 
 export type UsageRequestPolicy = {
-  /** Minimum spacing between live requests for one endpoint. */
   minIntervalMs: number;
-  /** Oldest snapshot still worth serving when the endpoint is unavailable. */
   maxStaleMs: number;
 };
 
 export type UsageRequestResult = {
   payload: RuntimeValue;
-  /** Epoch ms the returned payload was read from the endpoint. */
   payloadAt: number;
-  /** The reading before `payload`, when one is still stored. */
   previous?: { payload: RuntimeValue; storedAt: number };
-  /** Epoch ms the payload was fetched; absent when the payload is a live response. */
   cachedAt?: number;
-  /** Why the payload came from the cache instead of the endpoint. */
   reason?: string;
 };
 
@@ -107,16 +73,9 @@ export type UsageCache = {
     policy: UsageRequestPolicy,
     refresh?: boolean,
   ) => Promise<UsageRequestResult>;
-  /** Resolves once every pending store write has settled. */
   flush: () => Promise<void>;
 };
 
-/**
- * Non-reversible cache key component for an account identity, so the shared
- * file never carries a credential or an account ID in readable form. Callers
- * must pass an identifier that survives credential rotation; a rotating access
- * token would move the key and silently drop both the snapshot and the gate.
- */
 export function identityKey(identity: string): string {
   return createHash("sha256").update(identity).digest("hex").slice(0, 16);
 }
@@ -131,7 +90,6 @@ function parseRetryAfter(value: string | null, at: number): number | undefined {
   return Number.isNaN(date) ? undefined : Math.max(0, date - at);
 }
 
-/** GET a provider quota endpoint, turning a non-2xx response into a `UsageHttpError`. */
 export async function fetchUsageJson(
   url: string,
   token: string,
@@ -154,11 +112,6 @@ export async function fetchUsageJson(
   return response.json();
 }
 
-/**
- * Transport failures and the statuses a provider asks the client to retry back
- * off exponentially. A permanent status such as 401 keeps the plain interval, so
- * a re-authentication is picked up on the next refresh.
- */
 function isRetryable(error: RuntimeValue): boolean {
   if (!(error instanceof UsageHttpError)) return true;
   return (
@@ -221,7 +174,6 @@ function parseEntries(value: RuntimeValue): Record<string, UsageCacheEntry> {
   );
 }
 
-/** Merge two views of one endpoint, keeping the newest snapshot and the longest gate. */
 function mergeEntry(
   left: UsageCacheEntry | undefined,
   right: UsageCacheEntry | undefined,
@@ -241,7 +193,6 @@ function mergeEntry(
   };
 }
 
-/** File-backed store shared by every session on this machine. */
 export function createFileUsageCacheStorage(path = DEFAULT_USAGE_CACHE_PATH): UsageCacheStorage {
   return {
     read: async () => {
@@ -274,13 +225,6 @@ export function createFileUsageCacheStorage(path = DEFAULT_USAGE_CACHE_PATH): Us
   };
 }
 
-/**
- * Create a cache over `storage`. Every endpoint runs at most one live request
- * per `minIntervalMs`, concurrent callers of one key share that request, and a
- * failure serves the stored snapshot while it is younger than `maxStaleMs`.
- * When nothing usable is stored the caller sees the original failure, or a
- * `UsageThrottledError` carrying the time the gate reopens.
- */
 export function createUsageCache(
   options: { storage?: UsageCacheStorage; now?: () => number } = {},
 ): UsageCache {
@@ -349,8 +293,6 @@ export function createUsageCache(
     try {
       const payload = await load();
       const completedAt = now();
-      // The reading this one replaces becomes the comparison point; a repeated
-      // timestamp would make the interval zero, so it is never kept.
       const previous = snapshot && snapshot.storedAt < completedAt ? snapshot : entry?.previous;
       saveEntry(key, {
         snapshot: { payload, storedAt: completedAt },
@@ -386,7 +328,6 @@ export function createUsageCache(
     request: (key, load, policy, refresh = false) => {
       const pending = inflight.get(key);
       if (pending && !refresh) return pending;
-      // A mutation refresh must run AFTER an older read, never share its stale result.
       const started = (pending ? pending.catch(() => undefined) : Promise.resolve())
         .then(() => run(key, load, policy, refresh))
         .finally(() => {

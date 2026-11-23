@@ -20,13 +20,8 @@ import {
   type UsageWindow,
 } from "./types.ts";
 
-/**
- * Shortest gap between two Synthetic readings worth reading a pace from. Below
- * it a single request dominates the difference and the verdict would flicker.
- */
 const MIN_PACE_INTERVAL_MS = 30_000;
 
-/** One reading of a bucket that refills instead of resetting. */
 type RefillReading = { capacity: number; remaining: number };
 
 type SyntheticReadings = { weekly?: RefillReading };

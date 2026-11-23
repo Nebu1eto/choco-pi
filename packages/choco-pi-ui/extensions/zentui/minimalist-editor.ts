@@ -342,17 +342,12 @@ function renderLabeledBorder(options: {
   )}${rightPart}${options.renderBorder(options.rightCorner)}`;
 }
 
-/**
- * Where {@link renderMinimalistFrame} puts the editor's rows and its
- * autocomplete rows, for mapping a mouse position back to the editor.
- */
 export function minimalistFrameGeometry(width: number, editorRows: number) {
   return {
     editorTop: 1,
     editorRows,
     editorLeft: 2,
     innerWidth: Math.max(0, width - 4),
-    // A separator row comes between the text and the menu.
     autocompleteTop: editorRows + 2,
     autocompleteLeft: 2,
   };
@@ -360,31 +355,18 @@ export function minimalistFrameGeometry(width: number, editorRows: number) {
 
 export type LabeledBoxOptions = {
   width: number;
-  /** Rows inside the box; each is cut or padded to the inner width. */
   lines: string[];
   topLeft?: string;
   topRight?: string;
-  /**
-   * Cells on the right of the top border, joined by ` – ` in the border's
-   * color the way the editor joins its model and cost; used instead of `topRight`.
-   */
   topRightCells?: readonly string[];
   bottomLeft?: string;
   bottomRight?: string;
-  /** Cells on the right of the bottom border, joined like `topRightCells`. */
   bottomRightCells?: readonly string[];
   uiTheme: Theme;
   config: ZentuiConfig;
-  /** Paints the border instead of the editor's border color; a throw falls back to it. */
   borderColor?: (text: string) => string;
 };
 
-/**
- * A box drawn like the minimalist editor frame — labeled `╭`/`╮` and
- * `╰`/`╯` borders around `│` rows — with caller-chosen labels, in the
- * editor's border color unless `borderColor` paints it. Other extensions use
- * it to frame their own panels the way the prompt is framed.
- */
 export function renderLabeledBox({
   width,
   lines,

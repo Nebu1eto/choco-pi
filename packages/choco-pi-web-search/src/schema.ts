@@ -22,7 +22,6 @@ import {
   type JsonValue,
 } from "./contract.ts";
 
-/** String enum in the `{ type: "string", enum: [...] }` form every Pi provider accepts (not `anyOf` of literals). */
 export function stringEnum<const V extends readonly string[]>(values: V): Schema<V[number]> {
   return { type: "string", enum: [...values] };
 }
@@ -74,7 +73,6 @@ export function searchProviderSchema(description?: string) {
 
 const ReferenceInputSchema = obj({ id: str({ minLength: 1 }) });
 
-/** Open JSON-object-of-objects schema for `providerOptions` without `$ref` so tool schemas can copy properties standalone. */
 const ProviderOptionsToolSchema: Schema<Record<string, JsonRecord>> = {
   type: "object",
   additionalProperties: {
@@ -120,7 +118,6 @@ export const canonicalSearchParams = obj({
 
 export const isObjectValue = compile(obj({}, { open: true })).check;
 
-/** Recursive JSON value. Numbers are bounded to finite values because pi-schema `num()` accepts NaN/Infinity. */
 const JsonValueSchema: Schema<JsonValue> = { $ref: "#/$defs/JsonValue" };
 const JsonRecordSchema: Schema<JsonRecord> = {
   type: "object",
@@ -159,7 +156,6 @@ const isRuntimeSearchRequestBase = compile({
   $defs: JsonValueDefinitions,
 }).check;
 
-/** Validates a runtime SearchRequest, allowing any valid custom lowercase family id in `provider`. */
 export function isRuntimeSearchRequest<Value>(value: Value): boolean {
   if (!isRuntimeSearchRequestBase(value)) return false;
   if (!isObjectValue(value)) return false;

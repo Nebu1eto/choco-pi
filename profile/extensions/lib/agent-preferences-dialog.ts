@@ -48,7 +48,6 @@ export const AGENT_SECTION_ID = "agent";
 
 const MATCH_USER_LABEL = "Match user";
 const CUSTOM_LANGUAGE_LABEL = "Custom…";
-/** The unset style row; distinct from choosing the default style by name, which pins it. */
 const DEFAULT_STYLE_LABEL = `Default (${DEFAULT_STYLE})`;
 const LANGUAGE_PRESETS = ["English", "Korean", "Japanese", "Chinese"];
 const ENABLED_LABEL = "Enabled";
@@ -153,7 +152,6 @@ async function writePersona(
 async function writeOnUsageLimit(ctx: ExtensionCommandContext, value: OnUsageLimit): Promise<void> {
   await writeAndNotify(
     ctx,
-    // An unchanged value neither writes nor emits, so it cannot cancel an armed usage-limit wait.
     async () => {
       await writeAgentPreferenceIfChanged(AGENT_ON_USAGE_LIMIT_KEY, value);
     },
@@ -186,7 +184,6 @@ async function writePromptSuggestion(
   );
 }
 
-/** Parses a Daybreak preference row or argument value; `undefined` when unrecognized. */
 export function parseDaybreakValue(value: string): DaybreakPreference | undefined {
   const normalized = value.trim().toLowerCase();
   if (normalized === "auto") return "auto";
@@ -201,7 +198,6 @@ async function writeDaybreakDefault(
 ): Promise<void> {
   await writeAndNotify(
     ctx,
-    // An unchanged value neither writes nor emits, so it cannot reseed default-source sessions.
     async () => {
       await writeAgentPreferenceIfChanged(DAYBREAK_DEFAULT_KEY, enabled);
     },
@@ -266,7 +262,6 @@ async function writeContextSoftCap(
 ): Promise<void> {
   await writeAndNotify(
     ctx,
-    // An unchanged value neither writes nor emits, so it cannot trigger a needless re-apply.
     async () => {
       await writeAgentPreferenceIfChanged(CONTEXT_SOFT_CAP_KEY, value);
     },
@@ -349,17 +344,9 @@ function handleAgentPreferenceChange(
   return { kind: "update" };
 }
 
-/**
- * Builds the Agent section of the preferences panel: the global agent
- * language, agent style, agent persona, and usage-limit rows backed by
- * `~/.pi/agent/settings.json`. Row changes persist asynchronously; await
- * `flushAgentPreferenceWrites` to observe them on disk.
- */
 export function buildAgentPreferencesSection(
   ctx: ExtensionCommandContext,
 ): PreferencesExtraSection {
-  // The auto-name write lands asynchronously, so the rebuild that adds or
-  // drops the naming-model row reads the value the user just chose.
   let chosenAutoName: boolean | undefined;
   return {
     id: AGENT_SECTION_ID,
@@ -429,7 +416,6 @@ export function buildAgentPreferencesSection(
           values: [ENABLED_LABEL, DISABLED_LABEL],
         },
       ];
-      // The naming model only matters while sessions are named automatically.
       if (autoName) {
         items.push({
           id: SESSION_AUTO_NAME_MODEL_KEY,
@@ -492,10 +478,6 @@ export function buildAgentPreferencesSection(
   };
 }
 
-/**
- * Follow-up flows for outcomes emitted by the Agent section, run while the
- * dialog is closed; returns where the reopened dialog should focus.
- */
 export async function runAgentPreferencesOutcome(
   outcome: string,
   ctx: ExtensionCommandContext,
@@ -524,13 +506,6 @@ export async function runAgentPreferencesOutcome(
   return {};
 }
 
-/**
- * Handles the agent-specific `/preferences` argument grammar
- * (`agent`, `language [name]`, `style [name]`, `persona [value]`,
- * `usage-limit [value]`). Returns the section/focus to open, `{ open: false }`
- * after starting a direct write, or `undefined` when the arguments belong to
- * the zentui grammar.
- */
 export function resolveAgentPreferencesArgs(
   args: string,
   ctx: ExtensionCommandContext,

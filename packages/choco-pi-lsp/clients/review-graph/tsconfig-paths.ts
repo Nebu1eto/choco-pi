@@ -35,7 +35,6 @@ interface ParsedConfig {
 const cache = new BoundedLruCache<string, TsconfigPathMatcher[]>(64);
 const referencesCache = new BoundedLruCache<string, Map<string, string>>(64);
 
-/** Strip JSONC comments and trailing commas without touching string contents. */
 function parseJsonc(content: string): RuntimeValue {
   let output = "";
   let inString = false;
@@ -200,9 +199,7 @@ function firstSourceEntry(configPath: string, parsed: ParsedConfig): string | un
   for (const candidate of candidates) {
     try {
       if (fs.statSync(candidate).isFile()) return candidate;
-    } catch {
-      // Try the next conventional entry.
-    }
+    } catch {}
   }
   return undefined;
 }
@@ -233,16 +230,13 @@ function collectReferencedProjects(
           if (isRuntimeString(pkg.name) && !result.has(pkg.name)) {
             result.set(pkg.name, entry);
           }
-        } catch {
-          // An unreadable adjacent package.json does not define a mapping.
-        }
+        } catch {}
       }
     }
     collectReferencedProjects(referencedConfig, result, visited);
   }
 }
 
-/** Find and parse the nearest governing tsconfig, cached per importer directory. */
 export function parseTsconfigPaths(cwd: string, homeDir = os.homedir()): TsconfigPathMatcher[] {
   const normalizedCwd = path.resolve(cwd);
   const configDir = findGoverningTsconfigDir(normalizedCwd, homeDir);
@@ -251,9 +245,6 @@ export function parseTsconfigPaths(cwd: string, homeDir = os.homedir()): Tsconfi
   const key = `${normalizedCwd}|${configPath}|${signature}`;
   const cached = cache.get(key);
   if (cached) return cached;
-  // Home-guarding is enforced inside findGoverningTsconfigDir's walk itself
-  // (via workspace-topology's shared isAtOrAboveHomeDir ceiling), so a hit
-  // here is never at/above homeDir.
   if (!configDir) {
     cache.set(key, []);
     return [];
@@ -278,7 +269,6 @@ export function parseTsconfigPaths(cwd: string, homeDir = os.homedir()): Tsconfi
   return matchers;
 }
 
-/** Apply the longest matching paths pattern and substitute its single `*`. */
 export function aliasedImportTargets(specifier: string, importerDir: string): string[] {
   for (const matcher of parseTsconfigPaths(importerDir)) {
     if (!specifier.startsWith(matcher.prefix) || !specifier.endsWith(matcher.suffix)) continue;
@@ -292,7 +282,6 @@ export function aliasedImportTargets(specifier: string, importerDir: string): st
   return [];
 }
 
-/** Resolve an exact package-name import through the governing config's project references. */
 export function referencedProjectImportTarget(
   specifier: string,
   importerDir: string,

@@ -1,5 +1,3 @@
-// The patch parser enforces hunk line counts and section boundaries, and reports a section
-// it cannot read by name instead of giving its lines to another file.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
@@ -100,7 +98,6 @@ test("content that looks like a header is content while the hunk's counts remain
   assert.deepEqual(result.notices, []);
 });
 
-// The cases below are correct before and after the change; they pin the sweep.
 test("well-formed variants parse unchanged", () => {
   const result = summary([
     ...A_HEAD,

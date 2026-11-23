@@ -51,7 +51,6 @@ type Status = keyof typeof EXIT_CODES;
 
 const PhaseRecordSchema = obj({ usage: PhaseUsageSchema }, { open: true });
 
-/** Restart workers are separate processes with their own ledgers. */
 function workerUsage(records: readonly EvidenceRecord[]) {
   return records.flatMap((record) =>
     record.kind === PHASE_RECORD && matches(PhaseRecordSchema, record.data) && record.data.usage
@@ -103,7 +102,6 @@ async function reportPending(scenario: PendingScenario, out: string): Promise<vo
 
 async function runScenario(scenario: Scenario, host: Host, out: string): Promise<void> {
   const observed = await scenario.execute(host);
-  // Counters are read at verdict time so late subcases (negatives) are included.
   const evidence = { ...observed, networkCalls: host.networkCalls(), aborts: host.aborts() };
   const verdicts = evaluateChecks(evidence, [...scenario.checks, ...HARNESS_CHECKS]);
   const status = statusOf(verdicts, scenario);
@@ -154,7 +152,6 @@ const scratch = join("/tmp/choco-pi", process.env.PI_SESSION_ID ?? "background-c
 const pending = PENDING_SCENARIOS.find((item) => item.name === values.scenario);
 const scenario = SCENARIOS.find((item) => item.name === values.scenario);
 
-/** The offline subject a scenario offers; refuses a name it does not declare. */
 function offlineModelFor(item: Scenario, requested: string | undefined) {
   if (requested === undefined) return item.offlineModels?.values().next().value;
   const model = item.offlineModels?.get(requested);
@@ -165,7 +162,6 @@ function offlineModelFor(item: Scenario, requested: string | undefined) {
 if (pending) await reportPending(pending, values.out ?? join(scratch, pending.name));
 else if (!scenario) throw new Error(`Use --scenario with one of: ${names.join(", ")}`);
 else {
-  // Resolved before the launcher scopes PI_CODING_AGENT_DIR; refuses unapproved runs up front.
   const live =
     values.live === undefined
       ? undefined

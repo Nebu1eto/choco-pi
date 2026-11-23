@@ -41,7 +41,6 @@ export const extensionStatusPlacementValues: ExtensionStatusPlacement[] = [
   "middle",
   "right",
 ];
-/** Placements for a status that is shown; the per-status switch owns `off`. */
 export const shownExtensionStatusPlacementValues: ExtensionStatusPlacement[] = [
   "left",
   "middle",
@@ -142,28 +141,12 @@ export type FooterPatch = Partial<
 >;
 export type ApplyResult = { applied: boolean; reason?: string };
 
-/**
- * Outcomes the settings panel emits. `"close"` asks the host to close the
- * dialog entirely; every other value is handed back to the host, which closes
- * the dialog, runs {@link runZentuiPreferencesOutcome}, and reopens.
- */
 export type ZentuiPreferencesOutcome =
   | "close"
   | "edit-working-line-messages"
   | "edit-working-line-spinner-speed"
   | "edit-working-line-text-speed";
 
-/**
- * A settings section contributed by the embedding host. Host sections render
- * like built-in sections; `handleChange` performs the side effect (including
- * notifications) and reports how the list should redraw, or asks for an
- * outcome so the host can run a follow-up flow outside the dialog.
- *
- * With `mergeInto` the section contributes no tab of its own: its rows are
- * appended to the named section, which may be a built-in one or another host
- * section. Changes are routed by row id, so a merged section only ever sees
- * the rows it built.
- */
 export interface PreferencesExtraSection {
   id: string;
   label: string;
@@ -175,18 +158,11 @@ export interface PreferencesExtraSection {
   ) => { kind: "update" } | { kind: "rebuild" } | { kind: "outcome"; outcome: string };
 }
 
-/**
- * One headed block of a layout tab. Each entry is either a row id or
- * `section:<source id>`, which takes every remaining row of that source (a
- * built-in section or a host section) in the order the source builds them.
- * A row id placed explicitly anywhere wins over a `section:` entry.
- */
 export interface PreferencesLayoutGroup {
   label?: string;
   rows: readonly string[];
 }
 
-/** One tab of a host-defined layout: its groups render in order under dim headings. */
 export interface PreferencesLayoutTab {
   id: string;
   label: string;
@@ -198,7 +174,6 @@ export interface ZentuiPreferencesFocus {
   focusId?: string;
 }
 
-/** Outcome of parsing `/preferences` arguments that this panel understands. */
 export interface ZentuiPreferencesArgsResolution {
   open: boolean;
   section?: string;
@@ -209,37 +184,12 @@ export interface ZentuiPreferencesPanelOptions {
   tui: { requestRender(): void };
   theme: ExtensionContext["ui"]["theme"];
   extraSections?: PreferencesExtraSection[];
-  /**
-   * Renders one section's rows inside another, keyed source to target. The
-   * source keeps no tab of its own and its rows arrive under a dim heading, in
-   * the order the keys are declared.
-   */
   mergeSections?: Record<string, string>;
-  /**
-   * Tab order. Listed sections come first in this order; anything left over
-   * keeps its natural position after them, so an unknown or missing id is
-   * harmless.
-   */
   sectionOrder?: string[];
-  /**
-   * Host-defined tabs. When set it replaces `mergeSections` and
-   * `sectionOrder`: every row from every section is placed by id into a tab
-   * group. A row neither placed nor hidden still renders, appended to the tab
-   * its source would have owned, so a new upstream row is never lost.
-   */
   layout?: readonly PreferencesLayoutTab[];
-  /** Row ids the panel never shows, not even in search. */
   hiddenRows?: readonly string[];
-  /**
-   * Where the panel opens. A tab id, or a source section id resolved to the
-   * tab that holds its rows; `initialFocusId` wins when it names a placed row.
-   */
   initialSection?: string;
   initialFocusId?: string;
-  /**
-   * Opens the focused row's submenu as soon as the panel appears, so a command
-   * can hand the user straight to one picker instead of the row that holds it.
-   */
   openInitialSubmenu?: boolean;
   onOutcome: (outcome: string) => void;
 }
@@ -248,26 +198,9 @@ export interface ZentuiPreferencesPanelHandle {
   render: (width: number) => string[];
   invalidate: () => void;
   handleInput: (data: string) => void;
-  /**
-   * Mouse input in the panel's own coordinates (row 0 is its top border). A
-   * click on a section in the tab strip shows it; a click on a row selects
-   * and changes it as Enter does; the wheel moves the selection. An open
-   * submenu or the search field receives the events over the list area. The
-   * result never asks for keyboard focus: the host keeps it.
-   */
   handleMouse: (event: TuiMouseEvent) => TuiMouseEventResult | undefined;
   dispose: () => void;
-  /**
-   * True while a row's submenu owns the panel. The host must stop claiming its
-   * own shortcuts then, because a submenu such as a model picker needs Tab and
-   * plain characters for its own search and filters.
-   */
   hasOpenSubmenu: () => boolean;
-  /**
-   * True while the panel's full-text search owns the filter field. The host
-   * must hand every key to the panel then, including digits and Tab, because
-   * they type into the filter instead of switching tabs.
-   */
   hasActiveSearch: () => boolean;
   getActiveSection: () => string;
 }
@@ -303,7 +236,6 @@ export type SettingsCommandDeps = {
   getActiveExtensionStatuses: () => ReadonlyMap<string, string>;
   setExtensionStatusDefaultPlacement: (placement: ExtensionStatusPlacement) => void;
   setExtensionStatusPlacement: (key: string, placement: ExtensionStatusPlacement) => void;
-  /** Drops one status key's override so it follows the default placement again. */
   clearExtensionStatusPlacement: (key: string) => void;
   setExtensionStatusColorMode: (key: string, colorMode: ExtensionStatusColorMode) => void;
   requestRender: () => void;

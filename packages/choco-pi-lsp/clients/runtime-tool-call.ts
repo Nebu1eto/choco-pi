@@ -93,37 +93,6 @@ function getToolCallRawFilePath(toolName: string, event: { input?: unknown }): s
   return undefined;
 }
 
-/**
- * Resolve a tool_call's raw path to the file pi will actually touch.
- *
- * The `cwd` basis is the host `ctx.cwd`, which for the pinned host IS the same
- * value the tools were constructed with — `AgentSession` passes its one `_cwd`
- * to both `createAllToolDefinitions`
- * (`@earendil-works/pi-coding-agent/dist/core/agent-session.js:2026`, source
- * `src/core/tools/index.ts:99-124`) and the `ExtensionRunner` behind `ctx.cwd`
- * (`dist/core/agent-session.js:2037`; `runner.js:154`, `:476-479`). Neither is
- * reassigned after construction, so there is no drift TODAY (#1655 item 4).
- * `tests/clients/pi-host-contract.test.ts` pins that, because the day a host
- * lets one move independently, every path here silently retargets.
- *
- * The path is produced the way pi produces it, in pi's two stages (#1655 item
- * 5, plus review F1):
- *
- *   1. `resolveHostToolPath` mirrors pi's BASE resolution, `resolveToCwd`
- *      (`dist/core/tools/path-utils.js:42-44`, source
- *      `src/core/tools/path-utils.ts:~44-46`) — unicode-space folding, `@`
- *      prefix stripping, `~` expansion, `file://` conversion, and Git-Bash
- *      drive paths, all BEFORE anything is probed.
- *   2. `resolveHostPathVariants` mirrors pi's fallback LADDER
- *      (`dist/core/tools/path-utils.js:45-70`, source
- *      `src/core/tools/path-utils.ts:52-83`).
- *
- * Stage 1 was missing in the first cut of this fix, and the ladder cannot
- * stand in for it: an `@`-prefixed path, a `file://` URL, or a non-breaking
- * space are all resolved by pi at stage 1 and are untouched by any of the four
- * stage-2 candidates. A plain `path.resolve` therefore produced a path pi
- * never opens, and the miss looked identical to "file genuinely absent".
- */
 function resolveToolCallFilePath(
   rawFilePath: string | undefined,
   cwd: string | undefined,
@@ -179,9 +148,6 @@ function shouldSkipLspAutoTouch(filePath: string, projectRoot: string): boolean 
   return false;
 }
 
-// Kept in lockstep with the gate's normalizeContent + oldtext-autopatch's
-// normalizeOldTextForMatch: the host edit tool's full fuzzy-match space, so the
-// autopatch passes count/locate oldText exactly where the host applies it (#257).
 function normalizeOldTextForMatch(text: string): string {
   return normalizeForGuardMatch(text);
 }
@@ -217,9 +183,6 @@ function isIndentationOnlyChange(before: string, after: string): boolean {
   const beforeLines = before.replace(/\r\n/g, "\n").split("\n");
   const afterLines = after.replace(/\r\n/g, "\n").split("\n");
   if (beforeLines.length !== afterLines.length) return false;
-  // Strip both leading and trailing whitespace: consistent with
-  // findIndentationInsensitiveCandidate which matches via .trimEnd(), so a
-  // candidate that differs only in trailing whitespace is still indentation-only.
   return beforeLines.every((line, index) => line.trim() === afterLines[index].trim());
 }
 
@@ -245,13 +208,6 @@ function getNewContentFromToolCall(event: LspBoundaryValue): string | undefined 
 
 interface ToolCallEvent {
   toolName?: string;
-  /**
-   * Host-assigned identity for this call, shared with the paired
-   * `tool_result` event (SDK's `ToolCallEventBase.toolCallId`). Carried
-   * through so the canonical resolved path can be correlated by identity
-   * instead of the paired tool_result re-deriving it from its own metadata
-   * (#1642).
-   */
   toolCallId?: string;
   input?: unknown;
   details?: unknown;
@@ -292,57 +248,12 @@ interface ToolCallDeps {
 
 export type ToolCallResult = { block: true; reason?: string } | void;
 
-/**
- * Total guard around the `tool_call` handler body (#1655 item 1).
- *
- * `tool_call` is the ONE pi emit path with no per-handler `try`/`catch`. Every
- * sibling wraps each handler and routes a throw to `emitError`
- * (`emitToolResult` at
- * `@earendil-works/pi-coding-agent/dist/core/extensions/runner.js:649-707`,
- * source `src/core/extensions/runner.ts:877-930`; the generic `emit` at
- * source `runner.ts:801-832`). `emitToolCall`
- * (`dist/core/extensions/runner.js:701-717`, source `runner.ts:932-953`) calls
- * `await handler(event, ctx)` bare, and its caller
- * `AgentSession._installAgentToolHooks`'s `beforeToolCall`
- * (`dist/core/agent-session.js:229-241`, source `agent-session.ts:~228-242`)
- * rethrows: `throw new Error("Extension failed, blocking execution: ...")`.
- *
- * So an unguarded throw anywhere in choco-pi-lsp's `tool_call` handler does not
- * degrade choco-pi-lsp — it BLOCKS the user's tool call outright. Advisory
- * instrumentation must never be able to do that. Every failure degrades to
- * "choco-pi-lsp did nothing for this call" (`undefined`, which pi reads as
- * "no extension opinion") and lands one ledger entry per tool name.
- *
- * Returning `undefined` on a throw is deliberate: a partially-executed handler
- * cannot have earned a `{ block: true }` verdict, and inventing one would turn
- * a choco-pi-lsp bug into a refused user tool call — the exact outcome this guard
- * exists to prevent.
- *
- * #1642 F2 (inside the guard): a BLOCKED call (git-guard, read-guard
- * preflight, the duplicate-export check) never gets a paired `tool_result` —
- * the host never lets the tool execute. Any path attribution recorded for it
- * below would otherwise sit in the correlation cache forever (bounded by its
- * LRU cap, but pure garbage that can crowd out a live in-flight record under
- * enough blocked-edit volume — a reviewer-reproduced leak). Clear it eagerly
- * on the way out whenever the call was blocked; a no-op if nothing was
- * recorded (a gitignored SKIP is not a block, so it is unaffected). This
- * cleanup runs INSIDE the try, so a throw out of it is absorbed too.
- */
 export async function handleToolCall(deps: ToolCallDeps): Promise<ToolCallResult> {
   try {
     const result = await handleToolCallImpl(deps);
 
     // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     if (result && (result as { block?: boolean }).block) {
-      // Review F2 — this cleanup gets its OWN catch, and it is not optional
-      // tidiness. By the time it runs, `result` is a FINAL `{ block: true }`
-      // verdict: the read guard has already refused an edit-without-read, or
-      // the git guard has already refused a commit. Letting a throw out of
-      // bookkeeping reach the outer catch would convert that verdict into
-      // `undefined` — "choco-pi-lsp has no opinion" — and the refused edit would
-      // execute. A guard that fails OPEN because its telemetry broke is
-      // worse than no guard, so the verdict is returned regardless of what
-      // the cleanup does.
       try {
         const toolCallId = resolveToolCallCorrelationId(deps.event);
         if (toolCallId !== undefined) {
@@ -361,9 +272,7 @@ export async function handleToolCall(deps: ToolCallDeps): Promise<ToolCallResult
           deps.dbg?.(
             `tool_call blocked-attribution cleanup threw (block verdict preserved): ${reason}`,
           );
-        } catch {
-          // A broken `dbg` must not resurrect the throw just absorbed.
-        }
+        } catch {}
       }
     }
     return result;
@@ -371,8 +280,6 @@ export async function handleToolCall(deps: ToolCallDeps): Promise<ToolCallResult
     // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
     const toolName = (deps.event as { toolName?: string } | undefined)?.toolName ?? "unknown";
     const reason = error instanceof Error ? error.message : String(error);
-    // Once per tool name per session: a wedged handler fires on every call of
-    // that tool, and the ledger is a health surface, not a log.
     recordDegradationOnce({
       kind: "tool-call-handler-throw",
       subject: toolName,
@@ -383,12 +290,7 @@ export async function handleToolCall(deps: ToolCallDeps): Promise<ToolCallResult
       if (error instanceof Error && error.stack) {
         deps.dbg?.(`tool_call handler stack: ${error.stack}`);
       }
-    } catch {
-      // A broken `dbg` must not resurrect the throw this guard just absorbed.
-    }
-    // Any attribution already recorded is deliberately LEFT in place: the
-    // tool now executes (this returns "no opinion"), so its paired
-    // `tool_result` still arrives and claims the record exactly once.
+    } catch {}
     return undefined;
   }
 }
@@ -420,18 +322,6 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
   const editInputForTelemetry = (event as { input?: unknown }).input as
     | { edits?: unknown[] }
     | undefined;
-  // #1655 item 3: SNAPSHOT the requested batch width here, at handler entry.
-  // `input` is a live, mutable, extension-ordered object — pi types it
-  // `Record<string, LspDictionaryValue>` and hands the SAME reference to every handler in
-  // turn (`@earendil-works/pi-coding-agent/dist/core/extensions/runner.js:701-716`
-  // passes `event` unchanged through the loop; source
-  // `src/core/extensions/types.ts:914-919`), and choco-pi-lsp itself rewrites it in
-  // place further down (indent correction, hashline resolution, range
-  // relocation). `requestedEditIndexes` was already a snapshot; the totals
-  // below used to RE-READ `editInputForTelemetry.edits.length` from the live
-  // object hundreds of lines and several `await`s later, so a batch that
-  // changed width in between produced an internally inconsistent summary —
-  // indexes from the call-time array, totals from the mutated one.
   const requestedEditIndexes =
     toolName === "write"
       ? [0]
@@ -499,21 +389,8 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
   const attributesMutationTarget =
     toolCallId !== undefined && (toolName === "write" || toolName === "edit");
   const targetMissing = !nodeFs.existsSync(filePath);
-  // #1642 F1: a brand-new file's WRITE is never a "skip" — `tool_call`
-  // fires PRE-execution, so `existsSync` is false for every path a write
-  // is about to CREATE. Gitignore is a pure pattern match (no existence
-  // requirement), so it is checked regardless of `targetMissing`; only an
-  // actual ignore verdict is a real "refuse". Folding `targetMissing` into
-  // `skipped` (the pre-fix-round-2 shape of this file) made EVERY new-file
-  // write's paired tool_result refuse to run diagnostics/autofix/format at
-  // all — a full pipeline regression worse than the bug #1642 fixes.
   const targetIgnored = isPathIgnoredByProject(filePath, runtime.projectRoot, false);
   if (attributesMutationTarget) {
-    // #1642: record the canonical target BY TOOL-CALL IDENTITY — including
-    // (especially) when it is being skipped here. The paired tool_result
-    // must take this exact verdict rather than re-deriving its own path
-    // from relative diff metadata, which is how a gitignored worktree
-    // edit got re-attributed onto a same-relative-path parent file.
     runtime.recordToolCallAttribution(toolCallId, {
       resolvedPath: filePath,
       skipped: targetIgnored,
@@ -521,20 +398,6 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
     });
   }
   if (targetMissing) {
-    // #1655 item 5: this early return used to be the whole story — choco-pi-lsp
-    // did nothing, said nothing, and the file pi went on to read stayed
-    // invisible to the read guard, the LSP warm, and the dispatch. The
-    // variant ladder above now finds the macOS-shaped cases; when it probed
-    // variants and STILL found nothing, say so rather than returning an
-    // indistinguishable silence (defect shape 10). `write` is exempt for the
-    // same reason #1642 F1 gives just above: a write's target legitimately
-    // does not exist yet.
-    //
-    // Review F1: this used to also require `triedVariants.length > 0`, which
-    // silenced exactly the misses the base-normalization gap produced —
-    // those paths have no quote and no AM/PM, so every stage-2 candidate
-    // collapses onto the base path and nothing is "tried". `unresolved` is
-    // the whole condition; the tried list is detail for the reason string.
     if (toolName !== "write" && pathResolution?.unresolved) {
       const tried =
         pathResolution.triedVariants.length > 0
@@ -620,7 +483,6 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
       if (toolName === "read") {
         runtime.clearLspReadWarmState(filePath);
       }
-      // Best effort only; never block tool calls.
     }
   }
 
@@ -630,10 +492,6 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
   let effectiveReadOffset = requestedReadOffset;
   let effectiveReadLimit = getEffectiveReadLimit(filePath, readInput);
 
-  // --- Opportunistic read expansion via tree-sitter ---
-  // For partial reads (small limit, not from line 1), find the enclosing
-  // symbol and expand the read range to cover it. This gives the read guard
-  // accurate symbol-level coverage without requiring an LSP server.
   let expandedByLsp = false;
   let enclosingSymbol:
     | {
@@ -685,10 +543,6 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
             name: qualifiedLspSymbolName(located, lspSymbols),
             kind: lspSymbolKindName(located.symbol.kind),
           };
-          // Flat SymbolInformation results (native-ts7's real shape) carry
-          // no hierarchy — an empty LSP ancestry must NOT wipe the real
-          // tree-sitter chain (#951 review finding 1). Enrich only when
-          // the LSP actually provided one.
           if (located.ancestry.length > 0) {
             enrichedAncestry = located.ancestry.map((entry) => ({
               name: entry.name,
@@ -730,12 +584,9 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
             `(${expansion.newOffset}–${expansion.newOffset + expansion.newLimit - 1})`,
         );
       }
-    } catch {
-      // Best-effort only.
-    }
+    } catch {}
   }
 
-  // --- Read-Before-Edit Guard: record reads ---
   if (toolName === "read" && filePath && !isExternalOrVendor) {
     const totalLines = countFileLines(filePath);
     const deliveredLimit = effectiveReadLimit ?? 1;
@@ -770,8 +621,6 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
   }
 
   const { complexityClient } = await loadBootstrapClients();
-  // Record complexity baseline for historical tracking (booboo/tdi).
-  // Not shown inline - just captured for delta analysis.
   if (
     !isExternalOrVendor &&
     complexityClient.isSupportedFile(filePath) &&
@@ -792,22 +641,13 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
     }
   }
 
-  // --- Read-Before-Edit Guard: check edits ---
-  // write = full replacement; no prior read needed (you're starting fresh).
-  // edit = partial modification; guard enforced to prevent blind overwrites.
   const isEditOnly = isToolCallEventType("edit", event);
   const isWriteOrEdit = isToolCallEventType("write", event) || isEditOnly;
 
-  // Track any Write so recordWritten can inject a synthetic read afterward.
-  // The agent authored the content (new or overwritten), so it trivially "knows" the file.
   if (!isEditOnly && isWriteOrEdit && filePath && !getFlag("no-read-guard")) {
     runtime.readGuard.noteCreatedFile(filePath, runtime.turnIndex, runtime.peekWriteIndex());
   }
 
-  // --- Indentation mismatch correction ---
-  // Some models output spaces in oldText when the file uses tabs (or vice versa).
-  // Detect this before the read guard runs so a recoverable mismatch does not
-  // degrade into a no-line-info allow path.
   if (isEditOnly && filePath) {
     // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
     const editInput = (event as { input?: unknown }).input as {
@@ -853,24 +693,14 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
               : null,
           )
           .filter((entry): entry is EditIndentTarget => entry !== null);
-    // Read the file once; derive the two normalized forms needed by
-    // tryCorrectIndentationMismatchFromContent (CRLF->LF only) and
-    // countOldTextMatches / the autopatch bridge (host fuzzy-match space).
     let crlfContent: string | undefined;
     let matchNormalizedContent: string | undefined;
     try {
       const raw = nodeFs.readFileSync(filePath, "utf-8");
       crlfContent = raw.replace(/\r\n/g, "\n");
       matchNormalizedContent = normalizeOldTextForMatch(raw);
-    } catch {
-      // File unreadable — corrections will be skipped gracefully below.
-    }
+    } catch {}
 
-    // --- Pass 0: escaped control-char correction ---
-    // Models may write literal \n or \t in oldText (JSON interprets them as actual
-    // newline/tab) when the file has the two-character escape sequences (e.g. inside
-    // a regex or string literal). Safety gates: original must not match at all;
-    // escaped version must match exactly once.
     if (matchNormalizedContent !== undefined) {
       for (const entry of oldTexts) {
         const v = entry.value;
@@ -890,12 +720,6 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
       }
     }
 
-    // --- Pass 1: trailing whitespace correction ---
-    // Editors strip trailing whitespace on save; the model may copy content
-    // that had it. Safety gates: the original raw oldText must not already
-    // match, and the stripped raw candidate must match exactly once. When
-    // trailing empty lines are stripped from oldText, strip the equivalent
-    // suffix from newText so the replacement span is not accidentally widened.
     if (crlfContent !== undefined) {
       for (const entry of oldTexts) {
         const patch = computeTrailingWhitespaceOldTextPatch({
@@ -923,12 +747,6 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
             newTextTrailingEmptyLinesPatched: newTextPatched,
           },
         });
-        // Bridge: same rationale as the indent autopatch — the
-        // trailing-ws patcher only applies when the stripped oldText
-        // matches exactly once against the file, so the agent's text
-        // reflects real content at the matched span. Register a
-        // synthetic read covering it so the read-guard downstream
-        // doesn't fire a zero_read block after the verification.
         if (matchNormalizedContent !== undefined && runtime.readGuard) {
           const range = findUniqueMatchLineRange(matchNormalizedContent, patch.oldText);
           if (range) {
@@ -978,10 +796,6 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
           indentationOnly: boolean;
         } => entry !== undefined,
       );
-    // Apply safe corrections individually — each edit stands alone.
-    // Unsafe corrections (non-indentation-only or ambiguous) fall through
-    // to resolveOldTextEdits, which handles them per-edit with proper
-    // oldtext_duplicate / oldtext_not_found reporting and partial apply.
     for (const entry of correctedOldTexts) {
       if (
         entry.indentationOnly &&
@@ -1006,10 +820,6 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
             newTextIndentationPatched: correctedNewText !== undefined,
           },
         });
-        // Bridge: a unique-match autopatch proves the agent's oldText
-        // reflects real content at this span. Register a synthetic read
-        // for the matched range so a zero_read block downstream isn't
-        // thrown after the autopatch already verified the content.
         if (matchNormalizedContent !== undefined && runtime.readGuard) {
           const range = findUniqueMatchLineRange(matchNormalizedContent, entry.corrected);
           if (range) {
@@ -1066,14 +876,6 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
                       readGuardCorrelationId,
                     },
                     content: [],
-                    // #1655 item 2: `provider`/`model`/`sessionId`/`session`
-                    // used to be forwarded here from the tool_call event.
-                    // pi builds a `tool_call` with exactly
-                    // `type`/`toolName`/`toolCallId`/`input`
-                    // (`@earendil-works/pi-coding-agent/dist/core/agent-session.js:230-234`,
-                    // source `src/core/agent-session.ts:~228-236`), so all
-                    // four were always `undefined` and the tool_result
-                    // branch they fed was unreachable.
                   },
                   getFlag: (name: string) => getFlag(name),
                   dbg,
@@ -1131,9 +933,7 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
               }
               return { block: true, reason };
             }
-          } catch {
-            // fall through to full block
-          }
+          } catch {}
         }
         if (!editBatchSummary) logBlockedEditSummary("preflight");
         return { block: true, reason: preflightError };
@@ -1154,12 +954,6 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
             oldTextResolved: !!contentMatchValidated,
           })
         : { action: "allow" as const };
-      // Content-verified range-stale relocation: the lines the agent meant
-      // to edit moved (read-time line hashes uniquely match the new spot),
-      // so re-target the positional edit to where the content now lives
-      // instead of dead-ending. Safe because the hashes prove the new span
-      // IS the intended content — the same guarantee that lets
-      // pi-hashline-readmap auto-apply. Single-range only (set by the guard).
       if (verdict.relocation) {
         const relocated = relocateEditRange(
           // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
@@ -1190,7 +984,6 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
               to: verdict.relocation.to,
             },
           });
-          // Relocation applied — let the re-targeted edit proceed.
         } else if (verdict.action === "block") {
           logBlockedEditSummary("range_relocated_blocked");
           return { block: true, reason: verdict.reason };
@@ -1205,19 +998,11 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
     }
   }
 
-  // --- Pre-write duplicate detection ---
-  // Check if new content redefines functions that already exist elsewhere.
-  // Uses cachedExports (populated at session_start via ast-grep scan).
   if (isWriteOrEdit && runtime.cachedExports.size > 0) {
     const newContent = getNewContentFromToolCall(event);
     if (newContent) {
       const dupeWarnings: string[] = [];
       const exportRe = /export\s+(?:async\s+)?(?:function|class|const|let|type|interface)\s+(\w+)/g;
-      // Read current on-disk content once so we can check whether the file
-      // being written already owns a given export (e.g. it IS the source and
-      // another file merely re-exports from it). cachedExports only tracks one
-      // file per name — whichever was scanned first — so a re-exporter can
-      // win the slot and incorrectly shadow the original definition.
       let currentFileExports: Set<string> | undefined;
       if (filePath && nodeFs.existsSync(filePath)) {
         try {
@@ -1226,9 +1011,7 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
           for (const m of currentContent.matchAll(exportRe)) {
             currentFileExports.add(m[1]);
           }
-        } catch {
-          // non-fatal — fall back to no current-export knowledge
-        }
+        } catch {}
       }
       for (const match of newContent.matchAll(exportRe)) {
         const name = match[1];

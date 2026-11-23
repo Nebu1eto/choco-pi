@@ -25,19 +25,14 @@ export const BUILT_IN_WORKING_LINE_MESSAGES = PI_WORKING_LINE_MESSAGES;
 export const WORKING_LINE_FALLBACK_MESSAGE = "Working…";
 
 export const MAX_WORKING_LINE_MESSAGES = 48;
-/** Complete Loader row, including its two margins and Pi's indicator separator. */
 export const MAX_WORKING_LINE_ROW_CELLS = 80;
-/** Indicator payload budget inside the complete Loader row. */
 export const MAX_WORKING_LINE_FRAME_CELLS = MAX_WORKING_LINE_ROW_CELLS - 3;
 export const MAX_WORKING_LINE_MESSAGE_CELLS = 43;
-/** Sized so category-prefixed labels ("LSP: Searching Symbols") show untruncated. */
 export const MAX_WORKING_LINE_TOOL_CELLS = 22;
 export const MAX_WORKING_LINE_FRAMES = 1024;
 export const MAX_WORKING_LINE_FRAME_CODE_UNITS = 512 * 1024;
 export const MAX_WORKING_LINE_RAW_CODE_UNITS = 4096;
-/** Keeps combining-rich visible text bounded before it is copied into every animation frame. */
 export const MAX_WORKING_LINE_NORMALIZED_CODE_UNITS = 256;
-/** Three modifiers plus one color are sufficient for each Working-line tier. */
 export const MAX_WORKING_LINE_STYLE_TOKENS = 4;
 export const MAX_WORKING_LINE_STYLE_CODE_UNITS = 48;
 export const MAX_WORKING_LINE_ENTRIES_EXAMINED = 256;
@@ -70,7 +65,6 @@ type WorkingLineContext = {
 
 type AgentDurationListener = (durationMs: number) => void;
 
-/** One agent-duration clock shared by minimalist Editor and Working-line consumers. */
 export class AgentDurationClock {
   private startedAt: number | undefined;
   private completedMs: number | undefined;
@@ -151,9 +145,7 @@ function segmentGraphemes(value: string): Iterable<string> {
         },
       };
     }
-  } catch {
-    // Without Intl.Segmenter, treat the complete value as one conservative grapheme.
-  }
+  } catch {}
   return [value];
 }
 
@@ -182,7 +174,6 @@ function boundRawWorkingLineInput(value: string): string {
   if (value.length <= MAX_WORKING_LINE_RAW_CODE_UNITS) return value;
   const prefix = value.slice(0, MAX_WORKING_LINE_RAW_CODE_UNITS);
   const graphemes = [...segmentGraphemes(prefix)];
-  // The last segmented item may be only the prefix of a grapheme that crosses the raw bound.
   graphemes.pop();
   return graphemes.join("");
 }
@@ -206,7 +197,6 @@ function stripC1TerminalSequences(value: string): string {
     .replaceAll(/\u009b[0-?]*[ -/]*[@-~]/g, "");
 }
 
-/** Normalize untrusted user-authored text before it can reach Pi's working row. */
 export function normalizeWorkingLineMessage(value: BoundaryValue): string {
   if (!isString(value)) return "";
   const bounded = boundRawWorkingLineInput(value);
@@ -400,7 +390,6 @@ function styleForTier(colors: PolishedTuiColors, tier: Tier): ColorSpec | undefi
   }
 }
 
-/** Normalize only Working-line palette specs before they are repeated across generated frames. */
 export function normalizeWorkingLineStyleSpec(value: ColorSpec | undefined): ColorSpec | undefined {
   if (value === undefined) return undefined;
   const tokens: string[] = [];
@@ -442,7 +431,6 @@ function renderTier(
   );
 }
 
-/** Resolve the fixed, nonanimated high-tier style used by persisted Turn summaries. */
 export function renderWorkingLineHigh(
   theme: ThemeLike,
   colorSource: WorkingLineComponentConfig["colorSource"],
@@ -591,7 +579,6 @@ function truncateWithEllipsis(value: string, capacity: number): string {
 
 export type ComposedWorkingLine = { message: string; row: string };
 
-/** Validate and measure the fixed visible width shared by every frame in a preset. */
 export function workingLineSpinnerWidth(spinnerId: WorkingLineComponentConfig["spinner"]): number {
   const frames: readonly string[] = WORKING_LINE_SPINNERS[spinnerId].frames;
   const width = visibleWidth(frames[0] ?? "");
@@ -601,7 +588,6 @@ export function workingLineSpinnerWidth(spinnerId: WorkingLineComponentConfig["s
   return width;
 }
 
-/** Compose visual Message · Tool · Elapsed · Thought · Tokens order with tokens reserved first. */
 export function composeWorkingLineRow(
   config: WorkingLineComponentConfig,
   message: string,
@@ -1001,9 +987,7 @@ function workingLineUi(ctx: WorkingLineContext): WorkingLineUi | undefined {
 export type WorkingLineReconcileResult = { applied: boolean; reason?: string };
 
 type InstalledAnimationPhase = {
-  /** Logical beginning of the dwell for frameStates[0]. */
   frameEpochMs: number;
-  /** Scheduler frame represented by frameStates[0], retained across array rebuilds. */
   scheduleFrame: number;
   intervalMs: number;
   frameStates: WorkingLineFrameState[];
@@ -1028,7 +1012,6 @@ type InstallationSnapshot = {
   stopElapsedUpdates: (() => void) | undefined;
 };
 
-/** Owns Pi's public, unkeyed working-row message and indicator configuration. */
 export class WorkingLineController {
   private installed = false;
   private ownsIndicator = false;
@@ -1067,8 +1050,6 @@ export class WorkingLineController {
     this.agentActive = true;
     this.activeTools.clear();
     if (this.getConfig().components.workingLine.enabled) {
-      // Pi emits extension handlers before constructing its Loader. Force and rebase the
-      // stored indicator so the subsequently constructed Loader begins at intended frame zero.
       this.install(ctx, true, true);
     }
     this.reconcileElapsedUpdates(ctx);
@@ -1287,10 +1268,6 @@ export class WorkingLineController {
       textTick,
       scheduleStartFrame,
     );
-    // Pi's public Loader always gives replacement frame zero a full first interval. Carrying
-    // the logical fractional dwell in this epoch keeps later rebuilds wall-clock-correct; the
-    // visible replacement can still jitter by less than one interval because the API cannot
-    // schedule a fractional first interval.
     const frameEpochMs = sampledAtMs - intervalFraction * generated.intervalMs;
     this.ownsIndicator = true;
     const indicatorOptions = { frames: generated.frames, intervalMs: generated.intervalMs };
@@ -1318,7 +1295,6 @@ export class WorkingLineController {
     try {
       this.applyIndicator(ui, rootConfig);
     } catch {
-      // A transient last-writer/public-API failure must not break the agent turn.
       this.recoverOrReleaseAfterFailure(ui, snapshot);
     }
   }
@@ -1390,8 +1366,6 @@ export class WorkingLineController {
       ui.setWorkingIndicator(snapshot.indicatorOptions);
       if (snapshot.ownsMessage) ui.setWorkingMessage("");
     } catch {
-      // Recovery is deliberately direct rather than recursive. If either setter cannot
-      // restore the last successful public state, release both unkeyed surfaces.
       this.releaseAfterFailure(ui);
     }
   }
@@ -1401,16 +1375,12 @@ export class WorkingLineController {
     if (this.ownsIndicator) {
       try {
         ui.setWorkingIndicator();
-      } catch {
-        // Best-effort release after a partial public-API installation failure.
-      }
+      } catch {}
     }
     if (this.ownsMessage) {
       try {
         ui.setWorkingMessage();
-      } catch {
-        // Best-effort release after a partial public-API installation failure.
-      }
+      } catch {}
     }
     this.installed = false;
     this.ownsIndicator = false;
@@ -1427,16 +1397,12 @@ export class WorkingLineController {
     if (ui && this.ownsIndicator) {
       try {
         ui.setWorkingIndicator();
-      } catch {
-        // Cleanup is best effort and remains idempotent.
-      }
+      } catch {}
     }
     if (ui && this.ownsMessage) {
       try {
         ui.setWorkingMessage();
-      } catch {
-        // Cleanup is best effort and remains idempotent.
-      }
+      } catch {}
     }
     this.installed = false;
     this.ownsIndicator = false;

@@ -54,7 +54,6 @@ export type PullRequestReview = {
   metadata: PullRequestMetadata;
   remote: string;
   baseSha: string;
-  /** The fetched, verified pull request head. Persist this SHA with review state. */
   headSha: string;
   rawDiff: string;
   worktreePath: string;
@@ -85,7 +84,6 @@ function isObject(value: RuntimeValue): value is Record<string, RuntimeValue> {
 }
 
 function parseAuthor(value: RuntimeValue, context: string): PullRequestAuthor | null {
-  // GitHub returns null when the author's account is no longer available.
   if (value === null) return null;
   if (
     !isObject(value) ||
@@ -156,7 +154,6 @@ async function runGhJson(cwd: string, args: string[], runner: ExecRunner): Promi
   }
 }
 
-/** Read one pull request's review metadata without changing local or remote state. */
 export async function getPullRequestMetadata(
   cwd: string,
   number: number,
@@ -172,7 +169,6 @@ export async function getPullRequestMetadata(
   return parsePullRequest(value, `gh pr view ${number} output`);
 }
 
-/** List open pull requests for command completion. */
 export async function listPullRequests(
   cwd: string,
   runner: ExecRunner = defaultExecRunner,
@@ -287,10 +283,7 @@ async function removeOwnedWorktree(
     return false;
   try {
     await removeWorktree(root, path, runner);
-  } catch {
-    // A claimed path may exist without a Git administrative entry when a
-    // previous add failed. The ownership file still makes local removal safe.
-  }
+  } catch {}
   await rm(path, { recursive: true, force: true });
   await unlink(ownerFile(path)).catch(() => undefined);
   return true;
@@ -335,8 +328,6 @@ async function claimWorktreePath(
       throw error;
     }
     try {
-      // Claim the directory itself before Git writes into it. If another
-      // process won the path race, remove only our sidecar and try a suffix.
       await mkdir(path, { mode: 0o700 });
       return { path, token };
     } catch (error) {
@@ -348,17 +339,12 @@ async function claimWorktreePath(
   throw new Error(`Unable to allocate a pull request worktree under ${directory}.`);
 }
 
-/**
- * Fetch, pin, diff, and check out a pull request without changing branches in
- * the caller's checkout. The returned headSha is the exact reviewed commit.
- */
 export async function resolvePullRequestTarget(
   cwd: string,
   target: Extract<ReviewTarget, { kind: "pr" }>,
   options: PullRequestResolveOptions = {},
 ): Promise<PullRequestReview> {
   const runner = options.runner ?? defaultExecRunner;
-  // Resolved per call, so worktrees follow this session's agent directory.
   const reviewDirectory = refuseRealStoreUnderTest(
     options.reviewDirectory ?? resolveReviewDirectory(),
   );
@@ -418,7 +404,6 @@ export async function resolvePullRequestTarget(
   };
 }
 
-/** Dispose only the worktree proven by the resolver's ownership token. */
 export async function disposePullRequestWorktree(
   review: PullRequestReview,
   runner: ExecRunner = defaultExecRunner,

@@ -16,7 +16,6 @@ export type StaleQueuedWorkLifecycleKind =
 
 export type TerminalObligationPhase = "older" | "active";
 
-/** One stale abort's pending agent_end: match goalIds, or id-less when acceptsAnonymous. */
 export type AgentEndObligation = {
   goalIds: Set<string>;
   acceptsAnonymous: boolean;

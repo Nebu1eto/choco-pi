@@ -63,13 +63,6 @@ export {
 
 export { sanitizeExtensionUiText } from "./session-extension-ui.ts";
 
-/**
- * The subset of the ACP client connection this adapter's sessions call.
- *
- * `AgentSideConnection` carries private state, so no structural value is
- * assignable to it. Declaring the contract the session actually uses lets both
- * the real SDK connection and narrow client fakes satisfy it without assertions.
- */
 export type AcpConnection = {
   sessionUpdate(params: SessionNotification): Promise<void>;
   requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse>;
@@ -78,9 +71,7 @@ export type AcpConnection = {
 
 export type StopReason = "end_turn" | "cancelled" | "error";
 
-/** One active turn plus at most this many explicitly queued ACP prompts. */
 const MAX_QUEUED_TURNS = 64;
-/** Preserve responsive-client delivery without letting a dead child retain a prompt forever. */
 const PI_EXIT_EMIT_DRAIN_MS = 100;
 
 export class PiAcpSession {
@@ -96,43 +87,25 @@ export class PiAcpSession {
   private readonly fileCommands: FileSlashCommand[];
   private unsubscribeProcExit: () => void = () => {};
 
-  // Used to map abort semantics to ACP stopReason.
-  // Applies to the currently running turn.
   private cancelRequested = false;
 
-  // Current in-flight turn (if any). Additional prompts are queued.
   private pendingTurn: PendingTurn | null = null;
   private readonly turnQueue: QueuedTurn[] = [];
   private turnQueueClosedError: Error | null = null;
-  // Track tool call statuses and ensure they are monotonic (pending -> in_progress -> completed).
-  // Some pi events can arrive out of order (e.g. late toolcall_* deltas after execution starts),
-  // and clients may hide progress if we ever downgrade back to `pending`.
   private currentToolCalls = new Map<string, "pending" | "in_progress">();
 
-  // pi can emit multiple `turn_end` and `agent_end` events for a single user prompt
-  // when retry, compaction, or queued continuations run. The session-level prompt
-  // completes only when `agent_settled` is emitted.
-  // For ACP diff support: capture file contents before edit/write mutations,
-  // then emit ToolCallContent {type:"diff"}. Compatible structured edit/write
-  // events may need to be implemented in pi in the future.
   private fileSnapshots = new Map<string, { path: string; oldText: string | null }>();
   private fileMutationToolCallIds = new Set<string>();
   private bashToolCallIds = new Set<string>();
   private bashOutputSnapshots = new Map<string, string>();
   private readonly toolPresentations = new ToolPresentationTracker();
 
-  // Ensure `session/update` notifications are sent in order and can be awaited
-  // before completing a `session/prompt` request.
   private lastEmit: Promise<void> = Promise.resolve();
   private readonly emitDrain = {
     abandoned: false,
     release: Promise.withResolvers<void>(),
   };
-  // Separates distinct outputs that the client would otherwise append to one block.
-  // It sees every text update in delivery order, which is `emit`'s call order.
   private readonly textBoundary = new TextBoundary();
-  // Changes at each Pi `message_start`/`message_end`, so text deltas of one assistant
-  // message share a source and the deltas of the next message start a new paragraph.
   private assistantMessageSeq = 0;
   private extensionUiGeneration = 0;
   private extensionUiActive = true;
@@ -179,18 +152,15 @@ export class PiAcpSession {
     this.armIdleTimer();
   }
 
-  /** Give newly submitted session activity a fresh idle window. */
   activate(): void {
     this.cancelIdleTimer();
     this.armIdleTimer();
   }
 
-  /** Start a fresh idle window after non-turn session activity completes. */
   markIdle(): void {
     this.armIdleTimer();
   }
 
-  /** Cancel dialogs exactly once, then stop an idle subprocess through the bounded shutdown path. */
   reap(): void {
     this.cancelIdleTimer();
     const proc = this.proc;
@@ -237,11 +207,6 @@ export class PiAcpSession {
     this.startupInfoSent = false;
   }
 
-  /**
-   * Best-effort attempt to send startup info outside of a prompt turn.
-   * Some clients (e.g. Zed) may only render agent messages once the UI is ready;
-   * callers can invoke this shortly after session/new returns.
-   */
   sendStartupInfoIfPending(): void {
     if (this.startupInfoSent || !this.startupInfo) return;
     this.startupInfoSent = true;
@@ -254,7 +219,6 @@ export class PiAcpSession {
 
   async prompt(message: string, images: PiPromptImage[] = []): Promise<StopReason> {
     this.activate();
-    // pi RPC mode disables slash command expansion, so we do it here.
     const expandedMessage = expandSlashCommand(message, this.fileCommands);
 
     const turnPromise = new Promise<StopReason>((resolve, reject) => {
@@ -264,7 +228,6 @@ export class PiAcpSession {
         return;
       }
 
-      // If a turn is already running, enqueue.
       if (this.pendingTurn) {
         if (this.turnQueue.length >= MAX_QUEUED_TURNS) {
           reject(
@@ -276,8 +239,6 @@ export class PiAcpSession {
         }
         this.turnQueue.push(queued);
 
-        // Best-effort: notify client that a prompt was queued.
-        // This doesn't work in Zed yet, needs to be revisited
         this.emit({
           sessionUpdate: "agent_message_chunk",
           content: {
@@ -286,8 +247,6 @@ export class PiAcpSession {
           },
         });
 
-        // Also publish queue depth via session info metadata.
-        // This also not visible in the client
         this.emit({
           sessionUpdate: "session_info_update",
           _meta: { piAcp: { queueDepth: this.turnQueue.length, running: true } },
@@ -296,7 +255,6 @@ export class PiAcpSession {
         return;
       }
 
-      // No turn is running; start immediately.
       this.startTurn(queued);
     });
 
@@ -304,7 +262,6 @@ export class PiAcpSession {
   }
 
   async cancel(): Promise<void> {
-    // Cancel current and clear any queued prompts.
     this.cancelRequested = true;
 
     if (this.turnQueue.length) {
@@ -321,7 +278,6 @@ export class PiAcpSession {
       });
     }
 
-    // Abort the currently running turn (if any). If nothing is running, this is a no-op.
     await this.proc.abort?.();
   }
 
@@ -329,19 +285,10 @@ export class PiAcpSession {
     return this.cancelRequested;
   }
 
-  /**
-   * The client sent a prompt and rendered it as a new user entry, so the next agent
-   * text opens a new block and needs no separator. Idempotent.
-   */
   beginClientPrompt(): void {
     this.textBoundary.reset();
   }
 
-  /**
-   * Deliver one update through the ordered, boundary-aware queue and wait for it.
-   * Unlike `emit`, a client delivery failure rejects, so command handlers that report
-   * their result this way keep failing the prompt when the client cannot be reached.
-   */
   async sendUpdate(update: SessionUpdate): Promise<void> {
     const drain = this.emitDrain;
     if (drain.abandoned) return;
@@ -352,13 +299,10 @@ export class PiAcpSession {
       if (drain.abandoned) return;
       return conn.sessionUpdate({ sessionId, update: prepared });
     });
-    this.lastEmit = delivery.catch(() => {
-      // The awaiting caller observes the failure; later updates still go out in order.
-    });
+    this.lastEmit = delivery.catch(() => {});
     await delivery;
   }
 
-  /** Invalidate and settle UI requests before the owning subprocess is stopped. */
   async closeExtensionUi(): Promise<void> {
     this.cancelIdleTimer();
     if (!this.extensionUiActive) return;
@@ -373,29 +317,22 @@ export class PiAcpSession {
       entry.release();
       try {
         void proc.sendExtensionUiResponse?.({ id, cancelled: true }).catch(() => {});
-      } catch {
-        // The transport may already be disconnected; the request is still locally settled.
-      }
+      } catch {}
     }
   }
 
-  /** Queue one update; `source` groups text chunks that continue one streamed message. */
   private emit(update: SessionUpdate, source?: string): void {
     const drain = this.emitDrain;
     if (drain.abandoned) return;
     const conn = this.conn;
     const sessionId = this.sessionId;
     const prepared = this.textBoundary.apply(update, source);
-    // Serialize update delivery, but do not restart abandoned work after a late reply.
     this.lastEmit = this.lastEmit
       .then(() => {
         if (drain.abandoned) return;
         return conn.sessionUpdate({ sessionId, update: prepared });
       })
-      .catch(() => {
-        // Ignore notification errors (client may have gone away). We still want
-        // prompt completion.
-      });
+      .catch(() => {});
   }
 
   private async flushEmits(): Promise<void> {
@@ -478,8 +415,6 @@ export class PiAcpSession {
     );
     const reason: StopReason = this.cancelRequested ? "cancelled" : "error";
     const settlement: TurnSettlement = { type: "resolve", reason };
-    // Also release a settlement already awaiting flushEmits. Child exit must not
-    // depend on an ACP notification promise ever resolving.
     const drain = this.emitDrain;
     const emits = this.lastEmit;
     const timer = setTimeout(() => {
@@ -493,8 +428,6 @@ export class PiAcpSession {
 
   private startTurn(t: QueuedTurn): void {
     this.cancelRequested = false;
-    // The object identity is this turn's ownership token: a late prompt acknowledgement
-    // may only act while this exact turn is still pending and not already settling.
     const turn: PendingTurn = {
       resolve: t.resolve,
       reject: t.reject,
@@ -507,18 +440,11 @@ export class PiAcpSession {
       turn.acknowledged = true;
     };
 
-    // Publish queue depth (0 because we're starting the turn now).
     this.emit({
       sessionUpdate: "session_info_update",
       _meta: { piAcp: { queueDepth: this.turnQueue.length, running: true } },
     });
 
-    // For `started` and `queued`, completion is determined by pi events: retry,
-    // compaction, or queued continuations may emit multiple `agent_end` events before
-    // `agent_settled`. Only `handled` settles here, because no run follows it.
-    // `agent_settled` carries no run identity, so ownership comes from stdout order:
-    // Pi answers a started prompt only once its run is active, so a settle read before
-    // this response frame belongs to an earlier, extension-triggered run.
     this.proc.prompt(t.message, t.images, { onResponseFrame: acknowledge }).then(
       (disposition) => {
         acknowledge();
@@ -529,7 +455,6 @@ export class PiAcpSession {
       (err) => {
         acknowledge();
         if (!ownsTurn()) return;
-        // If this looks like an auth/config issue, surface AUTH_REQUIRED so clients can offer terminal login.
         const authErr = maybeAuthRequiredError(err);
         let settlement: TurnSettlement;
         if (authErr) {
@@ -538,14 +463,11 @@ export class PiAcpSession {
           const reason: StopReason = this.cancelRequested ? "cancelled" : "error";
           settlement = { type: "resolve", reason };
         }
-        // A prompt acknowledgement failure leaves Pi's health unknown, so queued turns
-        // must settle rather than being started against the same process automatically.
         this.settlePendingTurn(settlement, { queuedSettlement: settlement });
       },
     );
   }
 
-  /** Surface a tool call while the model is still streaming its arguments. */
   private handleStreamedToolCall(toolCall: PiAssistantToolCall | undefined): void {
     const toolCallId = toolCall?.id ?? "";
     const toolName = toolCall?.name ?? "tool";
@@ -561,7 +483,6 @@ export class PiAcpSession {
     const locations = normalized.presentation.locations ?? toToolCallLocations(rawInput, this.cwd);
     const boundedInput = boundedToolRawInput(rawInput);
     const existingStatus = this.currentToolCalls.get(toolCallId);
-    // IMPORTANT: never downgrade status (e.g. if we already marked in_progress via tool_execution_start).
     const status = existingStatus ?? "pending";
 
     if (isBashTool(toolName)) {
@@ -594,8 +515,6 @@ export class PiAcpSession {
       return;
     }
 
-    // Best-effort: keep rawInput updated while args are streaming.
-    // Keep the existing status (pending or in_progress).
     this.emit({
       sessionUpdate: "tool_call_update",
       toolCallId,
@@ -606,12 +525,10 @@ export class PiAcpSession {
     });
   }
 
-  /** Render one streamed assistant message event as ACP session updates. */
   private handleAssistantMessageEvent(ame: PiAssistantMessageEvent | undefined): void {
     if (ame === undefined) return;
     const source = `assistant:${this.assistantMessageSeq}`;
 
-    // Stream assistant text.
     if (ame.type === "text_delta") {
       this.emit(
         {
@@ -634,8 +551,6 @@ export class PiAcpSession {
       return;
     }
 
-    // Surface tool calls ASAP so clients (e.g. Zed) can show a tool-in-use/loading UI
-    // while the model is still streaming tool call args.
     if (
       ame.type === "toolcall_start" ||
       ame.type === "toolcall_delta" ||
@@ -643,8 +558,6 @@ export class PiAcpSession {
     ) {
       this.handleStreamedToolCall(ame.toolCall);
     }
-
-    // Ignore other delta/event types for now.
   }
 
   private handlePiEvent(ev: PiRpcEvent): void {
@@ -684,7 +597,6 @@ export class PiAcpSession {
           break;
         }
 
-        // Capture pre-mutation file contents so we can emit a structured ACP diff.
         const isFileMutation = toolName === "edit" || toolName === "write";
         let snapshotOldText: string | null | undefined;
         if (isFileMutation) {
@@ -715,7 +627,6 @@ export class PiAcpSession {
             : toToolCallLocations(args, this.cwd, line);
         const boundedInput = boundedToolRawInput(args);
 
-        // If we already surfaced the tool call while the model streamed it, just transition.
         const alreadySurfaced = this.currentToolCalls.has(toolCallId);
         this.currentToolCalls.set(toolCallId, "in_progress");
         if (alreadySurfaced) {
@@ -780,7 +691,6 @@ export class PiAcpSession {
             : undefined,
           _meta: normalized ? { editorToolPresentation: normalized.presentation } : undefined,
         };
-        // A file mutation publishes its diff instead of the raw tool payload.
         if (!isFileMutation) update.rawOutput = partial;
         this.emit(update);
         break;
@@ -855,9 +765,7 @@ export class PiAcpSession {
                 },
               ];
             }
-          } catch {
-            // ignore; fall back to text only
-          }
+          } catch {}
         }
 
         if (!content && !hasStructuredDiff && text) {
@@ -874,7 +782,6 @@ export class PiAcpSession {
           locations: normalized?.presentation.locations,
           _meta: normalized ? { editorToolPresentation: normalized.presentation } : undefined,
         };
-        // A structured diff already carries the mutation; the raw payload would duplicate it.
         if (!hasStructuredDiff) update.rawOutput = result;
         this.emit(update);
 
@@ -940,20 +847,14 @@ export class PiAcpSession {
       }
 
       case "turn_end": {
-        // pi uses `turn_end` for sub-steps (e.g. tool_use) and will often start another turn.
-        // Do NOT resolve the ACP `session/prompt` here; wait for `agent_settled`.
         break;
       }
 
       case "agent_end": {
-        // One low-level run ended. Pi may still retry, compact, or process a queued
-        // continuation, so keep the ACP turn open until `agent_settled`.
         break;
       }
 
       case "agent_settled": {
-        // A settle read before the pending prompt's response frame ended an earlier run
-        // (for example a triggerTurn custom message), not this turn.
         if (this.pendingTurn && !this.pendingTurn.acknowledged) break;
         const reason: StopReason = this.cancelRequested ? "cancelled" : "end_turn";
         this.settlePendingTurn({ type: "resolve", reason }, { startNext: true });
@@ -961,7 +862,6 @@ export class PiAcpSession {
       }
 
       case "unknown_event": {
-        // Pi brackets every message, of any role, with these; only their order matters here.
         if (ev.eventType === "message_start" || ev.eventType === "message_end") {
           this.assistantMessageSeq += 1;
         }
@@ -979,7 +879,6 @@ function formatAutoRetryMessage(ev: PiAutoRetryStartEvent): string {
   const maxAttempts = ev.maxAttempts;
   const delayMs = ev.delayMs;
 
-  // Fail closed on absent or non-finite counters rather than rendering NaN to the client.
   if (!isFiniteNumber(attempt) || !isFiniteNumber(maxAttempts) || !isFiniteNumber(delayMs)) {
     return "Retrying...";
   }

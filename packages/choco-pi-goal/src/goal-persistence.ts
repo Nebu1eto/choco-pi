@@ -11,7 +11,6 @@ import {
 } from "./state.ts";
 import { CUSTOM_ENTRY_TYPE, type GoalEntrySource, type ThreadGoal } from "./types.ts";
 
-/** Event-bus channel announcing the goal after each persisted goal-state change. */
 export const GOAL_CHANGED_EVENT = "goal:changed";
 
 interface GoalPersistenceDeps {
@@ -40,7 +39,6 @@ export function createGoalPersistence(deps: GoalPersistenceDeps) {
 
   const getGoal = (): ThreadGoal | null => (goal ? cloneGoal(goal) : null);
 
-  /** Subscribers receive a copy so they cannot mutate runtime state. */
   const emitGoalChanged = (snapshot: ThreadGoal | null): void => {
     deps.pi.events.emit(GOAL_CHANGED_EVENT, snapshot ? cloneGoal(snapshot) : null);
   };

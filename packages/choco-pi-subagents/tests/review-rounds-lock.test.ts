@@ -1,7 +1,3 @@
-/**
- * The review-round ledger lock: stale recovery and release must never delete a
- * lock another writer created after the stale one was observed.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -33,7 +29,6 @@ test("a contender paused after judging a lock stale cannot delete the lock that 
   const gate = new Promise<void>((resolve) => {
     open = resolve;
   });
-  // B observes the stale lock, then pauses right before removing it.
   const contender = acquireLock(path, {
     timeoutMs: 300,
     beforeStaleRemoval: async () => {
@@ -42,11 +37,9 @@ test("a contender paused after judging a lock stale cannot delete the lock that 
     },
   });
   await atRemoval;
-  // Meanwhile A recovers the same stale lock and takes it.
   const holder = await acquireLock(path);
   assert.equal(await readFile(path, "utf-8"), holder);
   open();
-  // B must not take the lock while A holds it: it times out instead.
   await assert.rejects(contender, /timed out waiting for the ledger lock/);
   assert.equal(await readFile(path, "utf-8"), holder, "A's lock is intact");
   await releaseLock(path, holder);

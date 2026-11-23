@@ -6,9 +6,6 @@ import { PRIORITY } from "../priorities.ts";
 import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
 import { createAvailabilityChecker } from "./utils/runner-helpers.ts";
 
-// Per-cwd cached `--version` probes (#120). Before this, each dispatch
-// invocation fired a fresh `safeSpawnAsync` per command — once per Elixir
-// file save.
 const mix = createAvailabilityChecker("mix", ".bat");
 const elixirc = createAvailabilityChecker("elixirc", ".bat");
 
@@ -16,20 +13,6 @@ function hasMixExs(cwd: string): boolean {
   return fs.existsSync(path.join(cwd, "mix.exs"));
 }
 
-// Elixir 1.16+ emits diagnostics in a multi-line "code snippet" format where
-// the file:line:col lives on a trailing `└─ path:line:col` line, several lines
-// after the `error:`/`warning:` header:
-//
-//     warning: variable "x" is unused
-//     │
-//   3 │     x = 1
-//     │     ~
-//     │
-//     └─ lib/foo.ex:3:5: Foo.bar/0
-//
-// Older Elixir put the location on the line immediately after `warning:` and
-// reported compile errors as a single `** (Kind) path:line:col: message` line.
-// We support both so the runner works across toolchain versions.
 const ELIXIR_SNIPPET_LOCATION = /└─\s+(.+?):(\d+)(?::(\d+))?(?::|$)/;
 
 function parseElixirOutput(
@@ -41,11 +24,6 @@ function parseElixirOutput(
   const resolvedTarget = path.resolve(cwd, filePath);
   const lines = raw.split(/\r?\n/);
 
-  // elixirc reports paths RELATIVE to its cwd (e.g. `bad.ex`, not the absolute
-  // path we passed), so resolve the reported path against the runner cwd — not
-  // process.cwd(). Elixir 1.16+ also normalizes to a lowercase drive letter and
-  // forward slashes (`c:/...`), which never string-equals `C:\...` on Windows,
-  // so compare case-insensitively there.
   const matchesTarget = (sourcePath: string): boolean => {
     const resolved = path.resolve(cwd, sourcePath.trim());
     return process.platform === "win32"
@@ -55,12 +33,8 @@ function parseElixirOutput(
 
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
-    // Defense-in-depth: cap line length before regex matching. The input is
-    // trusted, bounded compiler output and the patterns have no exponential
-    // backtracking, but this bounds worst-case work regardless (ReDoS guard).
     if (line.length > 2000) continue;
 
-    // Legacy one-line compile error: ** (CompileError) path:line:col: message
     const syntax = line.match(/^\*\* \(([^)]+)\)\s+(.+?):(\d+):(?:(\d+):)?\s*(.+)$/);
     if (syntax) {
       const [, kind, sourcePath, lineStr, colStr, message] = syntax;
@@ -80,13 +54,11 @@ function parseElixirOutput(
       continue;
     }
 
-    // error:/warning: header — may be bare (legacy) or indented (1.16+).
     const header = line.match(/^\s*(error|warning):\s+(.+)$/);
     if (!header) continue;
     const [, severityLabel, message] = header;
     const severity = severityLabel === "error" ? "error" : "warning";
 
-    // New format: scan forward for the `└─ path:line:col` snippet footer.
     let located = false;
     for (
       let lookahead = index + 1;
@@ -94,7 +66,6 @@ function parseElixirOutput(
       lookahead++
     ) {
       const next = lines[lookahead];
-      // A blank gap or another header ends this diagnostic block.
       if (/^\s*(error|warning):\s+/.test(next)) break;
       const snippet = next.match(ELIXIR_SNIPPET_LOCATION);
       if (snippet) {
@@ -119,7 +90,6 @@ function parseElixirOutput(
     }
     if (located) continue;
 
-    // Legacy format: location on the immediately following line.
     const location = lines[index + 1]?.match(/^\s+(.+?):(\d+):(?:(\d+):)?$/);
     if (!location) continue;
     const [, sourcePath, lineStr, colStr] = location;

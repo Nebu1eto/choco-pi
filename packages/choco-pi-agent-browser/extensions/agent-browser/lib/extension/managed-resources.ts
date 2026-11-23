@@ -41,8 +41,6 @@ export type OwnedManagedSession = {
   sessionName: string;
 };
 
-// Event ranks are local to the branch being restored. Keep them out of owned-resource
-// state so branch switches never compare unrelated branch histories.
 export interface BranchManagedResourceEvents {
   electronLaunchActiveRanks: Map<string, number>;
   electronLaunchCleanupRanks: Map<string, number>;
@@ -177,7 +175,6 @@ export function mergeActiveElectronLaunchRecords(
     target.set(record.launchId, record);
     if (options.branchOwnedLaunchIds) {
       if (alreadyRuntimeOwned) {
-        // Already runtime-owned from a prior live result; keep it that way.
       } else if (options.markBranchOwned === true) {
         options.branchOwnedLaunchIds.add(record.launchId);
       } else if (options.touchedLaunchIds?.has(record.launchId)) {
@@ -571,7 +568,6 @@ export function shouldSerializeBrowserCommand(options: {
   );
 }
 
-// Serializes managed-session read/modify/write work so overlapping tool calls cannot promote stale state or close an in-use session.
 export class AsyncExecutionQueue {
   private tail: Promise<void> = Promise.resolve();
 

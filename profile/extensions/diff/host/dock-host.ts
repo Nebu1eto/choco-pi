@@ -1,25 +1,3 @@
-/**
- * Dock host: the pane becomes a real column beside the transcript.
- *
- * Pi internals this depends on (checked by `inspectHostRoot` before any
- * change): the private `layoutRoot` field of the fullscreen renderer and its
- * `VStack[ScrollView, dock]` structure. Install swaps entry 0 for an `HStack`
- * of the same transcript, a one-column border and the pane; uninstall puts the
- * original two entries back. Because Pi keeps mounting the same root object,
- * the change survives a fullscreen/regular round trip without reinstalling.
- *
- * Mouse: pi-tui gives a component coordinates local to it, and a scrolled
- * component its own rows, so a body event's `y` is the body row. It offers an
- * event to every component under the pointer, innermost first, until one
- * handles it; the row (`PaneRow`) is therefore asked after the transcript's
- * own components declined, which is how a press beside the pane is seen.
- *
- * Wheel: pi-tui scrolls the scroll views under the pointer only when no
- * component handled the wheel event, and then passes whatever the innermost
- * view could not take on to the transcript, whatever that view's overscroll
- * setting. The row therefore scrolls the pane itself for a wheel anywhere on
- * the pane's columns and reports it handled, so the transcript never moves.
- */
 import type {
   Component,
   Focusable,
@@ -39,19 +17,12 @@ const BORDER_ACTIVE = "\u001b[1m┃\u001b[22m";
 
 type Viewport = { top: number; height: number };
 
-/**
- * A left press the pane takes without acting on it. Pi starts a text selection
- * on a press nothing takes and copies it when the button is released; inside
- * the pane a press selects diff lines or leads to a click instead.
- */
 const TAKEN_PRESS: TuiMouseEventResult = { handled: true, render: false };
 
 class PaneBody implements Component, Focusable {
   focused = false;
   readonly capturesViewportInput = true;
-  /** A press on a line started a selection; drags extend it until the release. */
   selecting = false;
-  /** Screen row of the first visible body row, as of that press. */
   private viewportTop = 0;
   readonly surface: GuardedSurface;
   readonly requestFocus: () => void;
@@ -65,8 +36,6 @@ class PaneBody implements Component, Focusable {
 
   render(width: number): string[] {
     const lines = this.surface.renderBody(width, this.focused);
-    // pi-tui clamps the scroll position after this render, without drawing
-    // again; clamping the same way puts the pinned row on the first visible line.
     const { top, height } = this.viewport();
     const first = Math.max(0, Math.min(top, lines.length - height));
     return pinRows(lines, first, this.surface.stickyRows(first, height));
@@ -84,8 +53,6 @@ class PaneBody implements Component, Focusable {
           this.viewportTop = event.screenY - (event.y - this.viewport().top);
           return this.surface.pointer({ kind: "press", row: event.y, extend: event.shift });
         }, false);
-        // Not on a line: the press is still taken, or Pi would start its own text
-        // selection here and copy it on release. pi-tui sends the click to whoever took it.
         if (!pressed) return TAKEN_PRESS;
         this.selecting = true;
         this.surface.contain(() => this.requestFocus(), undefined);
@@ -94,13 +61,10 @@ class PaneBody implements Component, Focusable {
       case "drag": {
         if (!this.selecting) return undefined;
         this.surface.contain(() => {
-          // The body scrolls under a held button, so the row is read from the screen: at
-          // most one row past either edge, which scrolls the selection a row at a time.
           const { top, height } = this.viewport();
           const visible = Math.max(-1, Math.min(height, event.screenY - this.viewportTop));
           this.surface.pointer({ kind: "drag", row: top + visible });
         }, undefined);
-        // The view asks for a frame itself, and only when the selection changed.
         return { handled: true };
       }
       case "release":
@@ -144,7 +108,6 @@ class PaneHeader implements Component {
   invalidate(): void {}
 }
 
-/** The one-column drag handle between the transcript and the pane. */
 export class BorderHandle implements Component {
   dragging = false;
   readonly rows: () => number;
@@ -164,9 +127,6 @@ export class BorderHandle implements Component {
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    // The wheel scrolls the pane; the row does that. A press with another button
-    // includes a horizontal wheel, which pi-tui reports as a press with no
-    // release: taking it would leave the border the target of the next press.
     if (event.type === "wheel") return undefined;
     if (event.type === "press" && event.button !== "left") return undefined;
     if (event.type === "press" && event.button === "left") {
@@ -188,17 +148,6 @@ export class BorderHandle implements Component {
   invalidate(): void {}
 }
 
-/**
- * The transcript, the border and the pane side by side. A left press on the
- * transcript's columns gives keyboard focus back to what had it before the
- * pane, and is left unhandled so Pi still starts its text selection there. On
- * the pane's columns the row takes what nothing in the pane took (the space
- * under a short list): the press, so that Pi selects and copies nothing in
- * the pane, and the click, which focuses the pane. A wheel on the pane's
- * columns, header and border included, scrolls the pane and nothing else.
- * Other buttons, which include a horizontal wheel, are left to pi-tui, which
- * does nothing with them.
- */
 class PaneRow extends HStack {
   readonly paneColumn: (width: number) => number;
   readonly leavePane: () => void;
@@ -218,7 +167,6 @@ class PaneRow extends HStack {
     this.scrollPane = scrollPane;
   }
 
-  // pi-tui does not export the result type its containers return.
   handleMouse(event: TuiMouseEvent): ReturnType<HStack["handleMouse"]> {
     if (event.type === "wheel") {
       if (event.x < this.paneColumn(event.width)) return undefined;
@@ -237,7 +185,6 @@ class PaneRow extends HStack {
     return {
       handled: true,
       render,
-      // The row itself took the event: the shape pi-tui's containers report for a child.
       target: {
         component: this,
         originX: event.screenX - event.x,
@@ -285,14 +232,12 @@ export function createDockHost(
       ),
     () =>
       surface.contain(() => {
-        // Terminal resizes change the clamp; re-apply the width after this frame.
         if (!mounted || relayoutQueued || mounted.appliedWidth === callbacks.width()) return;
         relayoutQueued = true;
         queueMicrotask(() => {
           relayoutQueued = false;
           if (!mounted) return;
           const target = mounted;
-          // Runs outside any pi-tui call, so nothing above would catch a throw.
           surface.contain(() => {
             layoutRow(target, callbacks.width());
             tui.requestRender();
@@ -343,7 +288,6 @@ export function createDockHost(
             if (host.isFocused()) host.unfocus();
           }, undefined),
         () => surface.contain(() => host.focus(), undefined),
-        // The pane's own scroll view clamps to its content.
         (lines) =>
           surface.contain(() => {
             scroll.scrollBy(lines);
@@ -362,8 +306,6 @@ export function createDockHost(
       const target = mounted;
       host.unfocus();
       mounted = undefined;
-      // Restore only while our row is still in place; if something else has
-      // since rebuilt the root, writing old entries back would break it.
       if (target.layout.root.children[0] === target.row) {
         restoreEntries(target.layout.root, target.layout.entries);
       }

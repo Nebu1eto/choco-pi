@@ -69,7 +69,6 @@ function deadPid(): number {
   return finished.pid;
 }
 
-/** A live process that is not an ancestor of the lease script, so it cannot be mistaken for the caller. */
 function unrelatedLivePid(context: TestContext): number {
   const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 120_000)"], {
     stdio: "ignore",

@@ -14,7 +14,6 @@ await writeFile(
   "utf8",
 );
 
-// Imported after the config exists so the process cache holds the original profile.
 const { resolveAuthFetchProfile } = await import("../auth-fetch.ts");
 const { getCachedWebSearchConfig } = await import("../config-loader.ts");
 
@@ -38,7 +37,6 @@ test("authFetch profile removed on disk is revoked without a cache refresh", asy
     JSON.stringify({ authFetch: { other: ["other.example"] } }) + "\n",
     "utf8",
   );
-  // The stale process cache still lists the revoked profile; resolution must ignore it.
   assert.ok(JSON.stringify(getCachedWebSearchConfig()).includes("docs.company.com"));
   await assert.rejects(resolveAuthFetchProfile("work"), /Unknown authFetch profile: work/);
 

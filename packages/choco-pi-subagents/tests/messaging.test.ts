@@ -337,8 +337,6 @@ test("message envelopes and events use flat alias identities", async () => {
     sentContent,
     '<agent-message from="beta" type="FINAL">\nfrom-beta\n</agent-message>',
   );
-  // The SDK only reaches the root session's steering queue for deliverAs
-  // "steer"; triggerTurn covers the idle root with exactly one continuation.
   assert.deepEqual(sentOptions, { deliverAs: "steer", triggerTurn: true });
   assert.deepEqual(emitted, {
     event: "subagents:message",
@@ -352,7 +350,6 @@ test("message envelopes and events use flat alias identities", async () => {
   });
 });
 
-/** Read the single text part a messaging tool result carries. */
 function resultText(result: { content: Array<{ type: string; text?: string }> }): string {
   const part = result.content[0];
   assert.equal(part?.type, "text");
@@ -365,11 +362,6 @@ interface SentRootMessage {
   triggerTurn: boolean | undefined;
 }
 
-/**
- * A fully typed `agent_message` host. Every member the tool can reach records
- * what it received; the rest throw, so an unexpected call fails loudly instead
- * of being silently accepted by a placeholder cast.
- */
 interface MessageSink {
   sent: SentRootMessage[];
   events: SubagentMessageNotification[];
@@ -460,8 +452,6 @@ test("worker messages reach live recipients by steering, not by the follow-up qu
 });
 
 test("a steer that lands on a retired, replaced, or cancelled recipient reports staleness", async () => {
-  // Each case suspends inside steer(), mutates the manager exactly as a real
-  // generation change/eviction/cancellation would, then releases the steer.
   const cases: Array<{ name: string; retire: (record: AgentMessageRecord) => void }> = [
     { name: "generation replaced", retire: (record) => void (record.resultGeneration = 2) },
     {

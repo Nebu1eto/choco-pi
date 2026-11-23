@@ -9,7 +9,6 @@ export type AgentTreeRow<T extends AgentTreeRecord> = {
   depth: number;
 };
 
-/** Group children directly under their parent while preserving launch order at every level. */
 export function buildAgentTree<T extends AgentTreeRecord>(
   records: readonly T[],
 ): AgentTreeRow<T>[] {

@@ -94,11 +94,6 @@ function parseNonEmptyString(value: BoundaryValue, fallback: string): string {
   return isString(value) && value.length > 0 ? value : fallback;
 }
 
-/**
- * Reads `workingLine.toolLabels` as a tool-name to label map, dropping any
- * entry whose value is not a usable string so one bad key cannot break the
- * working line.
- */
 function parseToolLabels(value: BoundaryValue) {
   const labels = new Map<string, string>();
   if (isRecord(value)) {

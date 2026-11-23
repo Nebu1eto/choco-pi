@@ -24,7 +24,6 @@ export interface CodexUsageSnapshot {
   raw: BoundaryValue;
 }
 
-/** The usage window cannot be read for the active credential; `reason` says why. */
 export interface CodexUsageUnavailable {
   unavailable: true;
   reason: string;

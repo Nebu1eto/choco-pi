@@ -112,7 +112,6 @@ async function activate() {
     mode: "json",
     sessionManager: { getSessionId: () => ROOT, getEntries: () => [] },
   };
-  // Tools read only the members the fake context defines; the host context has no lighter test double.
   const toolContext: ExtensionToolContext = Object.assign(Object.create(null), ctx);
   const fire = async (name: string, event: LifecycleEvent): Promise<void> => {
     const handlers = extension.handlers.get(name) ?? [];
@@ -191,7 +190,6 @@ test("stop-shells stops a TERM-resistant group for the listed owners only and ke
         .stdout.data.includes("ready"),
     );
 
-    // Foreign root id is ignored.
     root.bus.emit(STOP_CONTROL_STOP_SHELLS_CHANNEL, {
       requestId: "ignored",
       rootSessionId: "other-root",
@@ -206,7 +204,6 @@ test("stop-shells stops a TERM-resistant group for the listed owners only and ke
       epoch: 1,
       ownerSessionIds: [ROOT, ROOT],
     });
-    // Acknowledged synchronously, before the stop settles.
     assert.equal(root.reports.length, 1);
     assert.equal(root.reports[0]?.phase, "acknowledged");
     assert.equal(root.reports[0]?.participant, "shells");

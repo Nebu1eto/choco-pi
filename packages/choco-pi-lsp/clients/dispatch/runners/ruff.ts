@@ -1,12 +1,3 @@
-/**
- * Ruff runner for dispatch system
- *
- * Dispatch mode is diagnostics-only.
- * Autofix is handled earlier by the post-write pipeline to avoid
- * mutating files mid-dispatch after LSP sync has already happened.
- * Supports venv-local installations.
- */
-
 import { arr, compile, obj, opt, str, unknown } from "@earendil-works/pi-schema";
 import { finiteNum } from "../../lsp/schema-guards.ts";
 import { safeSpawnAsync } from "../../safe-spawn.ts";
@@ -89,11 +80,8 @@ const ruffRunner: RunnerDefinition = {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
 
-    // Shared config-args seam (#1247): the autofix path consumes the same
-    // builder, so the package-owned fallback config can never drift.
     const configArgs = ruffConfigArgs(cwd);
 
-    // Step 1: Capture diagnostics (before fixing) — teaching signal for the agent
     const checkResult = await safeSpawnAsync(
       cmd,
       ["check", "--output-format", "json", ...configArgs, ctx.filePath],

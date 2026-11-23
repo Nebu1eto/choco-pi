@@ -1,7 +1,3 @@
-/**
- * The base a branch comparison uses when the user names none: the remote's
- * default branch when the repository knows it, then `main`, then `master`.
- */
 import type { ExecRunner } from "../types.ts";
 import { nulFields } from "./parse.ts";
 
@@ -17,7 +13,6 @@ async function verifiedCommit(runner: ExecRunner, cwd: string, ref: string): Pro
   return result.code === 0 && result.stdout.trim().length > 0;
 }
 
-/** `origin` first, then any other remote whose HEAD points at a branch. */
 async function remoteDefault(runner: ExecRunner, cwd: string): Promise<string | undefined> {
   const result = await runner(
     "git",
@@ -44,7 +39,6 @@ async function remoteDefault(runner: ExecRunner, cwd: string): Promise<string | 
   return undefined;
 }
 
-/** Resolve the default base. Rejects only when the runner does (deadline, cancellation). */
 export async function resolveDefaultBranchBase(
   runner: ExecRunner,
   cwd: string,

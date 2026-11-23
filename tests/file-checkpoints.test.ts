@@ -157,8 +157,6 @@ test("anchors cover every checkpoint in the file, including abandoned branches",
   const entries = [
     entry({ id: "c1", type: "custom", customType: "choco-pi:file-checkpoint", data: checkpoint }),
     entry({ id: "user-1", type: "message", message: { role: "user", content: "kept" } }),
-    // A mid-turn checkpoint and one on a branch the fork walked away from: both
-    // are unreachable from the active branch yet still referenced by the file.
     entry({
       id: "c2",
       type: "custom",

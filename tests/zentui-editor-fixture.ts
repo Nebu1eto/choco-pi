@@ -1,4 +1,3 @@
-/** Real zentui editors over a real pi-tui editor, for the editor mouse and selection tests. */
 import assert from "node:assert/strict";
 import {
   Editor,
@@ -19,7 +18,6 @@ import type {
 } from "../packages/choco-pi-ui/extensions/zentui/editor-selection.ts";
 import { loadZentuiModule } from "./zentui-build.ts";
 
-/** The parts of a zentui editor the tests use. */
 export type FramedEditor = {
   focused: boolean;
   render(width: number): string[];
@@ -29,7 +27,6 @@ export type FramedEditor = {
   getText(): string;
   getExpandedText(): string;
   getCursor(): RuntimeValue;
-  /** The first stop of a key in Pi's editor, and passed on to the base by the wrapper. */
   onExtensionShortcut?: (data: string) => boolean;
 };
 
@@ -63,7 +60,6 @@ export const TUI_FIXTURE = reinterpretHostValue<TUI>({
   requestRender: () => {},
 });
 
-/** A clipboard that keeps what it is given instead of touching the system's. */
 export function testClipboard(fail?: Error) {
   const copied: string[] = [];
   const reports: CopyOutcome[] = [];
@@ -88,7 +84,6 @@ export function testClipboard(fail?: Error) {
   };
 }
 
-/** Every editor style with the padding rows that move its text. */
 export const STYLES: [style: string, paddingRows: string][] = [
   ["opencode", "both"],
   ["opencode", "none"],
@@ -120,19 +115,15 @@ export async function zentui(style: string, paddingRows: string, enabled = true)
   // SAFETY: as above.
   const Polished = ui.PolishedEditor as Constructor;
   return {
-    /** zentui around another extension's editor, as the harness installs it. */
     wrapped: (
       base: RuntimeValue = new Editor(TUI_FIXTURE, EDITOR_THEME),
       clipboard: SelectionClipboard = testClipboard().clipboard,
     ) => new Wrapped(base, ...shared(clipboard)),
-    /** zentui's own editor, used when no other extension supplies one. */
-    // Pi installs its keybindings as pi-tui's; app actions it does not know never match.
     polished: (clipboard: SelectionClipboard = testClipboard().clipboard) =>
       new Polished(TUI_FIXTURE, EDITOR_THEME, getKeybindings(), ...shared(clipboard)),
   };
 }
 
-/** A mouse event on the cell where `text` starts in the frame the editor just drew. */
 export function at(
   editor: FramedEditor,
   text: string,

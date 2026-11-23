@@ -1,17 +1,3 @@
-/**
- * Child background-compaction attachment through the REAL runner.
- *
- * Every test drives `runAgent()` / `resumeAgent()` against the installed Pi
- * SDK with a scripted provider registered through `ModelRuntime`; no request
- * leaves the process. `PI_CODING_AGENT_DIR` points at a temporary agent
- * directory holding two probe extensions (alpha, beta), so the real
- * `~/.pi/agent` is never read. The runner's own `createResourceLoader` seam
- * is used only to observe the loader (and, for the nested case, to capture a
- * child context); the bridge itself is appended by the runner.
- *
- * The coordinator is a fake built against the frozen `CoordinatorApi`; the
- * registry is the real frozen `registry.ts`.
- */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -83,10 +69,6 @@ import type { AgentConfig } from "../src/types.ts";
 import registerCompaction from "../../choco-pi-compaction/src/index.ts";
 import chocoPiHooks from "../../choco-pi-hooks/src/extension.ts";
 
-// ---------------------------------------------------------------------------
-// Host fixture (real SDK, scripted provider, temporary directories)
-// ---------------------------------------------------------------------------
-
 const PROVIDER = "child-fake";
 const SUMMARIZER_MARKER = "context summarization assistant";
 const INLINE_PATH = `<inline:${CHILD_COMPACTION_EXTENSION_NAME}>`;
@@ -144,7 +126,6 @@ function reply(text: string, options: ReplyOptions = {}): AssistantMessage {
 
 type Responder = (context: TranscriptContext) => Promise<AssistantMessage>;
 
-/** Scripted stream: summarizer requests answer at once, others defer to the responder. */
 function scriptedStream(input: {
   readonly context: TranscriptContext;
   readonly signal: AbortSignal | undefined;
@@ -311,7 +292,6 @@ function compactions(entries: readonly SessionEntry[]): CompactionEntry[] {
   return entries.filter((entry): entry is CompactionEntry => entry.type === "compaction");
 }
 
-/** Whether `entry` is the user message whose text contains `needle`. */
 function isUserPromptWith(entry: SessionEntry, needle: string): boolean {
   if (entry.type !== "message" || entry.message.role !== "user") return false;
   const content = entry.message.content;
@@ -327,10 +307,6 @@ function childKeys(): string[] {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Fake child coordinator against the frozen CoordinatorApi
-// ---------------------------------------------------------------------------
-
 interface FakeChild {
   readonly context: ChildCoordinatorContext;
   readonly coordinator: CoordinatorApi;
@@ -340,28 +316,20 @@ interface FakeChild {
   readonly acks: CompactionEntry[];
   readonly disposals: () => number;
   readonly state: () => CandidateState;
-  /** Outcome of simulated recovery at creation; undefined when nothing was recovered. */
   readonly recovered: () => "ready" | "discarded" | undefined;
   makeReady(candidateId: string, firstKeptEntryId?: string): void;
   markPreparing(): void;
   markInstalled(): void;
-  /** Simulated `recoverChildCandidates`: newest valid record, revalidated by prefix. */
   recoverFromBranch(): void;
 }
 
 interface FakeProviderOptions {
   readonly enabled?: boolean;
-  /** Ready candidate at creation; the retained entry defaults to the first user message. */
   readonly readyAtCreation?: { readonly candidateId: string; readonly firstKeptEntryId?: string };
-  /** Hold creation until this promise settles (stale-after-await tests). */
   readonly creationGate?: Promise<void>;
-  /** Report "preparing" from status() so only host-routed arbitration can adopt. */
   readonly hideReadyFromStatus?: boolean;
-  /** Recover persisted candidate records from the child branch at creation. */
   readonly recoverFromBranch?: boolean;
-  /** Reject creation attempts while this returns true (the attempt number is 1-based). */
   readonly rejectCreation?: (attempt: number) => boolean;
-  /** Make a candidate ready when this boundary is observed (before the bridge checks status). */
   readonly readyAtBoundary?: {
     readonly kind: "turn_end" | "agent_before_settle";
     readonly candidateId: string;
@@ -416,7 +384,6 @@ function createFakeChild(context: ChildCoordinatorContext, hideReady = false): F
       calls.push("cancel");
       cancels.push(reason);
       if (state === "queued" || state === "preparing" || state === "ready") state = "canceled";
-      // Like the real coordinator: there is no adopting -> canceled edge; a proposal fails closed.
       else if (state === "adopting") state = "discarded-stale";
     },
     status: () => ({
@@ -484,7 +451,6 @@ function createFakeChild(context: ChildCoordinatorContext, hideReady = false): F
   };
 }
 
-/** Fingerprint of the branch up to and including `cutEntryId`; "" when it is off the branch. */
 function prefixFingerprint(branch: readonly SessionEntry[], cutEntryId: string): string {
   const index = branch.findIndex((entry) => entry.id === cutEntryId);
   if (index < 0) return "";
@@ -494,7 +460,6 @@ function prefixFingerprint(branch: readonly SessionEntry[], cutEntryId: string):
     .join(">");
 }
 
-/** A schema-valid persisted candidate whose prefix ends at `cutEntryId` on `branch`. */
 function candidateRecord(
   context: ChildCoordinatorContext,
   candidateId: string,
@@ -531,7 +496,6 @@ function candidateRecord(
   return record;
 }
 
-/** The runner-facing attachment for one fake child: records boundaries and commits. */
 function fakeAttachment(
   child: FakeChild,
   readyAtBoundary?: FakeProviderOptions["readyAtBoundary"],
@@ -578,10 +542,6 @@ function fakeProvider(options: FakeProviderOptions = {}) {
   };
   return { provider, children, attempts: () => attempts };
 }
-
-// ---------------------------------------------------------------------------
-// Shared setup
-// ---------------------------------------------------------------------------
 
 type Mode = "isolated" | "readOnly" | "denylist";
 
@@ -634,7 +594,6 @@ after(async () => {
   await rm(rootDir, { recursive: true, force: true });
 });
 
-/** Mirror AgentManager.removeRecord: session_shutdown, then dispose. */
 async function disposeChild(session: AgentSession): Promise<void> {
   const index = liveChildren.indexOf(session);
   if (index >= 0) liveChildren.splice(index, 1);
@@ -665,9 +624,7 @@ async function runChild(
   options: {
     readonly prompt?: string;
     readonly run?: Partial<RunOptions>;
-    /** Loaded before the runner's inline factories, like path-loaded packages in production. */
     readonly packageFactories?: readonly ExtensionFactory[];
-    /** Loaded after the runner's inline factories, so their handlers run after the bridge's. */
     readonly trailingFactories?: readonly ExtensionFactory[];
   } = {},
 ): Promise<ChildRun> {
@@ -723,10 +680,6 @@ async function flush(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-// ---------------------------------------------------------------------------
-// Feature switch
-// ---------------------------------------------------------------------------
-
 test("feature off: a disabled provider is never asked for a coordinator", async () => {
   const fake = fakeProvider({ enabled: false });
   unpublish = publishChildCompactionProvider(fake.provider);
@@ -748,11 +701,6 @@ test("a corrupt provider slot is ignored rather than trusted", async () => {
   assert.ok(!run.loadedPaths.includes(INLINE_PATH));
   assert.deepEqual(childKeys(), []);
 });
-
-// ---------------------------------------------------------------------------
-// Binding under restricted modes: no-extension loaders (isolated, readOnly)
-// and a filtered loader (denylist)
-// ---------------------------------------------------------------------------
 
 const MODES: readonly Mode[] = ["isolated", "readOnly", "denylist"];
 
@@ -794,7 +742,6 @@ for (const mode of MODES) {
       "a candidate that is not ready is never arbitrated at a boundary",
     );
 
-    // Settled, not disposed: still registered, preparation canceled.
     assert.equal(getCoordinator(child.context.ownerKey), child.coordinator);
     assert.deepEqual(child.cancels, ["canceled"]);
     assert.equal(child.disposals(), 0);
@@ -807,10 +754,6 @@ for (const mode of MODES) {
     assert.deepEqual(childKeys(), []);
   });
 }
-
-// ---------------------------------------------------------------------------
-// Child anchor seam: appends only through a current attachment
-// ---------------------------------------------------------------------------
 
 test("appendAnchor appends a child anchor while attached and nothing after detachment", async () => {
   const fake = fakeProvider();
@@ -835,10 +778,6 @@ test("appendAnchor appends a child anchor while attached and nothing after detac
   assert.equal(child.context.appendAnchor(), "", "a detached attachment returns no ID");
   assert.equal(manager.getEntries().length, entriesAfterDetach, "nothing appended");
 });
-
-// ---------------------------------------------------------------------------
-// mainSessionFork adoption never touches the parent
-// ---------------------------------------------------------------------------
 
 test("mainSessionFork child adoption leaves parent entries, leaf, projection and file unchanged", async () => {
   const current = requireHost();
@@ -908,10 +847,6 @@ test("a proposal whose retained entry is not on the child branch is never commit
   assert.equal(child.acks.length, 0);
 });
 
-// ---------------------------------------------------------------------------
-// Resume path gets the same adoption notification
-// ---------------------------------------------------------------------------
-
 test("resumeAgent forwards a boundary adoption to its own onCompaction once", async () => {
   const fake = fakeProvider();
   unpublish = publishChildCompactionProvider(fake.provider);
@@ -938,12 +873,6 @@ test("resumeAgent forwards a boundary adoption to its own onCompaction once", as
   );
 });
 
-// ---------------------------------------------------------------------------
-// Host-routed adoption: delivered by compaction_end only, with no summarizer
-// request and no compaction hook
-// ---------------------------------------------------------------------------
-
-/** Real compaction extension options for a child; background compaction stays unconfigured. */
 function childCompactionOptions(): Parameters<typeof registerCompaction>[1] {
   return {
     retryPolicy: { enabled: false, maxRetries: 0, baseDelayMs: 0, maxAgentDelayMs: 0 },
@@ -952,10 +881,6 @@ function childCompactionOptions(): Parameters<typeof registerCompaction>[1] {
   };
 }
 
-/**
- * The subagents extension publishes this registry in production; children are
- * recognized by it. Returns a restore callback that removes only what it added.
- */
 function publishChildManagerRegistry(): () => void {
   const managerKey = Symbol.for("pi-subagents:manager");
   if (Object.getOwnPropertyDescriptor(globalThis, managerKey) !== undefined) return () => {};
@@ -966,7 +891,6 @@ function publishChildManagerRegistry(): () => void {
   };
 }
 
-/** Production package set inside a non-isolated child: real compaction summarizer and real hooks. */
 async function childPackages(root: string): Promise<{
   readonly factories: readonly ExtensionFactory[];
   readonly hookLog: () => Promise<string[]>;
@@ -1021,8 +945,6 @@ test("host-routed child adoption skips the paid summarizer and Pre/PostCompact h
       hideReadyFromStatus: true,
     });
     unpublish = publishChildCompactionProvider(fake.provider);
-    // Only the tool-call turn crosses the threshold, so the host compacts
-    // exactly once, mid-run, inside the runner's onCompaction window.
     let index = 0;
     current.setResponder(async () =>
       index++ === 0 ? reply("STEP", { toolCall: true, usageInput: 5_000 }) : reply("DONE"),
@@ -1049,10 +971,6 @@ test("host-routed child adoption skips the paid summarizer and Pre/PostCompact h
     process.env.PI_CODING_AGENT_DIR = agentDir;
   }
 });
-
-// ---------------------------------------------------------------------------
-// Cancellation and timeout
-// ---------------------------------------------------------------------------
 
 test("cancellation releases the child candidate and registry entry without parent mutation", async () => {
   const current = requireHost();
@@ -1095,7 +1013,6 @@ test("cancellation releases the child candidate and registry entry without paren
     assert.deepEqual(child.cancels, ["canceled"]);
     assert.equal(child.disposals(), 1);
     assert.equal(child.context.signal.aborted, true);
-    // Quiesced, not disposed: the session keeps its bridge for a resume.
     assert.equal(getChildCompactionBridge(run.session), bridge, "WeakMap keeps the bridge");
     assert.equal(bridge.isPreparing(), false, "a quiesced bridge reads as idle");
     assert.deepEqual(run.compactionCallbacks, []);
@@ -1103,7 +1020,6 @@ test("cancellation releases the child candidate and registry entry without paren
     assert.deepEqual(current.manager.getEntries(), parentEntries, "parent untouched");
     assert.deepEqual(parentFake.calls, [], "parent coordinator never touched by the child");
     assert.equal(getCoordinator(parentKey), parentFake.coordinator);
-    // A later disposal is idempotent.
     await disposeChild(run.session);
     assert.equal(child.disposals(), 1);
   } finally {
@@ -1132,7 +1048,6 @@ test("turn-limit timeout releases the child candidate and registry entry", async
     assert.ok(bridge, "a timed-out child keeps its bridge for a resume");
     assert.equal(bridge.isPreparing(), false);
     assert.deepEqual(childKeys(), []);
-    // Resume reattaches a fresh coordinator under the same owner key.
     current.setResponder(async () => reply("AFTER-TIMEOUT"));
     await resumeAgent(run.session, "continue");
     const next = fake.children[1];
@@ -1144,10 +1059,6 @@ test("turn-limit timeout releases the child candidate and registry entry", async
     setGraceTurns(previousGrace);
   }
 });
-
-// ---------------------------------------------------------------------------
-// Late coordinator creation after disposal (stale-after-await)
-// ---------------------------------------------------------------------------
 
 test("a coordinator created after the child is disposed is disposed and never registered", async () => {
   const gate = Promise.withResolvers<void>();
@@ -1166,11 +1077,6 @@ test("a coordinator created after the child is disposed is disposed and never re
   assert.deepEqual(childKeys(), []);
 });
 
-// ---------------------------------------------------------------------------
-// Quiesce, reattach, and the agent_before_settle route
-// ---------------------------------------------------------------------------
-
-/** Start a child, run `whileRunning` once its first request is in flight, then cancel it. */
 async function cancelMidRun(
   name: string,
   fake: ReturnType<typeof fakeProvider>,
@@ -1205,7 +1111,6 @@ async function cancelMidRun(
   return { run, child };
 }
 
-/** The child user message carrying `needle` on the session's current branch. */
 function promptEntry(session: AgentSession, needle: string): SessionEntry {
   const entry = session.sessionManager.getBranch().find((item) => isUserPromptWith(item, needle));
   assert.ok(entry, `prompt "${needle}" on the branch`);
@@ -1244,7 +1149,6 @@ test("reattach after cancel recovers a persisted candidate whose prefix still ma
   assert.equal(resumed.length, 1);
   assert.equal(next.acks.length, 1);
 
-  // A normal settle keeps the reattached coordinator; a second reattach is a no-op.
   const bridge = getChildCompactionBridge(run.session);
   assert.ok(bridge);
   await bridge.reattach();
@@ -1260,7 +1164,6 @@ test("reattach after cancel discards a persisted candidate whose branch diverged
   });
   const cut = promptEntry(run.session, "child prompt");
   assert.ok(cut.parentId, "the cut has an ancestor to branch from");
-  // Moving the leaf above the cut also takes the record (its descendant) off the branch.
   run.session.sessionManager.branch(cut.parentId);
 
   requireHost().setResponder(async () => reply("RESUMED"));
@@ -1304,7 +1207,6 @@ test("a preparation that completes after quiesce appends nothing and adopts noth
   const entriesAfterQuiesce = manager.getEntries().length;
   const callsAfterQuiesce = child.calls.length;
 
-  // The old coordinator's preparation resolves late: persisting and anchoring are refused.
   const cut = promptEntry(run.session, "child prompt");
   assert.throws(
     () => child.context.appendRecord(candidateRecord(child.context, "late", cut.id)),
@@ -1343,7 +1245,6 @@ test("second quiesce is a no-op; disposal is once; reattach after disposal is a 
   assert.equal(child.disposals(), 1, "a repeated quiesce disposes nothing");
   assert.deepEqual(child.cancels, ["canceled"]);
 
-  // Reattach, then retire the record: the fresh coordinator is disposed exactly once.
   await bridge.reattach();
   const next = fake.children[1];
   assert.ok(next);
@@ -1391,7 +1292,6 @@ test("a candidate ready at agent_before_settle commits before the run settles", 
 
 type TranscriptMessage = TranscriptContext["messages"][number];
 
-/** One provider-request message as `role:text`, tool calls rendered as `toolCall`. */
 function requestLine(message: TranscriptMessage): string {
   const content = message.content;
   const text = Array.isArray(content)
@@ -1400,12 +1300,6 @@ function requestLine(message: TranscriptMessage): string {
   return `${message.role}:${text}`;
 }
 
-/**
- * Pi SDK 1.3.0 ends a turn after every assistant response and its tool batch,
- * so one long tool-cycling task crosses a `turn_end` per cycle. No mid-turn
- * projection exists in the bridge; this pins the SDK behavior that makes it
- * unnecessary.
- */
 test("a multi-tool child adopts at the next tool-cycle boundary and the next provider request starts with the summary", async () => {
   const fake = fakeProvider();
   unpublish = publishChildCompactionProvider(fake.provider);
@@ -1416,7 +1310,6 @@ test("a multi-tool child adopts at the next tool-cycle boundary and the next pro
     requests.push(context.messages.filter((message) => message.role !== "system").map(requestLine));
     const n = index++;
     if (n === 2) {
-      // Ready while the third request is in flight; the cut is STEP1's assistant entry.
       const child = fake.children[0];
       assert.ok(child);
       const cut = child.context.sessionManager
@@ -1441,11 +1334,9 @@ test("a multi-tool child adopts at the next tool-cycle boundary and the next pro
     "one turn_end per tool cycle",
   );
 
-  // Requests up to the one in flight when the candidate became ready are uncompacted.
   for (const request of requests.slice(0, 3)) {
     assert.equal(request[0], "user:CYCLE-PROMPT");
   }
-  // The next request (after STEP2's turn_end) and every later one start with the summary.
   for (const request of requests.slice(3)) {
     const [summary, firstKept] = request;
     assert.ok(summary?.startsWith("user:The conversation history before this point"));
@@ -1474,10 +1365,6 @@ test("a multi-tool child adopts at the next tool-cycle boundary and the next pro
     ["threshold"],
   );
 });
-
-// ---------------------------------------------------------------------------
-// Native compaction state refresh on reattach, and commit-then-cancel ordering
-// ---------------------------------------------------------------------------
 
 test("reattach replays the child's registered native compaction state exactly once", async () => {
   const fake = fakeProvider();
@@ -1594,7 +1481,6 @@ test("a host-routed commit whose cancel preempts its acknowledgment is acknowled
     const fake = fakeProvider();
     unpublish = publishChildCompactionProvider(fake.provider);
     let preempt: (() => void) | undefined;
-    // Loaded before the bridge, so its session_compact handler runs first.
     const preempting: ExtensionFactory = (pi) => {
       pi.on("session_compact", () => {
         preempt?.();
@@ -1630,7 +1516,6 @@ test("a host-routed commit whose cancel preempts its acknowledgment is acknowled
       ).length;
     assert.equal(committed(), 1);
 
-    // Resume: reattach and replay the native checkpoint before the prompt.
     const order: string[] = [];
     const unregister = registerSessionNativeRefresher(
       run.session.sessionManager.getSessionId(),
@@ -1659,11 +1544,6 @@ test("a host-routed commit whose cancel preempts its acknowledgment is acknowled
   }
 });
 
-// ---------------------------------------------------------------------------
-// A normal settle between a host-route proposal and the host's append
-// ---------------------------------------------------------------------------
-
-/** Agent settings that let a short child session be compacted by hand. */
 async function useManualCompactSettings(name: string): Promise<void> {
   const dir = join(rootDir, name);
   await mkdir(dir, { recursive: true });
@@ -1677,10 +1557,6 @@ async function useManualCompactSettings(name: string): Promise<void> {
   process.env.PI_CODING_AGENT_DIR = dir;
 }
 
-/**
- * A trailing `session_before_compact` handler: it runs after the bridge has
- * adopted (proposal recorded) and before the host appends the entry.
- */
 interface SettleRace {
   readonly factory: ExtensionFactory;
   arm(settle: () => void): void;
@@ -1738,7 +1614,6 @@ test("a host-route proposal outlives a normal settle and is acknowledged once on
     );
     assert.equal(getCoordinator(child.context.ownerKey), child.coordinator, "still attached");
 
-    // The proposal is spent: a replayed commit event and a later settle change nothing.
     const entry = compactions(run.session.sessionManager.getBranch()).at(-1);
     assert.ok(entry);
     await run.session.extensionRunner.emit({
@@ -1792,18 +1667,11 @@ test("a host-route proposal whose compaction fails after a normal settle is canc
   }
 });
 
-// ---------------------------------------------------------------------------
-// Session creation fails after the bridge exists
-// ---------------------------------------------------------------------------
-
 interface SubscriptionCensus {
-  /** Subscriptions still open, per session bound during the run. */
   readonly live: Map<AgentSession, number>;
-  /** Subscriptions ever opened, per session. */
   readonly opened: Map<AgentSession, number>;
 }
 
-/** Subscriptions per session bound while `run` executes, via the class prototype. */
 async function withSubscriptionCensus(run: () => Promise<void>): Promise<SubscriptionCensus> {
   const live = new Map<AgentSession, number>();
   const opened = new Map<AgentSession, number>();
@@ -1835,7 +1703,6 @@ async function withSubscriptionCensus(run: () => Promise<void>): Promise<Subscri
   return { live, opened };
 }
 
-/** A trailing extension that makes `bindExtensions` reject through the runner's own onError. */
 const BIND_FAILURE = "bind-extensions-failure";
 const failingStart: ExtensionFactory = (pi) => {
   pi.on("session_start", () => {
@@ -1849,7 +1716,6 @@ async function failChildCreation(name: string): Promise<SubscriptionCensus> {
       runChild(agentConfig(name), {
         trailingFactories: [failingStart],
         run: {
-          // The runner forwards extension errors here; throwing propagates out of bindExtensions.
           onToolActivity: (event) => {
             if (event.toolName.startsWith("extension-error:")) throw new Error(BIND_FAILURE);
           },
@@ -1890,7 +1756,6 @@ test("a bindExtensions failure disposes the bridge once and leaves no slot or su
     "the bridge left no session subscription behind",
   );
 
-  // The bridge's session_start ran before the failing handler, so creation was in flight.
   assert.equal(fake.attempts(), 1);
   const child = fake.children[0];
   assert.ok(child);
@@ -1901,7 +1766,6 @@ test("a bindExtensions failure disposes the bridge once and leaves no slot or su
   assert.equal(getCoordinator(`${CHILD_OWNER_KEY_PREFIX}${childId}`), undefined);
   assert.deepEqual(childKeys(), []);
 
-  // The shutdown a retiring manager would emit is a no-op on the disposed bridge.
   await emitChildSessionShutdown(session);
   assert.equal(child.disposals(), 1);
   assert.equal(fake.attempts(), 1);
@@ -1936,13 +1800,11 @@ test("a rejected reattach leaves the bridge idle so a later resume retries creat
   bridge.settle({ canceled: true, timedOut: false });
   assert.equal(child.disposals(), 1);
 
-  // The provider rejects the second attempt: reattach reports and resolves.
   await bridge.reattach();
   assert.equal(fake.attempts(), 2);
   assert.equal(fake.children.length, 1, "no coordinator was created by the rejected attempt");
   assert.deepEqual(childKeys(), [], "the rejected attempt registered nothing");
 
-  // A later resume must retry; before the fix the failed attempt stayed "creating".
   await bridge.reattach();
   assert.equal(fake.attempts(), 3, "creation is retried after a rejected attempt");
   const next = fake.children[1];

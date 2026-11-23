@@ -1,48 +1,6 @@
 import type { ProtocolDictionary } from "./runtime-values.ts";
 import type { RuntimeValue } from "./runtime-values.ts";
 import { isRuntimeNumber, isRuntimeString } from "./runtime-values.ts";
-/**
- * diagnostic_mark — agent-facing disposition operation (#690, unifying
- * #181/#503/#504's discussion into one triage layer).
- *
- * Four dispositions, given the exact filePath/rule/message/line a
- * diagnostics_report finding was reported with (same fields shown in that
- * tool's output):
- *   false-positive — the rule misfired. Persists project-wide.
- *   suppress       — real finding, deliberate policy not to fix. Writes an
- *                     inline `choco-pi-lsp-ignore: <rule>` comment into the source
- *                     (read by clients/dispatch/inline-suppressions.ts) —
- *                     portable and git-visible, not just a store entry.
- *   defer          — fix later. Session-ephemeral; resurfaces on the next
- *                     process run.
- *   flagged        — mark for the agent to fix. Persists until resolved;
- *                     surfaces in diagnostics_report mode=full as "flagged-to-fix".
- *
- * Anchoring is content-based, never file:line, but the flavor differs by
- * disposition (see clients/diagnostic-dispositions.ts's module doc):
- * false-positive uses a STRICT anchor (rule + normalized message + a hash of
- * the diagnostic's OWN line — a site-specific judgment that should re-fire
- * if the line is rewritten); defer/suppress/flagged use a WEAK anchor (rule +
- * normalized message only — intent-level judgments that must survive edits to
- * the flagged line). Both are the SAME derivation clients/dispatch/
- * dispatcher.ts and diagnostics-report.ts's mode=full path use when filtering,
- * so a mark made here is honored on the very next dispatch/query.
- *
- * #802: the caller-supplied `line` is NOT trusted as-is anymore — it's the
- * line a (possibly stale) diagnostics_report call reported, and the file may
- * have moved on since (an earlier edit, a prior suppress in the same batch
- * shifting later lines down). Before writing anything, `verifyLine` below
- * cross-checks it against live per-file diagnostics recorded in
- * clients/widget-state.ts (same tool/rule/normalizedMessage — reusing
- * diagnostic-dispositions.ts's own normalizer so a match here agrees with the
- * anchor derivation) and reanchors to the CURRENT line when it differs. Where
- * widget-state has nothing for this exact finding, a conservative fuzzy
- * fallback accepts the caller's line if it's in-bounds and non-blank, else
- * searches a small window around it for the nearest non-blank line. See
- * verifyLine's doc for the failure-mode contract (false-positive/defer/
- * flagged degrade to today's trust-the-caller behavior on an internal error;
- * suppress never writes at an unverified position).
- */
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
@@ -58,26 +16,12 @@ import { getFileDiagnostics, type WidgetDiagnostic } from "../clients/widget-sta
 
 const DISPOSITIONS = ["false-positive", "suppress", "defer", "flagged"] as const;
 
-// How far ± the caller's line the fuzzy fallback searches for a plausible
-// (non-blank) line when there's no widget-state match to reanchor from.
 const FUZZY_SEARCH_RADIUS = 5;
 
 function isBlank(text: string | undefined): boolean {
   return text === undefined || text.trim().length === 0;
 }
 
-/**
- * Look for a live widget-state diagnostic on this file matching
- * tool/rule/normalizedMessage, and return the line it's CURRENTLY recorded
- * at. Never throws — any lookup failure (widget-state unavailable, malformed
- * record) is treated identically to "no match", which safely falls through
- * to the fuzzy fallback below.
- *
- * Multiple matches (same rule/message on different lines, e.g. a copy-pasted
- * violation) are ambiguous; per #802 this picks the match CLOSEST to the
- * caller's line rather than guessing — the conservative choice for suppress,
- * which must never place a comment above the wrong site.
- */
 function widgetCrossCheck(
   absPath: string,
   tool: string | undefined,
@@ -109,13 +53,6 @@ function widgetCrossCheck(
   return { line: closest.line, ambiguous: true };
 }
 
-/**
- * No widget-state match — accept the caller's line as-is if it's in bounds
- * and non-blank (today's behavior, unchanged); otherwise search outward for
- * the nearest non-blank line within FUZZY_SEARCH_RADIUS. Returns undefined
- * when nothing plausible is nearby (caller must be told to re-run
- * diagnostics_report rather than write at a guessed position).
- */
 function fuzzyReanchor(
   lines: string[],
   callerLine: number,
@@ -136,14 +73,6 @@ function fuzzyReanchor(
 
 type LineVerification = { line: number; reanchored: boolean; note?: string } | { error: string };
 
-/**
- * Verify/reanchor the caller's line against the file's CURRENT content
- * (#802). By construction this function never throws — the widget cross-
- * check and the fuzzy fallback are each internally defensive — so a caller
- * doesn't need to guess whether a thrown exception happened before or after
- * a "the line is wrong" determination; there's always a definitive returned
- * result.
- */
 function verifyLine(
   content: string,
   absPath: string,
@@ -198,8 +127,6 @@ function verifyLine(
 
 export function createLensDiagnosticMarkTool(
   getCwd: () => string,
-  /** Runtime telemetry identity, when known (#1448 class sweep) — attributed
-   * onto the disposition log alongside the mark. */
   getIdentity?: () => { model?: string; provider?: string },
 ) {
   return {
@@ -311,12 +238,6 @@ export function createLensDiagnosticMarkTool(
         };
       }
 
-      // #802: verify/reanchor before anything is written. `verifyLine` never
-      // throws by construction (see its doc), but this is still wrapped so an
-      // unforeseen failure can never leave `verifiedLine` in an inconsistent
-      // state — on any exception here, suppress refuses to write (the failure
-      // mode that must stay safe) while false-positive/defer/flagged fall back
-      // to trusting the caller's line, matching today's pre-#802 behavior.
       let verifiedLine = line;
       let reanchorNote: string | undefined;
       try {
@@ -334,9 +255,6 @@ export function createLensDiagnosticMarkTool(
               details: {},
             };
           }
-          // false-positive/defer/flagged: same worst-case as before #802 — a
-          // stale line produces a rotted (never-matching) anchor rather than a
-          // blocked mark.
         } else {
           verifiedLine = verification.line;
           reanchorNote = verification.note;
@@ -359,7 +277,6 @@ export function createLensDiagnosticMarkTool(
       if (disposition === "suppress") {
         let updated: string;
         try {
-          // biome-ignore lint/style/noNonNullAssertion: validated above
           updated = insertSuppressComment(content, absPath, verifiedLine, rule!);
         } catch (err) {
           return {

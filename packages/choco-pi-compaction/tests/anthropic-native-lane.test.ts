@@ -1,12 +1,3 @@
-/**
- * Anthropic native isolated lane request (INSTALLED Anthropic adapter, fake
- * fetch, no network).
- *
- * The lane must send exactly the frozen prefix with the compaction beta and
- * trigger, read the block from raw provider stream events even though the
- * adapter drops it and errors on `stop_reason: "compaction"`, count
- * `usage.iterations`, and turn every failure into a typed value.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -35,7 +26,6 @@ const MODEL: Model<"anthropic-messages"> = {
   maxTokens: 4_096,
 };
 const API_KEY = "native-non-secret-placeholder-key";
-/** Synthetic signed block with an unknown field; the signature is a placeholder. */
 const BLOCK = {
   type: "compaction",
   content: "NATIVE synthetic prefix facts",
@@ -45,7 +35,6 @@ const BLOCK = {
 
 type Frame = JsonObject & { readonly type: string };
 
-/** Every key path in insertion order, so added or reordered fields are visible. */
 function keyPaths<T>(value: T, prefix = ""): string[] {
   if (!(value instanceof Object)) return [];
   return Object.entries(value).flatMap(([key, child]) => [
@@ -121,7 +110,6 @@ function errorResponse(
   });
 }
 
-/** Captured-style body: five messages, compaction-rejected parameters present. */
 function capturedBody(): WireBody {
   const body = parseWireBody(
     JSON.stringify({
@@ -453,7 +441,6 @@ test("200 responses without exactly one intact summary are failures with usage c
       `${item.name}: billed usage still counted`,
     );
   }
-  // A stream that ends before any stop reason is malformed, not a summary.
   const truncated = expectFailure(await lane(() => sse([start()])).run());
   assert.equal(truncated.code, "malformed");
 });

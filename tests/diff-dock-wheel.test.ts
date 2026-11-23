@@ -1,7 +1,3 @@
-// Wheel over the docked /diff pane, driven through pi-tui's real alt-screen
-// input path: raw SGR mouse bytes in, the dock host's components and pi-tui's
-// own wheel routing in between. A wheel anywhere on the pane's columns scrolls
-// the pane and never the transcript; a wheel on the transcript is unchanged.
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Component, ProgramStatus, Terminal } from "@earendil-works/pi-tui";
@@ -23,7 +19,6 @@ import type {
 const COLUMNS = 120;
 const ROWS = 40;
 const PANE_WIDTH = 40;
-/** Zero-based columns: the border, then the pane's content. */
 const BORDER_COLUMN = COLUMNS - PANE_WIDTH - 1;
 const PANE_COLUMN = BORDER_COLUMN + 1;
 const TRANSCRIPT_COLUMN = 10;
@@ -46,7 +41,6 @@ class Lines implements Component {
   invalidate(): void {}
 }
 
-/** A terminal that records nothing and hands its input callback to the test. */
 class FakeTerminal implements Terminal {
   input: (data: string) => void = () => {};
   start(onInput: (data: string) => void, _onResize: () => void): void {
@@ -79,7 +73,6 @@ function numbered(prefix: string, count: number): string[] {
   return Array.from({ length: count }, (_, index) => `${prefix} ${index}`);
 }
 
-/** Pi's fullscreen layout (modes/interactive/chat-viewport.js) on a real alt-screen TUI, with the pane docked. */
 function dockedPane(bodyLines: number, overrides: Partial<PaneSurface> = {}) {
   const document = new Container();
   document.addChild(new Lines(numbered("transcript", 200)));
@@ -128,7 +121,6 @@ function dockedPane(bodyLines: number, overrides: Partial<PaneSurface> = {}) {
   const pane = scrollers[0];
   assert.ok(pane, "the dock host attaches the pane's scroller");
 
-  /** Send raw SGR mouse bytes (zero-based cell) through the terminal, then draw the frame. */
   const send = (button: number, x: number, y: number, release = false): void => {
     terminal.input(`\u001b[<${button};${x + 1};${y + 1}${release ? "m" : "M"}`);
     tui.renderNow();
@@ -147,7 +139,6 @@ function withPane(
 ): void {
   const docked = dockedPane(bodyLines, overrides);
   try {
-    // The transcript sits mid-way, so a leaked wheel in either direction would move it.
     docked.transcript.scrollTo(100);
     docked.tui.renderNow();
     assert.equal(docked.transcript.scrollTop, 100);
@@ -194,7 +185,6 @@ test("wheel on a list shorter than the pane, and below its end, leaves the trans
   withPane(3, ({ pane, send, state }) => {
     assert.ok(pane.viewportHeight() > 3);
     for (const row of [1, BODY_ROW, ROWS - 6]) {
-      // Checked after every event: a leaked down and a leaked up would cancel out.
       for (const button of [WHEEL_DOWN, WHEEL_DOWN, WHEEL_UP]) {
         send(button, PANE_COLUMN + 5, row);
         assert.deepEqual(state(), { transcript: 100, pane: 0 });
@@ -263,8 +253,6 @@ test("a horizontal wheel inside the pane changes nothing and leaves no press tar
     assert.equal(tui.getFocusedComponent(), editor);
     assert.equal(tui.hasActiveSelection(), false);
 
-    // Horizontal wheels never send a release. Had a pane component taken one, pi-tui
-    // would send this press to it instead of the body (on the border: a resize drag).
     send(0, PANE_COLUMN + 5, BODY_ROW);
     send(0, PANE_COLUMN + 5, BODY_ROW, true);
     assert.deepEqual(
@@ -277,7 +265,6 @@ test("a horizontal wheel inside the pane changes nothing and leaves no press tar
   });
 });
 
-/** A frame of the whole layout as pi-tui draws it now, one string per terminal row, escapes removed. */
 function screen(root: Component): string[] {
   return renderLayoutFrame(root, COLUMNS, ROWS, () => {}).lines.map((row) =>
     stripTerminalSequences(row),
@@ -315,7 +302,6 @@ test("when the body shrinks under a scrolled pane the pinned row still lands on 
     ({ root, tui, pane, maxPaneTop }) => {
       pane.scrollTo(maxPaneTop());
       tui.renderNow();
-      // The first frame after the shrink: pi-tui clamps the scroll position only after the body drew.
       count = 45;
       const rows = screen(root);
       const pinned = rows.flatMap((row, index) => (row.includes("PINNED") ? [index] : []));

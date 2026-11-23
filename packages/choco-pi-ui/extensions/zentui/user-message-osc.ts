@@ -166,9 +166,6 @@ function filterUserMessageTerminalText(text: string, options: FilterOptions): Fi
         continue;
       }
 
-      // Removing an unterminated introducer prevents it from consuming
-      // Zentui's prompt markers. Preserve visible trailing payload, except
-      // for a recognized partial OSC 133 command prefix.
       const payloadEnd = boundary?.index ?? text.length;
       const payload = text.slice(payloadStart, payloadEnd);
       index = payloadStart + incompleteOsc133PrefixLength(payload);
@@ -221,7 +218,6 @@ function filterBalancedUserMessageTerminalText(text: string, options: FilterOpti
   return filterUserMessageTerminalText(text, { ...options, preserveValidOsc8: false }).text;
 }
 
-/** Strip every terminal control from untrusted source text before Markdown rendering. */
 export function sanitizeUserMessageSourceText(text: string): string {
   return filterBalancedUserMessageTerminalText(text, {
     preserveValidOsc8: false,
@@ -230,10 +226,6 @@ export function sanitizeUserMessageSourceText(text: string): string {
   });
 }
 
-/**
- * Sanitize a predecessor-rendered row. Pi formatting needs only SGR and
- * structurally valid 7-bit OSC 8; every other terminal control is removed.
- */
 export function sanitizeRenderedUserMessageText(text: string): string {
   return filterBalancedUserMessageTerminalText(text, {
     preserveValidOsc8: true,
@@ -242,7 +234,6 @@ export function sanitizeRenderedUserMessageText(text: string): string {
   });
 }
 
-/** Sanitize one predecessor output stream while retaining its row boundaries. */
 export function sanitizeRenderedUserMessageLines(lines: string[]): string[] {
   return sanitizeRenderedUserMessageText(lines.join("\n")).split("\n");
 }

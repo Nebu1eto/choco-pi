@@ -135,7 +135,7 @@ export async function activateUsageStatus(
       if (snapshot) {
         renderSnapshot(ctx, snapshot);
       } else {
-        renderSnapshot(ctx, undefined); // show loading
+        renderSnapshot(ctx, undefined);
         dependencies.request(pi, (refreshed) => {
           if (!isCurrent(capturedGeneration)) return;
           renderSnapshot(ctx, refreshed);

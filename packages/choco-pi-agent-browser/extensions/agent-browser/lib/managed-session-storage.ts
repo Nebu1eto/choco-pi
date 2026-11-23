@@ -204,7 +204,6 @@ function getDirectoryFilesystemIdentity(
   try {
     const entry = statSync(path, { bigint: true });
     if (!entry.isDirectory() || entry.dev <= 0n || entry.ino <= 0n) return undefined;
-    // ponytail: Android reports mutable ctime as birthtime; use statx birthtime/inode generation when Node exposes either reliably.
     return platform === "android"
       ? `${entry.dev}:${entry.ino}`
       : entry.birthtimeNs > 0n
@@ -281,7 +280,6 @@ function resolveProjectGenerationIdentity(
     if (!marker) {
       const content = JSON.stringify({ id: randomUUID(), version: 1 });
       if (platform === "android") {
-        // ponytail: Android denies hard links in app storage; use renameat2(RENAME_NOREPLACE) if Node exposes it.
         try {
           writeFileSync(markerPath, content, { encoding: "utf8", flag: "wx", mode: 0o600 });
         } catch (error) {
@@ -326,12 +324,10 @@ export function hasManagedSessionRestoreProjectIdentity(cwd: string): boolean {
   return resolveProjectGenerationIdentity(cwd) !== undefined;
 }
 
-/** Keep fresh rotations from one Pi transcript in one private upstream restore pool. */
 export function getManagedSessionRestoreScope(sessionName: string): string {
   return sessionName.replace(MANAGED_SESSION_FRESH_SUFFIX_PATTERN, "");
 }
 
-/** Stable for one Pi transcript and checkout generation; isolated from other concurrent transcripts. */
 export function createManagedSessionRestoreKey(
   cwd: string,
   restoreScope = "",
@@ -362,7 +358,6 @@ export function getManagedRestoreSessionsDirectory(home: string, namespace?: str
     : join(home, ".agent-browser", "sessions");
 }
 
-/** Require the upstream 256-bit key format and secure every directory that can receive restore snapshots. */
 export function ensureManagedSessionRestoreStorageIsSecure(
   parentEnv: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,

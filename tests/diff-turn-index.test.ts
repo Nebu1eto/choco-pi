@@ -1,4 +1,3 @@
-// Every checkpoint records turnIndex 0: Pi restarts turn_start's index for each prompt. /diff numbers turns itself.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
@@ -84,7 +83,6 @@ test("file-checkpoints records Pi's per-prompt turn index, so every checkpoint s
     for (const handler of handlers.get(event) ?? []) await handler(payload, ctx);
   };
   await fire("session_start", { reason: "startup" });
-  // What AgentSession emits: agent_start resets its turn counter, so each prompt's first turn is 0.
   for (const [prompt, file] of [
     ["first prompt", "b.txt"],
     ["second prompt", "c.txt"],
@@ -94,7 +92,6 @@ test("file-checkpoints records Pi's per-prompt turn index, so every checkpoint s
       type: "message_start",
       message: { role: "user", content: prompt, timestamp: Date.now() },
     });
-    // The agent works for two more turns in the same prompt; they record nothing.
     await fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: Date.now() });
     await fire("turn_start", { type: "turn_start", turnIndex: 2, timestamp: Date.now() });
     await writeFile(join(root, file), `${prompt}\n`);
@@ -181,7 +178,6 @@ test("each turn alone: its checkpoint against the next, and a prompt without one
   await writeFile(join(root, "b.txt"), "from turn one\n");
   await checkpoint("two");
   prompt("two");
-  // Turn two changed nothing, so file-checkpoints records no checkpoint for turn three.
   prompt("three");
   await writeFile(join(root, "c.txt"), "from turn three\n");
   await checkpoint("four");
@@ -223,7 +219,6 @@ test("each turn alone: its checkpoint against the next, and a prompt without one
     if (state.kind !== "ready") return;
     listed.push(state.snapshot.files.map((file) => `${file.status} ${file.path}`));
     if (source.kind !== "range") continue;
-    // An earlier turn's text is read from its trees, not from the working tree.
     const path = state.snapshot.files[0]?.path ?? "";
     const { body } = await store.loadFile(path);
     assert.equal(body.kind, "text");

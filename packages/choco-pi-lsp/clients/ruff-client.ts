@@ -1,13 +1,3 @@
-/**
- * Ruff Client for choco-pi-lsp
- *
- * Fast Python linting and formatting via Ruff CLI.
- * Replaces flake8, pylint, isort, black, pyupgrade.
- *
- * Requires: pip install ruff
- * Docs: https://docs.astral.sh/ruff/
- */
-
 import { createSubsystemLogger } from "./extension-log.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -18,8 +8,6 @@ import {
 import { isFileKind } from "./file-kinds.ts";
 import { safeSpawnAsync } from "./safe-spawn.ts";
 import { ruffConfigArgs } from "./tool-policy.ts";
-
-// --- Types ---
 
 export interface RuffDiagnostic {
   line: number;
@@ -33,7 +21,6 @@ export interface RuffDiagnostic {
   fixable: boolean;
 }
 
-// ruff check --output-format json
 interface RuffJsonDiagnostic {
   code: string | null;
   message: string;
@@ -42,8 +29,6 @@ interface RuffJsonDiagnostic {
   fix: { applicability: string } | null;
   filename: string;
 }
-
-// --- Client ---
 
 const ruffAvailability = createAvailabilityChecker("ruff", ".exe");
 
@@ -55,13 +40,6 @@ export class RuffClient {
     this.log = verbose ? createSubsystemLogger("ruff") : () => {};
   }
 
-  /**
-   * Check if ruff CLI is available, auto-install if not.
-   *
-   * Re-entrancy safe: the shared availability seam deduplicates the complete
-   * probe/auto-install transaction per cwd and tool, so concurrent callers do
-   * not duplicate installation attempts.
-   */
   async ensureAvailable(): Promise<boolean> {
     const resolved = await resolveAvailableOrInstall(ruffAvailability, "ruff", process.cwd());
     if (!resolved) return false;
@@ -69,18 +47,10 @@ export class RuffClient {
     return true;
   }
 
-  /**
-   * Check if a file is a Python file
-   */
   isPythonFile(filePath: string): boolean {
     return isFileKind(filePath, "python");
   }
 
-  /**
-   * Async auto-fix variant for pipeline use (non-blocking spawn).
-   * `cwd` is the dispatch language root (used for config discovery); when
-   * omitted it defaults to the file's directory.
-   */
   async fixFileAsync(
     filePath: string,
     cwd?: string,
@@ -112,10 +82,6 @@ export class RuffClient {
     try {
       const before = await fs.promises.readFile(absolutePath, "utf-8");
 
-      // Shared config-args seam (#1247): the lint runner consumes the same
-      // builder, so `check --fix` can never drift to ruff's default rule
-      // set when the project lacks its own config and the package-owned
-      // core.toml fallback applies.
       const configArgs = ruffConfigArgs(cwd ?? path.dirname(absolutePath));
       const spawnOpts = { timeout: 10000, cwd: cwd ?? path.dirname(absolutePath) };
 
@@ -163,8 +129,6 @@ export class RuffClient {
     }
   }
 
-  // --- Internal ---
-
   private parseOutput(output: string, filterFile?: string): RuffDiagnostic[] {
     if (!output.trim()) return [];
 
@@ -173,11 +137,10 @@ export class RuffClient {
       const diagnostics: RuffDiagnostic[] = [];
 
       for (const item of items) {
-        // Filter to single file if requested
         if (filterFile && path.resolve(item.filename) !== filterFile) continue;
 
         diagnostics.push({
-          line: item.location.row - 1, // ruff is 1-indexed
+          line: item.location.row - 1,
           column: item.location.column - 1,
           endLine: item.end_location.row - 1,
           endColumn: item.end_location.column - 1,

@@ -1,9 +1,3 @@
-/**
- * A skill hook with `once: true` must execute at most once per session even
- * when two dispatches of its event overlap. Pi's default parallel tool mode
- * runs `afterToolCall` (and so `tool_result` -> PostToolUse) for sibling tool
- * calls concurrently, so overlapping `HookEngine.run` calls do occur.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { HookEngine } from "../src/index.ts";
@@ -24,8 +18,6 @@ const skillSource: HookSource = {
   hooks: { PostToolUse: [{ hooks: [{ type: "command", command: "x", once: true }] }] },
 };
 
-// The second run starts while the first is suspended at its first await, so
-// it selects its jobs before the first run's handler can have finished.
 test("overlapping runs execute a once skill hook at most once", async () => {
   let calls = 0;
   const engine = new HookEngine([skillSource], {

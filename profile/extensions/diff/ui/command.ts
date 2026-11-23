@@ -1,15 +1,11 @@
-/** `/diff` argument grammar. */
 import type { DiffSource } from "../../lib/changes/git/model.ts";
 
 export type DiffCommand =
   | { kind: "toggle" | "open" | "close" | "focus" | "refresh" }
   | { kind: "width"; width: number }
   | { kind: "source"; source: DiffSource }
-  /** `turn` undefined means the latest turn that has a checkpoint. */
   | { kind: "source-turn"; turn: number | undefined }
-  /** `base` undefined means the repository's default base (see default-base.ts). */
   | { kind: "source-branch"; base: string | undefined }
-  /** `enabled` undefined asks for the current setting. */
   | { kind: "auto"; enabled: boolean | undefined }
   | { kind: "notes"; action: "send" | "clear" }
   | { kind: "review" }
@@ -20,7 +16,6 @@ export const DIFF_USAGE =
 
 const SOURCE_USAGE = "Usage: /diff source session | uncommitted | turn [<n>] | branch [<base>]";
 
-/** Base used by `/diff source branch` when none is given and none can be resolved from git. */
 export const FALLBACK_BRANCH_BASE = "main";
 
 export const DIFF_SUBCOMMANDS = [

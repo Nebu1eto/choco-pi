@@ -14,7 +14,6 @@ import { STEP_TOOL } from "./fake-sse.ts";
 
 const SUMMARY_MARKER = "context summarization assistant";
 
-/** Origin only (scheme + host); paths and queries never enter artifacts. */
 export function requestOrigin(input: Parameters<typeof globalThis.fetch>[0]): string {
   const raw = input instanceof Request ? input.url : String(input);
   return URL.canParse(raw) ? new URL(raw).origin : "unparseable";
@@ -23,7 +22,6 @@ export function requestOrigin(input: Parameters<typeof globalThis.fetch>[0]): st
 const LaneSchema = obj({ compaction: unknown() }, { open: true });
 const LaneFieldSchema = withArtifactDefs(obj({ compaction: InputSchema }, { open: true }));
 
-/** The lane request's `compaction` field and `anthropic-beta` values (no other header). */
 export function recordLaneRequest(
   recorder: HostState["recorder"],
   compaction: ArtifactInput,
@@ -42,7 +40,6 @@ const ToolsSchema = obj(
 );
 const SystemSchema = withArtifactDefs(obj({ system: InputSchema }, { open: true }));
 
-/** Classifies an actual serialized Anthropic body by what production put on it. */
 export function classify(payload: ArtifactInput): RequestKind {
   if (matches(LaneSchema, payload)) return "lane";
   if (matches(SystemSchema, payload) && containsText(payload.system, SUMMARY_MARKER))
@@ -55,11 +52,6 @@ export function classify(payload: ArtifactInput): RequestKind {
 export interface LiveFetchOptions {
   readonly state: HostState;
   readonly origin: string;
-  /**
-   * The model's API base URL. Only requests under its path pass: a provider
-   * whose utility endpoints share the model origin (Synthetic `/v2/quotas`)
-   * keeps them blocked, so they neither reach the network nor the ledger.
-   */
   readonly endpoint?: string;
   readonly ledger: LiveLedger;
   readonly realFetch: typeof globalThis.fetch;
@@ -82,7 +74,6 @@ async function bodyTextOf(
   return body;
 }
 
-/** Records dispatch, actual transport and the branch it was sent from. */
 function recordRequest(state: HostState, bodyText: string, payload: ArtifactInput): Sent {
   const kind = classify(payload);
   const sessionId = state.mainSessionId;
@@ -112,11 +103,6 @@ function rememberWire(state: HostState, sent: Sent, init: RequestInit | undefine
   });
 }
 
-/**
- * Live global fetch: provider-origin requests pass through to the real network
- * after capture, the runaway guard and the foreground observer; every other
- * origin is refused through `block`.
- */
 function withinEndpoint(
   input: Parameters<typeof globalThis.fetch>[0],
   endpoint: string | undefined,

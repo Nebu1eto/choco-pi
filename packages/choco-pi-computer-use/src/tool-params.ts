@@ -13,15 +13,6 @@ import type {
   WaitForParams,
 } from "./contract.ts";
 
-/**
- * Tool inputs and outputs use snake_case. The bridge, the action union and the
- * native helper protocol keep their camelCase names, so this module is the only
- * place that maps between the two: tool parameters are converted before they
- * reach the bridge, and action names are converted back when they are written
- * into model-visible text.
- */
-
-/** Action names as the model spells them; the internal action union keeps its names. */
 const WIRE_TO_INTERNAL_ACTION = {
   press: "press",
   click: "click",
@@ -41,7 +32,6 @@ const INTERNAL_TO_WIRE_ACTION = new Map([
   ["moveMouse", "move_mouse"],
 ]);
 
-/** The model-facing spelling of an internal action name; other names pass through. */
 export function actionLabel(action: string): string {
   return INTERNAL_TO_WIRE_ACTION.get(action) ?? action;
 }
@@ -128,8 +118,6 @@ export function toFindParams(params: WireFindParams): FindParams {
   };
 }
 
-// Capability labels renamed to snake_case; reject the former spellings instead of letting
-// them silently match nothing.
 const RENAMED_CAPABILITIES = new Map([
   ["setvalue", "set_value"],
   ["settext", "set_text"],

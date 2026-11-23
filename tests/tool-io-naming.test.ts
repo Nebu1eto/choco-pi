@@ -1,13 +1,3 @@
-/**
- * Contract: every repository tool's parameter schema uses snake_case property
- * names and snake_case, single-word or kebab-case option values (user decision
- * "tool inputs and outputs use snake_case"; tool names are exempt).
- *
- * A child process (tests/helpers/collect-tool-schemas.ts) loads every
- * repository extension entry with Pi's own loader and reports the registered
- * schemas. It runs with HOME and PI_CODING_AGENT_DIR pointing at an empty
- * scratch directory, so nothing under ~/.pi is read.
- */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -28,42 +18,22 @@ const execFileAsync = promisify(execFile);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const COLLECTOR = path.join(ROOT, "tests", "helpers", "collect-tool-schemas.ts");
 
-/** snake_case or a single lowercase word. */
 const SNAKE_KEY = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
-/** snake_case, a single lowercase word, or kebab-case. */
 const OPTION_VALUE = /^[a-z0-9]+(?:[_-][a-z0-9]+)*$/;
 
-/**
- * Subtrees whose keys are verbatim external data, as "tool:path". Every key
- * below the path is exempt; the path's own key is still checked.
- */
-const PASS_THROUGH_SUBTREES = new Set([
-  // An LSP CallHierarchyItem handed back to the server unchanged (selectionRange, ...).
-  "lsp_navigation:call_hierarchy_item",
-]);
+const PASS_THROUGH_SUBTREES = new Set(["lsp_navigation:call_hierarchy_item"]);
 
-/**
- * Option values that are neither camelCase nor snake_case and stay as they are,
- * as "tool:path=value". The user decision converts camelCase values only.
- */
 const ALLOWED_VALUES = new Set([
-  // Upper-case message envelope types shared with the agent messaging protocol.
   "agent_message:type=MESSAGE",
   "agent_message:type=TASK",
   "agent_message:type=FINAL",
 ]);
 
-/**
- * Entries Pi's jiti loader cannot load outside a real Pi process, with a part
- * of the reason. The collector still registers their tools through a plain
- * Node import with a stub API, so their schemas are checked too.
- */
 const KNOWN_LOAD_FAILURES = {
   "packages/choco-pi-compaction/src/index.ts": "pi-ai-extension-view.js/api/anthropic-messages",
   "packages/choco-pi-subagents/src/index.ts": "pi-tui/dist/index.js/dist/tui.js",
 } satisfies Record<string, string>;
 
-/** Tools whose absence would mean a package silently stopped loading. */
 const EXPECTED_TOOLS = [
   "web_search",
   "source_check",
@@ -108,7 +78,6 @@ const NESTED_SCHEMA_KEYS = [
 const SCHEMA_LIST_KEYS = ["anyOf", "oneOf", "allOf", "prefixItems"];
 const SCHEMA_MAP_KEYS = ["$defs", "definitions", "patternProperties"];
 
-/** Naming violations in one tool's parameter schema, as readable lines. */
 export function namingViolations(tool: string, schema: RuntimeValue): string[] {
   const violations: string[] = [];
   const visit = (node: RuntimeValue, at: string): void => {

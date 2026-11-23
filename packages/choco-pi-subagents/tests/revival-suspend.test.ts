@@ -73,17 +73,12 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-/** A child session whose manager reports `file` as its session file. */
 async function sessionWithFile(env: UsageLimitEnv, file: string): Promise<AgentSession> {
   const session = await env.childSession();
   session.sessionManager.getSessionFile = () => file;
   return session;
 }
 
-/**
- * Install an auto-resume quota policy whose corroboration stays pending until
- * `release()`, so a suspend can land while the usage-limit evaluation awaits it.
- */
 function heldCorroboration(t: TestContext, env: UsageLimitEnv) {
   const state = policyState({
     preference: "auto-resume",
@@ -100,7 +95,6 @@ function heldCorroboration(t: TestContext, env: UsageLimitEnv) {
   return { state, release: () => gate.resolve(undefined) };
 }
 
-/** The record's journal entries after its suspend entry. */
 function afterSuspend(entries: SubagentJournalData[], id: string): SubagentJournalData[] {
   const own = entriesOf(entries, id);
   const index = own.findIndex((entry) => entry.suspended);
@@ -245,7 +239,6 @@ test("a queued post-reset continuation is suspended as a usage wait", async (t) 
   runs[0].resolve({ responseText: "", session, aborted: false, steered: false, failure: LIMIT });
   await flush();
   manager.steer(parked, "carry me");
-  // Another provider: the parked one is closed until its reset.
   const busy = manager.spawn(
     env.pi,
     env.context({ model: env.models.sol }),
@@ -331,7 +324,6 @@ test("dispose({ suspend: true }) keeps a suspended run's worktree", async (t) =>
     isolation: "worktree",
     cwd: repo,
   });
-  // Worktree creation runs git asynchronously once the run starts.
   await waitFor(() => runs.length > 0, "the run started");
   const worktree = manager.getRecord(id)?.worktree;
   assert.ok(worktree, "a worktree was created");

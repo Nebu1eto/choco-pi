@@ -26,7 +26,6 @@ export type RecipientResolution<T extends MessagingRecord = MessagingRecord> =
   | { ok: true; kind: "agent"; address: string; record: T }
   | { ok: false; error: string; candidates: string[] };
 
-/** Return the globally unique flat identity used for agent-to-agent messaging. */
 export function getAgentIdentity(record: MessagingRecord): string {
   const identity = record.alias ?? record.handle;
   if (!identity)
@@ -72,7 +71,6 @@ function nearMatches(
     .map(({ address }) => address);
 }
 
-/** Resolve `/root` or a globally unique alias, handle, or id. */
 export function resolveMessageRecipient<T extends MessagingRecord>(
   to: string,
   records: readonly T[],
@@ -83,12 +81,8 @@ export function resolveMessageRecipient<T extends MessagingRecord>(
   for (const record of records) {
     try {
       candidates.push({ record, address: getAgentIdentity(record) });
-    } catch {
-      // A malformed record must not prevent healthy records from resolving.
-    }
+    } catch {}
   }
-  // Flat identities supersede tree paths, but accepting the final segment keeps
-  // callers using a previously emitted `/root/...` address working.
   const target = to.split("/").filter(Boolean).at(-1) ?? to;
   const byId = candidates.find(({ record }) => record.id === target);
   if (byId) return { ok: true, kind: "agent", ...byId };
@@ -119,7 +113,6 @@ export function resolveMessageRecipient<T extends MessagingRecord>(
   };
 }
 
-/** Wrap agent-authored text so it can never be mistaken for the real user's voice. */
 export function formatAgentMessage(
   senderIdentity: string,
   text: string,
@@ -129,7 +122,6 @@ export function formatAgentMessage(
   return `<agent-message from="${senderIdentity}" type="${type}">\n${neutralizedText}\n</agent-message>`;
 }
 
-/** Parse a complete agent-message envelope; ordinary user text returns undefined. */
 export function parseAgentMessage(text: string): ParsedAgentMessage | undefined {
   const match =
     /^<agent-message from="([^"\r\n]+)" type="(MESSAGE|TASK|FINAL)">\r?\n([\s\S]*)\r?\n<\/agent-message>$/.exec(
@@ -145,18 +137,14 @@ export function parseAgentMessage(text: string): ParsedAgentMessage | undefined 
   };
 }
 
-/** `steer_subagent` always sends an agent-authored MESSAGE envelope. */
 export function formatSteerMessage(senderIdentity: string, text: string): string {
   return formatAgentMessage(senderIdentity, text, "MESSAGE");
 }
 
 export type MessageDeliveryClass = "running" | "queued" | "closing" | "finished";
 
-/** Classify whether a recipient can receive now, before session creation, or not at all. */
 export function classifyMessageDelivery(record: MessagingRecord): MessageDeliveryClass {
   const generation = record.resultGeneration ?? 1;
-  // A usage-limit-parked recipient is held like a queued one: its messages
-  // join the continuation prompt when the provider window resets.
   const active =
     record.status === "running" ||
     record.status === "queued" ||

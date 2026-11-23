@@ -1,4 +1,3 @@
-// The session source against real git and real session files: what it lists, and where its baseline comes from.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
@@ -65,7 +64,6 @@ async function repository(t: { after(fn: () => Promise<void>): void }): Promise<
   return root;
 }
 
-/** The tree of every non-ignored working file, as file-checkpoints captures it before a prompt. */
 async function checkpointTree(root: string): Promise<string> {
   const index = join(root, ".git", "checkpoint-index-" + String(Math.random()).slice(2));
   await git(root, { GIT_INDEX_FILE: index }, "add", "-A");
@@ -109,13 +107,10 @@ function checkpointData(tree: string, label: string) {
     version: 2,
     worktreeTree: tree,
     timestamp: new Date().toISOString(),
-    // Pi's turn_start index restarts at 0 for every prompt, so every checkpoint records 0.
     turnIndex: 0,
     label,
   };
 }
-
-/* ------------------------------------------------------------- listing */
 
 test("the session source lists only this session's changes: earlier edits stay out, a re-edited file shows the session's part", async (t) => {
   const root = await repository(t);
@@ -124,12 +119,10 @@ test("the session source lists only this session's changes: earlier edits stay o
   await writeFile(join(root, "b.txt"), "one\n");
   await git(root, {}, "add", "-A");
   await git(root, {}, "commit", "-qm", "base");
-  // Before the session: two dirty files and an untracked one.
   await writeFile(join(root, "pre.txt"), "one\npre\n");
   await writeFile(join(root, "both.txt"), "one\npre\n");
   await writeFile(join(root, "pre-untracked.txt"), "x\n");
   const tree = await checkpointTree(root);
-  // During the session: an edit, a second edit of a dirty file, a new file (as a shell command would make).
   await writeFile(join(root, "b.txt"), "one\nsession\n");
   await writeFile(join(root, "both.txt"), "one\npre\nsession\n");
   await writeFile(join(root, "made-by-shell.txt"), "a\nb\n");
@@ -211,7 +204,6 @@ test("without a checkpoint the session source lists nothing, not the working tre
   const none = await read(root, provider(sessionBaselineOf(fresh.getEntries())));
   assert.deepEqual(listed(none), []);
   assert.deepEqual(none.baseline, { kind: "none", reason: NO_SESSION_CHECKPOINT });
-  // An empty session source names the way to the working tree's own changes.
   assert.equal(
     emptyMessage(none),
     `${NO_SESSION_CHECKPOINT} /diff source uncommitted shows every uncommitted change.`,
@@ -225,7 +217,6 @@ test("without a checkpoint the session source lists nothing, not the working tre
   const off = await read(root, provider(sessionBaselineOf(fresh.getEntries())));
   assert.deepEqual(listed(off), []);
   assert.deepEqual(off.baseline, { kind: "none", reason: SESSION_WITHOUT_CHECKPOINTS });
-  // That reason already names the command; it is not repeated.
   assert.equal(emptyMessage(off), SESSION_WITHOUT_CHECKPOINTS);
 
   const noProvider = await read(root, undefined);
@@ -249,8 +240,6 @@ test("outside a git repository the session source reports it and lists nothing",
   assert.equal(store.getState().kind, "not-a-repository");
 });
 
-/* ------------------------------------------------------------ baseline */
-
 test("the baseline is the session's first checkpoint across resume, compaction, /tree navigation and fork", async (t) => {
   const cwd = await tempDir(t, "diff-session-cwd-");
   const sessions = await tempDir(t, "diff-session-files-");
@@ -265,7 +254,6 @@ test("the baseline is the session's first checkpoint across resume, compaction, 
   manager.appendCompaction("summary", secondPrompt, 1000);
   assert.deepEqual(sessionBaselineOf(manager.getEntries()), expected, "after /compact");
 
-  // /tree: back to the first prompt and a new branch from there.
   manager.branch(firstPrompt);
   manager.appendCustomEntry(CHECKPOINT_ENTRY, checkpointData("c".repeat(40), "other branch"));
   manager.appendMessage(user("other branch"));
@@ -276,7 +264,6 @@ test("the baseline is the session's first checkpoint across resume, compaction, 
   const resumed = SessionManager.open(file, sessions);
   assert.deepEqual(sessionBaselineOf(resumed.getEntries()), expected, "a resumed session");
 
-  // Fork (as /fork and /clone do): a new session file with the path to the chosen entry.
   const parentId = resumed.getSessionId();
   const forkFile = resumed.createBranchedSession(secondPrompt);
   assert.ok(forkFile);
@@ -288,7 +275,6 @@ test("the baseline is the session's first checkpoint across resume, compaction, 
     "a fork keeps its parent's start",
   );
 
-  // A fork before the first prompt copied no prompt: its own first checkpoint is the start.
   const early = SessionManager.inMemory(cwd);
   early.appendCustomEntry(CHECKPOINT_ENTRY, checkpointData("a".repeat(40), "first prompt"));
   assert.equal(sessionBaselineOf(early.getEntries()).kind, "none");

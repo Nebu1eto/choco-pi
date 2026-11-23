@@ -29,7 +29,6 @@ type Notice = [string, string];
 const STALE_CONTEXT_ERROR =
   "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().";
 
-/** Waits for queued preference writes and the notifications that follow them. */
 async function settleWrites(): Promise<void> {
   await flushAgentPreferenceWrites();
   await new Promise((resolve) => setImmediate(resolve));
@@ -164,8 +163,6 @@ test(
     assert.deepEqual(section.handleChange("sessionAutoNameModel", "openai/gpt-5.6-luna"), {
       kind: "update",
     });
-    // Turning automatic naming off rebuilds the list without the model row,
-    // before the asynchronous write has landed.
     assert.deepEqual(section.handleChange("sessionAutoName", "Disabled"), { kind: "rebuild" });
     assert.ok(!section.buildItems().some((item) => item.id === "sessionAutoNameModel"));
     await settleWrites();
@@ -618,7 +615,6 @@ test(
       const tabs = panel.render(160)[1] ?? "";
       assert.doesNotMatch(tabs, /Host/, "a merged section must not claim a tab");
 
-      // Four built-in appearance rows come first, then the merged row.
       for (let index = 0; index < 4; index += 1) panel.handleInput("\x1b[B");
       panel.handleInput("\r");
       assert.deepEqual(changes, [["hostAppearanceRow", "on"]]);

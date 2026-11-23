@@ -1,9 +1,3 @@
-// Reads the parts of a TLC model config (.cfg) that the wrapper controls:
-// INVARIANT, PROPERTY and CHECK_DEADLOCK. Every other section is kept as the
-// user wrote it, so TLC itself remains the parser of CONSTANT values and the
-// rest of the grammar. Anything ambiguous in the controlled sections is an
-// error rather than a guess.
-
 const KEYWORDS: ReadonlySet<string> = new Set([
   "CONSTANT",
   "CONSTANTS",
@@ -30,13 +24,10 @@ const KEYWORDS: ReadonlySet<string> = new Set([
 type Token = { text: string; start: number; end: number };
 
 export type ModelConfig = {
-  /** The config with the INVARIANT, PROPERTY and CHECK_DEADLOCK sections removed. */
   kept: string;
   invariants: string[];
   properties: string[];
-  /** The CHECK_DEADLOCK value the config sets, if any. */
   checkDeadlock: boolean | undefined;
-  /** True when the config declares its own CONSTRAINT or ACTION_CONSTRAINT. */
   constrained: boolean;
 };
 
@@ -168,7 +159,6 @@ export function readModelConfig(text: string): ModelConfig {
   return { kept, invariants, properties, checkDeadlock, constrained };
 }
 
-/** The config TLC runs: the kept sections plus the rules and constraint chosen for one run. */
 export function runConfig(
   config: ModelConfig,
   invariants: readonly string[],

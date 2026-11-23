@@ -1,9 +1,3 @@
-/**
- * Purpose: Guard model-facing output fidelity and job-step compilation regressions.
- * Responsibilities: Assert URL redaction leaves non-sensitive text byte-identical, and job steps compile to upstream argv verbatim.
- * Scope: Pure helpers only; no browser, network, or external CLI.
- */
-
 import assert from "node:assert/strict";
 import test from "node:test";
 

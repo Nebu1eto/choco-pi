@@ -1,15 +1,3 @@
-/**
- * golangci-lint runner for dispatch system
- *
- * Runs golangci-lint when a .golangci.yml config is present.
- * golangci-lint is the standard meta-linter for Go projects — it runs
- * staticcheck, errcheck, gosimple, and many others in one pass.
- *
- * Gate: skips when no .golangci.yml/.golangci.yaml config is found (project
- * relies on go-vet only). This avoids noisy default-rule runs on projects
- * that haven't opted in.
- */
-
 import * as path from "node:path";
 import { safeSpawnAsync } from "../../safe-spawn.ts";
 import { getLinterPolicyForCwd, hasGolangciConfig } from "../../tool-policy.ts";
@@ -47,12 +35,6 @@ interface GolangciOutput {
   Issues: GolangciIssue[] | null;
 }
 
-/**
- * Summarize a golangci-lint Replacement into a single-line fixSuggestion.
- * Prefers the Inline rewrite (precise + short) over multi-line block
- * replacements, and reports a delete-only fix when there's no new content.
- * Returns undefined when there is no Replacement attached.
- */
 function describeReplacement(
   replacement: GolangciReplacement | null | undefined,
 ): string | undefined {
@@ -80,11 +62,6 @@ function parseGolangciJson(raw: string, filePath: string): Diagnostic[] {
     return output.Issues.filter((issue) => path.resolve(issue.Pos.Filename) === absFile).map(
       (issue) => {
         const severity = issue.Severity === "error" ? "error" : "warning";
-        // golangci-lint's --out-format=json emits a Replacement object per
-        // issue when `golangci-lint run --fix` would deterministically
-        // rewrite the code. Mirror the rust-clippy structured-output path
-        // (commit 221b34d): propagate the field to fixable / fixSuggestion
-        // so the diagnostic routes through actionable-warnings.
         const fixSuggestion = describeReplacement(issue.Replacement);
         return {
           id: `golangci:${issue.FromLinter}:${issue.Pos.Line}`,
@@ -107,7 +84,6 @@ function parseGolangciJson(raw: string, filePath: string): Diagnostic[] {
   }
 }
 
-// Exported for the parser unit tests (#112 golangci-lint slice).
 export { parseGolangciJson };
 
 const golangciRunner: RunnerDefinition = {
@@ -124,7 +100,6 @@ const golangciRunner: RunnerDefinition = {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
 
-    // Only run if project has opted in via config file
     if (!hasGolangciConfig(cwd)) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
@@ -132,7 +107,6 @@ const golangciRunner: RunnerDefinition = {
     const cmd = await resolveAvailableOrInstall(golangci, "golangci-lint", cwd);
     if (!cmd) return { status: "skipped", diagnostics: [], semantic: "none" };
 
-    // Run on the specific file. golangci-lint accepts file paths directly.
     const result = await safeSpawnAsync(cmd, ["run", "--out-format=json", ctx.filePath], {
       timeout: 60000,
       cwd,
@@ -151,7 +125,6 @@ const golangciRunner: RunnerDefinition = {
     }
 
     if (semantic === "none") {
-      // Non-zero exit but no parseable issues — likely a config/tool error
       return { status: "skipped", diagnostics: [], semantic };
     }
 

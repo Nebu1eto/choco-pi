@@ -1,10 +1,3 @@
-/**
- * Codex ownership parity (D12): the Codex package's published eligibility slot
- * is authoritative for `resolveOwner` and `selectBackendId`; a missing or
- * malformed slot falls back to the snapshot heuristic; the host's eligibility
- * watcher journals one `config-change` record and replaces the main owner once
- * per changed decision, and does nothing after shutdown.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -57,10 +50,8 @@ const RESPONSES_MODEL: Model<Api> = {
   baseUrl: "https://corp.example/v1",
 };
 
-/** A fake Codex slot: `native` decides, `bump` advances the revision and notifies. */
 interface SlotOptions {
   readonly published?: boolean;
-  /** Codex's live `compaction.responsesCompaction`; absent: the field is not published. */
   readonly responsesCompaction?: boolean;
 }
 
@@ -130,14 +121,11 @@ test("malformed slot: ignored, the heuristic decides", () => {
 
 test("slot present: authoritative over the snapshot, both ways", () => {
   const slot = installSlot(() => false);
-  // Codex says no (e.g. voice-only or extras): local even though the snapshot says native.
   assert.equal(resolveOwner({ model: CODEX_MODEL }, ON), "local");
   assert.equal(resolveOwner({ model: CODEX_MODEL }), "local");
-  // Codex says yes for a configured Responses provider the snapshot does not list.
   slot.control.native = (model) => model.provider === "corp";
   assert.equal(resolveOwner({ model: RESPONSES_MODEL }, OFF), "codex-native");
   assert.equal(resolveOwner({ model: CODEX_MODEL }, ON), "local");
-  // Other owners still apply when Codex declines.
   slot.control.native = () => false;
   assert.equal(
     resolveOwner({ model: { ...CODEX_MODEL, api: "anthropic-messages" } }, ON, {
@@ -223,11 +211,6 @@ test("selectBackendId follows the slot: no codex-native-v2 for an ineligible Cod
   assert.equal(await selectBackendId(spec, both), CODEX_BACKEND_SETTING_ID);
 });
 
-// ---------------------------------------------------------------------------
-// The watcher, through a real host session
-// ---------------------------------------------------------------------------
-
-// First-wins: a probe stands in for the Codex lane in this process; it counts its instantiations.
 const codexFactory = { calls: 0 };
 registerBackendFactory(CODEX_BACKEND_SETTING_ID, () => {
   codexFactory.calls += 1;
@@ -236,7 +219,6 @@ registerBackendFactory(CODEX_BACKEND_SETTING_ID, () => {
 
 const STALE = "This extension ctx is stale after session replacement or reload.";
 
-/** Set to make the next owner restart fail (thrown from the settings-path option). */
 interface RestartFailure {
   error: Error | undefined;
 }
@@ -275,7 +257,6 @@ async function watchedHost() {
   });
   await host.session.prompt("ELIGIBILITY-GO");
   const ownerKey = mainOwnerKey(host.manager.getSessionId());
-  // The session-start owner resolves its backends asynchronously: wait until it is current.
   await waitFor(() => getCoordinator(ownerKey) !== undefined, "the main owner started");
   const records = () =>
     laneRecordsOf(host.manager.getBranch()).filter((record) => record.route === "config-change");
@@ -296,7 +277,6 @@ async function watchedHost() {
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 5));
 
-/** Poll until `condition` holds (2 s cap), so slow machines do not fail on fixed sleeps. */
 async function waitFor(condition: () => boolean, what: string): Promise<void> {
   const deadline = Date.now() + 2_000;
   while (!condition()) {
@@ -305,7 +285,6 @@ async function waitFor(condition: () => boolean, what: string): Promise<void> {
   }
 }
 
-/** Give an asynchronous restart that must NOT happen a fair chance to show up. */
 async function settle(): Promise<void> {
   for (let step = 0; step < 10; step++) await tick();
 }
@@ -316,12 +295,10 @@ test("a changed decision journals one config-change record and replaces the main
     assert.equal(rig.slot.listeners.size, 1, "one subscription per registration");
     const before = rig.generation();
     assert.ok(before !== undefined);
-    // An unchanged decision: nothing journaled, no restart.
     rig.slot.bump(() => true);
     await settle();
     assert.equal(rig.generation(), before);
     assert.equal(rig.records().length, 0);
-    // Codex turns native compaction off for this model.
     rig.slot.bump(() => false);
     await waitFor(() => rig.generation() === before + 1, "the owner restarted");
     await settle();
@@ -332,7 +309,6 @@ test("a changed decision journals one config-change record and replaces the main
       { event: records[0]?.event, from: records[0]?.from, to: records[0]?.to },
       { event: "yield", from: "codex-native-v2", to: "local" },
     );
-    // And back on.
     rig.slot.bump(() => true);
     await waitFor(() => rig.generation() === before + 2, "the owner restarted again");
     await settle();
@@ -389,7 +365,6 @@ test("after shutdown a bump does nothing: unsubscribed, no restart, no record", 
 test("an eligibility restart derives the OpenAI lane from the live slot, not the stale snapshot", async () => {
   const dir = await mkdtemp(join(tmpdir(), "choco-pi-eligibility-derive-"));
   const previousAgentDir = process.env[AGENT_DIR_ENV];
-  // The session-start snapshot: Codex native compaction off. No sidecar anywhere.
   await writeFile(
     join(dir, "choco-pi-codex.json"),
     JSON.stringify({ compaction: { responsesCompaction: false } }),
@@ -415,7 +390,6 @@ test("an eligibility restart derives the OpenAI lane from the live slot, not the
     const ownerKey = mainOwnerKey(host.manager.getSessionId());
     const calls = codexFactory.calls;
     const before = getCoordinator(ownerKey)?.ownerGeneration;
-    // `/codex` turns Responses compaction on: the slot flips, the snapshot stays false.
     slot.control.responsesCompaction = true;
     slot.bump(() => true);
     await waitFor(

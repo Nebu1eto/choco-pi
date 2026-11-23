@@ -1,6 +1,3 @@
-/**
- * Debounced graph persistence: pending-persist queue, persist worker lifecycle, main-thread fallback writes, and the exit flush hook.
- */
 import { includePropertiesWhen } from "../../optional-properties.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -31,16 +28,6 @@ import { flushReviewGraphPersist } from "./persist-flush.ts";
 import { LEGACY_GRAPH_CACHE_FILENAME, type PersistedGraphData } from "./persist-load.ts";
 import { recordPersistFailure } from "./source-files.ts";
 
-// --- Throttled, size-guarded graph persistence (circuit-breaker, #260) ---
-// The whole graph is serialized as one blob. Doing that synchronously on every
-// edit turn — `JSON.stringify` of a multi-MB graph plus number formatting for
-// every line/complexity/fanout — spiked the host into a `Fatal ... Zone` OOM,
-// especially when it overlapped the next build or the host's tsc. Two guards:
-//   1. Coalesce: a burst of edits schedules ONE write after a quiet window,
-//      instead of one full serialize per turn (the spike multiplier).
-//   2. Ceiling: serialize only a centrality-ranked subgraph above the element
-//      cap. Its coverage marker stays honest without risking the full-graph OOM
-//      that introduced this guard.
 const GRAPH_PERSIST_DEBOUNCE_MS_DEFAULT = 1500;
 export const GRAPH_PERSIST_MAX_ELEMENTS_DEFAULT = 500_000;
 
@@ -72,18 +59,8 @@ export const _pendingPersist = new Map<string, PendingPersist>();
 export const _persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
 export const _persistGenerations = new Map<string, number>();
 export const _workerRequests = new Map<number, { key: string; pending: PendingPersist }>();
-// Workers retired because every queue drained; their late error/exit events
-// must not disable or reroute a successor worker.
 const _retiredPersistWorkers = new WeakSet<Worker>();
 
-// #936/#958 follow-up: the mid-build resume checkpoint offloads its stringify+
-// gzip to the SAME shared persist worker (keeping the gzip of a growing graph
-// off the event loop during a background build). Tracked in a disjoint id/
-// generation space so handleWorkerResult routes a checkpoint promotion — a
-// distinct target path — without touching the authoritative-persist path. A
-// checkpoint write is best-effort: a lost one only costs a cold rebuild, so a
-// worker failure/death just drops it (the prior stride's checkpoint stays on
-// disk) rather than falling back like the authoritative persist does.
 interface PendingCheckpointWrite {
   cwd: string;
   generation: number;
@@ -149,12 +126,6 @@ export function graphCoverage(
   };
 }
 
-/**
- * Keep whole per-file node groups in reverse-dependency-centrality order, then
- * retain as many induced edges as fit. The node budget mirrors the source
- * graph's node/edge ratio so symbol-dense and edge-dense repositories both
- * retain a useful mix instead of allowing either side to consume the cap.
- */
 export function capGraphForPersist(
   cwd: string,
   graph: ReviewGraph,
@@ -312,9 +283,6 @@ export function writePendingOnMainThread(
       },
     );
     if (reason) {
-      // The persist SUCCEEDED via fallback — log the degradation under its
-      // own phase, not persist_failed (#950 review F7: a success followed
-      // by persist_failed read as contradiction in telemetry).
       reviewGraphBuilderState._lastWorkerFallbackReasonForTests = reason;
       logReviewGraph({
         cwd: key,
@@ -334,16 +302,10 @@ export function writePendingOnMainThread(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     recordPersistFailure(key, "cache_write_failed", message, pending, workerState);
-    // #1333: recordPersistFailure already emits `phase: "persist_failed"` to
-    // review-graph.log with this same message — the console.error was a
-    // duplicate RAW write into pi's frame, not a second destination.
   }
 }
 
 function handleWorkerResult(result: ReviewGraphPersistWorkerResult): void {
-  // Checkpoint offloads share this worker but promote to a different target;
-  // route them out before the authoritative-persist path (disjoint id space,
-  // so a checkpoint id is never also an authoritative one).
   const checkpoint = _checkpointWorkerRequests.get(result.id);
   if (checkpoint) {
     handleCheckpointWorkerResult(checkpoint, result);
@@ -358,13 +320,6 @@ function handleWorkerResult(result: ReviewGraphPersistWorkerResult): void {
   const { key, pending } = request;
   const currentGeneration = _persistGenerations.get(key);
   if (currentGeneration !== result.generation) {
-    // Removing the request makes completion observable to test/CLI waiters.
-    // Reap our completed loser synchronously first so "no requests in flight"
-    // also means its stage namespace is clean (#1318). Caught (#1361 review):
-    // force suppresses ENOENT but not EBUSY/EPERM (Windows AV/backup can
-    // briefly hold the handle) -- a failed reap must never abort this
-    // callback, or the WINNING generation's completion is lost with it. The
-    // startup sweep reclaims anything a failed unlink leaves behind.
     try {
       fs.rmSync(result.stagePath, { force: true });
     } catch (reapErr) {
@@ -435,10 +390,6 @@ function handleCheckpointWorkerResult(
   result: ReviewGraphPersistWorkerResult,
 ): void {
   _checkpointWorkerRequests.delete(result.id);
-  // Best-effort: a failed offload just means no checkpoint for this stride —
-  // the prior stride's checkpoint is still on disk and the next stride retries.
-  // Still surface it: a SYSTEMIC failure (disk full, perms, worker crash-loop)
-  // makes resume silently never work, and `checkpoint_written` just stops.
   if (result.error || result.gzBytes === undefined) {
     logReviewGraph({
       cwd: cp.cwd,
@@ -449,10 +400,6 @@ function handleCheckpointWorkerResult(
     fs.rm(result.stagePath, { force: true }, () => {});
     return;
   }
-  // Generation gate: a newer checkpoint stride, or build completion / a
-  // discarded resume (deleteReviewGraphCheckpoint bumps the generation before
-  // removing the file), supersedes this write — discard the stale stage rather
-  // than resurrect a checkpoint over a fresher one or a completed build.
   if (_checkpointGenerations.get(cp.cwd) !== cp.generation) {
     fs.rm(result.stagePath, { force: true }, () => {});
     return;
@@ -507,8 +454,6 @@ function handleWorkerDeath(reason: string): void {
       fallbackReason: "worker_death",
     });
   }
-  // Best-effort checkpoints don't fall back (no retained DTO to pin heap); drop
-  // their in-flight requests and clean up any stage files they may have left.
   const checkpoints = [..._checkpointWorkerRequests.values()];
   _checkpointWorkerRequests.clear();
   for (const cp of checkpoints) {
@@ -523,12 +468,6 @@ function handleWorkerDeath(reason: string): void {
 }
 
 function resolvePersistWorkerPath(): string | undefined {
-  // esbuild's dist bundle does NOT rewrite new URL(...) asset refs, so from
-  // the bundled dist/index.js a sibling ./persist-worker.js resolves beside
-  // the BUNDLE where nothing exists (#950 review F1 — the worker silently
-  // never ran in production). Try the compiled-sibling layout first (source
-  // checkout / unbundled dist/clients tree), then the dist-tree path
-  // relative to the bundle entry.
   const candidates = [
     new URL("../persist-worker.js", import.meta.url),
     new URL("../clients/review-graph/persist-worker.js", import.meta.url),
@@ -537,9 +476,7 @@ function resolvePersistWorkerPath(): string | undefined {
     try {
       const resolved = fileURLToPath(url);
       if (fs.existsSync(resolved)) return resolved;
-    } catch {
-      /* try next layout */
-    }
+    } catch {}
   }
   return undefined;
 }
@@ -573,15 +510,10 @@ export function getPersistWorker(): Worker | undefined {
             : "persist worker exited with pending requests",
         );
       } else {
-        // Clean exit with no pending work (unref'd worker at teardown, or host
-        // recycling): drop the stale reference so a later persist respawns
-        // instead of posting into a dead worker (#950 review F7).
         reviewGraphBuilderState._persistWorker = undefined;
       }
       settleReviewGraphPersistQueue();
     });
-    // #1148: adding a message listener refs the Worker's public MessagePort.
-    // Unref only after every listener is installed so it stays background-only.
     worker.unref();
     reviewGraphBuilderState._persistWorker = worker;
     return worker;
@@ -630,17 +562,6 @@ export function writePending(key: string): void {
   worker.postMessage(request);
 }
 
-// Flush any pending writes synchronously at process teardown so a debounced
-// snapshot isn't lost. Sync writes only (no child spawn — see the teardown
-// libuv hazard); best-effort. The synchronous gzip/write is deliberate: an
-// `exit` listener cannot await.
-//
-// Lifetime: Pi may evaluate this module more than once per process (in-process
-// sessions with another cwd re-evaluate extensions without a module cache). A
-// permanently installed listener pinned every evaluation's module graph, so the
-// listener is registered only while this evaluation has debounced or in-flight
-// work and is removed once every queue drains. Drained workers are terminated
-// for the same reason: a live worker's listeners pin the module.
 let _persistExitHookRegistered = false;
 function flushPendingReviewGraphPersistsAtExit(): void {
   if (_persistExitHookRegistered) {
@@ -652,18 +573,12 @@ function flushPendingReviewGraphPersistsAtExit(): void {
     ...[..._workerRequests.values()].map((request) => request.key),
   ]);
   for (const key of keys) {
-    // Shared with the CLI's forced flush — same persistedData DTO, same
-    // atomic writer (#762), distinct failure label per source.
     flushReviewGraphPersist(key, "exit_hook");
   }
-  // The review-graph logger's shared process-exit flusher was registered
-  // before this hook. Flush again after emitting exit-hook outcomes so a
-  // successful forced write cannot leave its lifecycle event buffered.
   flushReviewGraphLogSync();
   void reviewGraphBuilderState._persistWorker?.terminate();
 }
 
-/** Test-only seam for the exit-hook ordering/durability contract. */
 export function flushReviewGraphPersistsForExitForTests(): void {
   flushPendingReviewGraphPersistsAtExit();
 }
@@ -674,7 +589,6 @@ export function ensurePersistExitHook(): void {
   process.once("exit", flushPendingReviewGraphPersistsAtExit);
 }
 
-/** Drop the exit hook and the worker once no persist/checkpoint work remains. */
 export function settleReviewGraphPersistQueue(): void {
   if (_pendingPersist.size > 0 || _workerRequests.size > 0 || _checkpointWorkerRequests.size > 0) {
     return;
@@ -690,7 +604,6 @@ export function settleReviewGraphPersistQueue(): void {
   void worker.terminate();
 }
 
-/** Test-only: observe this evaluation's persist lifetime resources. */
 export function getReviewGraphPersistLifetimeForTests() {
   return {
     workerAlive: reviewGraphBuilderState._persistWorker !== undefined,

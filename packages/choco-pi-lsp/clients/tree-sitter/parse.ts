@@ -1,6 +1,3 @@
-/**
- * File parsing through the tree cache, language injections, and language availability queries.
- */
 import * as fs from "node:fs";
 import { findGrammarsDir, getParser, loadLanguage, resolveGrammarFile } from "./grammar-loader.ts";
 import type { TreeSitterClientInternals } from "./internals.ts";
@@ -12,11 +9,6 @@ import {
   type TreeSitterTree,
 } from "./shared.ts";
 
-/**
- * Parse a file and return the AST tree. The tree stays valid only until the
- * caller's next `await` — prefer `withParsedTree`, which extracts inside the
- * cache-safe window (#417/#675).
- */
 export async function parseFile(
   core: TreeSitterClientInternals,
   filePath: string,
@@ -93,10 +85,6 @@ export async function parseFileAndUse<T>(
   }
 }
 
-/**
- * Detect and extract injected content from template literals
- * Used for security analysis (SQL injection, unsafe regex, etc.)
- */
 export function extractInjections(
   core: TreeSitterClientInternals,
   filePath: string,
@@ -114,7 +102,6 @@ export function extractInjections(
     column: number;
   }> = [];
 
-  // Pattern: sql`SELECT * FROM users` or query`...`
   const sqlPattern = /\b(sql|query|execute)\s*`([^`]+)`/gi;
   let match: RegExpExecArray | null;
   while ((match = sqlPattern.exec(content)) !== null) {
@@ -127,7 +114,6 @@ export function extractInjections(
     });
   }
 
-  // Pattern: styled.div`color: red;` or css`...`
   const cssPattern = /\b(styled(?:\.\w+)?|css)\s*`([^`]+)`/gi;
   while ((match = cssPattern.exec(content)) !== null) {
     const lines = content.slice(0, match.index).split("\n");
@@ -139,7 +125,6 @@ export function extractInjections(
     });
   }
 
-  // Pattern: new RegExp(`pattern`)
   const regexPattern = /new\s+RegExp\s*\(\s*`([^`]+)`/gi;
   while ((match = regexPattern.exec(content)) !== null) {
     const lines = content.slice(0, match.index).split("\n");
@@ -155,20 +140,14 @@ export function extractInjections(
   return injections;
 }
 
-/** Check if tree-sitter is available (a core grammar resolves somewhere). */
 export function isAvailable(core: TreeSitterClientInternals): boolean {
   if (core.wasmAborted) return false;
-  // Available if the core TS grammar resolves in ANY source dir — the bundled
-  // `grammars/` counts even when web-tree-sitter/grammars is empty (no
-  // postinstall on pnpm/bun, or a fresh CI checkout).
   if (resolveGrammarFile(core, "tree-sitter-typescript.wasm")) return true;
-  // Re-evaluate the legacy dir in case grammars were installed after start.
   const dir = findGrammarsDir();
   core.grammarsDir = dir;
   return !!dir && fs.existsSync(dir);
 }
 
-/** Check if specific language is supported */
 export async function isLanguageSupported(
   core: TreeSitterClientInternals,
   languageId: string,
@@ -179,7 +158,6 @@ export async function isLanguageSupported(
   return language !== null;
 }
 
-/** Get loaded language for symbol extraction */
 export function getLanguage(
   core: TreeSitterClientInternals,
   languageId: string,

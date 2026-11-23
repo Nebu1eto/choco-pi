@@ -1,4 +1,3 @@
-// /review-assist with no argument outside the terminal UI: the same target choices as the TUI.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
@@ -30,10 +29,6 @@ async function git(cwd: string, ...args: string[]): Promise<void> {
   await execFileAsync("git", args, { cwd, env: FIXTURE_ENV });
 }
 
-/**
- * Real git inside the fixture; gh is never run (no network), it just fails.
- * Callers only tell success from failure, so a failure is reported as status 1.
- */
 const runner: ExecRunner = (command, args, options) => {
   if (command !== "git") {
     return Promise.resolve({ stdout: "", stderr: "gh is not available in this test", code: 1 });

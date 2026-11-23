@@ -1,11 +1,3 @@
-/**
- * Purpose: Verify pure selector-miss recovery helpers without spawning agent-browser.
- * Responsibilities: Lock visible-ref fallback matching, rich-input recovery actions, fill-text redaction, and excluded selector shapes.
- * Scope: Unit coverage for extensions/agent-browser/lib/results/selector-recovery.ts; integration probing stays in extension-validation tests.
- * Usage: Run with `npx tsx --test test/agent-browser.selector-recovery.test.ts` or via `npm run verify`.
- * Invariants/Assumptions: Fill recovery must focus/click current editable refs only and never echo the intended fill text.
- */
-
 import assert from "node:assert/strict";
 import test from "node:test";
 

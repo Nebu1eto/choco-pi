@@ -198,7 +198,6 @@ test("release refunds once; released and consumed tickets are single-use", async
   const next = await admit(store, "alpha");
   assert.equal(next.ok && next.notice.startsWith("Review round 1/3 admitted"), true);
 
-  // A ticket consumed by the manager can still be refunded if the launch then throws.
   const second = okTicket(await admit(store, "alpha"));
   assert.equal(consumeReviewTicket(second), true);
   assert.equal(consumeReviewTicket(second), false);
@@ -286,14 +285,14 @@ test("prototype-named work tasks are ordinary tasks", async (t) => {
   const store = new ReviewRoundStore(await tempDir(t));
   for (let i = 0; i < 3; i++) assert.equal((await admit(store, "constructor")).ok, true);
   assert.equal((await admit(store, "constructor")).ok, false);
-  assert.equal((await admit(store, "toString")).ok, false); // invalid (uppercase)
+  assert.equal((await admit(store, "toString")).ok, false);
   assert.equal((await admit(store, "valueof")).ok, true);
 });
 
 test("a stale lock is recovered; a fresh lock times out as unavailable", async (t) => {
   const dir = await tempDir(t);
   const store = new ReviewRoundStore(dir);
-  await admit(store, "alpha"); // creates the directory
+  await admit(store, "alpha");
   const lock = join(dir, `${SESSION}.json.lock`);
   await writeFile(lock, "99999999");
   const old = new Date(Date.now() - 60_000);
@@ -301,7 +300,7 @@ test("a stale lock is recovered; a fresh lock times out as unavailable", async (
   assert.equal((await admit(store, "alpha")).ok, true);
   await assert.rejects(stat(lock), { code: "ENOENT" });
 
-  await writeFile(lock, "99999999"); // fresh and held
+  await writeFile(lock, "99999999");
   const blocked = await admit(store, "alpha");
   assert.equal(!blocked.ok && blocked.code, "REVIEW_STATE_UNAVAILABLE");
   assert.equal(

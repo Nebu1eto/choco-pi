@@ -13,12 +13,6 @@ import {
   publishNativeCompactionBudgetHook,
 } from "../src/extension/native-compaction-budget.ts";
 
-/**
- * The compaction endpoint's request budget, pinned as a literal so a change to
- * the source constant (`OPENAI_CODEX_COMPACTION_ENDPOINT_BUDGET_TOKENS` in
- * `src/adapter/compaction/request-shrink.ts`) fails here instead of moving the
- * expectation with it.
- */
 const ENDPOINT_BUDGET_TOKENS = 872_000;
 
 function model(provider: string, id: string, api: Api, baseUrl: string): Model<Api> {

@@ -11,7 +11,6 @@ import { buildVerifiedAccessHeaders } from "./headers.ts";
 
 export type DaybreakModelSupport = "supported" | "unsupported" | "lookup-failed";
 export type DaybreakTargetProgram = "daybreak_blue" | "daybreak_red";
-/** `any` asks whether the model advertises some Daybreak program at all. */
 export type DaybreakSupportQuery = DaybreakTargetProgram | "any";
 const modelSchema = obj(
   {
@@ -46,7 +45,6 @@ export function configureCodexDaybreakModelSupportForTest(
   cache.clear();
 }
 
-/** Called by the entitlement invalidation boundary for toggles and inference auth failures. */
 export function invalidateCodexDaybreakModelSupport(account: DaybreakAccount): void {
   cache.delete(account.key);
 }
@@ -86,7 +84,6 @@ async function fetchModels(
   }
 }
 
-/** One whole-catalog flight per account/backend; target-program decisions are never cached. */
 export async function lookupCodexDaybreakModelSupport(
   account: DaybreakAccount,
   credentials: DaybreakLookupCredentials,

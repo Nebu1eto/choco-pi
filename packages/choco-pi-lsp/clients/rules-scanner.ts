@@ -1,25 +1,11 @@
-/**
- * Project rules scanner for choco-pi-lsp.
- *
- * Scans for rule files that other tools/agents may have left:
- * - .claude/rules/   — Claude Code rule files
- * - .agents/rules/   — Generic agent rule files
- * - .cursorrules     — Cursor IDE rules
- * - CLAUDE.md        — Claude Code project context
- * - AGENTS.md        — Generic agent context
- *
- * These are surfaced in the system prompt so the agent knows
- * to read them when relevant.
- */
-
 import * as fs from "node:fs";
 import * as path from "node:path";
 
 export interface ProjectRule {
-  source: string; // ".claude/rules", ".agents/rules", "root"
-  name: string; // filename or display name
-  filePath: string; // absolute path
-  relativePath: string; // relative to cwd
+  source: string;
+  name: string;
+  filePath: string;
+  relativePath: string;
 }
 
 export interface RuleScanResult {
@@ -42,12 +28,6 @@ const PROMPT_RULES_MAX_TOTAL = 12;
 const PROMPT_RULES_MAX_PER_SOURCE = 4;
 const PROMPT_RULES_MAX_CHARS = 900;
 
-// #250/#747 class: this walk is scoped to `.claude/rules`/`.agents/rules`
-// subtrees, so it never walks the whole cwd — but it's still unbounded
-// recursion. A small depth/file cap guards a pathologically deep or huge rules
-// directory (or a symlink loop) without needing the full home ceiling the
-// project-wide walkers use. Rules trees are shallow and small in practice, so
-// these bounds never trim a legitimate layout.
 const RULES_SCAN_MAX_DEPTH = 8;
 const RULES_SCAN_MAX_FILES = 500;
 
@@ -84,7 +64,6 @@ function findMarkdownFiles(
 export function scanProjectRules(cwd: string): RuleScanResult {
   const rules: ProjectRule[] = [];
 
-  // Scan rule directories
   for (const { dir, source } of RULE_DIRS) {
     const dirPath = path.join(cwd, dir);
     if (fs.existsSync(dirPath)) {
@@ -100,7 +79,6 @@ export function scanProjectRules(cwd: string): RuleScanResult {
     }
   }
 
-  // Check for root-level rule files
   for (const { file, source } of RULE_FILES) {
     const filePath = path.join(cwd, file);
     if (fs.existsSync(filePath)) {
@@ -122,7 +100,6 @@ export function scanProjectRules(cwd: string): RuleScanResult {
 export function formatRulesForPrompt(result: RuleScanResult): string {
   if (!result.hasCustomRules) return "";
 
-  // Group by source
   const bySource = new Map<string, ProjectRule[]>();
   for (const rule of result.rules) {
     const existing = bySource.get(rule.source) ?? [];

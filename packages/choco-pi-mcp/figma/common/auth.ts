@@ -17,7 +17,6 @@ export interface ReadAuthTokenOptions {
 
 const authTokenOverrides = new Map<string, string>();
 
-/** Pi's credential file: `auth.json` in the agent directory (`~/.pi/agent` in legacy mode). */
 export function defaultAuthFile(
   env: Readonly<Record<string, string | undefined>> = process.env,
   home: string = homedir(),

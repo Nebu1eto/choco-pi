@@ -11,7 +11,6 @@ export const MAX_HEADLESS_SAVED_REVIEWS = 50;
 const MAX_PATH_BYTES = 4 * 1024;
 const MAX_LABEL_BYTES = 8 * 1024;
 const MAX_RENDER_LINES = 4_000;
-/** Appended to a bounded label or text that was cut; the Markdown renderer recognises it. */
 export const TRUNCATION_INDICATOR = "\n…[truncated]";
 const encoder = new TextEncoder();
 
@@ -24,20 +23,12 @@ export type HeadlessReviewDiffUnit = {
   newText: string;
   truncated?: boolean;
 };
-/** One file's hunks as unified diff text (`@@` headers, then ` `/`+`/`-` lines). */
 export type HeadlessReviewUnifiedDiff = {
   path: string;
   diff: string;
-  /** Length of the file's whole unified diff in UTF-16 code units, before any bound. */
   chars: number;
-  /** `diff` is not the whole diff: cut by the per-file bound, or emptied by the total bound. */
   truncated?: boolean;
 };
-/**
- * `plain`: per-file old and new text, the shape of an ACP `Diff`, for print
- * mode and other RPC clients. `markdown`: unified diffs for a person reading
- * an editor that renders Markdown (the choco-pi ACP adapter in Zed).
- */
 export type HeadlessReviewFormat = "plain" | "markdown";
 export type HeadlessReviewPresentation = {
   title: string;
@@ -48,7 +39,6 @@ export type HeadlessReviewPresentation = {
   savedReviews: string[];
   limitations: string[];
   truncated: boolean;
-  /** Present for the `markdown` format only, which leaves `diffUnits` empty. */
   unifiedDiffs?: HeadlessReviewUnifiedDiff[];
 };
 
@@ -79,10 +69,6 @@ function truncateText(value: string, limit: number): TruncatedText {
   return { text: `${text}${TRUNCATION_INDICATOR}`, truncated: true };
 }
 
-/**
- * How a review target is named to the user, everywhere it is named (the
- * editor summary, the resume picker and its completions, saved-review lists).
- */
 export function describeReviewTarget(target: ReviewTarget): string {
   switch (target.kind) {
     case "session":
@@ -90,8 +76,6 @@ export function describeReviewTarget(target: ReviewTarget): string {
     case "session-turn":
       return `session ${target.sessionId}, turn ${target.turnIndex}`;
     case "branch":
-      // Without a named head the diff runs to the working tree, uncommitted edits included
-      // (core/git.ts resolveBranchTarget), so the title names the working tree, as the TUI header does.
       if (target.target !== undefined) return `${target.base}…${target.target}`;
       return target.base === "HEAD"
         ? "uncommitted changes (HEAD → working tree)"
@@ -127,10 +111,6 @@ function reconstructSide(
 
 const LINE_PREFIX = { context: " ", add: "+", del: "-" } as const;
 
-/**
- * The file's hunks as unified diff text, cut at a whole line within the unit
- * bound, and the length in UTF-16 code units the whole diff would have had.
- */
 function unifiedDiff(file: DiffFile): TruncatedText & { chars: number } {
   const kept: string[] = [];
   let used = 0;
@@ -164,7 +144,6 @@ function renderRisk(path: string, score: number, reasons: readonly string[]): st
 
 type ReadLimitations = { lines: string[]; truncated: boolean };
 
-/** One limitation line per file a read limit kept out, then the omitted-file count. */
 function readLimitations(model: DiffModel): ReadLimitations {
   const notices = model.notices ?? [];
   let truncated = notices.length > MAX_HEADLESS_REVIEW_FILES;
@@ -193,16 +172,10 @@ function renderSavedReview(record: ReviewRecord): string {
   return `${describeReviewTarget(record.target)} — ${reviewed} reviewed, ${comments} comment${comments === 1 ? "" : "s"}${record.verdict ? `, verdict ${record.verdict}` : ""} — updated ${record.updatedAt}`;
 }
 
-/** A sensitive file, or one the reader left hidden: listed by name, its text never sent. */
 function isHiddenInModel(model: DiffModel, file: DiffFile): boolean {
   return isSensitiveFile(file) || (model.hidden?.includes(file.path) ?? false);
 }
 
-/**
- * A hidden file's name for the reader: both sides of a rename or copy, so the
- * reader sees which side made it sensitive. Raw text; each renderer sanitises
- * the limitation line it ends up in once.
- */
 function hiddenName(file: DiffFile): string {
   return file.oldPath !== undefined && file.oldPath !== file.path
     ? `${file.oldPath} → ${file.path}`
@@ -231,7 +204,6 @@ function enforceTotalBound(presentation: HeadlessReviewPresentation): void {
     serializedBytes += bytes("true") - bytes("false");
   }
   const diffUnitBytes = presentation.diffUnits.map((unit) => bytes(JSON.stringify(unit)));
-  // Unified diffs are emptied from the last, never removed: each keeps its name and length.
   const unified = presentation.unifiedDiffs ?? [];
   for (let index = unified.length - 1; index >= 0; index -= 1) {
     if (serializedBytes <= MAX_HEADLESS_PRESENTATION_BYTES) return;
@@ -275,7 +247,6 @@ function enforceTotalBound(presentation: HeadlessReviewPresentation): void {
   }
 }
 
-/** Build a bounded, display-only representation of a local review. */
 export function createHeadlessReviewPresentation(
   input: HeadlessReviewPresentationInput,
 ): HeadlessReviewPresentation {
@@ -370,7 +341,6 @@ export function createHeadlessReviewPresentation(
   return presentation;
 }
 
-/** Render bounded lines suitable only for display surfaces such as `ctx.ui.notify`. */
 export function renderHeadlessReview(presentation: HeadlessReviewPresentation): string[] {
   const lines = [presentation.title, presentation.summary];
   if (presentation.truncated) lines.push("Output was truncated by headless review bounds.");

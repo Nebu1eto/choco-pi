@@ -34,7 +34,6 @@ async function activate() {
   await loader.reload();
   const loaded = loader.getExtensions();
   assert.deepEqual(loaded.errors, []);
-  // The SDK loader owns the API double and exposes the registered production handlers.
   const extension = loaded.extensions.find((entry) => entry.path === "<inline:stop-cap>");
   assert.ok(extension);
   loaded.runtime.sendUserMessage = runtime.sendUserMessage;

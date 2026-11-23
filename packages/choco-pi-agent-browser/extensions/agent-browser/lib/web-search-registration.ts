@@ -130,7 +130,6 @@ export function createAgentBrowserWebSearchParamsSchema(
 
 export const AgentBrowserWebSearchParams = createAgentBrowserWebSearchParamsSchema();
 
-/** Registration form: Pi 1.6 still requires a TypeBox-shaped parameter schema. */
 export const AgentBrowserWebSearchHostParams = hostParams(AgentBrowserWebSearchParams);
 
 type RuntimeWebSearchTool = ReturnType<typeof createRuntimeWebSearchTool>;

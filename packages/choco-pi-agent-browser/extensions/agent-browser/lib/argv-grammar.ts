@@ -124,7 +124,6 @@ export interface UpstreamGlobalFlagOccurrence {
 
 const SESSION_COMPONENT_ALPHANUMERIC = /^[\p{Alphabetic}\p{Number}]$/u;
 
-/** Match upstream's last-wins, case-sensitive boolean semantics; only exact `false` disables a present flag. */
 export function getBooleanFlagValue(args: string[], flag: string): boolean | undefined {
   let enabled: boolean | undefined;
   for (let index = 0; index < args.length; index += 1) {
@@ -151,12 +150,10 @@ export function isBooleanFlagEnabled(args: string[], flag: string): boolean {
   return getBooleanFlagValue(args, flag) ?? false;
 }
 
-/** Match upstream env_var_is_truthy exactly: lowercase only, without trimming or accepting "off". */
 export function isUpstreamEnvFlagEnabled(value: string | undefined): boolean {
   return value !== undefined && !["", "0", "false", "no"].includes(value.toLowerCase());
 }
 
-/** Mirror upstream sanitize_session_component for namespace/socket/state identity. */
 export function canonicalizeAgentBrowserNamespace(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   let normalized = "";
@@ -183,7 +180,6 @@ export function foldAgentBrowserFilesystemIdentity(
   platform: NodeJS.Platform,
 ): string {
   if (platform !== "darwin" && platform !== "win32") return value;
-  // APFS aliases include full Unicode folds such as ß/SS and ς/Σ, not just ASCII case.
   return value.normalize("NFC").toLowerCase().toUpperCase().toLowerCase().normalize("NFC");
 }
 
@@ -208,7 +204,6 @@ export function isAgentBrowserSessionIdentityKeyInNamespace(
   return prefix ? identityKey.startsWith(prefix) : !identityKey.includes("\0");
 }
 
-/** Mirror upstream 0.34.0 global parsing: full argv, no `--` sentinel, and only global value payloads are skipped. */
 export function scanUpstreamGlobalFlagOccurrences(
   args: string[],
   targetFlag: string,
@@ -254,7 +249,6 @@ export function resolveAgentBrowserNamespace(
   return canonicalizeAgentBrowserNamespace(envValue);
 }
 
-/** Mirror upstream's optional restore value and full-argv last-wins parsing. */
 export function extractRequestedRestoreKey(
   args: string[],
   sessionName: string,
@@ -371,7 +365,6 @@ export function projectUpstreamGlobalFlags(args: readonly string[]): UpstreamGlo
   return { indices, tokens };
 }
 
-/** Mirror upstream 0.34.0 clean_args: remove global flags wherever they appear before command parsing. */
 export function stripUpstreamGlobalFlags(args: readonly string[]): string[] {
   return projectUpstreamGlobalFlags(args).tokens;
 }

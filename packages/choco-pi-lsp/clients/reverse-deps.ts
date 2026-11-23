@@ -20,10 +20,6 @@ export interface ReverseDependencyIndex {
   source: "review-graph" | "project-snapshot";
 }
 
-/**
- * Rank files by the reverse-dependency centrality used throughout discovery:
- * most importers first, then most outgoing dependencies, then stable path.
- */
 export function rankFilesByReverseDependencyCentrality(index: ReverseDependencyIndex): string[] {
   const files = new Set([...Object.keys(index.imports), ...Object.keys(index.importedBy)]);
   return [...files].sort((a, b) => {
@@ -95,7 +91,6 @@ export function buildReverseDependencyIndexFromGraph(args: {
   return normalizeIndex(index);
 }
 
-/** Apply per-file import-target deltas without walking the full review graph. */
 export function patchReverseDependencyIndex(
   index: ReverseDependencyIndex,
   changes: readonly GraphFileImportChange[],

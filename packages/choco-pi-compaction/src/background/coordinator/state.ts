@@ -1,4 +1,3 @@
-/** Coordinator state transitions: owner currency, terminal finishes, failure reporting, no-progress suppression, and cooldowns. */
 import { compile, obj, str } from "@earendil-works/pi-schema";
 import type {
   CandidateFailure,
@@ -33,7 +32,6 @@ function cooldownMap(clock: SchedulerClock): Map<string, number> {
   return map;
 }
 
-/** Self-delimiting cooldown-key field: `~` when absent, else `<length>:<value>`. */
 function keyPart(value: string | undefined): string {
   return value === undefined ? "~" : `${value.length}:${value}`;
 }
@@ -86,7 +84,6 @@ export const PROCEED: CoordinatorArbitrationResult = { action: "proceed" };
 
 export const RATE_LIMIT_REASONS: ReadonlySet<string> = new Set(["quota", "429", "529"]);
 
-/** Refusals of one specific cut; the next request on the same scope may legally differ. */
 export const CUT_REFUSALS: ReadonlySet<string> = new Set(["no-legal-cut", "incompatible"]);
 
 export function ownerCurrent(state: CoordinatorState): boolean {
@@ -114,7 +111,6 @@ export function finish(
   portDetail?: string,
 ): void {
   if (!isOutstanding(current.machine.state)) return;
-  // The frozen table has no adopting -> canceled edge. Invalidation of a proposal fails closed.
   current.machine.transition(
     current.machine.state === "adopting" && terminal === "canceled" ? "discarded-stale" : terminal,
     reason,
@@ -125,7 +121,6 @@ export function finish(
   reportFailure(state, current, reason, portDetail ?? current.detail);
 }
 
-/** The single failure-port call of a candidate, made right after its one terminal transition. */
 function reportFailure(
   state: CoordinatorState,
   current: Candidate,
@@ -154,11 +149,6 @@ function reportFailure(
   }
 }
 
-/**
- * Fail the candidate. A transport-class failure (retryable or rate-limited)
- * also starts the scope cooldown; a legality or compatibility refusal of one
- * cut must not throttle the next request on the same scope.
- */
 export function fail(
   state: CoordinatorState,
   current: Candidate,
@@ -171,7 +161,6 @@ export function fail(
 ): void {
   current.detail = failure.detail;
   current.retryAfterMs = failure.retryAfterMs;
-  // A retry delay marks a refusal the backend expects to clear without the branch changing.
   if (failure.reason === "no-legal-cut" && failure.retryAfterMs === undefined)
     markNoProgress(state, current);
   finish(state, current, "failed", failure.reason);
@@ -179,7 +168,6 @@ export function fail(
   if (failure.cool) cool(state, current);
 }
 
-/** Fail the candidate and start the scope cooldown so the next attempt waits. */
 export function failAndCool(
   state: CoordinatorState,
   current: Candidate,
@@ -191,7 +179,6 @@ export function failAndCool(
 
 const REMEMBERED_CUTS = 32;
 
-/** Insert into a bounded insertion-ordered map, dropping the oldest entries. */
 export function remember<Value>(map: Map<string, Value>, key: string, value: Value): void {
   map.delete(key);
   map.set(key, value);
@@ -206,7 +193,6 @@ function noProgressKey(fingerprint: string, backendId: string): string {
   return `${keyPart(fingerprint)}|${keyPart(backendId)}`;
 }
 
-/** The lane just ended with no legal cut for this fingerprint: remember it so an unchanged retrigger is not started. */
 function markNoProgress(state: CoordinatorState, current: Candidate): void {
   if (current.cutFingerprint === undefined) return;
   remember(state.noProgress, noProgressKey(current.cutFingerprint, current.backendId), {
@@ -214,10 +200,6 @@ function markNoProgress(state: CoordinatorState, current: Candidate): void {
   });
 }
 
-/**
- * Whether a non-manual request repeats a no-legal-cut attempt over an
- * unchanged cut. Journals (through the observer) once per fingerprint and lane.
- */
 export function suppressed(
   state: CoordinatorState,
   request: PreparationRequest,
@@ -291,7 +273,6 @@ export function isStaleCause(state: CoordinatorState, cause: unknown): boolean {
   );
 }
 
-/** Invalidate on stale-owner failures and return the fallback; rethrow anything else. */
 export async function containStaleOwner<T>(
   state: CoordinatorState,
   run: () => Promise<T>,
@@ -374,7 +355,6 @@ export function cool(
   cooldownMap(state.clock).set(coolingKey(current), until);
 }
 
-/** Fails with "cooling" (no extra cooldown, no request sent) while the scope is cooling down. */
 export function refuseWhileCooling(state: CoordinatorState, current: Candidate): boolean {
   if (!coolingDown(state, current)) return false;
   const seconds = Math.ceil((cooldownUntil(state, current) - state.clock.now()) / 1000);

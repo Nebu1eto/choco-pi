@@ -18,7 +18,6 @@ import {
 
 const BRIDGE_SYMBOL = Symbol.for("choco-pi.native-settings-bridge");
 const RULE = "─".repeat(20);
-/** Pi's own message when an extension touches a runtime it has retired. */
 const STALE_MESSAGE =
   "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload().";
 
@@ -29,10 +28,6 @@ function prototypeRecord(): PrototypeRecord {
   return reinterpretHostValue<PrototypeRecord>(InteractiveMode.prototype);
 }
 
-/**
- * Stands in for Pi's `showSettingsSelector`: it builds the rows and hands the
- * component to `showSelector`, which is the seam the bridge collects from.
- */
 function fakeNativeSettings(items: SettingItem[], changes: [string, string][]) {
   return function fakeShowSettingsSelector(this: NativeSettingsHost): void {
     this.showSelector(() => ({
@@ -134,8 +129,6 @@ test(
 
     const sections = buildNativeSettingsSections();
 
-    // One standalone source: the panel's fallback keeps any row the layout
-    // does not place on this section's own "Pi" tab.
     assert.deepEqual(
       sections.map((section) => [section.id, section.label, section.mergeInto]),
       [["pi", "Pi", undefined]],
@@ -146,20 +139,15 @@ test(
       ...ROWS.map((row) => row.id),
     ]);
 
-    // The reasoning row keeps Pi's id but reads with this panel's wording.
     const model = sections.find((section) => section.id === "pi");
     assert.equal(
       model?.buildItems().find((item) => item.id === "thinking")?.label,
       "Reasoning effort",
     );
-    // The picker applies the model itself, so the row only redraws.
     const modelItem = model?.buildItems().find((item) => item.id === "piModel");
     assert.ok(modelItem?.submenu instanceof Function, "the picker opens inside the panel");
     assert.deepEqual(model?.handleChange("piModel", "gpt-5.6-luna"), { kind: "update" });
 
-    // Every Pi row applies through Pi's own handler and redraws in place. The
-    // former re-read after a refused TUI mode switch is gone with the row,
-    // which the profile pins and the layout hides.
     assert.deepEqual(model?.handleChange("hide-thinking", "true"), { kind: "update" });
     assert.deepEqual(model?.handleChange("tui-mode", "fullscreen"), { kind: "update" });
     assert.deepEqual(changes, [
@@ -167,7 +155,6 @@ test(
       ["tui-mode", "fullscreen"],
     ]);
 
-    // The collector must not leave its own showSelector behind on the host.
     assert.equal(Object.prototype.hasOwnProperty.call(host, "showSelector"), false);
   }),
 );

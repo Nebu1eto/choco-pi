@@ -250,9 +250,6 @@ test(
   "a preference write reaches subscribers in another module copy",
   withTempDirs(async ({ agent }) => {
     await mkdir(agent, { recursive: true });
-    // Pi loads each extension through its own module loader, so the dialog
-    // and its subscribers hold separate copies of this module. The query
-    // string defeats the ESM module cache the same way.
     const specifier = new URL(
       "../profile/extensions/lib/agent-preferences.ts?copy=1",
       import.meta.url,

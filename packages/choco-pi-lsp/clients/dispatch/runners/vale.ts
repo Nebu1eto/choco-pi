@@ -12,9 +12,6 @@ import {
 
 const vale = createAvailabilityChecker("vale", ".exe");
 
-/**
- * Check for a .vale.ini config file in cwd or parent dirs.
- */
 function findValeConfig(cwd: string): string | undefined {
   const local = path.join(cwd, ".vale.ini");
   if (fs.existsSync(local)) return local;
@@ -31,30 +28,6 @@ function findValeConfig(cwd: string): string | undefined {
   return undefined;
 }
 
-/**
- * Parse Vale JSON output.
- *
- * Format:
- * {
- *   "Data": {
- *     "Files": [
- *       {
- *         "Path": "file.md",
- *         "Alerts": [
- *           {
- *             "Line": 10,
- *             "Column": 5,
- *             "Severity": "warning",
- *             "Message": "some message",
- *             "Check": "some-rule"
- *           }
- *         ]
- *       }
- *     ],
- *     "LintedTotal": 1
- *   }
- * }
- */
 const ValeOutputSchema = obj(
   {
     Data: opt(
@@ -139,7 +112,6 @@ function parseValeOutput(raw: string, filePath: string): Diagnostic[] {
       }
     }
   } catch {
-    // JSON parse failed, return empty
     return diagnostics;
   }
 
@@ -156,7 +128,6 @@ const valeRunner: RunnerDefinition = {
   async run(ctx: DispatchContext): Promise<RunnerResult> {
     const cwd = ctx.cwd || process.cwd();
 
-    // Config-gated: skip unless a .vale.ini is found
     if (!findValeConfig(cwd)) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
@@ -170,7 +141,6 @@ const valeRunner: RunnerDefinition = {
 
     if (!cmd) return { status: "skipped", diagnostics: [], semantic: "none" };
 
-    // Vale exits 0 even on findings, non-zero only on errors
     const result = await safeSpawnAsync(cmd, ["--output", "JSON", ctx.filePath], {
       cwd,
       timeout: 15000,

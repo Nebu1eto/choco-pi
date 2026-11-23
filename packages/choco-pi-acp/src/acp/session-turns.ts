@@ -1,6 +1,3 @@
-/**
- * Prompt turn bookkeeping: the active and queued turns a session settles.
- */
 import type { BoundaryValue } from "../boundary.ts";
 import type { PiPromptImage } from "../pi-rpc/protocol.ts";
 import type { StopReason } from "./session.ts";
@@ -9,7 +6,6 @@ export type PendingTurn = {
   resolve: (reason: StopReason) => void;
   reject: (error: BoundaryValue) => void;
   settling: boolean;
-  /** Pi's response frame for this turn's prompt has been read from stdout. */
   acknowledged: boolean;
 };
 

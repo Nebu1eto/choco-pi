@@ -25,14 +25,6 @@ import type {
 import { parseZedTasks, runZedSetupCli } from "../src/zed/setup.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 
-/**
- * Standalone-mode entry points: the `choco-pi` launcher's env contract
- * (CHOCO_PI_STANDALONE=1, CHOCO_PI_HOME, CHOCO_PI_LAUNCHER, PI_ACP_PI_COMMAND,
- * PI_CODING_AGENT_DIR) moves ACP state under CHOCO_PI_HOME and routes every Pi start through
- * the launcher. Legacy mode (contract unset) keeps the previous values exactly.
- */
-
-/** A scratch install: `<root>/home` is CHOCO_PI_HOME, `<root>/app/bin/choco-pi` the launcher. */
 type StandaloneFixture = Readonly<{
   root: string;
   home: string;
@@ -51,7 +43,6 @@ async function standaloneFixture(): Promise<StandaloneFixture> {
   await mkdir(join(app, "bin"), { recursive: true });
   await writeFile(launcher, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\necho 1.6.0\n`);
   await chmod(launcher, 0o755);
-  // A different `pi` on PATH that standalone mode must never pick.
   const pathBin = join(root, "path-bin");
   const pathPi = join(pathBin, "pi");
   await mkdir(pathBin);
@@ -83,7 +74,6 @@ test("standalone: the ACP session map lives under CHOCO_PI_HOME/pi-acp", async (
 test("legacy: the ACP session map stays at ~/.pi/pi-acp", () => {
   assert.equal(getPiAcpDir({}), join(homedir(), ".pi", "pi-acp"));
   assert.equal(getPiAcpSessionMapPath({}), join(homedir(), ".pi", "pi-acp", "session-map.json"));
-  // CHOCO_PI_HOME alone (no launcher flag) is still legacy mode.
   assert.equal(getPiAcpDir({ CHOCO_PI_HOME: "/elsewhere" }), join(homedir(), ".pi", "pi-acp"));
 });
 
@@ -95,7 +85,6 @@ test("standalone: startup-info prompt and extension dirs live under CHOCO_PI_HOM
     extensions: join(fixture.home, "agent", "extensions"),
   };
   assert.deepEqual(startupInfoAgentDirs(contractEnv(fixture)), expected);
-  // The standalone home decides even before the launcher exports PI_CODING_AGENT_DIR.
   const { PI_CODING_AGENT_DIR: _agentDir, ...withoutAgentDir } = contractEnv(fixture);
   assert.deepEqual(startupInfoAgentDirs(withoutAgentDir), expected);
 });
@@ -105,7 +94,6 @@ test("legacy: startup-info prompt and extension dirs keep $HOME/.pi/agent", () =
     prompts: "/Users/someone/.pi/agent/prompts",
     extensions: "/Users/someone/.pi/agent/extensions",
   });
-  // The previous code joined an unset HOME as "", giving a relative path.
   assert.deepEqual(startupInfoAgentDirs({}), {
     prompts: join(".pi", "agent", "prompts"),
     extensions: join(".pi", "agent", "extensions"),
@@ -121,7 +109,6 @@ test("standalone: Pi launches through the launcher, never a PATH pi", async (t) 
     command: fixture.launcher,
     argsPrefix: [],
   });
-  // Without PI_ACP_PI_COMMAND, CHOCO_PI_LAUNCHER is the default.
   const { PI_ACP_PI_COMMAND: _command, ...withoutCommand } = env;
   assert.deepEqual(await resolvePiLaunch(undefined, withoutCommand, "darwin"), {
     command: fixture.launcher,
@@ -150,7 +137,6 @@ test("legacy: Pi resolves to pi from PATH", async (t) => {
     command: fixture.pathPi,
     argsPrefix: [],
   });
-  // CHOCO_PI_LAUNCHER without the standalone flag does not change the default.
   assert.equal(defaultPiCommand({ CHOCO_PI_LAUNCHER: fixture.launcher }), "pi");
 });
 
@@ -169,7 +155,6 @@ test("terminal auth re-enters the adapter through the launcher in standalone mod
   assert.deepEqual(decoded.args, ["--terminal-login"]);
 });
 
-/** Run `zed setup --dry-run` in-process and return the printed lines. */
 async function zedDryRun(
   environment: NodeJS.ProcessEnv,
   configDirectory: string,
@@ -284,7 +269,6 @@ test("legacy: Zed setup dry run keeps node + adapter and pi from PATH", async (t
   assert.equal(tasks[5]?.command, "pi");
 });
 
-/** A session manager that always resolves to one prepared session. */
 class SingleSessionManager implements SessionManagerLike {
   private readonly session: PiAcpSession;
 
@@ -315,7 +299,6 @@ class SingleSessionManager implements SessionManagerLike {
   async shutdownAll(): Promise<void> {}
 }
 
-/** A Pi process fake reporting one configured model. */
 class SingleModelProcess implements PiRpcProcessLike {
   onEvent(_handler: (ev: PiRpcEvent) => void): () => void {
     return () => {};
@@ -364,7 +347,6 @@ test("standalone: session/new startup info comes from the launcher and CHOCO_PI_
   });
   const agent = new PiAcpAgent(asAgentConn(conn), {});
   const sessions: SessionManagerLike = new SingleSessionManager(session);
-  // `sessions` is a private implementation detail; `Object.assign` installs the fake.
   Object.assign(agent, { sessions });
 
   const response = await agent.newSession({ cwd, mcpServers: [] });

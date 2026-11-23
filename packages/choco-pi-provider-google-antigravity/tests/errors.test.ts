@@ -169,7 +169,6 @@ test("required Pi behavior per kind holds for every kind, with and without timin
 });
 
 test("every kind round-trips through format and parse", () => {
-  // Format drops a field only when it would change Pi's retry verdict; whatever it keeps parses back.
   const keepsTiming = new Set(["quota_exhausted", "credits_exhausted", "rate_limited", "capacity"]);
   for (const kind of ANTIGRAVITY_ERROR_KINDS) {
     const bare = parseAntigravityErrorMessage(formatAntigravityErrorMessage({ kind }));

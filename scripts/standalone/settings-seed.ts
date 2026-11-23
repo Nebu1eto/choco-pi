@@ -1,30 +1,3 @@
-/**
- * First-run settings for a standalone (dedicated) choco-pi install.
- *
- * `profile/standalone/settings.seed.json` lists settings a fresh standalone
- * agent directory starts from. `choco-pi self setup` (and so install.sh and
- * `self update`) applies it once per key: a key is added only when
- * settings.json lacks it and no earlier setup already handled it. What was
- * handled is recorded in `<agentDir>/choco-pi/settings-seed.json`:
- *
- * - `version`: the newest seed version applied. A key whose `since` is at most
- *   this version was already offered, so it is never added again, whether the
- *   user kept, changed or deleted it. A newer seed adds only its new keys.
- * - `seeded`: the keys a setup wrote, or was about to write.
- * - `values`: the value each of those keys was given. `self setup
- *   --import-pi-settings` replaces a key only while it still holds exactly
- *   this value. A state written before this field existed falls back to the
- *   current seed file's value.
- *
- * Seeding is at most once per key: the state naming the keys about to be
- * added is persisted before settings.json is written. If that settings write
- * then fails, those keys are simply not seeded, and a retry does not add them
- * either; that is intended, since adding a key twice could bring back one the
- * user deleted. If the state write fails, settings.json is left untouched.
- *
- * Nothing is read from `~/.pi`. The legacy `pnpm install:profile` never
- * calls this module.
- */
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,17 +36,10 @@ export const SETTINGS_SEED_FILE = path.resolve(
   "settings.seed.json",
 );
 
-/** A seeded key: its value and the seed version that first offered it. */
 function seedEntry<Value>(value: Schema<Value>) {
   return opt(obj({ since: int({ minimum: 1 }), value }));
 }
 
-/**
- * The keys a seed may set, each with the values its reader accepts: Pi 1.6.0's
- * settings schema (dist/core/settings-schema.js) and, for fuzzyFileMentions,
- * profile/extensions/prompt-editor.ts. The object is closed, so any other key
- * is refused.
- */
 const SeedFileSchema = obj({
   version: int({ minimum: 1 }),
   settings: obj({
@@ -96,7 +62,6 @@ const SeedFileSchema = obj({
 const isSeedFile = compile(SeedFileSchema).check;
 export type SettingsSeed = Static<typeof SeedFileSchema>;
 
-/** Any JSON value. */
 export const JsonValueSchema = recursive<JsonValue>("JsonValue", (value) =>
   union([nul(), bool(), num(), str(), arr(value), map(value)]),
 );
@@ -110,7 +75,6 @@ const SeedStateSchema = obj({
 const isSeedState = compile(SeedStateSchema).check;
 type SeedState = Static<typeof SeedStateSchema>;
 
-/** Problems the schema cannot express: a key new in a version after `version`. */
 export function settingsSeedProblems(seed: SettingsSeed): string[] {
   const problems: string[] = [];
   for (const [key, entry] of Object.entries(seed.settings)) {
@@ -164,7 +128,6 @@ async function readSeedState(file: string): Promise<SeedState | null> {
   return parsed;
 }
 
-/** Writes `text` to `file` through a temporary file and a rename. */
 export async function writeTextAtomically(file: string, text: string): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.seed.tmp`;
@@ -177,12 +140,10 @@ export async function writeTextAtomically(file: string, text: string): Promise<v
   }
 }
 
-/** The installer's settings.json format (install-profile.ts writeSettings). */
 export function jsonText(value: JsonValue): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-/** `<agentDir>/settings.json` as an object; an absent file is empty. */
 export async function readAgentSettings(agentDir: string): Promise<JsonRecord> {
   const settingsPath = path.join(agentDir, "settings.json");
   const settingsText = await readOptional(settingsPath);
@@ -197,11 +158,6 @@ export async function readAgentSettings(agentDir: string): Promise<JsonRecord> {
   return parsed;
 }
 
-/**
- * The value the seed gave each key it seeded in `agentDir`: the recorded
- * value, or for a state from before values were recorded, the value `seed`
- * holds now. Empty when no seed was applied.
- */
 export async function seededValues(
   agentDir: string,
   seed: SettingsSeed,
@@ -220,18 +176,11 @@ export async function seededValues(
 }
 
 export type SeedResult = {
-  /** Keys written to settings.json by this call. */
   added: string[];
-  /** True when no earlier setup had applied a seed to this agent directory. */
   firstSeed: boolean;
   statePath: string;
 };
 
-/**
- * Applies `seed` to `<agentDir>/settings.json` once per key (see the module
- * comment). settings.json is rewritten only when a key is added, keeping the
- * installer's 2-space JSON format; the state file is written first.
- */
 export async function applySettingsSeed(agentDir: string, seed: SettingsSeed): Promise<SeedResult> {
   const settingsPath = path.join(agentDir, "settings.json");
   const statePath = seedStatePath(agentDir);

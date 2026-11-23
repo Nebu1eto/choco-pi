@@ -1,14 +1,3 @@
-/**
- * Feature attribution for billed calls.
- *
- * A model call is charged to the thing that triggered it: the tool whose
- * result the model was answering, the summarizer that ran it, or the user
- * when nothing else sits between the prompt and the call. The rule is
- * deterministic and puts every call in exactly one bucket, so the feature
- * view reconciles with the totals; it does not charge a tool for the context
- * its earlier results keep occupying.
- */
-
 export const FEATURE_CONVERSATION = "conversation";
 export const FEATURE_SUBAGENTS = "subagents";
 export const FEATURE_ORCHESTRATION = "subagents (orchestration)";
@@ -62,27 +51,21 @@ const BUILTIN_TOOLS: ReadonlySet<string> = new Set([
   "shell_list",
 ]);
 
-/** The MCP server name encoded in an `mcp__<server>__<tool>` tool name. */
 export function mcpServerOf(toolName: string): string | undefined {
   const match = MCP_TOOL_PATTERN.exec(toolName);
   return match?.[1];
 }
 
-/** The bucket label for an MCP server. */
 export function mcpFeature(server: string): string {
   return `MCP: ${server}`;
 }
 
-/** The result a call was answering: the tool's name and, for code mode, the MCP servers it reached. */
 export type TriggerTool = {
   toolName: string;
-  /** MCP servers named by the tool result's nested calls, in order. */
   nestedMcpServers: readonly string[];
-  /** For code mode: the calls the script made, as recorded in the result's traces. */
   nestedCalls: readonly NestedCall[];
 };
 
-/** The feature bucket of a call whose tree parent is the given tool result. */
 export function featureForTool(trigger: TriggerTool): string {
   const name = trigger.toolName;
   const server = mcpServerOf(name);
@@ -100,22 +83,18 @@ export function featureForTool(trigger: TriggerTool): string {
   return `tools: ${name}`;
 }
 
-/** True for an MCP server bucket. */
 export function isMcpFeature(feature: string): boolean {
   return feature.startsWith("MCP: ");
 }
 
-/** True for the per-tool buckets the concise view folds into "other tools". */
 export function isNamedToolFeature(feature: string): boolean {
   return feature.startsWith("tools: ");
 }
 
-/** The bucket of a call that answered a prompt rather than a tool result. */
 export function featureForTrigger(trigger: TriggerTool | undefined): string {
   return trigger === undefined ? FEATURE_CONVERSATION : featureForTool(trigger);
 }
 
-/** Buckets a code-mode call splits into, by what the script executed. */
 export const CODE_MODE_EXEC = "exec/shell";
 export const CODE_MODE_LSP = "LSP";
 export const CODE_MODE_FILES = "files";
@@ -153,14 +132,11 @@ const CODE_MODE_FILE_TOOLS: ReadonlySet<string> = new Set([
   "view_image",
 ]);
 
-/** One nested call a code-mode script made, as the tool result recorded it. */
 export type NestedCall = {
   name: string;
-  /** Visible result size in characters; 0 when the result carried no text. */
   size: number;
 };
 
-/** The code-mode bucket of one nested call. */
 export function codeModeBucket(name: string): string {
   const server = mcpServerOf(name);
   if (server !== undefined) return mcpFeature(server);
@@ -181,12 +157,6 @@ export function codeModeBucket(name: string): string {
   return CODE_MODE_OTHER;
 }
 
-/**
- * How a code-mode call's tokens and cost split across buckets: by each nested
- * call's result size, since larger results are what the model then reads;
- * evenly when every result is empty; all to "script only" without nested
- * calls. The weights sum to 1.
- */
 export function codeModeSplit(nested: readonly NestedCall[]): Map<string, number> {
   const weights = new Map<string, number>();
   if (nested.length === 0) return new Map([[CODE_MODE_SCRIPT, 1]]);

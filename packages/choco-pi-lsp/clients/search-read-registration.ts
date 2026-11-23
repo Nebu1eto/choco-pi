@@ -1,13 +1,3 @@
-/**
- * Register the lines a *search* tool revealed to the agent as reads, so a
- * follow-up edit to those lines is not blocked by the read-guard (#169).
- *
- * Search → edit is a common flow: the agent finds where something must change
- * (ast_grep_search / lsp_navigation / grep), then edits exactly those lines.
- * Those lines were genuinely shown, so they count as read — but ONLY those lines
- * (plus a small context margin), never the whole file, so editing an unseen
- * region is still guarded.
- */
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
 import { isPathIgnoredByProject } from "./file-utils.ts";
@@ -15,11 +5,8 @@ import { isExternalOrVendorFile } from "./path-utils.ts";
 import type { ReadRecord } from "./read-guard.ts";
 
 export interface SearchReadLocation {
-  /** Absolute or project-relative file path. */
   file: string;
-  /** 1-based first line shown. */
   startLine: number;
-  /** 1-based last line shown (defaults to startLine). */
   endLine?: number;
 }
 
@@ -27,17 +14,11 @@ interface RegisterOpts {
   projectRoot: string;
   turnIndex: number;
   writeIndex: number;
-  /** Lines of slack added around each shown range (default 2). */
   contextMargin?: number;
 }
 
 const DEFAULT_CONTEXT_MARGIN = 2;
 
-/**
- * Record each shown location as a read (± context margin). Resolves project-
- * relative paths, skips external/vendor/ignored/non-existent files, and dedupes
- * identical spans. Returns how many reads were recorded.
- */
 export function registerSearchReads(
   readGuard: { recordRead: (record: ReadRecord) => void },
   locations: SearchReadLocation[],

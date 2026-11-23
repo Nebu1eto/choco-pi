@@ -1,7 +1,3 @@
-/**
- * `compactionAnthropic` mode: asynchronous reader with a safe default, atomic
- * key-preserving writer, and the session-scoped server-side switch.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

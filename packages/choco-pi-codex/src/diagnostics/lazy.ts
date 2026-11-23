@@ -52,9 +52,7 @@ export function createLazyCodexDiagnostics(): LazyCodexDiagnostics {
           `Could not close the previous Codex cache log: ${error instanceof Error ? error.message : String(error)}`,
           "warning",
         );
-      } catch {
-        // Diagnostics lifecycle failures must not block session replacement.
-      }
+      } catch {}
     }
   };
 
@@ -97,9 +95,7 @@ export function createLazyCodexDiagnostics(): LazyCodexDiagnostics {
               `Codex cache diagnostics stopped: ${error instanceof Error ? error.message : String(error)}`,
               "warning",
             );
-          } catch {
-            // Diagnostics must never affect provider execution.
-          }
+          } catch {}
         }
       };
       active = { key, runtime: next, sink };

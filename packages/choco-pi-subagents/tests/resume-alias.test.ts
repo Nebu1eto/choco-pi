@@ -268,8 +268,6 @@ test("a model-switching resume refreshes the reported provenance; a same-model r
       definition: "/r/implementer.md",
     };
     assert.deepEqual(record.modelProvenance, switched);
-    // The completion notification and `subagents:record` journal both format
-    // `record.modelProvenance` at settle time.
     assert.ok(record.modelProvenance);
     assert.equal(
       formatModelLine(record.modelProvenance),

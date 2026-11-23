@@ -1,6 +1,3 @@
-/**
- * Archive URL resolution and archive installs.
- */
 import { isRuntimeFunction } from "../../tools/runtime-values.ts";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -12,20 +9,6 @@ import { TOOLS_DIR } from "./install-lock.ts";
 import { GITHUB_BIN_DIR, debugLog } from "./installer-env.ts";
 import type { ArchiveSpec, ToolDefinition } from "./tool-catalog.ts";
 
-/**
- * Install a tool that ships as a distribution archive (.tgz/.zip with a lib/ of
- * JARs + bin/ launchers — e.g. SpotBugs), not a single runnable binary or fat
- * JAR. Downloads the archive, extracts it (top-level dir stripped) into
- * ~/.choco-pi-lsp/tools/<id>/, then writes a thin launcher shim into the managed bin
- * so the tool resolves like any other via findGitHubToolPath. Extraction uses
- * `tar` (present on Windows 10+ as bsdtar, which also reads .zip).
- */
-/**
- * Resolve an {@link ArchiveSpec} download URL for the current platform/arch.
- * A string URL is platform-agnostic; a function resolves per platform/arch and
- * may return `undefined` (unsupported → caller degrades to "unavailable").
- * Exported for the tool-registry contract test.
- */
 function isArchiveUrlResolver(
   value: ArchiveSpec["url"],
 ): value is (platform: string, arch: string) => string | undefined {
@@ -64,27 +47,16 @@ export async function installArchiveTool(tool: ToolDefinition): Promise<string |
     return undefined;
   }
 
-  // Use basenames + cwd:TOOLS_DIR for the tar spawn so no argument contains a
-  // drive-letter colon — GNU tar (MSYS) otherwise reads `C:\…` as an rsync
-  // `host:path` ("Cannot connect to C:"). Relative paths work for both GNU tar
-  // and Windows bsdtar, so we avoid the GNU-only `--force-local` (which bsdtar
-  // rejects). fs.* calls still use the absolute paths.
   const extractName = tool.id;
   const archiveName = `${tool.id}.download.${spec.kind === "zip" ? "zip" : "tgz"}`;
   const extractDir = path.join(TOOLS_DIR, extractName);
   const tmpArchive = path.join(TOOLS_DIR, archiveName);
   try {
     await fs.mkdir(TOOLS_DIR, { recursive: true });
-    // Clear any prior extraction so a reinstall is clean.
     await fs.rm(extractDir, { recursive: true, force: true });
     await fs.mkdir(extractDir, { recursive: true });
     await fs.writeFile(tmpArchive, archiveBuffer);
 
-    // `--strip-components=N` drops N leading path components. Default 1 drops a
-    // versioned top-level dir so a launcher path stays stable (bin/… not
-    // spotbugs-X.Y.Z/bin/…). A TREE BUNDLE (stripComponents:0) has no wrapping
-    // dir — stripping would flatten/merge its sibling module folders — so the
-    // flag is omitted. bsdtar handles both .tgz and .zip with -xf.
     const stripComponents = spec.stripComponents ?? 1;
     const tarArgs = [
       spec.kind === "tgz" ? "-xzf" : "-xf",
@@ -93,11 +65,6 @@ export async function installArchiveTool(tool: ToolDefinition): Promise<string |
       extractName,
       ...(stripComponents > 0 ? [`--strip-components=${stripComponents}`] : []),
     ];
-    // Resolve `tar` to an absolute path on Windows (System32\tar.exe is the
-    // bsdtar shipped with Windows 10+) so extraction can't be hijacked via a
-    // writable PATH entry — same hardening as the taskkill spawn. On POSIX `tar`
-    // is a trusted coreutil whose absolute path varies by distro, so it stays
-    // bare (consistent with every other tool spawn).
     const tarBin = isWindows
       ? `${process.env.SystemRoot ?? "C:\\Windows"}\\System32\\tar.exe`
       : "tar";
@@ -117,9 +84,6 @@ export async function installArchiveTool(tool: ToolDefinition): Promise<string |
       return undefined;
     }
 
-    // Tree bundle (no launcher): the whole extracted tree IS the artifact. Verify
-    // the marker exists and resolve to the extract dir — the consuming server
-    // launches a runtime against a bootstrap inside it (e.g. PSES via pwsh).
     if (!spec.launcher) {
       const marker = spec.treeMarker
         ? path.join(extractDir, ...spec.treeMarker.split("/"))
@@ -139,7 +103,6 @@ export async function installArchiveTool(tool: ToolDefinition): Promise<string |
       return extractDir;
     }
 
-    // The launcher inside the extracted tree (e.g. bin/spotbugs[.bat]).
     const innerLauncher = path.join(extractDir, ...spec.launcher.split("/").map((p) => p));
     const resolvedInner = isWindows ? `${innerLauncher}.bat` : innerLauncher;
     try {
@@ -152,9 +115,6 @@ export async function installArchiveTool(tool: ToolDefinition): Promise<string |
     }
     if (!isWindows) await fs.chmod(resolvedInner, 0o750).catch(() => {});
 
-    // Thin shim in the managed bin so discovery (findGitHubToolPath) resolves
-    // it like any other managed tool. `call`/`exec` preserves the real
-    // launcher's own %~dp0/$0 so it still finds its sibling lib/.
     await fs.mkdir(GITHUB_BIN_DIR, { recursive: true });
     const launcherName = isWindows ? `${binaryName}.bat` : binaryName;
     const shimPath = path.join(GITHUB_BIN_DIR, launcherName);

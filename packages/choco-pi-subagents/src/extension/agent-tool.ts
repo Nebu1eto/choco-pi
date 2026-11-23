@@ -1,6 +1,3 @@
-/**
- * Agent tool registrations.
- */
 import { createSubagentLimitsTool, formatConcurrencyCap } from "../limits.ts";
 import { getMaxSubagentDepth, setMaxSubagentDepth } from "../nested-tools.ts";
 import { createAgentMessageTool } from "../agent-message.ts";
@@ -69,7 +66,6 @@ import {
 } from "./helpers.ts";
 import type { SubagentsRuntime } from "./runtime.ts";
 
-/** Registers subagent_limits, agent_message, and the Agent tool. */
 export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
   pi.registerTool(
     createSubagentLimitsTool({
@@ -84,13 +80,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
 
   pi.registerTool(createAgentMessageTool({ manager: rt.core.manager, pi }));
 
-  // ---- Agent tool ----
-
-  // The schedule parameter is gated on `schedulingEnabled` (read once
-  // at registration; flipping the setting later requires next pi session for
-  // the schema to update). Defining the shape once and spreading it via Partial
-  // preserves obj()'s inference when present and produces a
-  // `schedule`-free schema when absent — zero LLM-context cost in disabled mode.
   const scheduleSchemaFields = {
     schedule: opt(
       str({
@@ -103,18 +92,12 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
     ? scheduleSchemaFields
     : {};
 
-  // Each type carries its declared model, thinking and definition file, so the
-  // orchestrator chooses model/thinking knowing what the role (and any
-  // shadowing workspace file) actually declares.
   const agentToolDescription =
     "Launch a child-safe nested subagent for bounded delegated work. Available types:\n" +
     getAvailableTypes()
       .map((name) => `- ${describeRoleModel(name, getAgentConfig(name))}`)
       .join("\n");
 
-  // Held rather than registered inline: the mention clone reuses this exact
-  // definition, so the agent it starts is an ordinary top-level spawn instead
-  // of a second implementation that has to be kept in step with this one.
   const agentTool = defineTool({
     name: SUBAGENT_TOOL_NAMES.AGENT,
     label: "Agent",
@@ -245,19 +228,14 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
       ),
     ),
 
-    // ---- Custom rendering: Claude Code style ----
-
     renderCall: delegationRenderers.renderCall,
     renderResult: delegationRenderers.renderResult,
-
-    // ---- Execute ----
 
     execute: async (toolCallId, params, signal, onUpdate, ctx) => {
       // SAFETY: Pi's UI context implements the FleetPanel UI surface consumed here.
       const fleetContext = ctx as FleetPanelUIContext;
       rt.views.fleet.setUICtx(fleetContext.ui);
 
-      // Reload custom agents so new project/global .md files are picked up without restart
       if (!(await rt.revival.refreshAgentsForSession())) {
         return textResult(
           "Session changed while agent definitions were loading; nothing was started.",
@@ -265,27 +243,10 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
       }
 
       const rawType: SubagentType = params.subagent_type;
-      // Single decision point for dispatch (#183): unknown, disabled and
-      // case-ambiguous types are refused here, BEFORE anything spawns, so a
-      // background or scheduled call can't start running the wrong agent while
-      // the caller is still unaware. `fallbackSubagent` decides whether an
-      // unresolvable type falls back or fails closed.
       const dispatch = resolveSpawnType(rawType);
-      // `resume` replays a stored session and ignores `subagent_type` entirely,
-      // but the parameter is required by the schema — so gating it here would
-      // make a live agent unresumable the moment its type is deleted, disabled,
-      // or gains a case-clashing sibling. Only a real spawn is gated.
       if (!dispatch.ok && !params.resume) return textResult(dispatch.message);
       const subagentType = dispatch.ok ? dispatch.type : rawType;
-      // What the caller actually asked for, named once: `fellBackFrom` is "" for
-      // a blank request, so reading it inline invites the `??`-vs-`||` slip that
-      // once persisted an empty type into a scheduled job.
       const requestedType = (dispatch.ok && dispatch.fellBackFrom) || subagentType;
-      // Computed at resolution rather than after the run, so the background and
-      // schedule branches carry it too — previously it existed only on the
-      // foreground path. Resume deliberately doesn't: it replays the stored
-      // session and ignores `subagent_type` entirely, so a note about type
-      // substitution would be describing something that didn't happen.
       const typeNote =
         dispatch.ok && dispatch.fellBackFrom !== undefined
           ? `Note: Unknown agent type "${dispatch.fellBackFrom}" — using ${resolveType(subagentType) ? subagentType : "the fallback agent config"}.\n\n`
@@ -293,11 +254,8 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
 
       const displayName = getDisplayName(subagentType);
 
-      // Get agent config (if any)
       const customConfig = getAgentConfig(subagentType);
 
-      // requireExplicitModel: a fresh spawn names its model and thinking.
-      // Resume and schedule are exempt (they continue or defer, not choose).
       if (!params.resume && !params.schedule) {
         const refusal = explicitModelRefusal(subagentType, customConfig, params);
         if (refusal !== undefined) return textResult(typeNote + refusal);
@@ -316,8 +274,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
         }
       ).__choco_hook_worktree_path;
 
-      // Resolve the model chosen by invocation-config: caller first, then the
-      // role default, unless the role sets model_locked.
       let model = ctx.model;
       let modelUnavailable = false;
       let preferredNote = "";
@@ -326,12 +282,9 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
         switch (resolution.tag) {
           case "error":
             if (resolvedConfig.modelFromParams) return textResult(resolution.message);
-            // config-specified: fall back to the parent, but say so — the
-            // result note and toast below are the only trace of this.
             modelUnavailable = true;
             break;
           case "resolved": {
-            // Routing prefers the access-program variant (Fable -> Mythos) the account can use.
             const choice = chooseVariant(
               resolution.model,
               await loadPreferredVariants(),
@@ -353,9 +306,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
       if (modelUnavailable) ctx.ui.notify(modelNote.trim(), "warning");
       const fallbackNote = typeNote + modelNote + preferredNote;
 
-      // Scope validation: the effective resolved model is checked against the
-      // user's enabledModels list. Policy (hard error vs warn-and-proceed) lives
-      // in model-scope.ts so the nested delegation tools apply the same rule.
       const scopeVerdict = checkModelScope({
         model,
         cwd: ctx.cwd,
@@ -376,8 +326,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
         config: customConfig,
       });
       const modelLine = `${withOverrideReason(formatModelLine(modelProvenance), params.model_override_reason)}\n`;
-      // A synchronous start failure deletes the record before the throw
-      // propagates; journal its identity first so the failure is traceable.
       const onStartFailed = (info: { id: string; alias?: string; reason: string }): void => {
         pi.appendEntry("subagents:record", {
           id: info.id,
@@ -395,11 +343,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
       const runInBackground = resolvedConfig.runInBackground;
       const isolated = resolvedConfig.isolated;
       const isolation = resolvedConfig.isolation;
-      // Whether this spawn writes its .output transcript. Per-agent
-      // frontmatter (`output_transcript`) wins; otherwise the project/global
-      // default applies. `attachTranscript` below is the SOLE gate — every
-      // downstream consumer keys off record.outputFile being set, so no spawn
-      // path can re-enable the transcript by accident.
       const outputTranscript = customConfig?.outputTranscript ?? getOutputTranscriptDefault();
       const attachTranscript = (rec: AgentRecord | undefined, agentId: string): void => {
         if (!rec || !outputTranscript) return;
@@ -423,8 +366,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
       const agentInvocation: AgentInvocation = {
         modelName,
         thinking,
-        // Explicit value only — the default fallback would just add noise.
-        // Normalize so `0` (unlimited) doesn't surface as a misleading "max turns: 0".
         maxTurns: normalizeMaxTurns(resolvedConfig.maxTurns),
         timeoutMs: resolvedConfig.timeoutMs,
         maxToolCalls: resolvedConfig.maxToolCalls,
@@ -446,7 +387,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
         tags: invocationTags.length > 0 ? invocationTags : undefined,
       };
 
-      // ---- Schedule: register a job, don't spawn now ----
       if (params.schedule) {
         if (isRoundGatedRole(subagentType)) {
           return textResult(scheduleUnsupportedMessage(subagentType));
@@ -471,8 +411,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
             "Cannot combine `schedule` with `run_in_background: false` — scheduled jobs always run in background.",
           );
         }
-        // session_start loads the store in the background; wait for that load
-        // rather than refusing a schedule that arrives while it is in flight.
         const starting = rt.state.schedulerStarting;
         if (!rt.scheduling.scheduler.isActive() && starting !== undefined) await starting;
         if (!rt.scheduling.scheduler.isActive()) {
@@ -486,8 +424,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
             name: params.description,
             description: params.description,
             schedule: params.schedule as string,
-            // The caller's own name, not the substitute — the scheduler re-resolves
-            // at fire time, and the original is what a user edits.
             subagent_type: requestedType,
             prompt: params.prompt,
             model: params.model as string | undefined,
@@ -513,11 +449,8 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
         }
       }
 
-      // Resume existing agent
       if (params.resume) {
         let existing = rt.core.manager.getRecord(params.resume);
-        // A settled journaled record without a session (a re-armed usage wait
-        // that was stopped) continues from its saved file like a dormant one.
         if (
           existing !== undefined &&
           existing.parentAgentId === undefined &&
@@ -535,7 +468,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
               ctx,
               dormant,
               params.prompt,
-              // Same rule as a live resume: only a caller-supplied model switches.
               resolvedConfig.modelFromParams && model ? `${model.provider}/${model.id}` : undefined,
               toolCallId,
               params.work_task,
@@ -545,9 +477,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
         if (!existing || existing.parentAgentId) {
           return textResult(`Agent not found: "${params.resume}".`);
         }
-        // Keep this caller-facing check mode-independent. AgentManager.resume
-        // repeats the guard at the causal boundary so a concurrent state change
-        // still cannot re-enter the live record or rename it.
         if (existing.status === "running" || existing.status === "queued") {
           return textResult(
             `Agent "${params.resume}" is still ${existing.status} — it can only be resumed once its current run finishes.\n` +
@@ -564,11 +493,8 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
         if (!existing.session) {
           return textResult(`Agent "${params.resume}" has no active session to resume.`);
         }
-        // Only a caller-supplied model switches the resumed session; an agent
-        // file's default model never overrides the model the child already has.
         const resumeModel =
           resolvedConfig.modelFromParams && model ? `${model.provider}/${model.id}` : undefined;
-        // Resuming a review-role agent is a new review round: admit it first.
         const resumeAdmission = await rt.registry.admitReviewRound(
           ctx,
           existing.type,
@@ -579,10 +505,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
         const resumeTicket = rt.registry.ticketOf(resumeAdmission);
         const resumeNotice = rt.registry.noticeOf(resumeAdmission);
 
-        // Background resume: detached run that notifies on completion, mirroring
-        // a background spawn. Previously run_in_background was silently ignored
-        // on resume (this branch returned before the background branch below),
-        // so a resumed agent always blocked the main loop until it finished.
         if (runInBackground) {
           const id = existing.id;
           let record: AgentRecord | undefined;
@@ -638,7 +560,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
           });
         } catch (error) {
           if (error instanceof ResumeModelError) {
-            // Refused before any run started: refund the round.
             if (resumeTicket !== undefined) await rt.registry.reviewRounds.release(resumeTicket);
             return textResult(`Failed to resume agent "${params.resume}": ${error.message}`);
           }
@@ -649,8 +570,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
           return textResult(`Failed to resume agent "${params.resume}".`);
         }
         const address = record.alias ?? record.handle ?? record.id;
-        // Parked on a usage limit under auto-resume: the manager converted this
-        // resume to background, so answer now, exactly like a foreground spawn.
         if (record.status === "waiting_for_reset") {
           const until =
             record.usageLimit?.resetAt === undefined
@@ -664,8 +583,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
             buildRecordDetails(record, false, true),
           );
         }
-        // A failed resume surfaces the error, plus any partial output THIS
-        // resume produced (never the previous turn's answer, #144).
         if (
           record.status === "error" ||
           record.status === "budget_exceeded" ||
@@ -682,16 +599,12 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
         );
       }
 
-      // A stored usage-limit closure on the target provider is re-checked
-      // against live evidence before spawn's synchronous gate reads it.
       await rt.core.manager.refreshProviderBlock(
         model?.provider ?? ctx.model?.provider ?? "unknown",
         ctx.sessionManager.getSessionId(),
         model !== undefined ? model.id : ctx.model?.id,
       );
 
-      // Review roles: reserve a round (or refuse) after every other early return
-      // and immediately before the manager call.
       const admission = await rt.registry.admitReviewRound(
         ctx,
         subagentType,
@@ -702,13 +615,9 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
       const reviewTicket = rt.registry.ticketOf(admission);
       const reviewNotice = rt.registry.noticeOf(admission);
 
-      // Background execution
       if (runInBackground) {
         const { state: bgState, callbacks: bgCallbacks } = createActivityTracker(effectiveMaxTurns);
 
-        // Wrap onSessionCreated to wire output file streaming.
-        // The callback lazily reads record.outputFile (set right after spawn)
-        // rather than closing over a value that doesn't exist yet.
         let id: string;
         const origBgOnSession = bgCallbacks.onSessionCreated;
         bgCallbacks.onSessionCreated = (session: AgentSession) => {
@@ -719,9 +628,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
           }
         };
 
-        // A throw here means the agent never started. Let it out: pi marks a
-        // tool call failed only when execute throws, and a returned message
-        // reads to the model as a subagent that ran and reported this (#179).
         try {
           id = rt.core.manager.spawn(pi, ctx, subagentType, params.prompt, {
             reviewTicket,
@@ -745,13 +651,10 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
             ...bgCallbacks,
           });
         } catch (error) {
-          // spawn() throws only before an agent exists: refund the round.
           if (reviewTicket !== undefined) await rt.registry.reviewRounds.release(reviewTicket);
           throw error;
         }
 
-        // Set output file + join mode synchronously after spawn, before the
-        // event loop yields — onSessionCreated is async so this is safe.
         const joinMode = resolveJoinMode(rt.state.defaultJoinMode, true);
         const record = rt.core.manager.getRecord(id);
         if (record && joinMode) {
@@ -761,12 +664,8 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
         }
 
         if (joinMode == null || joinMode === "async") {
-          // Foreground/no join mode or explicit async — not part of any batch
         } else {
-          // smart or group — add to current batch
           rt.state.currentBatchAgents.push({ id, joinMode });
-          // Debounce: reset timer on each new agent so parallel tool calls
-          // dispatched across multiple event loop ticks are captured together
           if (rt.state.batchFinalizeTimer) clearTimeout(rt.state.batchFinalizeTimer);
           rt.state.batchFinalizeTimer = setTimeout(rt.background.finalizeBatch, 100);
         }
@@ -775,7 +674,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
         rt.views.fleet.ensureTimer();
         rt.views.fleet.update();
 
-        // Emit created event
         rt.notifications.emitLifecycle("subagents:created", {
           id,
           type: subagentType,
@@ -810,7 +708,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
         );
       }
 
-      // Foreground (synchronous) execution — stream progress via onUpdate
       let spinnerFrame = 0;
       const startedAt = Date.now();
       let fgId: string | undefined;
@@ -838,9 +735,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
         streamUpdate,
       );
 
-      // Wire session creation: register in widget + stream to output file.
-      // The output file path is set synchronously after spawn (below),
-      // before onSessionCreated fires — same pattern as background agents.
       const origOnSession = fgCallbacks.onSessionCreated;
       fgCallbacks.onSessionCreated = (session: AgentSession) => {
         origOnSession(session);
@@ -853,7 +747,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
             break;
           }
         }
-        // Stream conversation to output file (foreground agent logging)
         if (fgId) {
           const rec = rt.core.manager.getRecord(fgId);
           if (rec?.outputFile) {
@@ -862,7 +755,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
         }
       };
 
-      // Animate spinner at ~80ms (smooth rotation through 10 braille frames)
       const spinnerInterval = setInterval(() => {
         spinnerFrame++;
         streamUpdate();
@@ -900,8 +792,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
             ...fgCallbacks,
           },
           (fgAgentId) => {
-            // onSpawned: called synchronously after spawn, before onSessionCreated fires.
-            // Set up the output file so streamToOutputFile can pick it up.
             fgSpawned = true;
             const fgRec = rt.core.manager.getRecord(fgAgentId);
             attachTranscript(fgRec, fgAgentId);
@@ -909,14 +799,10 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
         );
         record = fgResult.record;
       } catch (error) {
-        // No agent was created: refund the round. Once spawned, the round stays counted.
         if (!fgSpawned && reviewTicket !== undefined)
           await rt.registry.reviewRounds.release(reviewTicket);
         throw error;
       } finally {
-        // Runs on both paths, so a startup throw — which now propagates, see
-        // the background spawn above (#179) — no longer leaves the spinner
-        // ticking or a finished agent on the widget.
         clearInterval(spinnerInterval);
         if (fgId) {
           rt.agentActivity.delete(fgId);
@@ -925,18 +811,13 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
         }
       }
 
-      // Get final token count
       const tokenText = formatLifetimeTokens(fgState);
 
       const details = buildDetails(detailBase, record, fgState, { tokens: tokenText });
-      // The session existed by now and may have clamped the requested
-      // thinking; report the record's refreshed provenance, not the request.
       const settledModelLine = record.modelProvenance
         ? `${formatModelLine(record.modelProvenance)}\n`
         : modelLine;
 
-      // Parked on a provider usage limit under auto-resume: the manager has
-      // converted this child to background, so answer the tool call now.
       if (record.status === "waiting_for_reset") {
         const address = record.alias ?? record.handle ?? record.id;
         const until =
@@ -959,7 +840,6 @@ export function installAgentTools(pi: ExtensionAPI, rt: SubagentsRuntime) {
         record.status === "budget_exceeded" ||
         record.status === "watchdog_stopped"
       ) {
-        // Error headline + any partial output the run produced before failing.
         return textResult(
           `${reviewNotice}${fallbackNote}${settledModelLine}Agent failed: ${record.error}${partialOutputSuffix(record)}`,
           details,

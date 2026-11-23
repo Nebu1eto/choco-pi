@@ -1,13 +1,3 @@
-/**
- * RuboCop runner for dispatch system
- *
- * Runs rubocop in lint-only mode (no auto-correct) on Ruby files.
- * Auto-correct is handled by the formatter pipeline — this runner
- * only reports remaining offenses after formatting.
- *
- * Supports bundle exec (preferred in Bundler projects).
- */
-
 import { safeSpawnAsync } from "../../safe-spawn.ts";
 import {
   getAutofixCapability,
@@ -107,14 +97,12 @@ const rubocopRunner: RunnerDefinition = {
     }
     const { cmd, args } = resolved;
 
-    // Lint only — no auto-correct (formatter handles that)
     const result = await safeSpawnAsync(
       cmd,
       [...args, "--format", "json", "--no-color", ctx.filePath],
       { timeout: 30000, cwd },
     );
 
-    // rubocop exits 0 = no offenses, 1 = offenses found, 2 = fatal error
     if (result.status === 2) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }

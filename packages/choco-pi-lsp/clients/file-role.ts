@@ -1,28 +1,16 @@
-/**
- * File Role Classification for choco-pi-lsp
- *
- * Classifies files by their structural role in the project so runners
- * can skip checks that don't apply (e.g. no complexity checks on generated
- * files, no logic-density checks on re-export barrels).
- */
-
 import { basename, dirname, win32 } from "node:path";
 import { isGeneratedOrArtifact } from "./generated-artifacts.ts";
 import { isWindowsPath } from "./path-utils.ts";
 
-// --- Types ---
-
 export type FileRole =
-  | "source" // Regular application source
-  | "test" // Test / spec file
-  | "init" // Module entry point (index.ts, __init__.py, mod.rs)
-  | "re-export" // Pure re-export barrel (only export * / export { } from)
-  | "generated" // Auto-generated code — do not lint
-  | "config" // Build / tool configuration
-  | "stub" // Type-only declaration file (.d.ts or interface-heavy)
-  | "migration"; // Database migration
-
-// --- Detection ---
+  | "source"
+  | "test"
+  | "init"
+  | "re-export"
+  | "generated"
+  | "config"
+  | "stub"
+  | "migration";
 
 const RE_EXPORT_LINE = /^export\s+(type\s+)?\*\s+from\s+|^export\s*\{[^}]*\}\s+from\s+/;
 
@@ -59,21 +47,6 @@ function isTypeStub(content: string): boolean {
   return typeOnlyLines.length / lines.length >= 0.75;
 }
 
-/**
- * Classify the structural role of a file. Pass `content` for higher
- * accuracy (enables generated-code detection, barrel detection, etc.).
- *
- * `detectFileRole` is platform-native by design — normal same-OS paths
- * (POSIX on Linux, win32 on Windows) go through the module-default
- * `basename`/`dirname`, unchanged from before. But a WINDOWS-SHAPED path
- * (drive letter or UNC prefix, per `isWindowsPath`) is parsed with
- * `path.win32.basename`/`dirname` regardless of the running OS (refs #1152,
- * the #1150 class): on Linux the module-default `dirname` finds no `/` in a
- * `C:\...` path, collapses to `"."`, and the dir-based branches below
- * (`/tests/`, `/spec/`, …) silently misclassify. On win32 this branch is a
- * no-op — `win32.basename`/`dirname` already equal the module default there
- * — so native Windows classification is unchanged.
- */
 export function detectFileRole(filePath: string, content?: string): FileRole {
   const usesWindowsPathSyntax = isWindowsPath(filePath);
   const base = (
@@ -83,7 +56,6 @@ export function detectFileRole(filePath: string, content?: string): FileRole {
     .replace(/\\/g, "/")
     .toLowerCase();
 
-  // --- Test ---
   if (
     base.includes(".test.") ||
     base.includes(".spec.") ||
@@ -99,13 +71,10 @@ export function detectFileRole(filePath: string, content?: string): FileRole {
   )
     return "test";
 
-  // --- Generated/artifact markers (path/name/header-based) ---
   if (isGeneratedOrArtifact(filePath, { content, includeDeclarations: false })) {
     return "generated";
   }
 
-  // --- Migrations ---
-  // Normalize separators before regex so the pattern works on Windows too
   const forwardDir = dir.replace(/\\/g, "/");
   if (
     forwardDir.includes("/migrations/") ||
@@ -114,7 +83,6 @@ export function detectFileRole(filePath: string, content?: string): FileRole {
   )
     return "migration";
 
-  // --- Config ---
   if (
     base.endsWith(".config.ts") ||
     base.endsWith(".config.js") ||
@@ -132,11 +100,9 @@ export function detectFileRole(filePath: string, content?: string): FileRole {
   )
     return "config";
 
-  // --- Type stubs ---
   if (base.endsWith(".d.ts")) return "stub";
   if (content && isTypeStub(content)) return "stub";
 
-  // --- Init / barrel ---
   const isIndexFile =
     base === "index.ts" ||
     base === "index.tsx" ||

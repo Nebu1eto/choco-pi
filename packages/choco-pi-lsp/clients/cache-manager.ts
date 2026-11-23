@@ -1,14 +1,3 @@
-/**
- * CacheManager for choco-pi-lsp.
- *
- * Manages persistent cache for scanner results and turn state.
- * Provides read/write/freshness checks for:
- * - Scanner cache: .choco-pi-lsp/cache/{scanner}.json
- * - Turn state: .choco-pi-lsp/turn-state.json
- *
- * All paths are relative to project root (process.cwd()).
- */
-
 import { finite, hasErrorCode } from "./runtime-guards.ts";
 import { arr, bool, compile, map, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import { createSubsystemLogger } from "./extension-log.ts";
@@ -19,10 +8,8 @@ import { writeFileAtomic } from "./atomic-write.ts";
 import { readJsonCache } from "./json-cache-read.ts";
 import { normalizeMapKey } from "./path-utils.ts";
 
-// --- Types ---
-
 export interface CacheMeta {
-  timestamp: string; // ISO timestamp
+  timestamp: string;
   scanDurationMs?: number;
   fileCount?: number;
 }
@@ -78,7 +65,7 @@ export interface ModifiedRange {
 export interface TurnFileState {
   modifiedRanges: ModifiedRange[];
   importsChanged: boolean;
-  lastEdit: string; // ISO timestamp
+  lastEdit: string;
 }
 
 export type TurnStateOwnerKind = "pi" | "mcp";
@@ -97,15 +84,11 @@ export interface TurnState {
   turnCycles: number;
   maxCycles: number;
   lastUpdated: string;
-  /** Legacy session id retained for old consumers and persisted snapshots. */
   sessionId?: string;
-  /** Explicit writer identity; unlike sessionId this distinguishes pi/MCP. */
   owner?: TurnStateOwner;
 }
 
-// --- Defaults ---
-
-const DEFAULT_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
+const DEFAULT_MAX_AGE_MS = 30 * 60 * 1000;
 const DEFAULT_TURN_STATE: TurnState = {
   files: {},
   turnCycles: 0,
@@ -115,8 +98,6 @@ const DEFAULT_TURN_STATE: TurnState = {
 
 export const MCP_TURN_STATE_OWNER_ID = `mcp-${process.pid}`;
 const TURN_OWNER_STALE_MS = 30 * 60 * 1000;
-
-// --- Helpers ---
 
 function getLensDir(cwd: string): string {
   return getProjectDataDir(cwd);
@@ -130,8 +111,6 @@ function getTurnStatePath(cwd: string): string {
   return path.join(getLensDir(cwd), "turn-state.json");
 }
 
-// --- Cache Manager ---
-
 export class CacheManager {
   private log: (msg: string) => void;
 
@@ -139,10 +118,6 @@ export class CacheManager {
     this.log = verbose ? createSubsystemLogger("cache") : () => {};
   }
 
-  /**
-   * Convert a file path to a stable turn-state key.
-   * Uses normalized absolute paths first, then stores cwd-relative keys when possible.
-   */
   toTurnStateKey(filePath: string, cwd: string): string {
     const cwdNorm = normalizeMapKey(path.resolve(cwd));
     const fileNorm = normalizeMapKey(path.resolve(cwd, filePath));
@@ -152,20 +127,12 @@ export class CacheManager {
     return rel;
   }
 
-  /**
-   * Get turn-state entry for a file path using normalized lookup.
-   */
   getTurnFileState(filePath: string, cwd: string): TurnFileState | undefined {
     const state = this.readTurnState(cwd);
     const key = this.toTurnStateKey(filePath, cwd);
     return state.files[key];
   }
 
-  // ---- Scanner Cache ----
-
-  /**
-   * Read a scanner cache entry. Returns null if not found or stale.
-   */
   readCache<T>(scanner: string, cwd: string, maxAgeMs = DEFAULT_MAX_AGE_MS): CacheEntry<T> | null {
     const cachePath = path.join(getCacheDir(cwd), `${scanner}.json`);
     const metaPath = path.join(getCacheDir(cwd), `${scanner}.meta.json`);
@@ -196,7 +163,6 @@ export class CacheManager {
       }
 
       // SAFETY: Each scanner key has one owner that writes and reads the same T through this manager;
-      // readJsonCache has already established valid JSON before restoring that owner type.
       const data = readJsonCache<T>(cachePath, (parsed) => parsed as T, onReadError);
       if (data === undefined) return null;
 
@@ -208,9 +174,6 @@ export class CacheManager {
     }
   }
 
-  /**
-   * Write a scanner cache entry.
-   */
   writeCache<T>(scanner: string, data: T, cwd: string, extraMeta?: Partial<CacheMeta>): void {
     const cacheDir = getCacheDir(cwd);
     fs.mkdirSync(cacheDir, { recursive: true });
@@ -232,7 +195,6 @@ export class CacheManager {
     this.log(`Cache written: ${scanner}`);
   }
 
-  /** Inspect a cache without changing the behavior of readCache consumers. */
   inspectCache(scanner: string, cwd: string, maxAgeMs = DEFAULT_MAX_AGE_MS): CacheInspection {
     const cachePath = path.join(getCacheDir(cwd), `${scanner}.json`);
     const metaPath = path.join(getCacheDir(cwd), `${scanner}.meta.json`);
@@ -260,9 +222,6 @@ export class CacheManager {
     }
   }
 
-  /**
-   * Check if a cache entry is fresh (exists and not expired).
-   */
   isCacheFresh(scanner: string, cwd: string, maxAgeMs = DEFAULT_MAX_AGE_MS): boolean {
     const metaPath = path.join(getCacheDir(cwd), `${scanner}.meta.json`);
     if (!fs.existsSync(metaPath)) return false;
@@ -279,9 +238,6 @@ export class CacheManager {
     }
   }
 
-  /**
-   * Clear a specific cache entry.
-   */
   clearCache(scanner: string, cwd: string): void {
     const cachePath = path.join(getCacheDir(cwd), `${scanner}.json`);
     const metaPath = path.join(getCacheDir(cwd), `${scanner}.meta.json`);
@@ -289,7 +245,6 @@ export class CacheManager {
       try {
         fs.unlinkSync(p);
       } catch (err) {
-        // ENOENT: file doesn't exist, other errors logged
         if (!hasErrorCode(err) || err.code !== "ENOENT") {
           this.log(`Failed to delete ${p}: ${err}`);
         }
@@ -297,11 +252,6 @@ export class CacheManager {
     }
   }
 
-  // ---- Turn State ----
-
-  /**
-   * Read turn state. Returns default if not found.
-   */
   readTurnState(cwd: string): TurnState {
     const statePath = getTurnStatePath(cwd);
     if (!fs.existsSync(statePath)) {
@@ -324,9 +274,6 @@ export class CacheManager {
     );
   }
 
-  /**
-   * Write turn state.
-   */
   writeTurnState(state: TurnState, cwd: string): void {
     const lensDir = getLensDir(cwd);
     fs.mkdirSync(lensDir, { recursive: true });
@@ -336,13 +283,10 @@ export class CacheManager {
     writeFileAtomic(statePath, JSON.stringify(state, null, 2));
   }
 
-  /** Return whether a writer may read/write this workspace worklist. */
   getTurnStateAccess(cwd: string, owner: Pick<TurnStateOwner, "kind" | "id">): TurnStateAccess {
     const state = this.readTurnState(cwd);
     if (!state.owner) {
       if (!state.sessionId || state.sessionId === owner.id) return "owned";
-      // Pre-owner files have no liveness information. Preserve the existing
-      // stale-session eviction behavior for this legacy shape.
       return "available";
     }
     if (state.owner.kind === owner.kind && state.owner.id === owner.id) {
@@ -364,12 +308,6 @@ export class CacheManager {
     return !Number.isFinite(lastSeen) || Date.now() - lastSeen > TURN_OWNER_STALE_MS;
   }
 
-  /**
-   * Add or update a file's modified ranges in turn state.
-   * Merges overlapping ranges. `sessionId:null` deliberately preserves the
-   * current owner; callers must provide an explicit owner id to claim a stale
-   * worklist.
-   */
   addModifiedRange(
     filePath: string,
     range: ModifiedRange,
@@ -394,7 +332,6 @@ export class CacheManager {
 
     const existing = state.files[normalizedPath];
     if (existing) {
-      // Merge ranges
       existing.modifiedRanges = this.mergeRanges([...existing.modifiedRanges, range]);
       existing.importsChanged = existing.importsChanged || importsChanged;
       existing.lastEdit = new Date().toISOString();
@@ -410,25 +347,19 @@ export class CacheManager {
     return state;
   }
 
-  /**
-   * Clear turn state (after turn_end processes it).
-   */
   clearTurnState(cwd: string, owner: Pick<TurnStateOwner, "kind" | "id">): boolean {
     const currentState = this.readTurnState(cwd);
     const isCurrentOwner = this.getTurnStateAccess(cwd, owner) !== "foreign-live";
     if (!isCurrentOwner && process.pid !== currentState.owner?.pid) return false;
     const state: TurnState = {
       ...DEFAULT_TURN_STATE,
-      files: {}, // fresh object — DEFAULT_TURN_STATE.files can be polluted by addModifiedRange
+      files: {},
       lastUpdated: new Date().toISOString(),
     };
     this.writeTurnState(state, cwd);
     return true;
   }
 
-  /**
-   * Increment turn cycle counter.
-   */
   incrementTurnCycle(cwd: string, owner: Pick<TurnStateOwner, "kind" | "id">): TurnState {
     const state = this.readTurnState(cwd);
     const isCurrentOwner = this.getTurnStateAccess(cwd, owner) !== "foreign-live";
@@ -438,18 +369,11 @@ export class CacheManager {
     return state;
   }
 
-  /**
-   * Check if max cycles exceeded.
-   */
   isMaxCyclesExceeded(cwd: string): boolean {
     const state = this.readTurnState(cwd);
     return state.turnCycles >= state.maxCycles;
   }
 
-  /**
-   * Get files that need jscpd re-scan (any edit).
-   * Only returns source code files jscpd can meaningfully analyse.
-   */
   getFilesForJscpd(cwd: string): string[] {
     const state = this.readTurnState(cwd);
     return Object.keys(state.files).filter((f) =>
@@ -457,9 +381,6 @@ export class CacheManager {
     );
   }
 
-  /**
-   * Get files that need madge re-scan (imports changed).
-   */
   getFilesForMadge(cwd: string): string[] {
     const state = this.readTurnState(cwd);
     return Object.entries(state.files)
@@ -467,11 +388,6 @@ export class CacheManager {
       .map(([p]) => p);
   }
 
-  // ---- Utilities ----
-
-  /**
-   * Merge overlapping or adjacent ranges.
-   */
   mergeRanges(ranges: ModifiedRange[]): ModifiedRange[] {
     if (ranges.length === 0) return [];
 
@@ -490,9 +406,6 @@ export class CacheManager {
     return merged;
   }
 
-  /**
-   * Check if a line falls within any modified range.
-   */
   isLineInModifiedRange(line: number, ranges: ModifiedRange[]): boolean {
     return ranges.some((r) => r.start <= line && line <= r.end);
   }

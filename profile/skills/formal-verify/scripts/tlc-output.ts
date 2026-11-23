@@ -1,20 +1,5 @@
-// Parsers for TLC's `-tool` message output.
-//
 // Ported from pstack's `statechart` skill by Lauren Tan, MIT licence
 // (Copyright (c) 2026 Lauren Tan; full text in ../THIRD_PARTY.md). Sources:
-// - readMessages, textOf, messageState: skills/statechart/scripts/frontends/messages.ts
-// - parseState: skills/statechart/scripts/frontends/dot.ts
-// - readBreak: skills/statechart/scripts/frontends/verdict.ts
-// - readTrace: skills/statechart/scripts/frontends/trace.ts
-// - parseValue and its tokenizer: skills/statechart/scripts/frontends/value.ts
-// - message codes and the Value type: skills/statechart/scripts/ir.ts
-//
-// Changes from the original: lines and messages are a tagged union instead of
-// `string | Message`; input is one string instead of a synchronous file-descriptor
-// generator; an unterminated message is reported instead of returned as a
-// partial result; trace steps keep TLC's state numbers and a raw fallback for
-// values the parser cannot read; run statistics and the TLC version are read
-// here as well.
 
 export type TlaValue =
   | boolean
@@ -30,7 +15,6 @@ export type TlaValue =
       values: TlaValue[];
     };
 
-/** A state variable's value: structured when the parser can read it, else TLC's text. */
 export type StateValue = TlaValue | { kind: "raw"; text: string };
 
 export type TlcState = Record<string, StateValue>;
@@ -62,7 +46,6 @@ export const EC = {
 
 export const LEVEL = { NONE: 0, ERROR: 1, TLCBUG: 2, WARNING: 3, STATE: 4 } as const;
 
-/** Error-level codes that belong to a reported violation rather than a failure of the run. */
 const VIOLATION_CODES: ReadonlySet<number> = new Set([
   EC.TLC_INVARIANT_VIOLATED_INITIAL,
   EC.TLC_PROPERTY_VIOLATED_INITIAL,
@@ -74,9 +57,6 @@ const VIOLATION_CODES: ReadonlySet<number> = new Set([
   EC.TLC_COUNTER_EXAMPLE,
 ]);
 
-// ---------------------------------------------------------------------------
-// Messages (messages.ts)
-
 const START = /@!@!@STARTMSG (\d+):(\d+) @!@!@$/;
 const END = /^@!@!@ENDMSG (\d+) @!@!@$/;
 const MARKER = /@!@!@/;
@@ -84,19 +64,9 @@ const MAX_LEVEL = 4;
 
 export type TlcMessages = {
   parts: TlcPart[];
-  /**
-   * Why the framing is invalid, or undefined when it is valid. Valid framing is a flat
-   * sequence: each STARTMSG is closed by an ENDMSG with the same code before the next
-   * STARTMSG, levels are 0-4, and no other line contains a marker. Output that ends
-   * inside a message is malformed too, since the run's output was cut.
-   */
   malformed: string | undefined;
 };
 
-/**
- * Splits TLC's `-tool` output into lines and messages. Parsing stops at the first
- * framing error, so a caller can never act on messages read past a malformed one.
- */
 export function readMessages(output: string): TlcMessages {
   const parts: TlcPart[] = [];
   let open: TlcMessage | undefined;
@@ -144,9 +114,6 @@ export function textOf(message: TlcMessage): string {
 export function* messagesIn(parts: Iterable<TlcPart>): Generator<TlcMessage> {
   for (const part of parts) if (part.kind === "message") yield part;
 }
-
-// ---------------------------------------------------------------------------
-// TLA+ values (value.ts)
 
 const BRACKET = new Int8Array(128);
 for (const c of "<{[(") BRACKET[c.charCodeAt(0)] = 1;
@@ -207,7 +174,6 @@ const UNESCAPED = new Map([
   ["f", "\f"],
 ]);
 
-/** Parses one TLA+ value as TLC prints it. Throws on anything it does not recognise. */
 export function parseValue(text: string): TlaValue {
   const tokens: string[] = [];
   const starts: number[] = [];
@@ -315,16 +281,8 @@ export function parseValue(text: string): TlaValue {
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// States (dot.ts parseState, messages.ts messageState)
-
 const STATE_LINE = /^(\w+)\s*=\s*([\s\S]*)$/;
 
-/**
- * Parses a state printed as `/\ x = 1\n/\ y = 2` (or `x = 1` for one variable).
- * Throws when the text is not a list of `name = value` pairs; a value the
- * value parser cannot read is kept as raw text.
- */
 export function parseState(text: string) {
   const entries: [string, StateValue][] = [];
   const seen = new Set<string>();
@@ -345,11 +303,9 @@ export function parseState(text: string) {
     }
     entries.push([name, value]);
   }
-  // fromEntries defines own data properties, so a variable named __proto__ stays data.
   return Object.fromEntries(entries);
 }
 
-/** The state that follows a message's first line, up to the first blank line. */
 export function messageState(message: TlcMessage): TlcState {
   const lines = textOf(message).split("\n");
   const body: string[] = [];
@@ -361,9 +317,6 @@ export function messageState(message: TlcMessage): TlcState {
   if (body.length === 0) throw new Error(`TLC message ${message.code} has no state`);
   return parseState(body.join("\n"));
 }
-
-// ---------------------------------------------------------------------------
-// Verdicts (verdict.ts)
 
 export type TlcBreak =
   | { kind: "deadlock" }
@@ -380,10 +333,6 @@ const NAMED = new Map<number, ["invariant" | "property", RegExp]>([
   ],
 ]);
 
-/**
- * The violation TLC reports, or undefined. Throws when a violation message does not
- * name its rule, or when a run reports more than one violation (TLC stops at the first).
- */
 export function readBreak(parts: Iterable<TlcPart>): TlcBreak | undefined {
   let found: TlcBreak | undefined;
   for (const m of messagesIn(parts)) {
@@ -447,10 +396,6 @@ function countOf(parts: Iterable<TlcPart>, code: number): number {
   return n;
 }
 
-/**
- * Why a run's output does not end the way TLC ends a run, or undefined: exactly one
- * "Finished" message (2186), and nothing but blank lines after it.
- */
 export function endingProblem(parts: readonly TlcPart[]): string | undefined {
   const finished = countOf(parts, EC.TLC_FINISHED);
   if (finished !== 1) return `TLC reported finishing ${finished} times`;
@@ -472,13 +417,6 @@ const TRACE_CODES: ReadonlySet<number> = new Set([
   EC.TLC_BACK_TO_STATE,
 ]);
 
-/**
- * Why the output is not positive evidence of a complete, error-free run, or undefined.
- * A complete run has well-formed framing (the caller checks readMessages first), one
- * success message (2193) before one Finished message (2186) that ends the output, one
- * readable statistics message (2199), at most one readable depth message (2194), and
- * no error, violation or counterexample message.
- */
 export function completeRunProblem(parts: readonly TlcPart[]): string | undefined {
   const ending = endingProblem(parts);
   if (ending) return ending;
@@ -506,12 +444,10 @@ export function completeRunProblem(parts: readonly TlcPart[]): string | undefine
 
 const JVM_NOTICE = /^Picked up (?:JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|JDK_JAVA_OPTIONS): /;
 
-/** Stderr lines other than the JVM's option notices; TLC itself writes nothing there. */
 export function unexpectedStderr(stderr: string): string[] {
   return stderr.split(/\r?\n/).filter((line) => line.trim() && !JVM_NOTICE.test(line));
 }
 
-/** Error and TLC-bug level messages that are not part of a violation report. */
 export function readFailures(parts: Iterable<TlcPart>): string[] {
   const failures: string[] = [];
   for (const m of messagesIn(parts))
@@ -527,26 +463,20 @@ export function readWarnings(parts: Iterable<TlcPart>): { code: number; text: st
   return warnings;
 }
 
-// ---------------------------------------------------------------------------
-// Traces (trace.ts)
-
 export type TraceStep = { index: number; action: string; state: TlcState };
 
-/** How a liveness counterexample repeats: it stutters forever, or `action` leads back to state `toIndex`. */
 export type TraceLoop = { kind: "stuttering" } | { kind: "back"; toIndex: number; action: string };
 
 export type TlcTrace = { steps: TraceStep[]; loop: TraceLoop | undefined };
 
 const STEP_HEADER = /^(\d+): <(.*)>\s*$/;
 
-/** The action name of a step header such as `2: <Inc line 7, col 8 to ... of module M>`. */
 function actionName(label: string): string {
   if (label === "Initial predicate") return label;
   const name = /^(\S+?)(?: line \d+, col \d+ to line \d+, col \d+ of module \S+)?$/.exec(label);
   return name?.[1] ?? label;
 }
 
-/** Reads the counterexample in a run's messages. Throws on a step it cannot place. */
 export function readTrace(parts: Iterable<TlcPart>): TlcTrace {
   const steps: TraceStep[] = [];
   const checked = (loop: TraceLoop | undefined): TlcTrace => {

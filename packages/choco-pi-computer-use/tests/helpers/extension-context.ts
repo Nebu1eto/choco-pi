@@ -10,23 +10,12 @@ import {
 
 type ExtensionMode = ExtensionContext["mode"];
 
-/** Optional host UI for tests: a `select` stub bound through the runner, and the host mode. */
 export interface TestUiOptions {
   select?: ExtensionUIContext["select"];
   notify?: ExtensionUIContext["notify"];
   mode?: ExtensionMode;
 }
 
-/**
- * A complete, host-built `ExtensionContext` for bridge tests.
- *
- * The host's own `ExtensionRunner.createContext()` supplies every member, so
- * the fixture satisfies the real type without a cast. Nothing touches user
- * state: credentials are an empty in-memory store, no models file is read,
- * the model catalog is not refreshed, and the session is in memory. With no
- * `ui` option, no UI context is bound and `hasUI` is false; with one, the
- * runner's no-op UI is extended with the given stubs and `hasUI` is true.
- */
 export async function createTestExtensionContext(
   cwd: string,
   ui?: TestUiOptions,

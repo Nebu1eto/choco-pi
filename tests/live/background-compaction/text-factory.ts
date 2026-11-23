@@ -15,7 +15,6 @@ export interface SummaryOwner {
   ownerGeneration: number;
 }
 export const summaryOwner = new AsyncLocalStorage<SummaryOwner>();
-/** Inject ownership/observation around the production summarizer, not a prepared result. */
 export function installTextFakeFactory(
   recorder: Recorder,
   modelRegistry: ModelRegistry,
@@ -35,7 +34,6 @@ export function installTextFakeFactory(
 type BackendFactoryContext = Parameters<Parameters<typeof registerBackendFactory>[1]>[0];
 type ModelSummarizer = ReturnType<typeof createModelSummarizer>;
 
-/** The production text backend over the production summarizer, run under its owner. */
 function observedTextBackend(
   recorder: Recorder,
   modelRegistry: ModelRegistry,
@@ -65,7 +63,6 @@ function observedTextBackend(
   });
 }
 
-/** Runs each summary inside `summaryOwner` so the provider can attribute it. */
 function ownedSummarizer(delegate: ModelSummarizer, owner: SummaryOwner): ModelSummarizer {
   return {
     scope: delegate.scope,

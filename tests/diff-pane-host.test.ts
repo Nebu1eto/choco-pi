@@ -39,7 +39,6 @@ class Lines implements Component {
   invalidate(): void {}
 }
 
-/** The fullscreen layout Pi 1.6.0 builds in modes/interactive/chat-viewport.js. */
 function chatViewport() {
   const transcript = new ScrollView(new Container(), {
     follow: "end",
@@ -58,7 +57,6 @@ function chatViewport() {
   return { root, transcript, dock };
 }
 
-/** Copy of a stack's internal entries, read the same way production does. */
 function entriesOf(stack: Component): StackEntry[] {
   const raw: RuntimeValue = "entries" in stack ? stack.entries : undefined;
   assert.ok(Array.isArray(raw));
@@ -322,7 +320,6 @@ test("dock mouse: a press on a line starts a selection that drags extend by scre
   assert.ok(scroll instanceof ScrollView);
   const body = scroll.children[0];
   assert.ok(body?.handleMouse);
-  // Thirty body rows in a ten-row viewport scrolled to row 5, which is on screen row 3.
   scroll.updateLayout(30, 10, () => {});
   scroll.scrollTo(5);
   const at = (type: TuiMouseEvent["type"], screenY: number): TuiMouseEvent => ({
@@ -348,8 +345,6 @@ test("dock mouse: a press on a line starts a selection that drags extend by scre
     render: true,
   });
   assert.equal(host.isFocused(), true, "selecting focuses the pane");
-  // The selection scrolled the body under the held button. pi-tui keeps the origin of
-  // the press for captured events, so their `y` is stale; the screen row is not.
   scroll.scrollTo(7);
   body.handleMouse({ ...at("drag", 6), y: 0 });
   body.handleMouse({ ...at("drag", 39), y: 0 });
@@ -375,7 +370,6 @@ test("dock mouse: a press beside the pane returns focus; a click on its empty sp
   host.install();
   const row = root.children[0];
   assert.ok(row instanceof HStack);
-  // The border is on column 79 of 120: the transcript is left of it.
   const at = (type: TuiMouseEvent["type"], x: number): TuiMouseEvent => ({
     ...mouse(type, x),
     x,
@@ -455,7 +449,6 @@ test("overlay host is right-anchored, non-capturing, sized by getters, and hidde
   overlay.component.handleMouse?.(mouse("drag", 59));
   assert.deepEqual(resizes, [60]);
   overlay.component.handleMouse?.(mouse("release", 59));
-  // A press anywhere else in the pane is taken, so Pi selects and copies nothing there.
   for (const y of [0, 20]) {
     assert.deepEqual(overlay.component.handleMouse?.({ ...mouse("press", 80), x: 10, y }), {
       handled: true,

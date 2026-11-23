@@ -1,13 +1,3 @@
-/**
- * Cross-file call graph — Sections 1, 2 & 3 of issue #154.
- *
- * Builds a bidirectional function-level call graph by resolving symbol
- * references across files. Provides BFS impact analysis with severity tiers.
- * Uses the Symbol/SymbolRef data produced by TreeSitterSymbolExtractor and
- * persists the result under the canonical review-graph identity; freshness is
- * owned exclusively by the review-graph snapshot.
- */
-
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -23,16 +13,12 @@ import { parseSymbolKey as parseCanonicalSymbolKey } from "./review-graph/symbol
 import { normalizeMapKey, toProjectRelativePath } from "./path-utils.ts";
 import type { Symbol, SymbolRef, SymbolResolution } from "./symbol-types.ts";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-/** Unique key for a symbol: `normalizedFilePath:symbolName` */
 export type SymbolKey = string;
 
 export type CallGraphResolution = SymbolResolution;
 export type CallGraphEvidenceKind = "calls" | "references" | "mixed";
 
 export interface CallGraphEvidenceCoverage {
-  /** Number of raw evidence records, including records folded into duplicates. */
   totalEvidence: number;
   callsEvidence: number;
   referencesEvidence: number;
@@ -41,19 +27,14 @@ export interface CallGraphEvidenceCoverage {
   unresolvedEvidence: number;
   typeOnlyEvidence: number;
   unsupportedEvidence: number;
-  /** Resolved same-file evidence intentionally omitted from this cross-file projection. */
   sameFileEvidence: number;
-  /** Raw evidence records beyond the first for each logical caller→callee edge. */
   duplicateEvidence: number;
-  /** False for capped/in-progress graphs or incomplete extractor queries. */
   complete: boolean;
-  /** Per-language evidence/query coverage, when supplied by the graph adapter. */
   languages?: Record<string, "complete" | "partial" | "unavailable">;
 }
 
 export interface ResolvedCallEdge {
   callerFile: string;
-  /** Name of the enclosing function/method in the caller file, if found. */
   callerSymbol?: string;
   callerKey: SymbolKey;
   callerKind?: string;
@@ -65,34 +46,22 @@ export interface ResolvedCallEdge {
   calleeKind?: string;
   calleeLine?: number;
   calleeColumn?: number;
-  /** Evidence source; `mixed` means duplicate logical evidence from both paths. */
   evidenceKind?: CallGraphEvidenceKind;
   resolution?: CallGraphResolution;
-  /** Number of raw evidence records folded into this deduplicated adjacency edge. */
   evidenceCount?: number;
-  /**
-   * 1.0 / candidateCount — discounts edges where the callee name is
-   * ambiguous (multiple defs with the same name in the project).
-   */
   weight: number;
 }
 
 export interface FunctionCallGraph {
-  /** caller symbolKey → Set of callee symbolKeys */
   callees: Map<SymbolKey, Set<SymbolKey>>;
-  /** callee symbolKey → Set of caller symbolKeys */
   callers: Map<SymbolKey, Set<SymbolKey>>;
-  /** Resolved logical edges; duplicate evidence is represented by evidenceCount. */
   edges: ResolvedCallEdge[];
-  /** Weighted in-degree for ranking (higher = more-called, more central) */
   inDegree: Map<SymbolKey, number>;
   unresolvedRefs: number;
   totalRefs: number;
   coverage?: CallGraphEvidenceCoverage;
   builtAt: string;
 }
-
-// ── Serialisable form for disk persistence ────────────────────────────────────
 
 export interface CallGraphCacheIdentity {
   reviewGraphVersion: string;
@@ -102,32 +71,24 @@ export interface CallGraphCacheIdentity {
 interface PersistedCallGraph {
   version: typeof CALL_GRAPH_CACHE_VERSION;
   builtAt: string;
-  /** The canonical review graph this projection was derived from. */
   reviewGraphVersion?: string;
   reviewGraphSignature?: string;
   edges: ResolvedCallEdge[];
   callees: [SymbolKey, SymbolKey[]][];
   callers: [SymbolKey, SymbolKey[]][];
   inDegree: [SymbolKey, number][];
-  /** Added after the first cache format; optional for legacy snapshots. */
   totalRefs?: number;
   unresolvedRefs?: number;
   coverage?: CallGraphEvidenceCoverage;
 }
 
-/** Persisted call-graph cache format version. Bump on breaking format changes. */
 export const CALL_GRAPH_CACHE_VERSION = 5;
-
-// ── Section 3: BFS impact analysis ───────────────────────────────────────────
 
 export type ImpactSeverity = "WillBreak" | "MayBreak" | "Review";
 
 export interface ImpactResult {
-  /** The affected symbol key. */
   symbolKey: SymbolKey;
-  /** BFS depth from the changed symbol (1 = direct caller). */
   depth: number;
-  /** Severity tier based on depth. */
   severity: ImpactSeverity;
 }
 
@@ -137,19 +98,6 @@ function severityForDepth(depth: number): ImpactSeverity {
   return "Review";
 }
 
-/**
- * BFS upstream through the callers map from `startKey`.
- *
- * Returns all symbols that would be affected if `startKey` changes,
- * classified by severity:
- *   depth 1 → WillBreak (direct callers)
- *   depth 2 → MayBreak  (callers of callers)
- *   depth 3+ → Review   (transitive)
- *
- * @param maxDepth  Limit traversal depth (default 3 — Review tier cutoff).
- * @param minWeight Only follow edges with weight ≥ this threshold (default 0.1).
- *                  Filters out highly ambiguous name resolutions.
- */
 export function impact(
   graph: FunctionCallGraph,
   startKey: SymbolKey,
@@ -160,7 +108,6 @@ export function impact(
   const visited = new Set<SymbolKey>([startKey]);
   const queue: Array<{ key: SymbolKey; depth: number }> = [{ key: startKey, depth: 0 }];
 
-  // Build a weight lookup from edges for filtering
   const edgeWeightMap = new Map<string, number>();
   for (const edge of graph.edges) {
     const edgeKey = `${edge.calleeKey}→${edge.callerKey}`;
@@ -178,7 +125,6 @@ export function impact(
     for (const callerKey of directCallers) {
       if (visited.has(callerKey)) continue;
 
-      // Check edge weight — skip highly ambiguous resolutions
       const edgeKey = `${item.key}→${callerKey}`;
       const weight = edgeWeightMap.get(edgeKey) ?? 1.0;
       if (weight < minWeight) continue;
@@ -190,20 +136,9 @@ export function impact(
     }
   }
 
-  // Sort by depth then symbolKey for stable output
   return results.sort((a, b) => a.depth - b.depth || a.symbolKey.localeCompare(b.symbolKey));
 }
 
-/**
- * Splits a `SymbolKey` into its file and symbol-name parts. Two shapes exist
- * (see `buildCallGraph` above): the normal `"filePath:symbolName"` form, and
- * the file-level fallback `"file:filePath"` used when no enclosing symbol was
- * found for a call site (module-level code). Splitting at the LAST colon
- * (rather than a naive `split(":")`) means a Windows drive letter in
- * `filePath` (`C:\...`) is never mistaken for the name/file separator; the
- * `"file:"` fallback is matched as a literal prefix first so it isn't
- * misparsed by the same last-colon rule.
- */
 export function parseSymbolKey(
   key: SymbolKey,
   knownFilePath?: string,
@@ -216,10 +151,6 @@ export function parseSymbolKey(
   return parseCanonicalSymbolKey(key, knownFilePath);
 }
 
-/**
- * Format an impact result set as a compact human-readable summary.
- * Example: "handleToolResult (WillBreak) → handleAgentEnd (MayBreak) → 3 Review callers"
- */
 export function formatImpact(results: ImpactResult[], projectRoot: string): string {
   if (results.length === 0) return "";
 
@@ -259,14 +190,7 @@ export function formatImpact(results: ImpactResult[], projectRoot: string): stri
   return parts.join(" → ");
 }
 
-// ── Stdlib / builtin noise filter ─────────────────────────────────────────────
-
-/**
- * Common stdlib / builtin names that appear in call sites but never resolve
- * to project-defined symbols. Filtering them cuts noise significantly.
- */
 const STDLIB_NAMES = new Set([
-  // JS/TS
   "console",
   "Math",
   "Object",
@@ -299,7 +223,6 @@ const STDLIB_NAMES = new Set([
   "Buffer",
   "process",
   "require",
-  // Python
   "print",
   "len",
   "range",
@@ -323,7 +246,6 @@ const STDLIB_NAMES = new Set([
   "filter",
   "sorted",
   "reversed",
-  // Go
   "fmt",
   "log",
   "os",
@@ -338,7 +260,6 @@ const STDLIB_NAMES = new Set([
   "panic",
   "recover",
   "new",
-  // Rust
   "eprintln",
   "eprint",
   "vec",
@@ -353,13 +274,11 @@ const STDLIB_NAMES = new Set([
   "HashMap",
   "HashSet",
   "format",
-  // Java/Kotlin
   "System",
   "toString",
   "equals",
   "hashCode",
   "Objects",
-  // Generic
   "this",
   "self",
   "nil",
@@ -369,13 +288,6 @@ const STDLIB_NAMES = new Set([
   "false",
 ]);
 
-// ── Core resolution ────────────────────────────────────────────────────────────
-
-/**
- * Build def index: symbol name → list of SymbolKeys that define it.
- * Exported symbols and all symbols are indexed; the ambiguity weight
- * discounts edges when many files define the same name.
- */
 function buildDefIndex(allSymbols: Map<string, Symbol[]>) {
   const byName = new Map<string, SymbolKey[]>();
   const byId = new Map<SymbolKey, Symbol>();
@@ -392,13 +304,6 @@ function buildDefIndex(allSymbols: Map<string, Symbol[]>) {
   return { byName, byId };
 }
 
-/**
- * Find the enclosing function/method for a ref at `refLine`. A symbol with
- * an end line is eligible only while the reference is inside its inclusive
- * source range; symbols without an end line retain the conservative start-line
- * fallback. Returns undefined when no symbol encloses the reference so callers
- * can use the file-level module key.
- */
 function findEnclosingSymbol(symbols: Symbol[], refLine: number): Symbol | undefined {
   let best: Symbol | undefined;
   for (const sym of symbols) {
@@ -413,26 +318,11 @@ function findEnclosingSymbol(symbols: Symbol[], refLine: number): Symbol | undef
   return best;
 }
 
-/**
- * Build the function-level call graph from normalized review-graph evidence.
- *
- * The adapter supplies canonical target ids for graph evidence. Such evidence
- * is accepted only when it points at a concrete symbol and has a non-ambiguous
- * resolution. The old name-only path remains for legacy SymbolRef callers, but
- * it is deliberately not used by the review-graph adapter (#1070).
- */
 export function buildCallGraph(
-  /** Keys are normalizeMapKey-canonical file paths; Symbol.filePath values retain their display spelling. */
   allSymbols: Map<string, Symbol[]>,
-  /** Keys are normalizeMapKey-canonical caller file paths; SymbolRef.filePath retains its display spelling. */
   allRefs: Map<string, SymbolRef[]>,
   inputCoverage?: CallGraphEvidenceCoverage,
 ): FunctionCallGraph {
-  // Keep the lookup index canonical even for legacy direct callers that still
-  // construct these maps from display paths; persisted/review-graph callers
-  // already satisfy the canonical-key contract documented above. A caller that
-  // supplies TWO raw spellings of the same file gets last-writer-wins here —
-  // raw compatibility is best-effort tolerance, not a merge contract.
   const canonicalSymbols = new Map<string, Symbol[]>();
   for (const [filePath, symbols] of allSymbols)
     canonicalSymbols.set(normalizeMapKey(filePath), symbols);
@@ -466,8 +356,6 @@ export function buildCallGraph(
     for (const ref of refs) {
       totalRefs++;
       if (!hasInputCoverage) {
-        // Legacy callers do not carry an evidenceKind, but each ref is still
-        // raw call-graph evidence and must contribute to coverage totals.
         coverage.totalEvidence++;
         if (ref.evidenceKind === "references" || ref.referenceKind === "type")
           coverage.referencesEvidence++;
@@ -488,8 +376,6 @@ export function buildCallGraph(
         candidateCount: number;
       }> = [];
       if (ref.targetId) {
-        // Canonical graph identity is authoritative. Never recover a name by
-        // splitting an id: symbol ids contain kind and line components.
         const callee = defIndex.byId.get(ref.targetId);
         if (!callee || ref.resolution === "name-only" || ref.resolution === "unresolved") {
           if (!hasInputCoverage) {
@@ -504,10 +390,6 @@ export function buildCallGraph(
           candidateCount: 1,
         });
       } else {
-        // Compatibility for pre-#1070 callers that supplied only name refs.
-        // There is no typed/import evidence to select one definition, so retain
-        // every cross-file candidate and discount each edge. Picking [0] made
-        // graph iteration order decide which caller was reported.
         const refName = ref.symbolName ?? parseSymbolKey(ref.symbolId, callerFile).symbolName ?? "";
         if (STDLIB_NAMES.has(refName) || !refName) {
           if (!hasInputCoverage) coverage.unsupportedEvidence++;
@@ -551,11 +433,6 @@ export function buildCallGraph(
       let duplicateRef = false;
       for (const { callee, resolution, candidateCount } of candidates) {
         if (normalizeMapKey(callee.filePath) === callerFileKey) {
-          // This projection is intentionally cross-file-only. A canonical
-          // same-file target is resolved by the source graph, but is represented
-          // by an explicit coverage category rather than as unsupported evidence.
-          // That keeps the projection contract while allowing complete coverage
-          // to gate user-facing cross-file impact honestly.
           coverage.sameFileEvidence++;
           if (hasInputCoverage) {
             coverage.eligibleEvidence--;
@@ -570,9 +447,6 @@ export function buildCallGraph(
           existing.evidenceCount = (existing.evidenceCount ?? 1) + 1;
           existing.evidenceKind =
             existing.evidenceKind === ref.evidenceKind ? existing.evidenceKind : "mixed";
-          // Duplicate evidence is a property of the logical pair, not of
-          // whether the producer happened to tag the record. Keep the edge,
-          // coverage, and centrality views consistent for legacy refs too.
           duplicateRef = true;
           continue;
         }
@@ -607,10 +481,6 @@ export function buildCallGraph(
         inDegree.set(callee.id, (inDegree.get(callee.id) ?? 0) + weight);
       }
       if (!hasInputCoverage && producedEdge) {
-        // Legacy name-only ambiguity can fan one raw record out to several
-        // weighted edges. Coverage remains a count of raw records, so account
-        // for eligibility and duplicates once per reference, not once per
-        // candidate edge.
         coverage.eligibleEvidence++;
         coverage.resolvedEvidence++;
         if (duplicateRef) coverage.duplicateEvidence++;
@@ -619,9 +489,6 @@ export function buildCallGraph(
     }
   }
 
-  // With adapter-supplied coverage, totalRefs is the raw evidence count. Some
-  // raw records (for example an external node with no caller file) cannot be
-  // represented in allRefs, but they must not disappear from accounting.
   if (hasInputCoverage) totalRefs = coverage.totalEvidence;
   const languagesKnownComplete = Object.values(coverage.languages ?? {}).every(
     (status) => status === "complete",
@@ -645,8 +512,6 @@ export function buildCallGraph(
   };
 }
 
-// ── Persistence ────────────────────────────────────────────────────────────────
-
 function cacheFilePath(cwd: string): string {
   return path.join(getProjectDataDir(cwd), "cache", "call-graph.json");
 }
@@ -655,11 +520,6 @@ function metaFilePath(cwd: string): string {
   return path.join(getProjectDataDir(cwd), "cache", "call-graph.meta.json");
 }
 
-/**
- * Persist a call-graph projection. Current callers pass the canonical
- * review-graph identity. There is deliberately no independent file/mtime
- * freshness argument: callers must use the review graph's canonical identity.
- */
 export function saveCallGraph(
   cwd: string,
   graph: FunctionCallGraph,
@@ -687,9 +547,7 @@ export function saveCallGraph(
       metaFile,
       JSON.stringify({ savedAt: new Date().toISOString(), edgeCount: graph.edges.length }),
     );
-  } catch {
-    // Non-fatal — next session rebuilds from scratch.
-  }
+  } catch {}
 }
 
 function inferLegacyCoverage(edges: ResolvedCallEdge[]): CallGraphEvidenceCoverage {
@@ -721,8 +579,6 @@ function inferLegacyCoverage(edges: ResolvedCallEdge[]): CallGraphEvidenceCovera
     unsupportedEvidence: 0,
     sameFileEvidence: 0,
     duplicateEvidence,
-    // A legacy graph can still be queried, but it cannot prove that the old
-    // extractor covered every source/reference kind.
     complete: false,
   };
 }
@@ -866,9 +722,6 @@ function validatePersistedCallGraph(
     const pair = `${edge.callerKey}\u0000${edge.calleeKey}`;
     if (pairKeys.has(pair)) return false;
     pairKeys.add(pair);
-    // Ambiguous legacy name-only evidence may fan one raw record out to
-    // multiple weighted edges. Weight the persisted evidence back to raw
-    // records so semantic validation agrees with coverage accounting.
     weightedEdgeEvidence += evidenceCount * edge.weight;
     weightedDuplicateEvidence += (evidenceCount - 1) * edge.weight;
     const callees = expectedCallees.get(edge.callerKey) ?? new Set<string>();
@@ -957,10 +810,6 @@ function validatePersistedCallGraph(
   return true;
 }
 
-/**
- * Load the persisted call graph from disk.
- * Returns undefined if the cache is missing, version-mismatched, or corrupt.
- */
 export function loadCallGraph(
   cwd: string,
   expectedIdentity?: CallGraphCacheIdentity,

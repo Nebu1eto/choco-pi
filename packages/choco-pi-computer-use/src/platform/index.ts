@@ -17,19 +17,12 @@ import type {
 import { linuxBackend } from "./linux/backend.ts";
 import { windowsBackend } from "./windows/backend.ts";
 
-/** Upper bound on the ownership release so session teardown never stalls on the helper. */
 const MACOS_RELEASE_TIMEOUT_MS = 2_500;
 
-/**
- * Releases protocol-7 helper ownership during session teardown. Best effort:
- * lease expiry and generation takeover cover any failure, so it never throws.
- */
 async function shutdownMacos(): Promise<void> {
   try {
     await releaseMacosOwnership(AbortSignal.timeout(MACOS_RELEASE_TIMEOUT_MS));
-  } catch {
-    // Release is advisory; teardown must proceed regardless.
-  }
+  } catch {}
 }
 
 const macosPlatformBackend: ComputerUsePlatformBackend = {
@@ -191,7 +184,6 @@ export function managedBrowserExecutableCandidates(browser: ManagedBrowserKind):
   );
 }
 
-/** Test-only backend substitution for exercising bridge state transitions without native UI access. */
 export function replacePlatformBackendForTest(backend: ComputerUsePlatformBackend): () => void {
   const previous = activePlatformBackend;
   activePlatformBackend = backend;

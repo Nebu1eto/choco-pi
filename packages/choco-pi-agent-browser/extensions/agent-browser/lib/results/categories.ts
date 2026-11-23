@@ -51,21 +51,14 @@ export function classifyAgentBrowserFailureCategory(options: {
     .join("\n");
   const command = options.command ?? "";
   const usedRef = options.args?.some((arg) => /^@e\d+\b/.test(arg)) ?? false;
-  // Explicit confirmation flag wins. Text-derived confirmation phrases come after locator-miss detection so a
-  // missed control named "Confirmation required" still gets selector recovery.
   if (options.confirmationRequired) return "confirmation-required";
-  // Canonical upstream prefix first: lastUrl can contain aborted / policy-blocked / about:blank.
   if (/\btab_gone:/i.test(text)) return "tab-gone";
-  // Upstream 0.32.4+ locator misses keep detail and may echo getByRole/getByText or Names seen lists.
-  // Evaluate before text-derived timeout/confirmation so accessible-name substrings cannot suppress recovery.
   const isUpstreamLocatorMiss =
     /\bNo element found:\s*(?:getBy[A-Za-z]+|role=|text=|label=|placeholder=|alt=|title=|testid=)/i.test(
       text,
     ) ||
-    // No trailing \b after ":" — colon is non-word, so "Element not found: text=…" would not match.
     (/\bElement not found:/i.test(text) && /\bVerify the selector, role, or name\b/i.test(text)) ||
     /\bnone match name\b/i.test(text) ||
-    // Scope Names seen to role/name miss context (or find) so unrelated prose cannot trip selector-not-found.
     (/\bNames seen:/i.test(text) &&
       (command === "find" ||
         /\belement has role\b|\bnone match name\b|\bgetByRole\b/i.test(text))) ||
@@ -73,8 +66,6 @@ export function classifyAgentBrowserFailureCategory(options: {
   if (isUpstreamLocatorMiss) return "selector-not-found";
   if (/confirmation required|pending confirmation|requires confirmation/i.test(text))
     return "confirmation-required";
-  // Match real timeout phrasing only. Do not treat bare "timeout" as a hit — accessible names can include that word,
-  // and `timed?\s*out` would also match the substring "timeout" as time+out.
   if (
     options.timedOut ||
     /\b(?:timed\s+out|timeout exceeded|watchdog|IPC read timeout)\b|must stay under its 30s IPC read timeout|Operation timed out/i.test(
@@ -191,12 +182,10 @@ export function buildAgentBrowserResultCategoryDetails(options: {
 const UPSTREAM_ERROR_CODE_PATTERN = /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/;
 const MAX_RETRY_AFTER_MS = 60_000;
 
-/** Returns the code only when it is a short identifier; anything else (prose, paths, secrets) is dropped. */
 export function validateUpstreamErrorCode(value: string | undefined): string | undefined {
   return value !== undefined && UPSTREAM_ERROR_CODE_PATTERN.test(value) ? value : undefined;
 }
 
-// Commands that observe state only. Everything else, including unknown commands, is treated as possibly mutating.
 const READ_ONLY_DIAGNOSTIC_COMMANDS = new Set([
   "a11y",
   "console",
@@ -387,10 +376,6 @@ function diagnosticBaseFor(options: {
   };
 }
 
-/**
- * Builds the normalized diagnostic for a failed call. Never infers a precise code from exit status alone:
- * a validated upstream code is preserved, otherwise only explicit text or flags select a specific code.
- */
 export function classifyAgentBrowserDiagnostic(options: {
   command?: string;
   errorText?: string;

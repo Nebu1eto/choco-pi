@@ -78,15 +78,11 @@ import {
 } from "./zentui-build.ts";
 
 const NOW = "2026-03-03T02:00:00.000Z";
-// The chat pane renders agent markdown and tool calls through the main
-// transcript's own components, which read the global theme.
 initTheme("dark", false);
-/** Shift+Tab as every terminal without the Kitty protocol sends it. */
 const SHIFT_TAB = "\u001b[Z";
 const ANSI_STYLE = new RegExp(String.raw`\u001b\[[0-9;]*m`, "g");
 const UP = "\u001b[A";
 const DOWN = "\u001b[B";
-/** Shift+arrow in the modified-CSI form every current terminal sends. */
 const SHIFT_UP = "\u001b[1;2A";
 const SHIFT_DOWN = "\u001b[1;2B";
 const CONFIG: ResolvedReviewConfig = {
@@ -139,7 +135,6 @@ const HIGH_FILE: DiffFile = {
 const MODEL: DiffModel = {
   baseSha: "base-sha",
   headSha: "head-sha",
-  // Deliberately opposite the review order.
   files: [LOW_FILE, HIGH_FILE],
 };
 const ASSESSMENTS: DiffAssessment = {
@@ -501,10 +496,6 @@ test("session and branch targets render specific headers without pull request sl
   await branch.close();
 });
 
-/**
- * One hunk holding both sides, so a selection can be pushed at the boundary
- * between removed and added lines in either direction.
- */
 type ReviewFixture = {
   model: DiffModel;
   assessments: DiffAssessment;
@@ -563,19 +554,15 @@ test("revealing context collapses an open selection instead of shifting its anch
     mounted.component.render(100).map(stripTerminalSequences).join("\n"),
     /Target src\/expand\.ts:12-13 RIGHT/,
   );
-  // The overlay renumbers displayed rows, so the range is dropped rather than
-  // carried onto whichever line the old anchor index now names.
   mounted.component.handleInput?.("+");
   await settleInput();
   assert.match(
     mounted.component.render(100).map(stripTerminalSequences).join("\n"),
-    // The cursor's unchanged line: old 12, new 13; it is addressed at its new number.
     /Target src\/expand\.ts:13 RIGHT/,
   );
   await mounted.close();
 });
 
-/** A row drawn inverted whole, after the one-column selection marker. */
 const highlightedRow = (line: string) => line.slice(1).startsWith("«");
 
 test("every selected row renders highlighted, not only the ends", async () => {
@@ -602,9 +589,6 @@ test("every selected row renders highlighted, not only the ends", async () => {
   assert.match(highlighted[2] ?? "", /const tail = 5;/);
   assert.match(rendered.join("\n"), /Target src\/mixed\.ts:13-15 RIGHT/);
 
-  // Split mode pairs a removed line with an added one on the same row, so the
-  // three selected lines must still read as three highlighted rows. Split moved
-  // from v (now reveal, as in the pane) to |.
   mounted.component.handleInput?.("|");
   const split = mounted.component.render(100).map(stripTerminalSequences);
   assert.match(split.join("\n"), /· split ·/);
@@ -640,7 +624,6 @@ test("a committed comment renders beneath its anchored line with a range label",
   assert.ok(anchorRow >= 0, "the anchored diff line remains rendered");
   assert.match(rendered[anchorRow + 1] ?? "", /● 13 Rename this variable\./);
 
-  // A range comment carries its whole span in the label.
   mounted.component.handleInput?.(SHIFT_DOWN);
   mounted.component.handleInput?.("c");
   mounted.component.handleInput?.("Both lines together.");
@@ -708,8 +691,6 @@ test("a folded hunk's placeholder counts the comments it hides", async () => {
 test("file rows show counts, risk badges and reasons, a rule ends the header, and a re-expanded reviewed hunk keeps its verdict", async () => {
   const mounted = await mountReview({ terminalRows: 40 });
   let rendered = mounted.component.render(100).map(stripTerminalSequences);
-  // The pane's row: marker, fold arrow, status letter, path, risk badge and counts at the right;
-  // the risk reasons follow on their own line, then why a rule-folded file is collapsed.
   assert.match(
     rendered.join("\n"),
     /❯▸ M src\/auth\.ts +▲45 \+0 -1 *\n {3}Authentication logic changed *\n {3}Hidden: Seeded file fold · ⏎ shows it/,
@@ -720,8 +701,6 @@ test("file rows show counts, risk badges and reasons, a rule ends the header, an
     "a rule separates the header from the files",
   );
 
-  // Space on the collapsed row expands the file; j enters its hunk; m folds it reviewed;
-  // Space on the placeholder unfolds it again, keeping the verdict on its header.
   mounted.component.handleInput?.(" ");
   mounted.component.handleInput?.("j");
   mounted.component.handleInput?.("m");
@@ -758,7 +737,6 @@ test("a range comment stores startLine and submits start_line and start_side; on
   mounted.component.handleInput?.("These lines belong together.");
   mounted.component.handleInput?.("\r");
 
-  // Plain movement collapses the selection, so the next comment is single-line.
   mounted.component.handleInput?.("k");
   mounted.component.handleInput?.("c");
   mounted.component.handleInput?.("One line only.");
@@ -822,7 +800,6 @@ test("in-view comment editor wraps, accepts newlines, submits, and cancels witho
   let component: Component | undefined;
   let overlaySettings: unknown;
   let inputCalls = 0;
-  // The host keeps the view open until it calls done, as Pi does; keys after that are ignored.
   let closeView: ((value: RuntimeValue) => void) | undefined;
   let ready!: () => void;
   const mounted = new Promise<void>((resolve) => {
@@ -930,7 +907,6 @@ test("commenting on a fold placeholder is refused", async () => {
   const mounted = await mountReview();
   mounted.component.handleInput?.("c");
   const rendered = mounted.component.render(100).map(stripTerminalSequences).join("\n");
-  // Pi's notifications are drawn behind the full-screen review: the warning is on its message line.
   assert.match(rendered, /Select an expanded diff line before commenting\./);
   assert.deepEqual(mounted.notifications, []);
   assert.match(rendered, /Input inactive/);
@@ -952,7 +928,6 @@ test("a message stays on the review's line until another replaces it, in every l
     "keys do not clear it",
   );
 
-  // Below 120 columns the chat replaces the diff and its header: the message moves above the status.
   mounted.component.handleInput?.("a");
   mounted.component.handleInput?.("why?");
   mounted.component.handleInput?.("\r");
@@ -983,7 +958,6 @@ test("chat takes focus, routes typing, sends only bounded review context, and re
   assert.match(rendered, /\bj\b/);
   assert.match(rendered, /Target src\/auth\.ts:5 RIGHT/);
 
-  // Tab belongs to the chat's editor, so Shift+Tab is what returns to the diff.
   mounted.component.handleInput?.(SHIFT_TAB);
   mounted.component.handleInput?.("j");
   rendered = mounted.component.render(140).map(stripTerminalSequences).join("\n");
@@ -1081,7 +1055,6 @@ test("page keys scroll the chat pane and the heading counts the rows below", asy
   assert.doesNotMatch(rendered, /line 30\b/, "PgUp leaves the tail");
   assert.match(rendered, /Agent chat \[FOCUSED\] · ↓\d+ below/);
 
-  // PgUp clamps at the top instead of running past the transcript.
   for (let page = 0; page < 20; page += 1) mounted.component.handleInput?.("\u001b[5~");
   rendered = mounted.component.render(200).map(stripTerminalSequences).join("\n");
   assert.match(rendered, /line 1\b/, "the first row is reachable");
@@ -1111,8 +1084,6 @@ test("the chat input completes /model and /effort like the main prompt", async (
   assert.match(rendered, /→ model\s+<provider\/model> — Switch the chat's model/);
   assert.match(rendered, /effort\s+<level> — Switch the chat's thinking level/);
 
-  // Tab accepts the command without executing it, exactly like the main
-  // prompt; the argument then completes from the model catalog.
   mounted.component.handleInput?.("\t");
   await settleCompletion();
   mounted.component.handleInput?.("sol");
@@ -1125,7 +1096,6 @@ test("the chat input completes /model and /effort like the main prompt", async (
   await settleInput();
   assert.deepEqual(fakeChat.modelChanges, ["openai/gpt-5.6-sol"]);
 
-  // Effort arguments complete from Pi's thinking levels.
   mounted.component.handleInput?.("/effort");
   mounted.component.handleInput?.(" ");
   mounted.component.handleInput?.("x");
@@ -1138,7 +1108,6 @@ test("the chat input completes /model and /effort like the main prompt", async (
   await settleInput();
   assert.deepEqual(fakeChat.effortChanges, ["xhigh"]);
 
-  // The session's own commands join the menu and filter like any other.
   mounted.component.handleInput?.("/rev");
   await settleCompletion();
   rendered = mounted.component.render(120).map(stripTerminalSequences).join("\n");
@@ -1155,11 +1124,8 @@ test("without zentui the keys row carries model and effort, and /model and /effo
   const mounted = await mountReview({
     terminalRows: 24,
     createReviewChat: () => fakeChat,
-    // zentui's frame names them under the input; the plain editor cannot,
-    // so the keys row is where they survive.
     zentuiLoader: unavailableZentuiLoader,
   });
-  // No diff line is selected on purpose: commands must not need context.
   mounted.component.handleInput?.("a");
   let rendered = mounted.component.render(140).map(stripTerminalSequences);
   const inputRow = rendered.findIndex((line) => /Input inactive|╭|^─{4,}/.test(line.trim()));
@@ -1195,7 +1161,6 @@ test("without zentui the keys row carries model and effort, and /model and /effo
     "a switch is reflected under the input",
   );
 
-  // /reload reloads the chat session's resources; the transcript survives.
   fakeChat.messages.push({ role: "user", text: "earlier question" });
   mounted.component.handleInput?.("/reload");
   mounted.component.handleInput?.("\r");
@@ -1204,8 +1169,6 @@ test("without zentui the keys row carries model and effort, and /model and /effo
   assert.equal(fakeChat.messages.length, 1, "the transcript is kept");
   assert.match(screen(), /Chat session resources reloaded/);
 
-  // A command the chat session registers routes through its prompt path;
-  // an unknown command warns and puts the text back for correction.
   fakeChat.availableCommands = [{ name: "review", description: "Adversarial review" }];
   mounted.component.handleInput?.("/review HEAD");
   mounted.component.handleInput?.("\r");
@@ -1257,18 +1220,12 @@ test("agent replies render as markdown and tool calls render like the main trans
   fakeChat.emitUpdate();
 
   let rendered = mounted.component.render(200).map(stripTerminalSequences).join("\n");
-  // Markdown goes through the main transcript's renderer: emphasis and
-  // inline-code markers are consumed, not shown.
   assert.match(rendered, /### Verdict/);
   assert.match(rendered, /The guard is safe because parse rejects flags\./);
   assert.doesNotMatch(rendered, /\*\*safe\*\*/);
   assert.doesNotMatch(rendered, /`parse`/);
   assert.match(rendered, /- first point/);
-  // The tool call renders through ToolExecutionComponent, exactly as the
-  // main agent's transcript titles it.
   assert.match(rendered, /read src\/auth\.ts/);
-  // Collapsed by default like the main transcript: the result body is hidden
-  // until Ctrl+O expands it, and a second Ctrl+O collapses it again.
   assert.doesNotMatch(rendered, /const token = read\(\);/);
   mounted.component.handleInput?.("\u000f");
   rendered = mounted.component.render(200).map(stripTerminalSequences).join("\n");
@@ -1276,7 +1233,6 @@ test("agent replies render as markdown and tool calls render like the main trans
   mounted.component.handleInput?.("\u000f");
   rendered = mounted.component.render(200).map(stripTerminalSequences).join("\n");
   assert.doesNotMatch(rendered, /const token = read\(\);/);
-  // `q` would be typed into the focused chat input; leave the chat first.
   mounted.component.handleInput?.("\u001b");
   await mounted.close();
 });
@@ -1299,15 +1255,11 @@ test("a collapsed tool preview truncates long lines to the pane instead of flood
   });
   fakeChat.emitUpdate();
 
-  // Wrapping can split the marker across rows, so search a squashed form of the
-  // chat column alone (the text after the column divider; the diff sits left of it).
   const squash = (lines: string[]) =>
     lines
       .map((line) => line.split("│").at(-1) ?? "")
       .join("")
       .replace(/\s+/g, "");
-  // Collapsed to the maximum: only the one-line call title renders; the
-  // preview and its long lines stay behind Ctrl+O.
   let rendered = mounted.component.render(200).map(stripTerminalSequences);
   assert.match(rendered.join("\n"), /grep \/match\/ in \./);
   assert.doesNotMatch(rendered.join("\n"), /match start x/);
@@ -1318,7 +1270,6 @@ test("a collapsed tool preview truncates long lines to the pane instead of flood
     "no preview rows at all",
   );
 
-  // Expanded: the component wraps at the pane width and the tail is visible.
   mounted.component.handleInput?.("\u000f");
   rendered = mounted.component.render(200).map(stripTerminalSequences);
   assert.ok(squash(rendered).includes("ENDMARK"), "expanded shows the full line");
@@ -1328,7 +1279,6 @@ test("a collapsed tool preview truncates long lines to the pane instead of flood
   );
 
   mounted.component.handleInput?.("\u000f");
-  // A failed tool keeps its message visible even collapsed.
   fakeChat.messages.push({
     role: "tool",
     toolCallId: "call-error",
@@ -1342,8 +1292,6 @@ test("a collapsed tool preview truncates long lines to the pane instead of flood
   rendered = mounted.component.render(200).map(stripTerminalSequences);
   assert.match(rendered.join("\n"), /boom failure/);
 
-  // A session-registered tool renders through its own renderer, exactly as
-  // the main transcript does with session.getToolDefinition.
   fakeChat.toolDefinitions["custom_probe"] = {
     renderCall: () => ({ render: () => ["custom probe title"] }),
   };
@@ -1396,7 +1344,6 @@ test("chat splits at 120 columns and replaces the diff below that width", async 
   await mounted.close();
 });
 
-/** Rows the view devotes to the diff body: everything above the status row. */
 function bodyRowCount(lines: string[]): number {
   const status = lines.findIndex((line) => /\d+\/\d+ files/.test(line));
   assert.notEqual(status, -1, "status row is rendered");
@@ -1473,7 +1420,6 @@ test(
       assert.match(lines[top + 1]!, /^│ draft/, `${label} input sits inside the frame`);
       assert.match(lines[top + 2]!, /^╰─.*╯$/, `${label} bottom border closes the frame`);
       assert.equal(top + 3, lines.length - 2, `${label} leaves both keymap rows`);
-      // Narrow terminals truncate the hints, but both rows survive the frame.
       assert.match(lines.at(-2)!, /^Comment · Enter submit/, `${label} first keymap row`);
       assert.match(lines.at(-1)!, /^Comment attaches only/, `${label} second keymap row`);
       if (width >= 80) {
@@ -1483,16 +1429,12 @@ test(
         );
         assert.match(lines.at(-1)!, /Comment attaches only to the selected visible line/);
       }
-      // The frame replaces pi-tui's rule rows, so the diff ends on the same row.
-      // The body's own file-list separator is also a full rule, so the
-      // editor's rule is the first one below the status row.
       const status = plain.findIndex((line) => /\d+\/\d+ files/.test(line));
       const editorRule = plain.findIndex((line, index) => index > status && /^─{4,}$/.test(line));
       assert.equal(top, editorRule, `${label} row offset`);
     }
 
     assert.match(framed.component.render(80).map(stripTerminalSequences).at(-3)!, /repo ─╯$/);
-    // The helper quits with `q`, which an open draft would swallow as text.
     for (const mounted of [framed, unframed]) mounted.component.handleInput?.("\u001b");
     await framed.close();
     await unframed.close();
@@ -1566,7 +1508,6 @@ test(
   },
 );
 
-/** Completion is asynchronous; let pi-tui's request chain finish. */
 async function settleCompletion(): Promise<void> {
   for (let tick = 0; tick < 20; tick += 1) {
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -1579,10 +1520,6 @@ after(() => {
   for (const root of temporaryRoots) rmSync(root, { recursive: true, force: true });
 });
 
-/**
- * A stand-in worktree for the review. Nothing in it shares a name with this
- * repository's root, so completing against the process directory would show.
- */
 function temporaryReviewRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "review-view-root-"));
   temporaryRoots.push(root);
@@ -1641,10 +1578,7 @@ test(
 
     for (const mounted of [framed, unframed]) {
       const rendered = mounted.component.render(100).map(stripTerminalSequences).join("\n");
-      // package.json and tests/ live in the process directory, not the review root.
       assert.doesNotMatch(rendered, /package\.json|tsconfig\.json/);
-      // Esc dismisses the list first, then cancels the draft; a live draft would
-      // swallow the `q` that closes the view.
       mounted.component.handleInput?.("\u001b");
       mounted.component.handleInput?.("\u001b");
       assert.match(
@@ -1681,16 +1615,11 @@ test("each input recalls its own history and never the other's", async () => {
   const mounted = await mountReview({
     terminalRows: 24,
     createReviewChat: () => fakeChat,
-    // History is the subject here, so the input keeps pi-tui's own chrome
-    // rather than depending on the reader's zentui configuration.
     zentuiLoader: unavailableZentuiLoader,
   });
   const read = () => mounted.component.render(120).map(stripTerminalSequences).join("\n");
   const COMMENT = "this cast hides a null";
   const QUESTION = "why is this cast safe";
-  // The committed comment legitimately renders inline in the diff, so the
-  // history assertions must read the input rows alone. They sit between the
-  // status row and the two keymap rows the view always closes with.
   const inputRows = (text: string) => {
     const lines = text.split("\n");
     const status = lines.findIndex((line) => /\d+\/\d+ files/.test(line));
@@ -1847,7 +1776,6 @@ async function settleInput(): Promise<void> {
 }
 
 test("+ and - change both hunk edges from an interior line and use the remaining side", async () => {
-  // The shared header takes three rows (totals, keys, rule), so the screen is taller.
   const mounted = await mountReview({ terminalRows: 60, ...expansionReviewFixture() });
   mounted.component.handleInput?.("j");
   mounted.component.handleInput?.("+");
@@ -1911,7 +1839,6 @@ test("hunk-wide expansion keeps the 100-line per-edge ceiling", async () => {
 
   for (let page = 0; page < 30; page += 1) mounted.component.handleInput?.("\u001b[5~");
   rendered = mounted.component.render(100).map(stripTerminalSequences).join("\n");
-  // Paging up stops at the file row, the first stop; j enters the first revealed line.
   assert.match(rendered, /No line selected/);
   mounted.component.handleInput?.("j");
   rendered = mounted.component.render(100).map(stripTerminalSequences).join("\n");
@@ -1923,7 +1850,6 @@ test("hunk-wide expansion keeps the 100-line per-edge ceiling", async () => {
 });
 
 test("revealed rows participate in line and page movement and produce stable comment anchors", async () => {
-  // 14 rows leave a six-row body under the shared header, so a page is five lines, as before.
   const mounted = await mountReview({ terminalRows: 14, ...expansionReviewFixture() });
   mounted.component.handleInput?.("+");
   await settleInput();
@@ -1945,7 +1871,6 @@ test("revealed rows participate in line and page movement and produce stable com
   assert.equal(comment?.side, "RIGHT", "an unchanged line is addressed at its new number");
   assert.equal(comment?.line, 7);
   assert.equal(comment?.anchor.hunkHash, "expandable-hunk");
-  // The anchor quotes the revealed lines around it, as they read in the file.
   assert.equal(
     comment?.anchor.snippet,
     "base line 5\nbase line 6\nbase line 7\nbase line 8\nbase line 9",
@@ -1993,7 +1918,6 @@ function longReviewFixture(lineCount = 30): ReviewFixture {
 
 test("page keys move the line cursor, keep it rendered, and reach the final diff row", async () => {
   const fixture = longReviewFixture();
-  // 14 rows: identity line, the shared header's three, a six-row body, the four-row footer.
   const mounted = await mountReview({ terminalRows: 14, ...fixture });
   let lines = mounted.component.render(100).map(stripTerminalSequences);
   assert.equal(lines.length, 14);
@@ -2100,7 +2024,6 @@ test("e opens at the cursor's side-specific line, including revealed context", a
   mounted.component.handleInput?.("e");
   await settleInput();
 
-  // The second line is unchanged (old 13, new 14): the editor opens the file as it is now, at 14.
   assert.deepEqual(launches, [["/repo/src/expand.ts:12"], ["/repo/src/expand.ts:14"]]);
   await mounted.close();
 });
@@ -2213,12 +2136,6 @@ test("terminal editor restores the TUI when the child exits unsuccessfully", asy
   assert.deepEqual(events, ["stop", "spawn", "start", "render:true"]);
 });
 
-/**
- * The review is a focus-capturing overlay. A host prompt opened from inside it
- * mounts underneath, so it renders invisibly while stealing the keyboard: the
- * review looks frozen and its promise never settles. Every prompt must
- * therefore hide the overlay first and restore it afterwards.
- */
 type OverlayLog = { events: string[]; hiddenDuringPrompt: string[] };
 
 async function mountWithOverlayHandle(options: {
@@ -2309,7 +2226,6 @@ const OVERLAY_PR: PullRequestMetadata = {
   updatedAt: NOW,
 };
 
-/** The pull request branch of Finish is chosen by the record's own target. */
 function pullRequestRecord(): ReviewRecord {
   return { ...record(), target: { kind: "pr", number: OVERLAY_PR.number } };
 }
@@ -2323,7 +2239,6 @@ test("Finish hides the review overlay while the pull request prompts are open", 
   });
   mounted.component.handleInput?.("S");
   await mounted.completion;
-  // Both prompts ran with the overlay hidden, and each restored it afterwards.
   assert.deepEqual(mounted.log.hiddenDuringPrompt, ["select:true", "input:true"]);
   assert.deepEqual(mounted.log.events, ["hide", "show", "hide", "show"]);
 });
@@ -2335,7 +2250,6 @@ test("Finish restores the review overlay when the outcome prompt is cancelled", 
     select: async () => undefined,
   });
   mounted.component.handleInput?.("S");
-  // Cancelling leaves the review open, so close it the normal way.
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.deepEqual(mounted.log.events, ["hide", "show"]);
   mounted.component.handleInput?.("q");
@@ -2375,7 +2289,6 @@ test("a file kept out by a read limit shows its notice in the list and the diff,
     reviewOrder: [big.path, ...ASSESSMENTS.reviewOrder],
   };
   const mounted = await mountReview({ terminalRows: 40, model, assessments });
-  // The view opens on the first hunk to review; the notice file has none, so move back to it (←).
   mounted.component.handleInput?.("\u001b[D");
   const rendered = mounted.component.render(120).map(stripTerminalSequences).join("\n");
   assert.ok(rendered.includes(`\n   ${notice}`), "the file row carries the notice");
@@ -2389,8 +2302,6 @@ test("a file kept out by a read limit shows its notice in the list and the diff,
   );
   await mounted.close();
 });
-
-/* ------------------------------------------------ the shared view's keys */
 
 const screenOf = (mounted: MountedReview, width = 100) =>
   mounted.component.render(width).map(stripTerminalSequences).join("\n");
@@ -2543,10 +2454,7 @@ test("a resumed review folds reviewed hunks and starts at the first unreviewed h
   await mounted.close();
 });
 
-/* --------------------------------------------- refresh and recorded findings */
-
 function commentOn(id: string, hunkId: string, line: number, body: string): ReviewComment {
-  // A real anchor on the fixture hunk, as the view writes one: comments are placed by their text.
   const anchoredHunk = [LOW_HUNK_1, LOW_HUNK_2].find((candidate) => candidate.id === hunkId);
   return {
     id,
@@ -2655,7 +2563,6 @@ test("a finished side-chat tool call reads the changes again, once per call", as
   fakeChat.emitUpdate();
   await settled();
   assert.equal(reads, 1, "the same call does not refresh twice");
-  // Esc closes the chat (q there would be typed into it); then q leaves.
   mounted.component.handleInput?.("\u001b");
   await mounted.close();
 });
@@ -2699,7 +2606,6 @@ test("f and F step through recorded reviewer findings on a working-tree review",
   assert.match(screen, /src\/ordinary\.ts +⚑1/);
   mounted.component.handleInput?.("f");
   screen = screenOf(mounted, 120);
-  // Open by default: the focused heading row, then the claim under it.
   assert.match(screen, /▶ ▾ ⚑ high finding F1 L2\s*\n\s+keeps the needle/);
   assert.match(screen, /2\/2 files/);
   mounted.component.handleInput?.("F");
@@ -2730,8 +2636,6 @@ test("the review's keys: one action per key, none shared with a review-only key;
   assert.equal(review.includes(SPLIT_TOGGLE_KEY), false);
   assert.deepEqual(PANE_KEYS.reveal, ["v"]);
 });
-
-/* ------------------------------------- the record follows the comparison it shows */
 
 test("after r moves the comparison, the saved review names the new base and head and keeps marks and comments", async () => {
   const changedLow2: DiffHunk = {
@@ -2806,8 +2710,6 @@ test("a failed refresh keeps the ids; a refresh that lands after the view closed
   assert.equal(late.savedRecords[0]?.baseSha, MODEL.baseSha);
 });
 
-/* -------------------------------------------- containment of render and input */
-
 test("a review that cannot draw closes at once, saves through the store, and says so once", async () => {
   let broken = false;
   let calls = 0;
@@ -2861,13 +2763,10 @@ test("a key that throws in the review is shown and the review can still be left"
   failNow = true;
   assert.doesNotThrow(() => mounted.component.handleInput?.("m"));
   failNow = false;
-  // The clock also draws relative times, so it is mended before the next frame.
   assert.match(screenOf(mounted, 120), /That key failed: clock broke/);
   await mounted.close();
   assert.equal(mounted.savedRecords.length, 1);
 });
-
-/* ------------------------------------------ a comment stays with its text */
 
 const R2_PATH = "src/r2.ts";
 
@@ -2938,7 +2837,6 @@ function r2Record(model: DiffModel, comment: ReviewComment): ReviewRecord {
   };
 }
 
-/** The diff row directly above the comment's block, as drawn. */
 function rowAbove(mounted: MountedReview, width = 140): string {
   const rows = mounted.component.render(width).map(stripTerminalSequences);
   const at = rows.findIndex((row) => row.includes("About this line."));
@@ -2946,7 +2844,6 @@ function rowAbove(mounted: MountedReview, width = 140): string {
 }
 
 async function expandR2(mounted: MountedReview): Promise<void> {
-  // The only file opens expanded; draw once so its body is read.
   mounted.component.render(140);
   await settled();
 }
@@ -3071,8 +2968,6 @@ test("a refresh in which only the commented hunk moved names its new line", asyn
   assert.equal(mounted.savedRecords.at(-1)?.comments[0]?.line, 22);
 });
 
-/* ----------------------- a comment on expanded context survives a resume */
-
 function expandedContextComment(fixture: ExpansionReviewFixture, line: number): ReviewComment {
   const hunk = fixture.model.files[0]?.hunks[0];
   assert.ok(hunk);
@@ -3164,13 +3059,9 @@ test("refresh: when a hunk moved, context read for its old place is dropped and 
   await mounted.close();
 });
 
-/* ------------------------------------------------- Ctrl+C and the mouse */
-
-/** The copy key as a terminal sends it: Cmd+C (Kitty protocol) on macOS, Ctrl+C elsewhere. */
 const COPY = COPY_KEY.key === "super+c" ? "\u001b[99;9u" : "\u0003";
 const ESCAPE = "\u001b";
 
-/** A left-button mouse event on column `x` of the first drawn row showing `text`. */
 function mouseOn(
   mounted: MountedReview,
   text: string | number,
@@ -3231,7 +3122,6 @@ test("the copy key copies the selected lines as code and a folded hunk as a diff
     /Copied 3 lines\./,
   );
 
-  // Folded, the hunk is one stop: the whole hunk is copied, as a diff.
   mounted.component.handleInput?.(" ");
   mounted.component.handleInput?.(COPY);
   await settleInput();
@@ -3253,7 +3143,6 @@ test("the copy key copies the selected lines as code and a folded hunk as a diff
     /Copied the hunk as a diff \(7 lines\)/,
   );
 
-  // On the file's row there is no text to copy.
   mounted.component.handleInput?.("g");
   const before = copied.length;
   mounted.component.handleInput?.(COPY);
@@ -3307,17 +3196,14 @@ test("mouse: a press puts the cursor on a line, drags select lines of one side, 
   assert.match(statusOf(mounted), /Target src\/mixed\.ts:12 RIGHT/);
   mouse(mouseOn(mounted, "const tail = 5;", "drag"));
   assert.match(statusOf(mounted), /Target src\/mixed\.ts:12-15 RIGHT/);
-  // Upwards the removed line has no number on this side: the selection stops below it.
   mouse(mouseOn(mounted, "const before = 1;", "drag"));
   assert.match(statusOf(mounted), /Target src\/mixed\.ts:12 RIGHT/, "a range never mixes sides");
-  // Past the last drawn row the drag is read as one row below the diff.
   mouse(mouseOn(mounted, 29, "drag"));
   assert.match(statusOf(mounted), /Target src\/mixed\.ts:12-15 RIGHT/);
   assert.deepEqual(mouse(mouseOn(mounted, 29, "release")), { handled: true });
   assert.equal(mouse(mouseOn(mounted, "const before = 1;", "drag")), undefined, "released");
   assert.match(statusOf(mounted), /Target src\/mixed\.ts:12-15 RIGHT/);
 
-  // An unfolded hunk's header is not a stop of the review's cursor: its first line is.
   assert.deepEqual(mouse(mouseOn(mounted, "@@ -10,5 +10,6 @@", "press")), {
     handled: true,
     render: false,
@@ -3325,7 +3211,6 @@ test("mouse: a press puts the cursor on a line, drags select lines of one side, 
   mouse(mouseOn(mounted, "@@ -10,5 +10,6 @@"));
   assert.match(statusOf(mounted), /Target src\/mixed\.ts:10 RIGHT/);
 
-  // A file's row closes and opens the file.
   mouse(mouseOn(mounted, "M src/mixed.ts"));
   assert.doesNotMatch(mounted.component.render(100).join("\n"), /const added = 2;/);
   mouse(mouseOn(mounted, "M src/mixed.ts"));
@@ -3380,7 +3265,6 @@ test("mouse: every left press on the diff is taken so Pi selects and copies noth
   );
   assert.equal(mouse({ ...mouseOn(mounted, 20), type: "wheel" }), undefined);
 
-  // While a comment is being written the diff takes the press and keeps the cursor.
   mounted.component.handleInput?.("j");
   mounted.component.handleInput?.("j");
   mounted.component.handleInput?.("c");
@@ -3422,7 +3306,6 @@ test("mouse: with the chat beside the diff, a press on the diff focuses the revi
   );
   assert.match(statusOf(mounted, width), /Target src\/mixed\.ts:12 RIGHT/);
 
-  // Below the split width the chat replaces the diff: nothing there is the review's.
   mounted.component.handleInput?.("\t");
   assert.equal(mouse(mouseOn(mounted, 6, "press", 20, width - 1)), undefined);
   mounted.component.handleInput?.(SHIFT_TAB);

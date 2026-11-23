@@ -11,7 +11,6 @@ import { createGoal, replaceGoal } from "./state.ts";
 import { TOOL_PROMPT_GUIDELINES } from "./prompts.ts";
 import type { GoalEntrySource, GoalResult, ThreadGoal } from "./types.ts";
 
-// TypeBox objects were open (extra keys allowed); keep that with { open: true }.
 const emptyParams = obj({}, { open: true });
 
 const createGoalParams = obj(

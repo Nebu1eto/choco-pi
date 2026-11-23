@@ -30,26 +30,19 @@ import {
 import type { GoogleModel } from "./request.ts";
 import { SseParser } from "./sse.ts";
 
-/** Deadline for the response headers of one attempt. */
 export const DEFAULT_HEADER_TIMEOUT_MS = 90_000;
-/** Longest silence allowed between two body chunks before the stream counts as stalled. */
 export const DEFAULT_IDLE_TIMEOUT_MS = 300_000;
-/** Transport retries when Pi passes no maxRetries. Pi's agent loop retries whole turns too. */
 export const DEFAULT_TRANSPORT_RETRIES = 1;
-/** Upper bound on transport retries whatever Pi passes, so Pi's own retries are not multiplied. */
 export const MAX_TRANSPORT_RETRIES = 2;
-/** A server-requested delay above this is not waited out here; Pi's visible retry owns it. */
 export const MAX_TRANSPORT_RETRY_DELAY_MS = 5_000;
 const BASE_RETRY_DELAY_MS = 1_000;
 const RESERVED_HEADERS = new Set(["authorization", "content-type", "user-agent", "host"]);
 
-/** Injection points for tests; production uses the defaults. */
 export interface AntigravityStreamDeps {
   now?: () => number;
   sleep?: (ms: number, signal: AbortSignal | undefined) => Promise<void>;
   headerTimeoutMs?: number;
   idleTimeoutMs?: number;
-  /** Environment fallback after options.env (defaults to process.env). */
   env?: Readonly<Record<string, string | undefined>>;
 }
 
@@ -73,7 +66,6 @@ function emptyMessage(model: Model<Api>): AssistantMessage {
   };
 }
 
-/** agy's headers, then caller headers except the identity and auth ones this transport owns. */
 function requestHeaders(token: string, ...sources: (ProviderHeaders | undefined)[]): Headers {
   const headers = new Headers(antigravityHeaders(token));
   for (const source of sources) {
@@ -90,7 +82,6 @@ function headerRecord(headers: Headers) {
   return Object.fromEntries(headers.entries());
 }
 
-/** One body read that also settles on abort or after the idle deadline (and cancels the body). */
 function readChunk(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   signal: AbortSignal,
@@ -147,11 +138,6 @@ interface AttemptContext {
   now: () => number;
 }
 
-/**
- * The whole body of a non-SSE response (an HTTP error or an HTTP 200 JSON body), read under the
- * same idle watchdog and abort as the event stream, so a body that never closes cannot hold the
- * turn open.
- */
 async function readBodyText(
   response: Response,
   signal: AbortSignal,
@@ -188,7 +174,6 @@ async function attemptOnce(run: AttemptContext): Promise<void> {
   if (outer?.aborted) throw abortError();
   outer?.addEventListener("abort", forward, { once: true });
   let headerTimedOut = false;
-  // Set once the attempt has consumed its whole response; any other exit lets go of it.
   let finished = false;
   let response: Response | undefined;
   const headerTimer = setTimeout(() => {
@@ -230,7 +215,6 @@ async function attemptOnce(run: AttemptContext): Promise<void> {
     }
     const contentType = response.headers.get("content-type") ?? "";
     if (!/text\/event-stream/iu.test(contentType)) {
-      // HTTP 200 with a JSON body: a google.rpc error, or a non-streamed response list.
       const text = await readBodyText(response, controller.signal, outer, run.idleTimeoutMs);
       if (outer?.aborted) throw abortError();
       finished = true;
@@ -284,14 +268,6 @@ async function attemptOnce(run: AttemptContext): Promise<void> {
   }
 }
 
-/**
- * The Google Antigravity transport: POST v1internal:streamGenerateContent?alt=sse with agy's
- * envelope, normalized into Pi assistant events. Assistant messages carry provider
- * `google`, the model's api and its base id, so pi-ai replays thought signatures only to the
- * same model. An API key that is not this provider's packed OAuth key (a Gemini API key from
- * Pi's inherited `google` API-key auth) fails with a classified auth error before any request.
- * Settles the returned stream exactly once (done or error).
- */
 export function streamGoogleAntigravityWith(
   model: Model<Api>,
   context: TranscriptContext,
@@ -435,7 +411,6 @@ export function streamGoogleAntigravityWith(
   return stream;
 }
 
-/** Provider-level streamSimple target (both Pi stream() and streamSimple() option shapes). */
 export function streamGoogleAntigravity(
   model: Model<Api>,
   context: TranscriptContext,

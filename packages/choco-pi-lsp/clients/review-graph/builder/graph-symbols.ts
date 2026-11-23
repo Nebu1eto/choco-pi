@@ -1,19 +1,8 @@
-/**
- * Symbol and reference extraction from a built review graph.
- */
 import { isRuntimeNumber } from "../../../tools/runtime-values.ts";
 import type { CallGraphEvidenceCoverage } from "../../call-graph.ts";
 import type { ReviewGraph, ReviewGraphNode } from "../types.ts";
 import type { SymbolKind, SymbolRef } from "../../symbol-types.ts";
 
-/**
- * Normalize graph symbol/call/reference evidence for call-graph construction.
- *
- * Graph node ids are opaque canonical identities (kind and line are part of the
- * id), so this adapter always reads target metadata from the target node. It
- * retains unresolved/type-only evidence for bounded coverage accounting, but
- * buildCallGraph will not turn those records into concrete edges.
- */
 export function extractSymbolsAndRefsFromGraph(graph: ReviewGraph) {
   const allSymbols = new Map<string, import("../../symbol-types.ts").Symbol[]>();
   const allRefs = new Map<string, import("../../symbol-types.ts").SymbolRef[]>();
@@ -145,10 +134,6 @@ export function extractSymbolsAndRefsFromGraph(graph: ReviewGraph) {
     }
   }
 
-  // Capped/partial graph persistence and file-level extractor metadata are
-  // explicit degradation signals for read-only consumers. Missing metadata is
-  // also unavailable: old/synthetic file nodes cannot prove that definitions,
-  // references, or the TS/TSX warm function facts were attempted successfully.
   let sawRelevantFileNode = false;
   for (const node of graph.nodes.values()) {
     if (node.kind !== "file") continue;
@@ -175,12 +160,6 @@ export function extractSymbolsAndRefsFromGraph(graph: ReviewGraph) {
             : languageStatus;
     }
   }
-  // A graph with symbols/evidence but no file coverage metadata is a
-  // synthetic/legacy shape that cannot prove which source files were
-  // actually extracted. Do not let it masquerade as a complete scan.
-  // No file node means there is no bounded source/extractor coverage to
-  // justify a clean empty call graph (including an entirely empty or
-  // external-only synthetic graph).
   if (!sawRelevantFileNode) coverage.complete = false;
 
   return { allSymbols, allRefs, coverage };

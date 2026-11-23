@@ -30,7 +30,6 @@ import { hostParams } from "./schema-bridge.ts";
 const DEFAULT_PROCESSED_MAX_CHARS = 20_000;
 const DEFAULT_RAW_MAX_CHARS = 40_000;
 
-/** snake_case tool input; the client and summarizers keep their internal camelCase option names. */
 interface ToolNodeParams {
   file_key: string;
   node_id?: string;
@@ -482,8 +481,6 @@ function toAssetType(value: "svg_icons" | "node_renders" | "image_fills"): Figma
   return "imageFills";
 }
 
-// Asset types and kinds are wrapper-owned option values; print them in the snake_case the
-// asset_types input accepts so the manifest can be fed back into figma_extract_assets.
 function toAssetTypeOutput(value: FigmaAssetType): "svg_icons" | "node_renders" | "image_fills" {
   if (value === "svgIcons") return "svg_icons";
   if (value === "nodeRenders") return "node_renders";

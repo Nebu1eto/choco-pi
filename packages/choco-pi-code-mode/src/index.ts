@@ -1,6 +1,3 @@
-// @choco-pi/code-mode: universal Code Mode (exec/wait), the core nested tools
-// (apply_patch, exec_command, write_stdin, view_image) and their engines.
-// Library entry; the Pi extension entry is ./extension.ts.
 export { createNestedTools, registerCodeMode, registerCodexCodeMode } from "./adapter/code-mode.ts";
 export type {
   AsyncCodeModeCallHook,

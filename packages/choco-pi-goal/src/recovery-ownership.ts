@@ -2,14 +2,6 @@ import { bool, compile, obj, oneOf, str, unknown } from "@earendil-works/pi-sche
 
 import type { ThreadGoal } from "./types.ts";
 
-/**
- * Publishes this package's provider-limit recovery ownership at
- * `globalThis[Symbol.for("choco-pi-goal:recovery")]` so the root usage-limit policy can yield to a
- * goal that owns recovery. Several goal runtimes can share one process (for example in-process child
- * sessions), so the slot holds one shared entry whose `recoveryOwnership(owner?)` reports the
- * first registered runtime that owns a goal, optionally restricted to its owning session; each
- * runtime adds and removes only its own reader.
- */
 export const GOAL_RECOVERY_SYMBOL = Symbol.for("choco-pi-goal:recovery");
 
 export interface GoalRecoveryOwnership {
@@ -23,13 +15,9 @@ type OwnershipReader = () => GoalRecoveryOwnership | undefined;
 
 interface GoalRecoveryEntry {
   recoveryOwnership(owner?: string): GoalRecoveryOwnership | undefined;
-  /** Readers may come from another module instance of this package; each is validated on use. */
   readers: Set<RuntimeSlot>;
 }
 
-// Slot values are host-owned in-process objects; objects stay open (extra keys accepted) as the
-// previous TypeBox objects were. Function-valued members are not JSON, so they are checked with
-// instanceof Function after the shape check.
 const isGoalRecoveryOwnership = compile(
   obj(
     {
@@ -46,7 +34,6 @@ const hasRecoveryEntryMembers = compile(
   obj({ recoveryOwnership: unknown(), readers: unknown() }, { open: true }),
 ).check;
 
-/** Host-owned value read from a global slot before validation. */
 type RuntimeSlot = {} | null | undefined;
 
 function createEntry(): GoalRecoveryEntry {
@@ -67,9 +54,7 @@ function createEntry(): GoalRecoveryEntry {
               providerLimitResumeScheduled: ownership.providerLimitResumeScheduled,
             };
           }
-        } catch {
-          // A reader bound to a disposed runtime must not hide another runtime's ownership.
-        }
+        } catch {}
       }
       return undefined;
     },
@@ -119,7 +104,6 @@ export interface GoalRecoveryOwnershipSource {
   isProviderLimitAutoResumeScheduled: (goalId: string) => boolean;
 }
 
-/** Ownership of the runtime's current goal; undefined unless the goal is active or paused. */
 export function goalRecoveryOwnership(
   source: GoalRecoveryOwnershipSource,
 ): GoalRecoveryOwnership | undefined {
@@ -136,9 +120,7 @@ export function goalRecoveryOwnership(
 }
 
 export interface GoalRecoveryOwnershipPublisher {
-  /** Idempotently publishes this runtime's reader. */
   install(): void;
-  /** Removes only this runtime's reader; deletes the slot once no runtime remains. */
   dispose(): void;
 }
 

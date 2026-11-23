@@ -313,7 +313,6 @@ test("btw type resolution falls through to an available role when defaults are d
   assert.ok(defaultGeneralConfig);
   const generalConfig = { ...defaultGeneralConfig, name: "general" };
   try {
-    // The harness posture: defaults disabled, fallback "none", one custom role.
     agentTypes.setDefaultsDisabled(true);
     agentTypes.setFallbackSubagent("none");
     agentTypes.registerAgents(new Map([["general", generalConfig]]));
@@ -324,7 +323,6 @@ test("btw type resolution falls through to an available role when defaults are d
     assert.equal(resolved.ok, true, "an available custom role must be picked");
     assert.equal(resolved.type, "general");
 
-    // With no registered types at all, failure is explicit, not silent.
     agentTypes.registerAgents(new Map());
     assert.equal(resolveBtwType().ok, false);
   } finally {
@@ -400,8 +398,6 @@ test("btw resolves the internal side-chat agent, which callers cannot name", asy
 
     assert.deepEqual(resolveBtwType(), { ok: true, type: SIDE_CHAT_TYPE });
 
-    // Caller-facing dispatch still refuses it: no Agent tool enum, no @side-chat
-    // type mention, no workflow step, no fallback substitution to it.
     assert.ok(!agentTypes.getAvailableTypes().includes(SIDE_CHAT_TYPE));
     const dispatch = agentTypes.resolveSpawnType(SIDE_CHAT_TYPE);
     assert.ok(!dispatch.ok || dispatch.type !== SIDE_CHAT_TYPE);
@@ -409,7 +405,6 @@ test("btw resolves the internal side-chat agent, which callers cannot name", asy
     assert.equal(agentTypes.resolveSpawnType(SIDE_CHAT_TYPE).ok, false);
     agentTypes.setFallbackSubagent("general");
 
-    // A disabled side-chat file restores the previous fallback chain.
     agentTypes.registerAgents(
       new Map([
         ["general", { ...general, name: "general" }],
@@ -464,8 +459,6 @@ test("a btw fork runs on the main model and thinking level, not side-chat defaul
   const roleModel = reasoningModel("side-chat-default-model");
   const fixture = await createSdkFixture(mainModel);
   fixture.session.setThinkingLevel("low");
-  // The fixture's catalog is empty; expose the role default so the control run
-  // proves the agent file's model would otherwise win.
   const ctx = fixture.ctx;
   const registry = ctx.modelRegistry;
   const find = registry.find.bind(registry);
@@ -489,7 +482,6 @@ test("a btw fork runs on the main model and thinking level, not side-chat defaul
   const sessions: AgentSession[] = [];
   const run = async (options: { mainSessionFork?: MainSessionFork; readOnly?: boolean }) => {
     const controller = new AbortController();
-    // Aborted before the prompt: runAgent builds the session and skips the turn.
     controller.abort();
     const result = await runAgent(ctx, SIDE_CHAT_TYPE, "side question", {
       pi: fixture.pi,

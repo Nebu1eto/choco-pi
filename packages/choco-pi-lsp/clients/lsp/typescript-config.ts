@@ -12,7 +12,6 @@ export function typeAcquisitionEnabledFromConfig(
   return config?.typeAcquisition?.enabled === true;
 }
 
-/** Settings understood by native tsgo and classic typescript-language-server. */
 export function defaultTypeScriptInitialization(
   typeAcquisitionEnabled: boolean,
 ): TypeScriptInitializationConfig | undefined {

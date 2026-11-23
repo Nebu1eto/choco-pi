@@ -442,10 +442,6 @@ function parseJsonMcpResults(text: string): ExaSearchResponse["results"] | null 
   }
 }
 
-/**
- * Calls one Exa MCP search tool and normalizes its payload. `web_search_advanced_exa`
- * returns the raw Exa search JSON; `web_search_exa` returns a formatted text block.
- */
 async function searchWithExaMcpTool(
   tool: string,
   args: ExaMcpArguments,
@@ -472,7 +468,6 @@ async function searchWithExaMcpTool(
   );
 }
 
-/** Filtered searches need the advanced tool, which not every deployment exposes. */
 async function searchWithFilteredExaMcp(
   query: string,
   options: ExaSearchOptions,
@@ -491,8 +486,6 @@ async function searchWithFilteredExaMcp(
   } catch (err) {
     if (err instanceof SearchTransportError && err.kind === "cancelled") throw err;
     if (options.recencyFilter || options.domainFilter?.length || options.exaSearchType) throw err;
-    // The basic tool ignores every argument except query/numResults, so the
-    // optional content request degrades into the formatted response.
     return searchWithExaMcpTool(EXA_MCP_BASIC_TOOL, basicArgs, options);
   }
 }

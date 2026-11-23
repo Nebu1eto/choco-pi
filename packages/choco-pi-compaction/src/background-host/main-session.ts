@@ -50,19 +50,13 @@ import {
   teardownMain,
 } from "./runtime.ts";
 
-// ---------------------------------------------------------------------------
-// Main-session lifecycle: one owner per owned main session
-// ---------------------------------------------------------------------------
-
 const RELAY_CONSUMER_ID = "choco-pi-compaction:adoption-relay";
 
 export interface MainSessionStart {
-  /** Reload the settings sidecar (session_start) or keep the loaded settings (model_select). */
   readonly reloadSettings: boolean;
   readonly childProvider: ChildCompactionProvider;
 }
 
-/** Host scalars snapshotted before the first await of a session start. */
 interface SessionSnapshot {
   readonly generation: number;
   readonly sessionManager: ExtensionContext["sessionManager"];
@@ -74,7 +68,6 @@ interface SessionSnapshot {
   readonly child: boolean;
 }
 
-/** A main session with an active background feature and a model to bind. */
 interface MainBinding {
   readonly session: SessionSnapshot;
   readonly model: Model<Api>;
@@ -82,30 +75,17 @@ interface MainBinding {
   readonly settings: Readonly<BackgroundCompactionSettings>;
 }
 
-/** Owner identity under which a main session's coordinator registers. */
 interface MainOwnerIdentity {
   readonly ownerKey: string;
   readonly ownerGeneration: number;
   readonly signal: BackgroundAdoptionSignal;
 }
 
-/**
- * session_start / model_select: replace the main owner. Invalidates the
- * previous owner synchronously, then rechecks the lifecycle after each await.
- * The previous replay bindings are detached synchronously but unbound only
- * after the new ones are installed (D8). Capture retention is separate from
- * replay binding: no unbind releases captures, so the same session keeps them
- * across every rebind, even one that installs no binding (mode off, no
- * checkpoint); a start for a different session releases the previous
- * sessions' captures explicitly. A start superseded during its await leaves
- * the unbinds detached for the start that completes (or shutdown) to run.
- */
 export async function startMainSession(
   rt: HostRuntime,
   ctx: ExtensionContext,
   start: MainSessionStart,
 ): Promise<void> {
-  // Invalidate synchronously, then snapshot every scalar before awaiting.
   const generation = ++rt.lifecycle;
   teardownMain(rt);
   detachReplayUnbinds(rt);
@@ -116,7 +96,6 @@ export async function startMainSession(
     const readMode = rt.options.anthropic?.readMode ?? readAnthropicCompactionMode;
     const readXaiMode = rt.options.xai?.readMode ?? readXaiCompactionMode;
     const readOpaqueHistory = rt.options.readOpaqueHistoryMode ?? readOpaqueHistoryMode;
-    // The live Codex value from the eligibility slot; the session-start snapshot only without one.
     const openaiServerSide =
       publishedCodexResponsesCompaction() ??
       rt.readState().codexCompaction?.responsesCompaction ??
@@ -138,22 +117,16 @@ export async function startMainSession(
     if (rt.loaded.diagnostic !== undefined) rt.notify(ctx, rt.loaded.diagnostic);
   }
   const settings = rt.loaded.settings;
-  // One cooldown setting for the shared gates of both vendor lanes.
   rt.foregroundGate.setCooldownMs(settings.cooldownMs);
   rt.xaiGate.setCooldownMs(settings.cooldownMs);
   registerSessionCleanup(rt, session);
-  // Children compact natively in the foreground and replay their own checkpoints too.
   bindNativeSession(rt, session, settings, ctx);
-  // The new bindings exist: the detached ones release only what no binding still holds.
   runUnbinds(rt.detachedUnbinds.splice(0));
-  // Captures follow the session, not the binding: only another session's are released.
   releaseOtherSessionCaptures(rt, session.sessionId);
-  // Inside a child the runner's bridge owns background attachment; no owner here.
   if (session.child) return;
   const state = bindParentSession(rt, ctx, session, start.childProvider);
   const model = session.model;
   if (!backgroundCompactionActive(settings) || model === undefined) return;
-  // A conflicting registry slot is the same "off" as the master switch.
   if (!registryUsable(rt, ctx)) return;
   await attachMainOwner(rt, ctx, { session, model, state, settings });
 }
@@ -177,7 +150,6 @@ function snapshotSession(ctx: ExtensionContext, generation: number): SessionSnap
   };
 }
 
-/** A session disposed without session_shutdown still releases its owner and native state. */
 function registerSessionCleanup(rt: HostRuntime, session: SessionSnapshot): void {
   rt.unregisterResourceCleanup?.();
   rt.unregisterResourceCleanup = registerSessionResourceCleanup((cleanupSessionId) => {
@@ -185,7 +157,6 @@ function registerSessionCleanup(rt: HostRuntime, session: SessionSnapshot): void
   });
 }
 
-/** Record the parent host and publish the child provider. */
 function bindParentSession(
   rt: HostRuntime,
   ctx: ExtensionContext,
@@ -198,13 +169,6 @@ function bindParentSession(
   return state;
 }
 
-/**
- * Bind this session's provider-native state (main session or subagent
- * child): its server-side switches, its Anthropic and xAI replay bindings, and
- * the refresher that restores them for a caller that knows only the session
- * (the subagent bridge reattaching a child). State is keyed by session ID, so
- * a child never resets the main session's.
- */
 function bindNativeSession(
   rt: HostRuntime,
   session: SessionSnapshot,
@@ -226,13 +190,6 @@ function bindNativeSession(
 
 const NATIVE_REFRESHER_ID = "choco-pi-compaction:replay";
 
-/**
- * Re-bind the session's replay projection to `ctx`'s session manager and
- * re-arm the replay rewrite, keeping its captures. The committed checkpoint is
- * read from the branch on every request, so a bound session replays it on the
- * next one. Nothing happens once the binding generation moved or `ctx`
- * belongs to another session.
- */
 function refreshNativeSession(
   rt: HostRuntime,
   bound: { readonly sessionId: string; readonly generation: number },
@@ -283,24 +240,12 @@ async function attachMainOwner(
   await recoverMainCandidates(rt, ctx, { owner, sessionManager: session.sessionManager });
 }
 
-/** The session a replay binding is made for; `ctx` undefined journals without a notice. */
 interface ReplayTarget {
   readonly sessionId: string;
   readonly sessionManager: ExtensionContext["sessionManager"];
   readonly ctx: ExtensionContext | undefined;
 }
 
-/**
- * Capture and project this session for Anthropic replay whenever a native
- * path can produce a checkpoint (server-side mode, the background
- * `anthropic-native` backend) or the branch's newest compaction already is
- * an Anthropic native checkpoint: a mode switch off keeps replaying it rather
- * than sending its summary text. The binding replaces the session's previous
- * one; the previous unbind runs afterwards (`startMainSession`), and the
- * binder's token check then keeps the projection. Unbound at the next session
- * start or model change for a binding that is not renewed, and at shutdown;
- * an unbind never releases the session's captures (`releaseCaptures`).
- */
 function bindAnthropicReplay(
   rt: HostRuntime,
   target: ReplayTarget,
@@ -320,11 +265,6 @@ function bindAnthropicReplay(
   if (checkpoint !== undefined) announceReplayKept(rt, target, "anthropic", checkpoint.entryId);
 }
 
-/**
- * Capture and project this session for xAI replay while xAI server-side mode
- * is selected, or while the branch's newest compaction is an xAI checkpoint
- * (kept replaying after a mode switch off, like Anthropic).
- */
 function bindXaiReplay(rt: HostRuntime, target: ReplayTarget): void {
   const { sessionId, sessionManager } = target;
   const producing = rt.xaiMode === "server-side";
@@ -336,7 +276,6 @@ function bindXaiReplay(rt: HostRuntime, target: ReplayTarget): void {
   announceReplayKept(rt, target, "xai", entryId);
 }
 
-/** The vendor's mode is off but a committed checkpoint keeps its replay binding: journal and notice once. */
 function announceReplayKept(
   rt: HostRuntime,
   target: ReplayTarget,
@@ -434,7 +373,6 @@ interface CoreRegistration {
   readonly cleanup: readonly (() => void)[];
 }
 
-/** Publish the coordinator under the owner key; a refusal disposes and releases everything. */
 function registerMainCoordinator(
   rt: HostRuntime,
   ctx: ExtensionContext,
@@ -499,7 +437,6 @@ interface CommittedAdoption {
   readonly backendId: string;
 }
 
-/** Forward a committed adoption of the current owner to the process-global signal. */
 function relayAdoption(
   rt: HostRuntime,
   owner: MainOwner,
@@ -531,7 +468,6 @@ async function recoverMainCandidates(
   const records = candidateRecordsOf(recovery.sessionManager.getBranch());
   if (records.length === 0) return;
   try {
-    // Binds only a compatible record; recovery never calls Backend.prepare.
     await owner.core.coordinator.recover(records);
   } catch (cause) {
     if (isCurrent(rt, owner)) rt.notify(ctx, `candidate recovery failed: ${errorText(cause)}`);

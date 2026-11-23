@@ -1,19 +1,3 @@
-/**
- * Wire-faithful transport capture for the xAI native lane.
- *
- * A provider registered through `registerProvider` delegates to the INSTALLED
- * `openai-responses` adapter with a capturing `fetch`; that fetch sees the
- * serialized body after every `before_provider_request` handler, so it is the
- * only trustworthy view of what was sent. Each captured Responses `input` is
- * aligned to branch entries by content keys (text, `call_id`, image data URL,
- * compaction `encrypted_content`) with the shared order-preserving aligner.
- *
- * Captures hold the request body (conversation content, never credentials).
- * Only an HTTP 200 answer to a mapped request is kept as a usable capture;
- * other responses go to a bounded diagnostics ring without their body.
- * Transport checks registered for the current provider call run before the
- * request leaves the process; a failed check refuses it locally (fail closed).
- */
 import type {
   Api,
   AssistantMessageEventStream,
@@ -57,10 +41,6 @@ import {
   storeBounded,
 } from "../shared/lane-runtime.ts";
 
-// ---------------------------------------------------------------------------
-// Wire model (Responses `input` items)
-// ---------------------------------------------------------------------------
-
 export const XaiWireItemSchema = JsonRecordSchema;
 const xaiWireBody = jsonRest({
   model: nonEmptyStr(),
@@ -94,7 +74,6 @@ const isWireCompactionItem = compile(
   obj({ type: lit("compaction"), encrypted_content: str() }, open),
 ).check;
 
-/** Items opening a tool call answered by a later output item with the same `call_id`. */
 const CALL_TYPES: ReadonlySet<string> = new Set([
   "function_call",
   "custom_tool_call",
@@ -120,13 +99,11 @@ function itemType(item: XaiWireItem): string | undefined {
   return isString(item.type) ? item.type : undefined;
 }
 
-/** Role-like label of an item: its `role`, else its `type`, else "item". */
 export function itemRole(item: XaiWireItem): string {
   if (isString(item.role)) return item.role;
   return itemType(item) ?? "item";
 }
 
-/** A leading system prompt or mid-conversation system update (`system`/`developer`, string content). */
 export function isInstructionItem(item: XaiWireItem | undefined): boolean {
   return item !== undefined && isInstructionFields(item);
 }
@@ -143,33 +120,23 @@ export function countCompactionItems(items: readonly XaiWireItem[]): number {
   return items.filter((item) => isCompactionWireItem(item)).length;
 }
 
-/** `call_id` of a tool-call opening item, else undefined. */
 export function callIdOf(item: XaiWireItem): string | undefined {
   const type = itemType(item);
   if (type === undefined || !CALL_TYPES.has(type)) return undefined;
   return hasCallId(item) ? item.call_id : undefined;
 }
 
-/** `call_id` of a tool output item, else undefined. */
 export function outputIdOf(item: XaiWireItem): string | undefined {
   const type = itemType(item);
   if (type === undefined || !OUTPUT_TYPES.has(type)) return undefined;
   return hasCallId(item) ? item.call_id : undefined;
 }
 
-/**
- * Index of the leading instruction item the adapter writes for the system
- * prompt: 0, or 1 right after a replayed compaction item; -1 when absent.
- */
 export function leadingInstructionIndex(input: readonly XaiWireItem[]): number {
   if (isInstructionItem(input[0])) return 0;
   if (isCompactionWireItem(input[0]) && isInstructionItem(input[1])) return 1;
   return -1;
 }
-
-// ---------------------------------------------------------------------------
-// Key alignment (wire item <-> projected entry)
-// ---------------------------------------------------------------------------
 
 function isBlank(text: string): boolean {
   return text.trim().length === 0;
@@ -187,7 +154,6 @@ function contentKeys(content: readonly XaiWireItem[]): WireKey[] {
   });
 }
 
-/** Keys of one transport item. Instructions and reasoning are deliberately unkeyed. */
 function wireItemKeys(item: XaiWireItem): WireKey[] {
   if (isUserMessageFields(item)) {
     return Array.isArray(item.content) ? contentKeys(item.content) : textKey(item.content);
@@ -203,7 +169,6 @@ function wireItemKeys(item: XaiWireItem): WireKey[] {
   return [];
 }
 
-/** The adapter's id sanitizing for tool calls from another provider or model. */
 function normalizeIdPart(part: string): string {
   return part
     .replace(/[^a-zA-Z0-9_-]/gu, "_")
@@ -211,7 +176,6 @@ function normalizeIdPart(part: string): string {
     .replace(/_+$/u, "");
 }
 
-/** Every `call_id` the adapter may emit for a host tool-call id (same-model raw or normalized). */
 function callIdVariants(id: string): string[] {
   const [raw = id] = id.split("|");
   return [...new Set([raw, normalizeIdPart(id)])];
@@ -244,15 +208,12 @@ function llmMessageKeys(message: Message): WireKey[] {
 function projectedEntryKeys(entry: ProjectedSessionEntry): WireKey[] {
   const keys = convertToLlm(entry.messages).flatMap(llmMessageKeys);
   const source = entry.sourceEntry;
-  // Only the newest compaction is projected with messages (and sent as an item);
-  // an older one retained in the kept range is invisible and absent from the wire.
   if (source.type === "compaction" && entry.messages.length > 0 && isXaiDetails(source.details)) {
     keys.push(wireKey("compaction", source.details.item.encrypted_content));
   }
   return keys;
 }
 
-/** Align captured input items to the branch projection at request time. */
 export function mapXaiWireToEntries(
   input: readonly XaiWireItem[],
   entries: readonly ProjectedSessionEntry[],
@@ -271,22 +232,12 @@ export function mapXaiWireToEntries(
   );
 }
 
-/**
- * Items the adapter emits for one assistant message: its reasoning item, its
- * text as an assistant `message` item, and its tool calls. A turn with text
- * and a call (or several calls) spans several consecutive items that all map
- * to the same projected entry.
- */
 function isAssistantTurnItem(item: XaiWireItem | undefined): boolean {
   if (item === undefined) return false;
   if (isAssistantMessage(item)) return true;
   const type = itemType(item);
   return type === "reasoning" || (type !== undefined && CALL_TYPES.has(type));
 }
-
-// ---------------------------------------------------------------------------
-// Captures and the per-call transport context
-// ---------------------------------------------------------------------------
 
 export interface XaiWireCapture {
   readonly schemaVersion: 1;
@@ -296,14 +247,10 @@ export interface XaiWireCapture {
   readonly provider: string;
   readonly modelId: string;
   readonly baseUrl: string;
-  /** Request URL origin and path; the query is dropped. */
   readonly endpoint: string;
-  /** HTTP status of the response to this exact request (always 200 for a stored capture). */
   readonly status: number;
   readonly bodyText: string;
-  /** Deep-frozen parse of bodyText. */
   readonly body: XaiWireBody;
-  /** Always set for a stored capture (an unmapped request is not a usable capture). */
   readonly mapping: WireMapping | undefined;
 }
 
@@ -317,18 +264,15 @@ export type XaiTransportVerdict =
   | {
       readonly ok: false;
       readonly code: string;
-      /** Local, user-facing refusal text (without the prefix); defaults to the code. */
       readonly message?: string;
     };
 type TransportCheck = (request: XaiTransportRequest) => XaiTransportVerdict;
-/** Observes the provider response before the adapter reads it; must read a clone and never throw. */
 export type XaiResponseObserver = (response: Response) => Promise<void>;
 
 interface TransportCall {
   readonly sessionId: string | undefined;
   readonly checks: TransportCheck[];
   readonly responseObservers: XaiResponseObserver[];
-  /** Called once with the reason code when a check refuses the request. */
   readonly refusalObservers: ((code: string) => void)[];
   readonly refusals: string[];
 }
@@ -341,7 +285,6 @@ interface TransportRefusal {
 
 const RUNTIME_SYMBOL = Symbol.for("choco-pi:xai-native-lane");
 
-/** Process-wide state shared by every extension instance that loads this module. */
 function runtime(): LaneRuntime<TransportCall, XaiWireCapture, TransportRefusal> {
   return laneRuntime<TransportCall, XaiWireCapture, TransportRefusal>(RUNTIME_SYMBOL, "xAI");
 }
@@ -349,12 +292,10 @@ function runtime(): LaneRuntime<TransportCall, XaiWireCapture, TransportRefusal>
 const MAX_REFUSALS = 64;
 const DEFAULT_CAPTURES_PER_SESSION = 4;
 
-/** The xAI transport call a before_provider_request handler is running for, if any. */
 export function currentXaiTransportCall(): TransportCall | undefined {
   return runtime().calls.getStore();
 }
 
-/** Bind the projection captures map against; the returned unbind removes only this source. */
 export function bindXaiSessionProjection(sessionId: string, source: ProjectionSource): () => void {
   const projections = runtime().projections;
   projections.set(sessionId, source);
@@ -363,7 +304,6 @@ export function bindXaiSessionProjection(sessionId: string, source: ProjectionSo
   };
 }
 
-/** Captures for a session, oldest first. */
 export function xaiCapturesFor(sessionId: string): readonly XaiWireCapture[] {
   return runtime().captures.get(sessionId) ?? [];
 }
@@ -375,11 +315,6 @@ export function releaseXaiSessionCaptures(sessionId: string): void {
   responseRing().delete(sessionId);
 }
 
-// ---------------------------------------------------------------------------
-// Responses that left no usable capture (diagnostics only)
-// ---------------------------------------------------------------------------
-
-/** A transmitted session request whose response was not HTTP 200 or whose body could not be mapped. */
 export interface XaiRecordedResponse {
   readonly sequence: number;
   readonly status: number;
@@ -392,16 +327,10 @@ export interface XaiRecordedResponse {
 const RESPONSES_SYMBOL = Symbol.for("choco-pi:xai-native-responses");
 const MAX_RESPONSES_PER_SESSION = 8;
 
-/**
- * Process-wide ring of unusable responses per session, kept apart from the
- * capture ring so a host retry burst (non-200 answers) never evicts the last
- * usable capture. Its own slot, so the lane runtime's shape is unchanged.
- */
 function responseRing(): Map<string, XaiRecordedResponse[]> {
   return responseRingSlot<XaiRecordedResponse>(RESPONSES_SYMBOL, "xAI");
 }
 
-/** Unusable responses of a session, oldest first (at most 8). */
 export function recentXaiResponsesFor(sessionId: string): readonly XaiRecordedResponse[] {
   return responseRing().get(sessionId) ?? [];
 }
@@ -417,7 +346,6 @@ export function xaiTransportRefusals(sessionId?: string): readonly TransportRefu
     : refusals.filter((refusal) => refusal.sessionId === sessionId);
 }
 
-/** Every refusal is a local error of this package, never a provider body. */
 export const XAI_TRANSPORT_REFUSAL_PREFIX = "choco-pi compaction: xAI native transport refused";
 const TRANSPORT_REFUSAL_HEADER = "x-choco-pi-transport-refusal";
 
@@ -428,9 +356,7 @@ export type XaiProviderStream = (
 ) => AssistantMessageEventStream;
 
 export interface XaiCapturingOptions {
-  /** Defaults to the installed openai-responses adapter's streamSimple. */
   readonly delegate?: typeof installedStreamSimple;
-  /** Base transport; defaults to the host-provided fetch, then globalThis.fetch. */
   readonly fetch?: typeof globalThis.fetch;
   readonly now?: () => number;
   readonly maxCapturesPerSession?: number;
@@ -444,7 +370,6 @@ function storeCapture(capture: XaiWireCapture, limit: number): void {
   storeBounded(runtime().captures, capture.sessionId, capture, limit);
 }
 
-/** A refused request is answered locally with a non-retryable 400 and never transmitted. */
 function refuse(call: TransportCall, code: string, now: number, detail?: string): Response {
   call.refusals.push(code);
   const refusals = runtime().refusals;
@@ -472,11 +397,6 @@ interface CaptureCall {
   readonly base: typeof globalThis.fetch;
 }
 
-/**
- * Provider `streamSimple` running the installed Responses adapter with a
- * capturing, verifying fetch. Captures are keyed by `options.sessionId`;
- * requests without one are verified but not captured.
- */
 export function createXaiCapturingStreamSimple(
   options: XaiCapturingOptions = {},
 ): XaiProviderStream {
@@ -551,12 +471,6 @@ async function captureAndForward(
   return response;
 }
 
-/**
- * Store the sent body for a session-bound call; calls without a session ID are
- * not captured. Only an HTTP 200 answer to a mapped body is a usable capture;
- * any other response goes to the diagnostics ring, so the host's retries of a
- * failing request never evict the last usable capture.
- */
 function recordCapture(
   capture: CaptureCall,
   sent: {
@@ -603,7 +517,6 @@ function recordCapture(
   );
 }
 
-/** Override `provider`'s Responses stream with the capturing wrapper (models and auth are kept). */
 export function registerXaiCapture(
   pi: ExtensionAPI,
   provider: string,

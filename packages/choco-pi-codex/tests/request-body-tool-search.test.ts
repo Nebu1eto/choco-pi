@@ -1,14 +1,3 @@
-/**
- * Pi's built-in `tool_search` on the openai-codex provider.
- *
- * Decision: the built-in is declared to the provider as an ordinary function
- * tool in the initial (cached) tool list, exactly like the custom tool it
- * replaced. Tools it loads mid-session never join the top-level `tools` field:
- * on a model with additional-tools or native tool-search support they are
- * anchored in the transcript (`additional_tools`, or a client
- * `tool_search_call`/`tool_search_output` pair with `defer_loading`), so the
- * request prefix stays byte-identical across the load.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -54,7 +43,6 @@ function model(compat: Record<string, boolean>): Model<"openai-codex-responses">
 }
 
 function transcript(withLoad: boolean): TranscriptContext {
-  // What Pi records when tool_search activates a match: an additive system message.
   const load: SystemMessage = { role: "system", content: "", toolsAdded: [LOADED], timestamp: 2 };
   return normalizeContext({
     systemPrompt: "Instructions.",

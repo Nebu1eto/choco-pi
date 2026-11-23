@@ -1,13 +1,3 @@
-/**
- * Anthropic native transport capture.
- *
- * A real `createAgentSession` runs the INSTALLED Anthropic adapter behind the
- * capturing provider registered by an extension through the public
- * `registerProvider` seam; a fake base fetch answers, so nothing leaves the
- * process. The capture must hold the final serialized body (after every
- * before_provider_request handler), map it to branch entry IDs, report foreign
- * content and ambiguity, and keep no credentials.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -155,7 +145,6 @@ interface Host {
   dispose(): Promise<void>;
 }
 
-/** Real session; capture installed by an extension, as the host wires it. */
 async function createHost(
   respond: (index: number) => Response,
   extensions: readonly ExtensionFactory[],
@@ -311,7 +300,6 @@ test(
       ]);
       const [first, second] = captures;
       assert.ok(first && second);
-      // The capture is the exact serialized body the fake transport received.
       assert.equal(first.bodyText, host.sent[0]?.body);
       assert.equal(second.bodyText, host.sent[1]?.body);
       assert.equal(first.status, 200);
@@ -320,7 +308,6 @@ test(
       assert.equal(first.provider, PROVIDER);
       assert.equal(first.modelId, "claude-haiku-5-5");
       assert.ok(Object.isFrozen(first.body) && Object.isFrozen(first.body.messages));
-      // No credential material is retained, though the transport saw it.
       assert.equal(host.sent[0]?.headers.get("x-api-key"), API_KEY);
       assert.equal(JSON.stringify(captures).includes(API_KEY), false);
       assert.equal("headers" in first, false);
@@ -385,10 +372,6 @@ test(
       assert.ok(capture?.mapping);
       const [first, , third] = capture.mapping.messages;
       assert.deepEqual(first?.entryIds, [host.seed.a], "order-preserving pick");
-      // Formerly every viable owner was recorded here. Both wire copies claim
-      // both projected owners in order, so the monotone assignment is unique
-      // and nothing is ambiguous; an unclaimed owner still is (see the
-      // legality test "mapping failures refuse instead of guessing").
       assert.deepEqual(first?.ambiguous, []);
       assert.deepEqual(third?.entryIds, [host.seed.c]);
       assert.deepEqual(third?.ambiguous, [], "only one owner remains after the first");
@@ -420,8 +403,6 @@ test("requests without a session ID or projection are not attributed", async () 
   })) {
     assert.notEqual(event.type, "error");
   }
-  // No projection bound: unmapped, not guessed, and so not a usable capture (D8);
-  // the response is kept for diagnostics only.
   assert.equal(capturesFor(unbound).length, 0, "an unmapped body is not a usable capture");
   const [response] = recentResponsesFor(unbound);
   assert.ok(response, "recorded under its session ID");
@@ -477,8 +458,6 @@ test("captured requests stay full: Anthropic message threads are not continued",
   assert.equal(sent.length, 2);
   const continued = sent[1];
   assert.ok(continued);
-  // A thread continue would send only the new message and omit system and tools,
-  // so captures and replay checks would see a partial conversation.
   assert.equal(continued.thread, undefined, "no thread continuation on the wire");
   assert.equal(continued.messages.length, 3, "the full conversation is sent");
 });

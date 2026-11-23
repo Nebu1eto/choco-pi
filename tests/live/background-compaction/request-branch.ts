@@ -12,7 +12,6 @@ export interface RequestBranch {
   suffixEntryIds: string[];
   suffixToolPairs: ToolPair[];
 }
-/** Derive expectations from the real branch at dispatch, never from a desired checkpoint. */
 export function captureRequestBranch(
   recorder: Recorder,
   manager: SessionManager,

@@ -349,7 +349,6 @@ function scanOwnedSnapshots(options: {
   );
 }
 
-/** After an owned close, expire only close-proven snapshots while retaining two fallbacks. */
 export function pruneOwnedManagedSessionRestoreSnapshots(options: {
   cwd: string;
   namespace?: string;

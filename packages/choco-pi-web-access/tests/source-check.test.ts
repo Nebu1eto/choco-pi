@@ -23,7 +23,6 @@ import type { Static } from "@earendil-works/pi-schema";
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 const isolatedAgentDir = await mkdtemp(join(tmpdir(), "choco-pi-source-check-agent-"));
 process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
-// Extension-level fixtures use the existing trusted-proxy fetch seam, not a direct socket.
 const previousHttpsProxy = process.env.HTTPS_PROXY;
 const previousNoProxy = process.env.NO_PROXY;
 const previousLowerNoProxy = process.env.no_proxy;

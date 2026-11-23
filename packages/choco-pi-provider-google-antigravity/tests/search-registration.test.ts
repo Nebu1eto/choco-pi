@@ -35,7 +35,6 @@ async function load(factories: ExtensionFactory[]) {
   return { bus, loaded };
 }
 
-/** The fake host's sign-in state; `signIn` defaults to OAuth while configured. */
 interface RegistryState {
   configured: boolean;
   reads: number;
@@ -56,7 +55,6 @@ function registryWith(state: RegistryState) {
 
 type LoadedExtension = Awaited<ReturnType<typeof load>>["loaded"][number];
 
-/** Runs every session synchronization handler with a signed-in registry. */
 async function syncSignedIn(extension: LoadedExtension) {
   const ctx = registryWith({ configured: true, reads: 0 });
   for (const event of ["session_start", "session_tree", "model_select"]) {
@@ -113,7 +111,6 @@ test("after the full handshake the adapter follows the sign-in state without rea
   state.configured = true;
   await emit("session_start");
   assert.equal(scope.adapters.has(GOOGLE_SEARCH_ADAPTER_ID), true);
-  // Only Google Antigravity OAuth counts: a Gemini API key also configures google.
   state.signIn = "stored_api_key";
   await emit("model_select");
   assert.equal(scope.adapters.has(GOOGLE_SEARCH_ADAPTER_ID), false);

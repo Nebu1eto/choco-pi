@@ -1,8 +1,3 @@
-// choco-pi-codex: choco-pi fork of @howaboua/pi-codex-conversion.
-// Registers the kept feature set only: the Codex adapter (openai-codex /
-// openai-responses providers with server-side compaction), apply_patch,
-// web_run, imagegen, view_image, Code Mode, and the OpenAI websocket options.
-// Voice, Notebook Mode, and the background-shell widget were removed.
 import { createRequire } from "node:module";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { HostSchema } from "@choco-pi/code-mode/schema-bridge";

@@ -170,9 +170,7 @@ async function fetchCodexUsageWithHeaders(
         signal,
       );
       if (detailedResetCredits) snapshot.resetCredits = detailedResetCredits;
-    } catch {
-      // Detailed reset-credit metadata is additive; usage still renders if this endpoint fails.
-    }
+    } catch {}
   }
   return snapshot;
 }
@@ -181,15 +179,10 @@ function hasConfiguredProviderCredential(ctx: ExtensionContext, provider: string
   try {
     return ctx.modelRegistry.getProviderAuthStatus(provider).configured;
   } catch {
-    // Unknown status keeps the existing auth path, which reports its own error.
     return true;
   }
 }
 
-/**
- * Why the ChatGPT usage window cannot be read for the active model, decided from synchronous
- * registry state so no credential is resolved or refreshed and no request is sent.
- */
 export function resolveCodexUsageUnavailable(
   ctx: ExtensionContext,
 ): CodexUsageUnavailable | undefined {

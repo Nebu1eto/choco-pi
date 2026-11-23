@@ -57,7 +57,6 @@ test(
   async () => {
     const harness = createRealPiRpcHarness(process.cwd());
     const sessions = new SessionManager();
-    // The real manager is injected before session creation so the test can observe its Pi events.
     Object.assign(harness.agent, { sessions } satisfies { sessions: SessionManagerLike });
     try {
       const created = await harness.agent.newSession({ cwd: harness.cwd, mcpServers: [] });

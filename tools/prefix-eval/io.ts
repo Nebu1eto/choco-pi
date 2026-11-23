@@ -10,7 +10,6 @@ import { JsonSchema, type JsonValue } from "./types.ts";
 const jsonCheck = compile(JsonSchema).check;
 const validators = new WeakMap<object, Validator>();
 
-/** Whether `value` matches `schema`; each schema object is compiled once. */
 function matches<S extends object>(schema: S, value: RuntimeValue): value is Static<S> {
   let validator = validators.get(schema);
   if (validator === undefined) {

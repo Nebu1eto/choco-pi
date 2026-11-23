@@ -1,11 +1,3 @@
-// Minimal Chrome DevTools Protocol client.
-//
-// Opt-in: set PI_COMPUTER_USE_CDP_PORT to the --remote-debugging-port of a
-// running Chromium-family browser. When active, navigate_browser uses
-// Page.navigate (event-driven, no AppleScript) and recent console messages
-// and uncaught exceptions are attached to tool results. Everything else
-// keeps the AX/CGEvent path, so with the env var unset this module is inert.
-
 import { randomUUID } from "node:crypto";
 import {
   isJsonObject,
@@ -49,7 +41,6 @@ export interface CdpPageSnapshot {
   text: string;
   targets: CdpSnapshotTarget[];
   outline: SerializedOutline;
-  /** Layout viewport in CSS pixels at capture time; absent when the page did not report it. */
   viewport?: { width: number; height: number };
   diagnostics: {
     cdp: "connected";
@@ -97,7 +88,6 @@ interface CdpAxNode {
   childIds?: JsonValue[];
 }
 
-/** Window frame in screen points, as reported by the AX side. */
 export interface WindowFrame {
   x: number;
   y: number;
@@ -123,11 +113,6 @@ function checkAbort(signal?: AbortSignal): void {
   if (signal?.aborted) throw new DOMException("Operation aborted.", "AbortError");
 }
 
-/**
- * A CDP action failed. `effectPossible` is false only when no input-bearing
- * command of the action (key, mouse, text, focus, or page-script call) was
- * sent; once one was sent the page may have applied it, even if it errored.
- */
 export class CdpActionError extends Error {
   readonly code: string;
   readonly effectPossible: boolean;
@@ -140,7 +125,6 @@ export class CdpActionError extends Error {
   }
 }
 
-/** Modifier names CDP keypress folds into the modifier bit mask (compared in lower case). */
 const CDP_MODIFIER_BITS = new Map([
   ["alt", 1],
   ["option", 1],
@@ -152,12 +136,6 @@ const CDP_MODIFIER_BITS = new Map([
   ["shift", 8],
 ]);
 
-/**
- * DOM `KeyboardEvent.key` names CDP keypress accepts, with their Windows
- * virtual key codes; each name is also its `code`. Chrome runs default
- * editing and navigation actions (caret moves, deletion, Tab focus) only for
- * key events that carry the virtual key code.
- */
 const CDP_NAMED_KEY_CODES: ReadonlyMap<string, number> = new Map<string, number>([
   ["Enter", 13],
   ["Tab", 9],
@@ -176,13 +154,11 @@ const CDP_NAMED_KEY_CODES: ReadonlyMap<string, number> = new Map<string, number>
   ...Array.from({ length: 12 }, (_, index): [string, number] => [`F${index + 1}`, 112 + index]),
 ]);
 
-/** The physical-key fields of a CDP key event, when known for the key. */
 interface CdpKeyIdentity {
   code?: string;
   windowsVirtualKeyCode?: number;
 }
 
-/** The `code` and Windows virtual key code of a DOM key value, when known. */
 function cdpKeyIdentity(key: string): CdpKeyIdentity {
   const named = CDP_NAMED_KEY_CODES.get(key);
   if (named !== undefined) return { code: key, windowsVirtualKeyCode: named };
@@ -199,20 +175,9 @@ function cdpModifierBit(key: string): number | undefined {
   return CDP_MODIFIER_BITS.get(key.toLowerCase());
 }
 
-/**
- * CDP key events skip the macOS text-input layer that turns Cmd shortcuts into
- * editing commands, so on macOS they reach the page without running them
- * (confirmed live for ["cmd","a"]: the selection stayed collapsed).
- */
 const CDP_MACOS_EDITING_LIMIT =
   'On macOS, Cmd editing shortcuts such as ["cmd","a"] (select all, copy, cut, paste, undo, redo) do not run on browser pages; use set_text to replace a field\'s text.';
 
-/**
- * Why CDP keypress cannot send `keys`, or undefined when it can. CDP sends each
- * key as a DOM key value: a modifier name, a single character, or a named key
- * such as "Enter". Desktop-only forms ("return", "right", "cmd+a") and
- * modifier-only lists would send nothing useful, so they are refused.
- */
 export function cdpKeysProblem(keys: readonly string[]): string | undefined {
   if (keys.length === 0) return "keypress.keys must contain at least one key.";
   const unsupported = keys.filter(
@@ -225,7 +190,6 @@ export function cdpKeysProblem(keys: readonly string[]): string | undefined {
   return undefined;
 }
 
-/** The thrown page-script message from a Runtime result, or undefined when it did not throw. */
 function scriptExceptionMessage(details: JsonValue | undefined): string | undefined {
   if (details === undefined) return undefined;
   if (!isJsonObject(details)) return "Page script threw an exception.";
@@ -239,16 +203,12 @@ function isAbortError(error: Error): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-/** The browser answered a command with a protocol error. */
 class CdpProtocolError extends Error {}
 
-/** A page script run for an action threw. */
 class CdpPageScriptError extends Error {}
 
-/** The targeted element still resolves but is no longer in the page (it was removed). */
 class CdpDetachedNodeError extends Error {}
 
-/** Read-only probe: whether the element is still connected to its document. */
 const CDP_CONNECTED_PROBE = "function(){ return this.isConnected; }";
 
 export interface CdpTransport {
@@ -262,7 +222,6 @@ export interface CdpTransport {
 }
 let createTransport: (url: string) => CdpTransport = (url) => new WebSocket(url);
 
-/** Replace only the wire transport; protocol handling remains production code. */
 export function replaceCdpTransportForTest(factory: (url: string) => CdpTransport): () => void {
   const previous = createTransport;
   createTransport = factory;
@@ -334,9 +293,7 @@ export class CdpTab {
     } catch (error) {
       try {
         ws.close();
-      } catch {
-        // already closed
-      }
+      } catch {}
       throw error;
     }
   }
@@ -345,7 +302,6 @@ export class CdpTab {
     return this.ws.readyState === WebSocket.OPEN;
   }
 
-  /** Whether this connection sent an input-bearing command (key, mouse, text, focus, page script). */
   get inputSent(): boolean {
     return this.inputCommandSent;
   }
@@ -356,12 +312,9 @@ export class CdpTab {
     this.rejectAllPending(new Error("CDP connection closed."));
     try {
       this.ws.close();
-    } catch {
-      // already closed
-    }
+    } catch {}
   }
 
-  /** Evaluates a JS expression in the page and returns its primitive value. */
   async evaluate(expression: string): Promise<JsonField> {
     const result = await this.send("Runtime.evaluate", {
       expression,
@@ -383,7 +336,6 @@ export class CdpTab {
     });
     try {
       await this.send("Page.navigate", { url });
-      // SPAs and slow pages may never fire load; cap the wait and move on.
       await Promise.race([
         loaded,
         new Promise<void>((resolve) => setTimeout(resolve, NAVIGATE_LOAD_TIMEOUT_MS)),
@@ -394,8 +346,6 @@ export class CdpTab {
   }
 
   async clickBackendNode(backendNodeId: number, signal?: AbortSignal): Promise<void> {
-    // Like a real click, focus moves to a focusable target before the click
-    // runs, so later keyboard input without ref goes there.
     await this.withBackendNode(
       backendNodeId,
       "function(){ this.scrollIntoView({block:'center', inline:'center'}); if (typeof this.focus === 'function') this.focus({preventScroll: true}); this.click(); }",
@@ -448,7 +398,6 @@ export class CdpTab {
     await this.deliver("Input.insertText", { text }, signal);
   }
 
-  /** Focuses a node and fails when focus did not land on it or inside it. */
   async focusBackendNode(backendNodeId: number, signal?: AbortSignal): Promise<void> {
     await this.withBackendNode(
       backendNodeId,
@@ -564,8 +513,6 @@ export class CdpTab {
     const objectId = resolved?.object?.objectId;
     if (!isString(objectId))
       throw new Error(`CDP could not resolve backend node ${backendNodeId}.`);
-    // A removed element still resolves until it is collected, and actions on it
-    // succeed without reaching the page; refuse it before sending anything.
     if (!(await this.isConnectedObject(objectId, signal)))
       throw new CdpDetachedNodeError(
         "The target element is no longer in the page; it was removed after the state was observed.",
@@ -583,11 +530,6 @@ export class CdpTab {
     if (exception) throw new CdpPageScriptError(exception);
   }
 
-  /**
-   * Read-only check: which of `backendNodeIds` no longer resolve to a node in
-   * the page (gone, or removed from the document). Resolved handles are
-   * released; no input-bearing command is sent.
-   */
   async unresolvedBackendNodes(
     backendNodeIds: readonly number[],
     signal?: AbortSignal,
@@ -607,7 +549,6 @@ export class CdpTab {
           if (!isString(objectId) || !(await this.isConnectedObject(objectId, signal)))
             unresolved.push(backendNodeId);
         } catch (error) {
-          // A protocol error means the node is gone; transport failures and aborts propagate.
           if (!(error instanceof CdpProtocolError)) throw error;
           unresolved.push(backendNodeId);
         }
@@ -628,7 +569,6 @@ export class CdpTab {
     return result?.result?.value === true;
   }
 
-  /** Screen bounds of the browser window containing this tab. */
   async windowBounds(): Promise<WindowFrame | undefined> {
     const result = await this.send("Browser.getWindowForTarget", { targetId: this.targetId });
     const bounds = result?.bounds;
@@ -642,14 +582,12 @@ export class CdpTab {
     return { x: bounds.left, y: bounds.top, w: bounds.width, h: bounds.height };
   }
 
-  /** Returns buffered console messages/exceptions and clears the buffer. */
   drainConsole(): CdpConsoleEntry[] {
     const entries = this.consoleBuffer;
     this.consoleBuffer = [];
     return entries;
   }
 
-  /** Sends an input-bearing command; from here on the action may have taken effect. */
   private deliver(
     method: string,
     params: JsonObject = {},
@@ -762,7 +700,6 @@ const connectedTabs = new Map<string, CdpTab>();
 const connectingTabs = new Map<string, Promise<CdpTab>>();
 let lastConnectFailureAt = 0;
 
-/** Close session-owned CDP state without affecting the browser process. */
 export function disconnectCdp(): void {
   for (const tab of connectedTabs.values()) tab.close();
   connectedTabs.clear();
@@ -777,13 +714,6 @@ function cdpEnabled(): boolean {
   return Number.isInteger(port) && port > 0 && port <= 65535 && globalThis.WebSocket !== undefined;
 }
 
-/**
- * Returns a CDP connection to the tab matching the controlled window's title
- * (and, when provided, the window's screen frame), or undefined when CDP is
- * disabled, unreachable, or no tab matches. Reuses the cached connection
- * while it still matches; failures are cached briefly so an unreachable
- * endpoint never adds per-call latency.
- */
 export async function cdpTabForWindow(
   windowTitle: string,
   frame?: WindowFrame,
@@ -1049,7 +979,6 @@ export async function cdpSnapshotForContext(
   }
 }
 
-/** A positive finite [width, height] pair, or undefined. */
 function viewportFrom(value: JsonField): { width: number; height: number } | undefined {
   if (!Array.isArray(value) || value.length !== 2) return undefined;
   const [width, height] = value;
@@ -1059,11 +988,6 @@ function viewportFrom(value: JsonField): { width: number; height: number } | und
   return { width, height };
 }
 
-/**
- * Read-only preflight for an action batch: `undefined` when the page target is
- * gone, otherwise the backend node ids that no longer resolve. Sends no
- * input-bearing command; with no node ids it only lists the page targets.
- */
 export async function cdpPreflightForContext(
   contextId: string,
   backendNodeIds: readonly number[],
@@ -1082,11 +1006,6 @@ export async function cdpPreflightForContext(
   }
 }
 
-/**
- * Runs one action on a fresh connection to the context's page. `undefined`
- * when the page target is gone (nothing sent). Other failures, except aborts,
- * become a CdpActionError whose `effectPossible` says whether input was sent.
- */
 async function withCdpContextTab<T>(
   contextId: string,
   run: (tab: CdpTab) => Promise<T>,
@@ -1293,16 +1212,6 @@ function isLocalDebuggerWebSocket(wsUrl: string, expectedPort: string | undefine
   }
 }
 
-/**
- * Picks the tab for a window title. Disambiguation order, applied only while
- * more than one candidate remains:
- *   1. exact title matches beat prefix matches;
- *   2. the tab whose browser window frame matches the controlled window
- *      (separates same-titled tabs in different windows);
- *   3. the visible tab (separates same-titled tabs in one window — the
- *      active tab is "visible", background tabs are "hidden").
- * /json/list ordering is never trusted; it is an undocumented MRU detail.
- */
 async function pickTab(
   pages: CdpPageTarget[],
   windowTitle: string,
@@ -1331,18 +1240,11 @@ async function pickTab(
       if (frame && inFrame && visibility === "visible") return candidate;
       if (frame && inFrame && !visibleFallback) visibleFallback = candidate;
       if (!frame && visibility === "visible") return candidate;
-    } catch {
-      // candidate unreachable; try the next one
-    }
+    } catch {}
   }
   return visibleFallback ?? pool[0];
 }
 
-/**
- * Whether the tab's browser window frame matches the AX window frame.
- * `trustOnUnknown` controls the answer when bounds cannot be read: cache
- * verification trusts the existing connection, candidate selection does not.
- */
 async function tabMatchesFrame(
   tab: CdpTab,
   frame: WindowFrame | undefined,
@@ -1358,9 +1260,6 @@ async function tabMatchesFrame(
   );
 }
 
-// The AX window title for a Chrome-family browser is usually the active tab
-// title, sometimes suffixed (" - Google Chrome", profile name), so compare
-// by prefix in both directions.
 function titlesMatch(tabTitle: string, windowTitle: string): boolean {
   const tab = tabTitle.trim().toLowerCase();
   const win = windowTitle.trim().toLowerCase();

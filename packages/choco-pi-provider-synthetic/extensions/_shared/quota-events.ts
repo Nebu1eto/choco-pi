@@ -7,12 +7,6 @@ import {
   type SyntheticQuotasSnapshotPayload,
 } from "../../src/types/quotas";
 
-/**
- * Emit a request to refresh quotas from the Synthetic API.
- *
- * `respond` is optional: callers that only want to trigger a refresh
- * (e.g. sub-bar-integration) omit it and pass undefined.
- */
 export function requestQuotas(
   pi: ExtensionAPI,
   respond?: (snapshot: SyntheticQuotasSnapshotPayload | undefined) => void,
@@ -22,9 +16,6 @@ export function requestQuotas(
   } satisfies SyntheticQuotasRequestPayload);
 }
 
-/**
- * Read the current cached quota snapshot from the store without an API call.
- */
 export function readQuotas(
   pi: ExtensionAPI,
   respond: (snapshot: SyntheticQuotasSnapshotPayload | undefined) => void,

@@ -7,11 +7,6 @@ import {
   isRuntimeObject,
   isRuntimeString,
 } from "./runtime-values.ts";
-/**
- * lsp_navigation tool definition
- *
- * Extracted from index.ts for maintainability.
- */
 
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
@@ -58,10 +53,6 @@ const VALID_OPERATIONS = [
   "capabilities",
 ] as const;
 
-/**
- * Model-facing operation names (snake_case tool I/O). VALID_OPERATIONS above
- * stays the internal vocabulary; INTERNAL_OPERATION maps at the tool boundary.
- */
 const TOOL_OPERATIONS = [
   "definition",
   "type_definition",
@@ -108,7 +99,6 @@ const INTERNAL_OPERATION = {
   capabilities: "capabilities",
 } as const satisfies { readonly [Name in ToolOperation]: LspNavigationOperation };
 
-/** LSP protocol subtrees embedded in results this tool builds; their keys stay verbatim. */
 const LSP_PASSTHROUGH_KEYS: ReadonlySet<string> = new Set([
   "edit",
   "location",
@@ -116,16 +106,7 @@ const LSP_PASSTHROUGH_KEYS: ReadonlySet<string> = new Set([
   "diagnostics",
 ]);
 
-const NAVIGABLE_SYMBOL_KINDS = new Set([
-  5, // Class
-  6, // Method
-  8, // Field
-  11, // Interface
-  12, // Function
-  13, // Variable
-  22, // EnumMember
-  23, // Struct
-]);
+const NAVIGABLE_SYMBOL_KINDS = new Set([5, 6, 8, 11, 12, 13, 22, 23]);
 
 type LspNavigationOperation = (typeof VALID_OPERATIONS)[number];
 
@@ -147,7 +128,6 @@ interface LspNavigationParams {
   exact_match?: boolean;
   top_level_only?: boolean;
   max_results?: number;
-  /** LSP CallHierarchyItem pass-through: inner keys (selectionRange, ...) stay as the protocol spells them. */
   call_hierarchy_item?: LSPCallHierarchyItem;
 }
 
@@ -160,7 +140,6 @@ function isToolOperation(value: string): value is ToolOperation {
   return TOOL_OPERATIONS.some((name) => name === value);
 }
 
-/** Model-facing name of an internal operation; labels such as "precheck" pass through. */
 function toolOperationName(operation: string): string {
   for (const name of TOOL_OPERATIONS) {
     if (INTERNAL_OPERATION[name] === operation) return name;
@@ -168,12 +147,6 @@ function toolOperationName(operation: string): string {
   return operation;
 }
 
-/**
- * Result JSON shown to the model. Raw LSP responses stay verbatim; results this
- * tool builds itself (find_symbol matches, rename/rename_file summaries, the
- * execute_command dry-run report) get snake_case keys, keeping embedded LSP
- * objects verbatim.
- */
 function modelResult(
   operation: LspNavigationOperation,
   result: RuntimeValue,
@@ -418,9 +391,6 @@ type SymbolMatch = {
 };
 
 function symbolKindLabel(kind: number | undefined): string {
-  // Single source of truth for LSP SymbolKind names (#883 doctrine; the
-  // Sonar-flagged duplicate table lived here). Navigation keeps its own
-  // "symbol" fallback for unknown kinds instead of the lsp-symbol-<n> form.
   return kind == null ? "symbol" : (SYMBOL_KIND_NAMES[kind] ?? "symbol");
 }
 
@@ -761,20 +731,10 @@ async function openFileBestEffort(
     } else {
       await lspService.openFile(filePath, fileContent);
     }
-  } catch {
-    /* LSP server may not be ready yet — proceed anyway */
-  }
+  } catch {}
 }
 
 export function createLspNavigationTool(
-  /**
-   * Resolves a flag, optionally scoped to a call's `cwd` (#792). Callers that
-   * need per-request project config (e.g. the MCP host, which has no single
-   * "current project root" the way an in-pi session does) can rebuild their
-   * flag resolver against `cwd` instead of whatever directory the tool was
-   * constructed in; callers that only have a single fixed project root (e.g.
-   * pi's own `getLensFlag`) may ignore the second argument.
-   */
   getFlag: (name: string, cwd?: string) => boolean | string | undefined,
   mutationDeps?: Pick<LspMutationContext, "runtime" | "cacheManager" | "readGuard" | "dbg">,
 ) {
@@ -917,7 +877,6 @@ export function createLspNavigationTool(
             description: "find_symbol only: maximum matches to return. Default 20.",
           }),
         ),
-        // Pass-through LSP CallHierarchyItem: its own level (and ranges) stay open and keep protocol key names.
         call_hierarchy_item: opt(
           obj(
             {
@@ -948,7 +907,6 @@ export function createLspNavigationTool(
       let columnResolution: SymbolColumnResolution | undefined;
       let mutationContext: LspMutationContext | undefined;
       let requestedApply = false;
-      // Model-facing operation name for the result envelope; set once the input is classified.
       let modelOperation: string | undefined;
 
       const finalize = (
@@ -1013,10 +971,6 @@ export function createLspNavigationTool(
           content: [
             {
               type: "text" as const,
-              // Compact JSON: omit indentation. Saves ~50% on rename / workspace-edits payloads
-              // while keeping the envelope machine-parseable. Tests use JSON.parse so
-              // they are agnostic to whitespace.
-              // Envelope and metadata keys are snake_case; LSP results stay verbatim.
               text: serializeLspToolEnvelope(envelope, envelopeOperation),
             },
           ],
@@ -1149,9 +1103,7 @@ export function createLspNavigationTool(
       if (filePath) {
         try {
           filePathIsDirectory = nodeFs.statSync(filePath).isDirectory();
-        } catch {
-          // non-existent path — existing error paths handle this
-        }
+        } catch {}
       }
 
       const lspService = getLSPService();
@@ -1351,7 +1303,6 @@ export function createLspNavigationTool(
         await openFileBestEffort(lspService, filePath);
       }
 
-      // Convert 1-based editor coords to 0-based LSP coords.
       const lspLine = (line ?? 1) - 1;
       const needsPosition = [
         "definition",
@@ -1474,9 +1425,7 @@ export function createLspNavigationTool(
             for (const touchedFile of applied.files) {
               try {
                 await openFileBestEffort(lspService, touchedFile, false);
-              } catch {
-                // Best-effort LSP resync only; disk edit already succeeded.
-              }
+              } catch {}
             }
             return { applied: true, ...applied };
           }
@@ -1496,9 +1445,7 @@ export function createLspNavigationTool(
               for (const touchedFile of result.files ?? []) {
                 try {
                   await openFileBestEffort(lspService, touchedFile, false);
-                } catch {
-                  // Best-effort LSP resync only; disk edit already succeeded.
-                }
+                } catch {}
               }
             }
             return result;
@@ -1515,9 +1462,6 @@ export function createLspNavigationTool(
               rawPath ? filePath : undefined,
             );
             const isAdvertised = advertised.includes(command);
-            // Dry-run by default: report advertisement status without running.
-            // Mutation only on explicit apply:true (and the client re-checks
-            // the allowlist — defense in depth).
             if (apply !== true) {
               return {
                 executed: false,

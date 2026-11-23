@@ -12,7 +12,6 @@ import { sanitizeShellText, ShellOutputViewer } from "./shell-viewer.ts";
 
 export const SHELLS_OVERLAY_HEIGHT_PCT = 70;
 
-/** Visible width of the "<bullet> <state> " prefix; continuation lines indent to match. */
 const ROW_PREFIX_WIDTH = 4;
 
 export type ShellState = "running" | "exited" | "stopped" | "failed";
@@ -225,9 +224,6 @@ export class ShellsOverlay implements Component {
       3,
       Math.floor((this.tui.terminal.rows * SHELLS_OVERLAY_HEIGHT_PCT) / 100) - 6,
     );
-    // Long labels wrap, so entries have variable heights. Each entry is capped at maxRows so the
-    // selected entry always fits; scrolling keeps the selected entry at the bottom once the
-    // entries before it no longer fit, matching the former one-line-per-shell behavior.
     const bodyWidth = Math.max(1, inner - ROW_PREFIX_WIDTH);
     const entries = shells.map((shell) => this.entryLines(shell, bodyWidth, maxRows));
     let start = this.selectedIndex;
@@ -308,7 +304,6 @@ export class ShellsOverlay implements Component {
     this.done(result);
   }
 
-  /** Wrap a shell's label and metadata to at most maxRows lines; clip only beyond that cap. */
   private entryLines(shell: ShellSummary, width: number, maxRows: number): string[] {
     const label = sanitizeShellText(shell.name ?? shell.command).trim();
     const pid = shell.pid === undefined ? "" : ` pid ${shell.pid}`;
@@ -327,7 +322,6 @@ export class ShellsOverlay implements Component {
   }
 }
 
-/** Open the admin shell roster and hand Enter selections to a live output viewer. */
 export async function openShellsOverlay(
   ui: ShellsUICtx,
   manager: ShellsManager,

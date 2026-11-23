@@ -54,7 +54,6 @@ test("PiAcpAgent: loadSession replays toolResult as tool_call + tool_call_update
   try {
     const conn = new FakeAgentSideConnection();
     const agent = new PiAcpAgent(asAgentConn(conn));
-    // The injected fake implements the complete store contract used by PiAcpAgent.
     Object.assign(agent, { store: new FakeStore() } satisfies { store: SessionStoreLike });
 
     await agent.loadSession({ sessionId: "s1", cwd: "/tmp/project", mcpServers: [] });

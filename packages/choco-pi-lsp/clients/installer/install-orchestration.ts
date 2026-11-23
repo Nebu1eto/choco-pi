@@ -1,6 +1,3 @@
-/**
- * installTool/ensureTool orchestration, tool environment, and catalog queries.
- */
 import { nodeBinDirectory } from "@choco-pi/shared/node-runtime";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -41,27 +38,17 @@ async function finishInstallAttempt(
   logSessionStart(
     `auto-install ${toolId}: ${ok ? "success" : "failed"} (${Date.now() - startedAt}ms)`,
   );
-  // Every install strategy funnels its outcome through here, so this one write
-  // records attempt-ness for all of them (#1500).
   noteInstallAttempt(
     toolId,
     ok ? "succeeded" : "failed",
     ok ? undefined : (installFailureReasons.get(toolId) ?? "install failed"),
   );
   if (ok) {
-    // A prior availability probe may have cached ENOENT for this exact child
-    // PATH. Make a successful mutation visible immediately rather than waiting
-    // for the bounded negative-cache TTL or the next session reset (#1199).
     resetSafeSpawnWindowsCommandCache();
-    // choco-pi fork: the madge managed-path memo reset is removed with
-    // the dependency-checker (madge) client — see VENDORED.md.
   }
   return ok;
 }
 
-/**
- * Install a tool by ID
- */
 export async function installTool(toolId: string): Promise<boolean> {
   if (process.env.CHOCO_PI_LSP_DISABLE_TOOL_INSTALL === "1") {
     installFailureReasons.set(
@@ -94,25 +81,10 @@ export async function installTool(toolId: string): Promise<boolean> {
         if (!tool.packageName || !tool.binaryName) return false;
         const npmPath = await installNpmTool(tool.packageName, tool.binaryName);
         if (npmPath !== undefined) {
-          // #1746 review F4: an install just resolved this package's range
-          // against the registry, so record it as freshly checked. Otherwise a
-          // new machine that installs 22 tools today has 22 unstamped tools,
-          // and spends the next 22 sessions running `npm update` on packages
-          // it installed minutes ago.
-          //
-          // Dynamic import, not a static one: managed-tool-refresh.ts imports
-          // THIS module for the tool registry, and a static import back would
-          // be a cycle. By the time this line runs the module graph is long
-          // since evaluated, so the lazy import is safe and also keeps the
-          // refresh module off the startup path.
           // SAFETY: The npm strategy guard above establishes packageName before this asynchronous callback is created.
           await import("./managed-tool-refresh.ts")
             .then((m) => m.stampManagedToolInstalled(tool.id, tool.packageName as string))
-            .catch(() => {
-              // Best-effort telemetry: a missing stamp costs one wasted
-              // update later, never a wrong version, and must not fail the
-              // install that just succeeded.
-            });
+            .catch(() => {});
         }
         return finishInstallAttempt(tool.id, npmPath !== undefined, startedAt);
       }
@@ -160,16 +132,6 @@ export async function installTool(toolId: string): Promise<boolean> {
   }
 }
 
-/**
- * Ensure a tool is installed (check first, install if missing).
- *
- * #1334 S5: when the pi host has actively denied project trust, the INSTALL
- * half is switched off here — the request degrades to the existing
- * `allowInstall:false` discovery-only path rather than failing outright, so an
- * already-present binary keeps working while nothing is downloaded or executed
- * on behalf of an untrusted project. A host with no trust surface at all
- * (`"unknown"`) is unaffected.
- */
 export async function ensureTool(
   toolId: string,
   opts?: { forceReinstall?: boolean; allowInstall?: boolean },
@@ -183,7 +145,6 @@ export async function ensureTool(
       ...opts,
       allowInstall: false,
     });
-    // AFTER the discovery pass, which clears the per-attempt record on entry.
     noteInstallAttempt(toolId, "declined", `project trust: ${denialReason}`);
     return discovered;
   }
@@ -195,8 +156,6 @@ async function ensureToolResolved(
   opts?: { forceReinstall?: boolean; allowInstall?: boolean },
 ): Promise<string | undefined> {
   installFailureReasons.delete(toolId);
-  // A fresh ensure supersedes whatever the last one recorded, and the trust-gate
-  // branch above deliberately keeps its `declined` record by never reaching here.
   installAttempts.delete(toolId);
   lastEnsureResolutionSource.delete(toolId);
   const cacheResolvedPath = (result: string | undefined): string | undefined => {
@@ -207,25 +166,17 @@ async function ensureToolResolved(
     return result;
   };
 
-  // forceReinstall: nuke caches, download from managed source, skip PATH entirely.
-  // Used when a PATH-resolved tool proves broken at launch (e.g. broken symlink).
-  // allowInstall:false wins over forceReinstall: caches are still cleared, but
-  // the function falls back to discovery-only and never downloads.
   if (opts?.forceReinstall) {
     const ensureStartMs = Date.now();
     logSessionStart(`auto-install ensure ${toolId}: force reinstall — clearing caches`);
 
-    // Clear in-memory session cache
     resolvedPathCache.delete(toolId);
 
-    // Clear persistent probe cache entry so getToolPath won't return stale PATH result
     try {
       const probeCache = await readProbeCache();
       delete probeCache[toolId];
       markProbeCacheChange(toolId, null);
-    } catch {
-      // best-effort
-    }
+    } catch {}
 
     if (opts.allowInstall === false) {
       noteInstallAttempt(toolId, "declined", "install disabled by caller");
@@ -263,8 +214,6 @@ async function ensureToolResolved(
       await lock.release();
     }
     if (!installed) {
-      // installTool RAN. Whatever it recorded stands; otherwise this is a
-      // genuine failure, which is what the caller needs to see (#1500).
       noteInstallAttemptIfUnrecorded(toolId, "failed", "install failed");
       logSessionStart(
         `auto-install ensure ${toolId}: force reinstall failed (${Date.now() - ensureStartMs}ms)`,
@@ -272,7 +221,6 @@ async function ensureToolResolved(
       return undefined;
     }
 
-    // Find the newly installed binary (github-local check now comes before PATH)
     const result = cacheResolvedPath(await getToolPath(toolId));
     if (result) {
       logSessionStart(
@@ -282,7 +230,6 @@ async function ensureToolResolved(
     return result;
   }
 
-  // Fast path 1: in-memory session cache — no I/O.
   const cached = resolvedPathCache.get(toolId);
   if (cached) {
     if (!isFullyQualified(cached)) {
@@ -293,10 +240,7 @@ async function ensureToolResolved(
       await fs.access(cached);
       lastEnsureResolutionSource.set(toolId, "session-cache");
       return cached;
-    } catch {
-      // The executor would report ENOENT for this cached positive. Evict it
-      // before discovery so the failure heals on this call, not after restart.
-    }
+    } catch {}
     resolvedPathCache.delete(toolId);
     const probeCache = await readProbeCache();
     delete probeCache[toolId];
@@ -304,7 +248,6 @@ async function ensureToolResolved(
     logSessionStart(`auto-install ensure ${toolId}: cached path disappeared; re-probing`);
   }
 
-  // Fast path 2: persistent probe cache — fs.access + stat, no process spawn.
   const diskCached = await checkProbeCache(toolId);
   if (diskCached) {
     resolvedPathCache.set(toolId, diskCached);
@@ -313,11 +256,6 @@ async function ensureToolResolved(
     return diskCached;
   }
 
-  // Coalesce the whole ensure operation, not just installation. Most startup
-  // duplicates race while checking already-installed tools, before installTool()
-  // would ever run. The key includes the install policy so a discovery-only
-  // caller cannot accidentally inherit an install-allowed caller's download (or
-  // vice versa).
   const inFlightKey = opts?.allowInstall === false ? `${toolId}:discovery-only` : toolId;
   const inFlight = ensureInFlight.get(inFlightKey);
   if (inFlight) {
@@ -329,17 +267,8 @@ async function ensureToolResolved(
   const ensurePromise = (async () => {
     logSessionStart(`auto-install ensure ${toolId}: start`);
 
-    // Check if already installed.
     const existingPath = await getToolPath(toolId);
     if (existingPath) {
-      // Version-pin drift (#589): getToolPath() above just spawned
-      // verifyToolBinary on the managed local install anyway (this is the
-      // slow path — fast paths 1/2 above already returned before reaching
-      // here), so lastManagedInstallVersion was populated for free if this
-      // is a pinned npm tool. Compare it to the current pin and, on
-      // mismatch, route through the EXISTING forceReinstall codepath rather
-      // than resolving to a known-stale binary. Piggybacks entirely on the
-      // probe-cache's ~once-per-24h/once-per-session cadence — no new spawn.
       const tool = TOOLS.find((t) => t.id === toolId);
       const pinnedVersion =
         tool?.installStrategy === "npm" && tool.packageName
@@ -368,10 +297,6 @@ async function ensureToolResolved(
       return existingPath;
     }
 
-    // Discovery and install are SEPARATE concerns. getToolPath() above already
-    // probed PATH / npm-global / managed bin — offline-safe, no download. When the
-    // caller forbids installs (allowInstall:false, e.g. CHOCO_PI_LSP_DISABLE_LSP_INSTALL=1)
-    // we must still return a discovered binary and only skip the actual install.
     if (opts?.allowInstall === false) {
       noteInstallAttempt(toolId, "declined", "install disabled by caller");
       logSessionStart(
@@ -404,8 +329,6 @@ async function ensureToolResolved(
     }
     let installed: boolean;
     try {
-      // Cross-process double-check: the lock waiter may now observe the tool
-      // installed by its predecessor and must not run a second package manager.
       const installedByPeer = await getToolPath(toolId);
       if (installedByPeer) {
         noteInstallAttempt(toolId, "succeeded", "installed by a concurrent process");
@@ -418,8 +341,6 @@ async function ensureToolResolved(
       await lock.release();
     }
     if (!installed) {
-      // installTool RAN and did not succeed. A genuine failure unless it
-      // recorded a more specific outcome of its own (#1500).
       noteInstallAttemptIfUnrecorded(toolId, "failed", "install failed");
       logSessionStart(
         `auto-install ensure ${toolId}: unavailable (${Date.now() - ensureStartMs}ms)`,
@@ -450,16 +371,10 @@ async function ensureToolResolved(
   }
 }
 
-// --- Integration Helpers ---
-
-/**
- * Get environment with tool paths added
- */
 export async function getToolEnvironment(): Promise<NodeJS.ProcessEnv> {
   const localBin = path.join(TOOLS_DIR, "node_modules", ".bin");
   const currentPath = process.env.PATH || process.env.Path || process.env.path || "";
   const separator = process.platform === "win32" ? ";" : ":";
-  // Under Bun, execPath is bun: npm-installed shebang tools need the launcher's Node.
   const nodeDir = nodeBinDirectory();
   const withNode = nodeDir ? `${nodeDir}${separator}${currentPath}` : currentPath;
   const augmentedPath = `${GITHUB_BIN_DIR}${separator}${localBin}${separator}${withNode}`;
@@ -476,11 +391,6 @@ export async function getToolEnvironment(): Promise<NodeJS.ProcessEnv> {
   return env;
 }
 
-// --- Status Check ---
-
-/**
- * Check status of all managed tools
- */
 export async function checkAllTools(): Promise<
   Array<{ id: string; name: string; installed: boolean; path?: string }>
 > {
@@ -501,13 +411,6 @@ export function isKnownToolId(toolId: string): boolean {
   return TOOLS.some((tool) => tool.id === toolId);
 }
 
-/**
- * The registry's own install strategy for `toolId`, or `undefined` for an
- * unknown id. Single source of truth for anything that needs to LABEL how a
- * tool gets installed (e.g. the availability-decision evidence's `source`
- * tag, #1612) — derived from the same `TOOLS` entry `ensureTool` dispatches
- * on, so the label can never drift out of sync with the actual installer.
- */
 export function getToolInstallStrategy(
   toolId: string,
 ): ToolDefinition["installStrategy"] | undefined {

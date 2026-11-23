@@ -63,20 +63,12 @@ function persistedConfig(sessionDir: string): AgentConfig {
   };
 }
 
-// Pi 1.0.4 writes a session file only once it holds a user or assistant
-// message. runAgent's persisted child (agent-runner.ts, SessionManager.create
-// with the parent's possibly unwritten session file as `parentSession`) must
-// construct, name, and bind such a session without the file existing, and the
-// first user message must materialize it with the parent link intact.
 test("runAgent tolerates a persisted child session whose file is created lazily", async () => {
   const sessionDir = await mkdtemp(join(tmpdir(), "choco-pi-lazy-session-"));
   const fixture = await createSdkFixture();
   const config = persistedConfig(sessionDir);
   registerAgents(new Map([[config.name, config]]));
   const controller = new AbortController();
-  // Aborted before the prompt: runAgent builds and binds the session, then skips
-  // session.prompt, so only setup entries (session name and model/thinking
-  // state) reach the session manager.
   controller.abort();
   const childSessionIds: string[] = [];
   try {
@@ -111,7 +103,6 @@ test("runAgent tolerates a persisted child session whose file is created lazily"
       const header: unknown = JSON.parse(headerLine);
       assert.ok(isSessionHeader(header), "the file starts with a session header");
       assert.equal(header.parentSession, fixture.ctx.sessionManager.getSessionFile());
-      // The subagent marker is a durable custom entry (hosts filter on it).
       const markers = [];
       for (const line of lines) {
         if (!line.includes(SUBAGENT_SESSION_MARKER)) continue;
@@ -129,8 +120,6 @@ test("runAgent tolerates a persisted child session whose file is created lazily"
       child.dispose();
     }
 
-    // A child that never received a message leaves a path with no file behind.
-    // Reopening that path (the resume route) must start cleanly instead of failing.
     const neverWritten = join(sessionDir, "never-written.jsonl");
     const resumed = await runAgent(fixture.ctx, config.name, "probe", {
       pi: fixture.pi,

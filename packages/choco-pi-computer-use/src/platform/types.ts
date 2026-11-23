@@ -7,12 +7,6 @@ export type PlatformName = "macos" | "windows" | "linux";
 export type ManagedBrowserKind = "helium" | "chrome";
 export type NativeInputDelivery = "hid" | "pid";
 export type ActOutcome = "worked" | "didnt" | "unknown";
-/**
- * Best-effort presentation hint for a root. The seam guarantees only the
- * `window` vs transient distinction; specific transient kinds are display hints
- * and must never drive behavior in shared code. Platforms that need precise
- * distinctions internally should use native signals.
- */
 export type PlatformRootKind = "window" | "menu" | "sheet" | "popover" | "dialog";
 
 export interface PlatformDiagnostics {
@@ -25,7 +19,6 @@ export interface PlatformDiagnostics {
   parentBundleId?: string;
   parentPath?: string;
   executablePath?: string;
-  /** Helper process start time, epoch seconds; absent from pre-startedAt helpers. */
   startedAt?: number;
   os?: string;
   arch?: string;
@@ -75,9 +68,7 @@ export interface PlatformRoot {
   isOnscreen: boolean;
   isFocused: boolean;
   isMinimized: boolean;
-  /** Best-effort; platforms without a main-window concept may mirror `isFocused`. */
   isMain: boolean;
-  /** Platform-reported modality fact, including platform-specific modal/dialog/sheet signals. */
   isModal: boolean;
   metadata?: JsonObject;
 }
@@ -97,7 +88,6 @@ export interface PlatformFocusWindowResult {
   reason?: string;
 }
 
-/** Grant-gated return of focus to the app (and window) the user had in front. */
 export interface PlatformRestoreUserFocusRequest {
   pid: number;
   windowTitle?: string;
@@ -113,12 +103,9 @@ export interface PlatformRestoreUserFocusResult {
 
 export interface HelperActPerformed {
   grounding?: "description" | "coordinates" | "keyboard-events" | "focus";
-  /** `ax` means the platform accessibility API (AX on macOS, UIA on Windows). */
   delivery?: "ax" | NativeInputDelivery;
-  /** `caller_required`: a pid-targeted pointer event was posted; the helper cannot attest its effect. */
   verification?: "caller_required";
   refound?: boolean;
-  /** Free-form diagnostic naming the platform's delta mechanism. */
   deltaSource?: string;
   selectionGrounding?: "ax" | "keyboard";
   transaction?: boolean;
@@ -138,16 +125,6 @@ export interface PlatformRootDelta {
   metadata?: JsonObject;
 }
 
-/**
- * Evidence on a helper `foreground_required` refusal (protocol 7, additive).
- * `pidPointerAttempted: true` with `observableChange: false` means pid-targeted
- * pointer input was posted and no change was observed within the settle window;
- * `effectPossible: false` then covers only work before that attempt. Absent
- * evidence means the helper refused before any delivery. `pixelCheck` is
- * "compared" (with `pixelChange`) when window pixels were compared during
- * the settle window, "not_needed" when an AX/window signal changed first,
- * and "unavailable" without Screen Recording or a successful capture.
- */
 export interface HelperRefusalEvidence {
   pidPointerAttempted?: boolean;
   observableChange?: boolean;
@@ -156,13 +133,8 @@ export interface HelperRefusalEvidence {
   pixelChange?: boolean;
 }
 
-/**
- * Base of platform helper command errors. `evidence` is parsed at the
- * transport boundary, so platform-neutral callers can read it typed.
- */
 export class PlatformCommandError extends Error {
   readonly evidence?: HelperRefusalEvidence;
-  /** Helper error code, for example `stale_look` or `invalid_args`. */
   readonly code?: string;
 
   constructor(message: string, evidence?: HelperRefusalEvidence, code?: string) {
@@ -177,7 +149,6 @@ export interface HelperActResult {
   outcome: ActOutcome;
   performed?: HelperActPerformed;
   evidence?: JsonObject;
-  /** `effectPossible: false` means the helper proved nothing was delivered. */
   error?: {
     code?: string;
     message?: string;
@@ -188,7 +159,6 @@ export interface HelperActResult {
   rootDelta?: PlatformRootDelta[];
   steps?: HelperActResult[];
   stoppedAt?: number;
-  /** Frontmost application before/after delivery, when the helper reports it. */
   frontmostBefore?: JsonValue;
   frontmostAfter?: JsonValue;
 }
@@ -201,7 +171,6 @@ export interface PlatformTarget {
 
 export interface PlatformObserveRequest {
   target: PlatformTarget;
-  /** Existing immutable look whose untouched refs/coordinate geometry survive a scoped refresh. */
   baseLookId?: string;
   readText: "auto" | "always" | "never";
   scopeRef?: string;
@@ -212,28 +181,17 @@ export interface PlatformObserveRequest {
 export type PlatformActTarget =
   | { ref: string }
   | { x: number; y: number }
-  /** Resolved through the app's AX focused element; the point is absent on outline-only looks. */
   | { focus: PlatformPoint | Record<string, never> };
 export type PlatformDeliveryPolicy = "ax_only" | "background" | "foreground";
 type PlatformMouseButton = "left" | "right" | "middle";
 type PlatformActDeliveryParam = { delivery?: NativeInputDelivery };
 export type PlatformPoint = { x: number; y: number };
 
-/** Owning client session for a helper request; generation changes when the session is reset. */
 export interface PlatformRequestSession {
   id: string;
   generation: number;
 }
 
-/**
- * Helper `cancel` acknowledgement (protocol 7). Terminal: `stopped` (reached a
- * checkpoint; delivers nothing more) and `completed` (finished first).
- * Non-terminal: `stopping` (flagged but still executing; delivery may continue
- * until the helper reports stopped). `not_found`: the helper had not seen the
- * request; it tombstones the id and refuses it if it arrives later.
- * `unacknowledged`: no ack arrived within the client's wait, so delivery state
- * is unknown.
- */
 export type HelperCancelState =
   | "stopped"
   | "stopping"
@@ -244,51 +202,27 @@ export type HelperCancelState =
 export interface HelperCancelAck {
   acknowledged: boolean;
   state: HelperCancelState;
-  /** Action index (batch step) at which the request stopped. */
   stoppedAt?: number;
-  /** False only when the helper proved nothing was delivered before stopping. */
   effectPossible?: boolean;
 }
 
-/** `result` carried by a helper `cancelled` error. */
 export interface HelperCancelledResult {
   outcome: "partial" | "rejected_before_delivery";
   stoppedAt?: number;
   reason?: "cancelled" | "deadline";
 }
 
-/**
- * Delivery state of an interrupted request: a cancel state, or `refused` for
- * an ownership refusal. Only `stopped`, `completed`, and `refused` are
- * terminal; see `HelperCancelState`.
- */
 export type HelperInterruptionState = HelperCancelState | "refused";
 
-/** Why a non-terminal `stopping` interruption cannot prove delivery ended. */
 export const HELPER_STOPPING_REASON = "delivery may continue until the helper reports stopped";
 
-/**
- * A helper request stopped by cancellation or deadline, or refused because
- * another session owns the helper. Transports attach it to their errors as
- * `interruption`; shared code maps it to a structured tool result.
- */
 export class HelperInterruption {
   readonly code: "cancelled" | "owned_by_other_session";
-  /**
-   * False only when the helper proved nothing was delivered. Always true for a
-   * non-terminal `stopping` state.
-   */
   readonly effectPossible?: boolean;
   readonly cancel?: HelperCancelAck;
   readonly result?: HelperCancelledResult;
-  /** True when the client gave up (timeout) rather than the helper stopping on its own. */
   readonly clientTimeout: boolean;
-  /**
-   * `stopped` when the helper itself answered `cancelled`; `refused` for
-   * ownership; otherwise the cancel acknowledgement's state.
-   */
   readonly state: HelperInterruptionState;
-  /** Present for `stopping`: `HELPER_STOPPING_REASON`. */
   readonly reason?: string;
 
   constructor(fields: {
@@ -316,7 +250,6 @@ export class HelperInterruption {
   }
 }
 
-/** Helper `claim` result (protocol 7). */
 export interface HelperClaimResult {
   claimed: boolean;
   owner?: PlatformRequestSession;
@@ -324,18 +257,14 @@ export interface HelperClaimResult {
 }
 
 export interface PlatformActRequestBase {
-  /** Unique per request. */
   requestId: string;
   session: PlatformRequestSession;
-  /** Absolute deadline in Unix epoch milliseconds after which the helper must not deliver. */
   deadlineMs: number;
   lookId: string;
   pid?: number;
   target: PlatformActTarget;
   policy: PlatformDeliveryPolicy;
-  /** Present only when a host-issued grant covers the target and policy is "foreground". */
   foregroundGrant?: true;
-  /** Resolve a focus target through the target app's AX focused element, not system focus. */
   focusResolution?: "ax_focused_element";
 }
 
@@ -354,7 +283,6 @@ export type PlatformActRequest = PlatformActRequestBase &
   );
 
 export interface PlatformReadTextRequest {
-  /** Observation that owns the element ref. Native backends must not resolve across observations. */
   lookId: string;
   elementRef: string;
   offset: number;
@@ -389,7 +317,6 @@ export interface PlatformWaitForResponse {
 
 export interface ComputerUsePlatformBackend {
   name: PlatformName;
-  /** Release process-local resources when the Pi session is torn down. */
   shutdown?(): void | Promise<void>;
   ensureReady(
     ctx: ExtensionContext,
@@ -400,7 +327,6 @@ export interface ComputerUsePlatformBackend {
   listRoots(query: PlatformRootQuery, signal?: AbortSignal): Promise<PlatformRoot[]>;
   getFrontmost(signal?: AbortSignal): Promise<PlatformFrontmostResult>;
   focusWindow(target: PlatformTarget, signal?: AbortSignal): Promise<PlatformFocusWindowResult>;
-  /** Reactivate a prior frontmost app; only sent with a host foreground grant. */
   restoreUserFocus(
     request: PlatformRestoreUserFocusRequest,
     signal?: AbortSignal,
@@ -413,7 +339,6 @@ export interface ComputerUsePlatformBackend {
     request: PlatformActRequest,
     options?: { timeoutMs?: number; signal?: AbortSignal },
   ): Promise<HelperActResult>;
-  /** Execute one-resource actions with one root baseline and one final settle. */
   actBatch?(
     requests: PlatformActRequest[],
     options?: { timeoutMs?: number; signal?: AbortSignal },

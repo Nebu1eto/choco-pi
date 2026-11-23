@@ -1,6 +1,3 @@
-// No promise the /diff pane starts without awaiting it may reject unhandled:
-// automatic opening, review-record and change-time reads, the notes file read, and
-// the pane's key actions each contain their failure and show it.
 import assert from "node:assert/strict";
 import test from "node:test";
 import type {
@@ -41,7 +38,6 @@ import {
 const STALE =
   "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx.";
 
-/** Fails the test if any promise rejects with nothing attached while it runs. */
 function watchRejections(t: { after(fn: () => void): void }) {
   const seen: string[] = [];
   const listener = (reason: RuntimeValue) => {
@@ -77,7 +73,6 @@ class BreakableTui extends FakeTui {
   }
 }
 
-/** Lists one session change on every read; counts reads; can fail a source change. */
 class SessionStore extends FakeStore {
   reads = 0;
   sourceError: Error | undefined;
@@ -201,8 +196,6 @@ function restoreLayout(tui: FakeTui, root: VStack): void {
   Object.defineProperty(tui, "layoutRoot", { configurable: true, writable: true, value: root });
 }
 
-/* ------------------------------------------------------- automatic opening */
-
 test("automatic opening that throws turns itself off for the session, says so once, and /diff still opens the pane", async (t) => {
   const noRejections = watchRejections(t);
   const h = setup();
@@ -260,8 +253,6 @@ test("a stale context during automatic opening is silent and stops the checks", 
   await noRejections("second tool call");
   assert.equal(h.store().reads, reads);
 });
-
-/* ------------------------------------------------------ records and times */
 
 function reviewListing(path: string): RecordsRead {
   return {
@@ -372,8 +363,6 @@ test("a change-time scan that throws keeps the last findings and shows a read er
   assert.equal(h.view().recorded.errors.length, 0);
 });
 
-/* ------------------------------------------------------- notes and keys */
-
 test("a redraw that throws while the notes file loads is reported, and the notes still load", async (t) => {
   const noRejections = watchRejections(t);
   let release: (() => void) | undefined;
@@ -427,11 +416,9 @@ test("a key action that fails shows the failure in the pane and the key works ag
   h.store().sourceError = undefined;
   h.view().handleKey("s");
   await noRejections("cycle source again");
-  // The failure's message is gone; a skipped source is still explained.
   assert.doesNotMatch(h.view().message?.text ?? "", /Cannot change/u);
   assert.match(h.view().message?.text ?? "", /Diff source:/u);
 
-  // With a note in the pane, a asks about the notes.
   h.view().notes?.add({
     path: "a.ts",
     hunk: {
@@ -460,8 +447,6 @@ test("a key action that fails shows the failure in the pane and the key works ag
   await noRejections("ask again");
   assert.match(h.view().message?.text ?? "", /No file selected/u, "no notes are left to ask about");
 });
-
-/* ------------------------------------------------------ the shared view */
 
 test("a body load that rejects oddly or a redraw that throws while showing it stays inside the view", async (t) => {
   const noRejections = watchRejections(t);
@@ -508,9 +493,6 @@ test("a body load that rejects oddly or a redraw that throws while showing it st
   assert.match(view.renderBody(80, true).join("\n"), /added/u, "the body shows afterwards");
 });
 
-/* ----------------------------------------------- the controller's response */
-
-/** The docked pane's body and header, found in the layout the harness gives the dock host. */
 function dockedPane(root: VStack) {
   const row = root.children[0];
   if (!(row instanceof HStack)) return undefined;

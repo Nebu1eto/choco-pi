@@ -28,12 +28,7 @@ export {
 };
 
 export const DAYBREAK_ENTRY = "choco-pi-daybreak";
-/** Request field that carries a Daybreak entitlement; only the provider finalizer may add it. */
 export const DAYBREAK_ACCESS_FIELD = "access_programs";
-/**
- * Live probes against Pi 1.0.4 "Sign in with ChatGPT" on provider `openai`:
- * `access_programs` cannot be granted there and its echo is an account default.
- */
 export const OPENAI_SIGN_IN_DAYBREAK_REASON =
   "not controllable on api.openai.com (no account id, no entitlement endpoint); server echo is not a grant";
 
@@ -59,12 +54,10 @@ type StoredState = {
   unregisterCleanup: () => void;
 };
 
-/** A request without a confirmed entitlement is honestly unknown until a lookup succeeds. */
 export function defaultDaybreakOutcome(requested: DaybreakRequest): DaybreakOutcome {
   return requested ? "pending" : "off";
 }
 
-/** Persisted request record; the entitlement outcome is deliberately absent. */
 export type DaybreakEntryData = Readonly<{
   enabled: DaybreakRequest;
   source: DaybreakSource;
@@ -80,12 +73,6 @@ function parseSource(value: RuntimeValue): DaybreakSource {
   return "explicit";
 }
 
-/**
- * Replays persisted Daybreak requests. Only the request is stored; the
- * entitlement outcome is never restored. A stored `default` request remains a
- * replaceable seed: a current default seed replaces its value, and a changed
- * value advances the revision so earlier entitlement lookups are invalidated.
- */
 export function restoreDaybreakInitialization(
   entries: readonly SessionEntry[] | undefined,
   fallback: DaybreakInitialization,
@@ -168,7 +155,6 @@ export function createDaybreakBridge(): DaybreakBridge {
         },
         report(outcome, revision) {
           if (!isCurrent() || revision !== state.revision) return;
-          // An unrequested session is always off, and a requested one cannot report off.
           if (!state.requested || outcome === "off") return;
           if (state.outcome === outcome) return;
           state = { ...state, outcome };
@@ -211,23 +197,12 @@ export function createDaybreakBridge(): DaybreakBridge {
   return bridge;
 }
 
-/**
- * Removes any existing Daybreak access field from a request payload. No bridge
- * outcome attests the current auth or model, so even a previously granted
- * session is stripped; the provider finalizer adds the actual entitlement
- * afterward. Returns `undefined` when the payload needs no change.
- */
 export function stripStaleDaybreakAccess(payload: RuntimeValue): JsonRecord | undefined {
   if (!isJsonRecord(payload) || !(DAYBREAK_ACCESS_FIELD in payload)) return undefined;
   const { [DAYBREAK_ACCESS_FIELD]: _stale, ...rest } = payload;
   return rest;
 }
 
-/**
- * Status text distinguishing off, an active blue/red grant, and each reason a
- * request is not applied. An unconfirmed request reads as pending. `signIn`
- * marks api.openai.com subscription sign-in, where a request is unavailable.
- */
 export function daybreakStatusValue(state: DaybreakState | undefined, signIn = false): string {
   if (!state) return "not initialized";
   if (!state.requested) return "off";
@@ -246,7 +221,6 @@ const DAYBREAK_REQUESTED_STATUS = {
   "model-not-supported": "unavailable; the current model does not support Daybreak",
   "security-key-required":
     "requested; sign in again with your hardware security key (/login openai-codex)",
-  // A requested state never reports off; read it as unconfirmed.
   off: "requested; checking availability",
 } satisfies Record<DaybreakOutcome, string>;
 
@@ -254,10 +228,6 @@ export function describeDaybreakState(state: DaybreakState | undefined, signIn =
   return `Daybreak: ${daybreakStatusValue(state, signIn)}`;
 }
 
-/**
- * Record that the current model cannot carry Daybreak because it uses
- * api.openai.com subscription sign-in. Reads no credential or account id.
- */
 export function reportDaybreakSignIn(
   controller: DaybreakController | undefined,
   ctx: Pick<DaybreakExtensionContext, "model" | "modelRegistry">,
@@ -268,10 +238,6 @@ export function reportDaybreakSignIn(
   return true;
 }
 
-/**
- * Hidden child-session extension: registers the session's Daybreak state and
- * strips stale access fields. It never grants an entitlement itself.
- */
 export function installDaybreakExtension(
   bridge: DaybreakBridge,
   input: Omit<DaybreakRegistration, "sessionId" | "entries" | "persist">,

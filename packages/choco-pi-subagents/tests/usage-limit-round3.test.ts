@@ -1,8 +1,3 @@
-/**
- * Third review round for the "On Usage Limit" manager paths: steering carried
- * across a re-park, the child's own session id on its classification, and the
- * wrapper-side resume refusal before any record mutation.
- */
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 
@@ -80,7 +75,6 @@ test("steering accepted while parked survives a re-park and is delivered exactly
     await flush();
     assert.equal(record?.status, "queued", "reset confirmed; waiting for the slot");
 
-    // Closed again before the slot frees: the queued continuation re-parks.
     closeUntil(
       { owner: env.owner, providerKey: "anthropic", accountId: "default" },
       Date.now() + HOUR,
@@ -129,7 +123,6 @@ test("the classification sent to corroborate carries the child's own session id"
     classification: UsageLimitClassification;
     evidence: "confirmed";
   }
-  // A policy answer that drops sessionId must not strip it from the wait.
   installed.policy.corroborate = async (classification) => {
     sent.push(classification);
     const answer: Answer = {
@@ -182,8 +175,6 @@ test("a background resume refused on availability leaves the record untouched", 
       throw new Error("a refused resume must not run");
     },
   };
-  // Capture the extension's own manager at its spawn boundary and replace only
-  // its runner seam, so the Agent tool drives the real wrapper.
   const spawn = AgentManager.prototype.spawn;
   const captured: ManagerRef = {};
   t.mock.method(
@@ -208,8 +199,6 @@ test("a background resume refused on availability leaves the record untouched", 
     );
   };
   const owner = parent.ctx.sessionManager.getSessionId();
-  // Activation applies the project's subagents.json (requireExplicitModel on);
-  // this test drives spawn mechanics, not model choice, so lift the gate.
   setRequireExplicitModel(false);
   await execute("spawn-call", {
     prompt: "task",

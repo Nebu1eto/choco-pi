@@ -28,12 +28,6 @@ const LAUNCHER = path.join(ROOT, "bin", "choco-pi");
 const NODE_DIR = path.dirname(process.execPath);
 const isTheme = compile(obj({ name: str() }, { open: true })).check;
 
-/**
- * Pi's login guidance for a start without any usable model, which Pi 1.6 reports as a startup
- * warning in RPC mode: its agent's placeholder model passes the check meant to keep the guidance
- * out of the diagnostics. A start without credentials has no models, so this is expected, and it
- * names the docs of the Pi package the launcher runs, which the launcher resolves itself.
- */
 const NO_MODELS_WARNING = (() => {
   const piPackage = path.dirname(
     path.dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"))),
@@ -59,7 +53,6 @@ async function readJson(file: string): Promise<JsonRecord> {
   return parsed;
 }
 
-/** An agent directory whose settings.json holds what the installer wrote. */
 async function agentDirectory(directory: string, settings: JsonRecord) {
   const agentDir = path.join(directory, "agent");
   await mkdir(agentDir, { recursive: true });
@@ -69,10 +62,6 @@ async function agentDirectory(directory: string, settings: JsonRecord) {
 
 const INSTALLED = { packages: ["/app/packages/choco-pi-ui"], skills: ["/app/profile/skills"] };
 
-/**
- * Stops the computer-use bridge a Pi start under `home` launched. macOS
- * starts it through `open`, outside this process tree, so it outlives Pi.
- */
 async function stopBridges(home: string): Promise<string> {
   const pattern = `${home}/Applications/pi-computer-use.app/Contents/MacOS/bridge serve`;
   const running = async () =>
@@ -80,7 +69,6 @@ async function stopBridges(home: string): Promise<string> {
       ({ stdout }) => stdout.trim(),
       () => "",
     );
-  // The bridge may still be starting when Pi exits.
   await new Promise((resolve) => setTimeout(resolve, 2_000));
   await runFile("pkill", ["-f", pattern]).catch(() => undefined);
   await new Promise((resolve) => setTimeout(resolve, 500));
@@ -223,7 +211,6 @@ test("a newer seed version adds only the keys new in that version", async (t) =>
     version: 2,
     settings: {
       theme: { since: 1, value: "nord-dark" },
-      // Listed as version 1 although v1 lacked it: version 1 was already applied.
       quietStartup: { since: 1, value: true },
       cacheWarming: { since: 2, value: "streaming" },
     },
@@ -242,7 +229,6 @@ test("a newer seed version adds only the keys new in that version", async (t) =>
   assert.equal((await readJson(seedStatePath(agentDir))).version, 2);
 });
 
-/** Runs `body` with `directory` made read-only, restoring its mode afterwards. */
 async function whileReadOnly<Result>(directory: string, body: () => Promise<Result>) {
   await chmod(directory, 0o500);
   try {
@@ -270,7 +256,6 @@ test("a failed seed state write leaves settings.json unchanged, so a deleted key
   );
   assert.equal(await readFile(settingsPath, "utf8"), before, "nothing was seeded");
 
-  // Permissions restored: the retry is the first real seed, and the only one.
   assert.deepEqual((await applySettingsSeed(agentDir, seed)).added, Object.keys(seed.settings));
   const { theme: _deleted, ...withoutTheme } = await readJson(settingsPath);
   await writeFile(settingsPath, `${JSON.stringify(withoutTheme, null, 2)}\n`);
@@ -288,7 +273,6 @@ test("a failed settings write after the state was saved is not retried: under-se
   const settingsPath = path.join(agentDir, "settings.json");
   const before = await readFile(settingsPath, "utf8");
   await mkdir(path.dirname(seedStatePath(agentDir)));
-  // The state directory stays writable; settings.json's temporary file cannot be created.
   await whileReadOnly(agentDir, () => assert.rejects(applySettingsSeed(agentDir, seed), /EACCES/));
   assert.equal(await readFile(settingsPath, "utf8"), before);
   assert.deepEqual(await readJson(seedStatePath(agentDir)), {
@@ -299,7 +283,6 @@ test("a failed settings write after the state was saved is not retried: under-se
       Object.entries(seed.settings).map(([key, entry]) => [key, entry?.value]),
     ),
   });
-  // At most once: the keys were offered, so a retry leaves them unseeded.
   assert.deepEqual(await applySettingsSeed(agentDir, seed), {
     added: [],
     firstSeed: false,
@@ -337,7 +320,6 @@ test("a fresh standalone setup prints next steps once and starts in RPC mode wit
   const home = path.join(directory, "home");
   const project = path.join(directory, "project");
   await mkdir(project, { recursive: true });
-  // No credentials and nothing inherited: a first start on a clean machine.
   const environment = {
     HOME: path.join(directory, "user"),
     CHOCO_PI_HOME: home,
@@ -380,7 +362,6 @@ test("a fresh standalone setup prints next steps once and starts in RPC mode wit
   if (child.exitCode === null) await once(child, "exit");
   assert.equal(await stopBridges(environment.HOME), "", "no bridge left running");
   assert.doesNotMatch(stderr, /No models match pattern/);
-  // Only Pi's expected no-login guidance, at most once; choco-pi's setup adds no warning.
   assert.doesNotMatch(
     stderr.replace(NO_MODELS_WARNING, ""),
     /warning/i,

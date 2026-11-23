@@ -1,4 +1,3 @@
-// The /diff pane always opens on the session source, opens by itself when the agent changes code, and refreshes.
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -108,7 +107,6 @@ function snapshotOf(revision: number, source: DiffSource, paths: string[]): Diff
   return snapshot;
 }
 
-/** A store that lists world[source kind] for its current source on every read. */
 class SourceStore implements DiffStore {
   state: DiffStoreState = { kind: "idle" };
   listeners = new Set<(state: DiffStoreState) => void>();
@@ -119,7 +117,6 @@ class SourceStore implements DiffStore {
   disposed = false;
   source: DiffSource;
   readonly world: Map<string, string[]>;
-  /** When set, refreshNow waits for this before reading. */
   gate: Promise<void> | undefined;
   readonly initial: DiffSource | undefined;
   readonly checkpoints: TurnTreeProvider | undefined;
@@ -291,7 +288,6 @@ function setup(
     assert.ok(view, "a view exists");
     return view.renderBody(120, false).join("\n");
   };
-  /** Let the controller's promise chains settle and run due timers. */
   const settle = async () => {
     for (let round = 0; round < 6; round += 1) {
       for (const [id, timer] of clock.timers) {
@@ -322,8 +318,6 @@ function setup(
     settle,
   };
 }
-
-/* ------------------------------------------------------------ the source */
 
 test("bare /diff, open, focus and the toggle shortcut open on the session source and name its baseline", async () => {
   const h = setup({ world: new Map([["session", ["b.txt"]]]) });
@@ -406,8 +400,6 @@ test("completions offer and the parser accepts the session source and the auto s
   assert.equal(parseDiffCommand("auto maybe").kind, "invalid");
   assert.deepEqual(parseDiffCommand("source branch"), { kind: "source-branch", base: undefined });
 });
-
-/* ------------------------------------------------------------ preferences */
 
 test("preferences: old files keep their saved width, odd values fall back, serialize writes width only", () => {
   assert.deepEqual(parsePrefs('{"version":1,"open":true,"width":70}'), { width: 70 });
@@ -574,8 +566,6 @@ test("live preference updates via settings.json immediately update automatic ope
   }
 });
 
-/* ------------------------------------------------------- automatic opening */
-
 test("a file-changing tool call docks the pane without focus; read-only tools and no change do not", async () => {
   const world = new Map<string, string[]>();
   const h = setup({ world });
@@ -703,7 +693,6 @@ test("a session that ends while the check reads git never gets a host", async ()
   const h = setup({ world: new Map([["session", ["b.txt"]]]) });
   h.tui.terminal.columns = 60;
   await h.fire("session_start", { reason: "startup" });
-  // A first check lists a change but cannot dock (narrow), leaving a ready snapshot behind.
   await h.fire("tool_execution_end", { toolName: "bash" });
   await h.settle();
   assert.equal(h.docked(), false);
@@ -719,8 +708,6 @@ test("a session that ends while the check reads git never gets a host", async ()
   assert.equal(h.docked(), false, "the ended session's check installs nothing");
   assert.equal(h.probe.session(), undefined);
 });
-
-/* ---------------------------------------------------------------- refresh */
 
 test("in Zed, /diff sends the session's changes as native diffs, old text from the checkpoint tree", async () => {
   const sent: string[] = [];

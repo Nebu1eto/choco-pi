@@ -6,7 +6,6 @@ import type { HostRuntime } from "./runtime.ts";
 
 const NOTICE_PREFIX = "Background compaction";
 
-/** Shows each distinct background-compaction warning at most once per registration. */
 export type Notifier = (ctx: ExtensionContext | undefined, message: string) => void;
 
 export function errorText(cause: unknown): string {
@@ -30,12 +29,10 @@ function notifyOnce(
 
 export type NoticeLevel = "info" | "warning" | "error";
 
-/** Show a user-facing notice every time it happens (progress of a requested compaction). */
 export function tell(ctx: ExtensionContext, message: string, type: NoticeLevel): void {
   showNotice(ctx, `${NOTICE_PREFIX}: ${message}`, type);
 }
 
-/** `ctx.ui.notify` with the text exactly as given; only a stale context is contained. */
 function showNotice(ctx: ExtensionContext, text: string, type: NoticeLevel): void {
   try {
     ctx.ui.notify(text, type);
@@ -44,31 +41,14 @@ function showNotice(ctx: ExtensionContext, text: string, type: NoticeLevel): voi
   }
 }
 
-/**
- * How a lane transition reaches the user (D5):
- * - `always`: user-initiated routes, disables and consented losses; journaled
- *   and notified on every call;
- * - `per-session-reason`: automatic routes; journaled and notified once per
- *   transition (route, event, reason, checkpoint) per session; a repeated
- *   transition is neither journaled again (D4) nor notified;
- * - `silent`: journal only (policy declines).
- */
 export type NoticePolicy = "always" | "per-session-reason" | "silent";
 
-/** A lane record as announced: `noticeAttempted` is decided by the policy, whatever the caller set. */
 export type AnnouncedRecord = Omit<LaneRecordInput, "noticeAttempted"> & {
   readonly noticeAttempted?: boolean;
 };
 
-/** The runtime fields lane announcements read. */
 export type AnnounceRuntime = Pick<HostRuntime, "journal" | "transitions">;
 
-/**
- * Journal one lane transition per policy, then notify through `notify`
- * (undefined: no notice is possible). `noticeAttempted` records whether a
- * notice was attempted. Shared by the main owner (host ctx) and child owners
- * (the child bridge's report).
- */
 export function announceVia(
   rt: AnnounceRuntime,
   record: AnnouncedRecord,
@@ -91,15 +71,6 @@ export function announceVia(
   if (attempted) notify();
 }
 
-/**
- * Journal one lane transition and notify per policy. `always` shows `text`
- * verbatim at `level` (callers own the wording, as the replay-disable notices
- * always did); `per-session-reason` shows it through the registration notifier
- * (prefixed warning, each distinct text at most once per registration, so
- * notices never become more frequent than before the journal existed). `ctx`
- * undefined journals without a notice. Only stale-context failures are
- * contained.
- */
 export function announce(
   rt: AnnounceRuntime & Pick<HostRuntime, "notify">,
   ctx: ExtensionContext | undefined,

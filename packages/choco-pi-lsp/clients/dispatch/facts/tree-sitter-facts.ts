@@ -1,12 +1,3 @@
-/**
- * Fact-provider-specific tree-sitter helper (#402).
- *
- * The generic node-walk utilities (`walk`, `childrenOfType`, `firstChildOfType`,
- * `withTreeSitterRoot`, `TsNode`) live in `clients/tree-sitter-shared.ts` so both
- * the fact extractors and the complexity client share them. This module re-exports
- * them for the extractors and adds the FactProvider-specific `extractFactsFromTree`
- * shell.
- */
 import {
   childrenOfType,
   firstChildOfType,
@@ -21,13 +12,6 @@ export { childrenOfType, firstChildOfType, type TsNode, walk };
 
 export const withFactTree = withTreeSitterRoot;
 
-/**
- * Provider shell for tree-sitter-backed fact extractors: read `file.content`,
- * parse via the shared client, and hand the root node to `extract`. On empty
- * content / parse failure / wasm abort it writes the empty `defaults` and returns
- * (there is no typescript-compiler fallback by design, #402). Centralising this
- * keeps each provider to just its extraction logic (and de-duplicates the prologue).
- */
 export async function extractFactsFromTree(
   ctx: DispatchContext,
   store: FactStore,

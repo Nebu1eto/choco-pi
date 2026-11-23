@@ -1,8 +1,3 @@
-/**
- * `session_start` (reason "resume") asks whether to resume a paused goal. The
- * answer arrives after an await, so a confirmation that outlived its session
- * or its goal must do nothing: no goal entry, no continuation message.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 import type {
@@ -17,10 +12,8 @@ import { createGoalRuntimeController } from "../src/goal-runtime-controller.ts";
 import { createGoal, setEntry, updateGoalStatus } from "../src/state.ts";
 import { CUSTOM_ENTRY_TYPE, type ThreadGoal } from "../src/types.ts";
 
-/** Host-owned value as recorded by the fakes; mirrors the repository `RuntimeValue` alias. */
 type RuntimeValue = {} | null | undefined;
 
-/** Reinterprets a deliberate partial host fixture as the full host type it stands in for. */
 function hostFixture<Target>(value: RuntimeValue): Target {
   // SAFETY: Callers pass partial fixtures covering every member the code under test reads.
   return value as Target;
@@ -60,7 +53,6 @@ function fixture() {
       messages.push(text);
     },
   };
-  // The controller uses only entry, event, and message APIs in this fixture.
   const controller = createGoalRuntimeController(hostFixture<ExtensionAPI>(pi));
   let answer: (value: boolean) => void = () => {};
   let asked = false;

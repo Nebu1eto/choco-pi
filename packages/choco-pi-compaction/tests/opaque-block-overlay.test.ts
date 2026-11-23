@@ -1,17 +1,3 @@
-/**
- * The provider-boundary block overlay over a fake registry with the host's
- * merge semantics: a blocked request is refused before the provider stream
- * runs, a later registration of the provider is wrapped again, two
- * registrations on one registry never wrap each other's overlay (no chain
- * growth across requests), the owning registration announces once, and
- * release restores the original registration. A native `Provider`
- * registration is overlaid by a delegating provider, and a request without
- * a session id is never authorized by the missing identity nor attributed to
- * a registration's mutable session (also through the real `ModelRuntime`,
- * whose `transformHeaders` await precedes the overlay), nor sent because
- * one registration re-wrapped a re-registered provider while another still
- * uses it.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -61,11 +47,6 @@ interface FakeHost {
   readonly calls: { register: number; transmitted: number };
 }
 
-/**
- * A registry with the host's registration semantics: config registrations
- * merge over a built-in stream, a native registration replaces both, and a
- * config registration replaces a native one.
- */
 function fakeHost(): FakeHost {
   const configs = new Map<string, ProviderRegistration>();
   const natives = new Map<string, Provider>();
@@ -106,7 +87,6 @@ function fakeHost(): FakeHost {
   };
 }
 
-/** The host's stale-context failure (`lifecycle.ts`). */
 const STALE_CONTEXT = "This extension ctx is stale after session replacement or reload.";
 
 function contextOf(registry: OverlayRegistry, sessionId: string | undefined): OverlayContext {
@@ -132,7 +112,6 @@ interface NativeProbe {
   readonly sent: { stream: number; streamSimple: number; deferred: number };
 }
 
-/** A native provider (a class instance with private state) that counts what it sends. */
 function nativeProvider(): NativeProbe {
   const sent = { stream: 0, streamSimple: 0, deferred: 0 };
   class NativeProvider implements Provider {
@@ -216,7 +195,6 @@ test("a later registration of the provider is wrapped again on the next sync", (
   try {
     const ctx = contextOf(host.registry, "overlay-s3");
     overlay.sync(ctx);
-    // A capture transport registers after the overlay and replaces it.
     let captured = 0;
     host.api.registerProvider(MODEL.provider, {
       api: "openai-responses",
@@ -269,7 +247,6 @@ test("two registrations on one registry never re-wrap each other; the owner anno
     assert.equal(childRecords.length, 1, "the child's registration journals its session");
     assert.equal(parentRecords.length, 0);
 
-    // The installing registration leaves: the other one takes over on its next sync.
     parent.release();
     child.sync(childCtx);
     assert.throws(() => send(host.registry, "overlay-child"));
@@ -300,7 +277,6 @@ test("a native Provider registration is overlaid: zero sends, one refuse record,
     for (let index = 0; index < 20; index++) overlay.sync(ctx);
     assert.equal(host.calls.register, registrations, "no re-wrap per request");
 
-    // Every capability of the original is kept, with the original as `this`.
     assert.equal(wrapper.id, MODEL.provider);
     assert.equal(wrapper.baseUrl, MODEL.baseUrl);
     assert.deepEqual(wrapper.getModels(), [MODEL]);
@@ -464,10 +440,8 @@ test("an anonymous request on a shared overlay is refused even when the block al
     assert.equal(ownerRecords.length, 1);
     assert.equal(ownerRecords[0]?.event, "refuse");
     assert.equal(ownerRecords[0]?.detail, "unattributed-request");
-    // By id, the owner's allow-loss still lifts its block.
     send(host.registry, "overlay-shared-owner");
     assert.equal(host.calls.transmitted, 1);
-    // Once the installer leaves, the owner alone serves the overlay: loss applies.
     installer.release();
     owner.sync(contextOf(host.registry, "overlay-shared-owner"));
     send(host.registry, undefined);
@@ -480,13 +454,8 @@ test("an anonymous request on a shared overlay is refused even when the block al
   }
 });
 
-// ---------------------------------------------------------------------------
-// Through the real model runtime
-// ---------------------------------------------------------------------------
-
 const RUNTIME_KEY = "overlay-runtime-non-secret-placeholder";
 
-/** A real `ModelRuntime` (with `native` registered when given), and the overlay's registration calls on it. */
 async function realRuntime(
   native: Provider | undefined,
 ): Promise<{ readonly runtime: ModelRuntime; readonly api: OverlayHostApi }> {
@@ -510,7 +479,6 @@ async function realRuntime(
   };
 }
 
-/** A gate the request's `transformHeaders` waits on; `entered` resolves when it is reached. */
 interface HeaderPause {
   readonly entered: Promise<void>;
   readonly resume: () => void;
@@ -649,7 +617,6 @@ test("real runtime: a lone installer moving off its blocked session still refuse
       refused.errorMessage ?? "no error",
     );
     assert.deepEqual(native.sent, { stream: 0, streamSimple: 0, deferred: 0 }, "zero sends");
-    // Session A has no owner left; its refusal is never journaled into session B.
     assert.equal(
       records.some((record) => record.sessionId === "overlay-rt-lone-b"),
       false,
@@ -664,7 +631,6 @@ test("an unattributed request is refused while any block is pending, and passes 
   const host = fakeHost();
   const installerRecords: OpaqueGuardRecord[] = [];
   const ownerRecords: OpaqueGuardRecord[] = [];
-  // The installing registration's context is stale: it owns no session.
   const installer = createOpaqueBlockOverlay(host.api, {
     modes: () => ({ opaqueHistory: "preserve" }),
     announce: (_ctx, record) => installerRecords.push(record),
@@ -699,19 +665,12 @@ test("an unattributed request is refused while any block is pending, and passes 
   }
 });
 
-// ---------------------------------------------------------------------------
-// Membership across a re-wrapped provider
-// ---------------------------------------------------------------------------
-
-/** Thrown by a transport that was reached: the request ends at once (a regression fails, never hangs). */
 const TRANSMITTED = "transmitted";
 
 interface RewrapCase {
   readonly runtime: ModelRuntime;
   readonly api: OverlayHostApi;
-  /** Requests that reached the provider's transport. */
   readonly transmitted: () => number;
-  /** Register the provider again, replacing the overlay on top of it. */
   readonly reregister: () => void;
 }
 
@@ -802,7 +761,6 @@ for (const [kind, setup] of [
         first.errorMessage ?? "no error",
       );
 
-      // The provider is registered again; only the parent syncs and wraps the replacement.
       rewrap.reregister();
       parent.sync(parentCtx);
       const second = await runtime.streamSimple(MODEL, CONTEXT, { apiKey: RUNTIME_KEY }).result();
@@ -830,7 +788,6 @@ for (const [kind, setup] of [
 test("an isolated overlay slot counts as shared: an anonymous request is refused even when the block allows loss", () => {
   const symbol = Symbol.for("choco-pi:compaction-opaque-block-overlay");
   const saved = Object.getOwnPropertyDescriptor(globalThis, symbol);
-  // Another version's slot occupies the shared one: other memberships are invisible.
   Object.defineProperty(globalThis, symbol, {
     value: {
       version: 2,
@@ -859,7 +816,6 @@ test("an isolated overlay slot counts as shared: an anonymous request is refused
       records.map((record) => record.event),
       ["refuse"],
     );
-    // By id, allow-loss still lifts the block.
     send(host.registry, "overlay-isolated");
     assert.equal(host.calls.transmitted, 1);
   } finally {

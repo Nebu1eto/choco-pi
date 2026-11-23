@@ -25,7 +25,6 @@ export type AntigravityErrorKind = (typeof ANTIGRAVITY_ERROR_KINDS)[number];
 
 const isErrorKind = compile(oneOf(ANTIGRAVITY_ERROR_KINDS)).check;
 
-/** Kinds Pi's retry classifier must treat as transient. Every other kind must fail fast. */
 export const RETRYABLE_ANTIGRAVITY_ERROR_KINDS: ReadonlySet<AntigravityErrorKind> = new Set([
   "capacity",
   "rate_limited",
@@ -33,7 +32,6 @@ export const RETRYABLE_ANTIGRAVITY_ERROR_KINDS: ReadonlySet<AntigravityErrorKind
   "network",
 ]);
 
-/** Fixed, self-authored wording per kind, chosen so Pi's retry and overflow predicates agree. */
 const KIND_PHRASES = {
   quota_exhausted: "quota exceeded",
   credits_exhausted: "AI credits exhausted; billing",
@@ -54,23 +52,17 @@ const KIND_PHRASES = {
 const MESSAGE_PREFIX = "Google Antigravity";
 const MAX_DETAIL_CHARS = 300;
 
-/** Everything one formatted message carries. */
 export interface AntigravityErrorFields {
   kind: AntigravityErrorKind;
   status?: number | undefined;
-  /** google.rpc.ErrorInfo.reason, when the backend sent one. */
   reason?: string | undefined;
-  /** ISO-8601 time the exhausted quota resets, when known. */
   resetsAt?: string | undefined;
   retryAfterMs?: number | undefined;
-  /** Sanitized backend message (at most 300 characters, no tokens or account identifiers). */
   detail?: string | undefined;
 }
 
 export interface AntigravityErrorInit extends AntigravityErrorFields {
-  /** google.rpc.Status.status, e.g. RESOURCE_EXHAUSTED. Not part of the formatted message. */
   rpcStatus?: string | undefined;
-  /** accounts.google.com verification link from the error details; never put in the message. */
   validationUrl?: string | undefined;
   cause?: unknown;
 }
@@ -115,7 +107,6 @@ const REDACTIONS: readonly (readonly [RegExp, string])[] = [
   [/[A-Za-z0-9+/_-]{40,}={0,2}/gu, "<redacted>"],
 ];
 
-/** Strip credentials and account identifiers, collapse to one line, cap at 300 characters. */
 export function sanitizeBackendMessage(message: string): string {
   let text = message;
   for (const [pattern, replacement] of REDACTIONS) text = text.replace(pattern, replacement);
@@ -170,7 +161,6 @@ function probeMessage(errorMessage: string): AssistantMessage {
   };
 }
 
-/** Whether Pi 1.6's own predicates classify `message` the way `kind` requires. */
 export function messageMatchesPiPolicy(kind: AntigravityErrorKind, message: string): boolean {
   const probe = probeMessage(message);
   return (
@@ -179,11 +169,6 @@ export function messageMatchesPiPolicy(kind: AntigravityErrorKind, message: stri
   );
 }
 
-/**
- * One stable line: `Google Antigravity <phrase> (kind=...; status=...; reason=...; resets_at=...;
- * retry_after_ms=...): <sanitized backend message>`. Backend text that would flip Pi's retry or
- * overflow decision away from the classified kind is dropped, then the timing fields.
- */
 export function formatAntigravityErrorMessage(fields: AntigravityErrorFields): string {
   const candidates = [
     messageFor(fields, true, true),
@@ -199,7 +184,6 @@ export function formatAntigravityErrorMessage(fields: AntigravityErrorFields): s
 const MESSAGE_PATTERN =
   /Google Antigravity [^()]*\(kind=([a-z_]+)((?:; [a-z_]+=[^;)]*)*)\)(?:: (.*))?/u;
 
-/** Inverts formatAntigravityErrorMessage. Resolves undefined for any other text. */
 export function parseAntigravityErrorMessage(message: string): AntigravityErrorFields | undefined {
   const match = MESSAGE_PATTERN.exec(message);
   const kind = match?.[1];
@@ -221,7 +205,6 @@ export function parseAntigravityErrorMessage(message: string): AntigravityErrorF
   return fields;
 }
 
-// google.rpc.Status as Google's JSON transcoding renders it. Unknown members are ignored.
 const RpcDetailSchema = obj(
   {
     "@type": opt(str()),
@@ -264,7 +247,6 @@ const isRpcError = compile(RpcErrorSchema).check;
 export const isAntigravityRpcError = isRpcError;
 const isEnvelopeOrList = compile(union([ErrorEnvelopeSchema, arr(ErrorEnvelopeSchema)])).check;
 
-/** The google.rpc error inside an HTTP error body (`{error}` or `[{error}]`), if any. */
 export function parseRpcErrorBody(bodyText: string): AntigravityRpcError | undefined {
   let value: unknown;
   try {
@@ -339,7 +321,6 @@ function kindForStatus(status: number | undefined): AntigravityErrorKind | undef
   return undefined;
 }
 
-/** Parses a protobuf Duration ("3.5s") or Go duration ("1h2m3.5s") into milliseconds. */
 export function parseDurationMs(value: string): number | undefined {
   const match = /^(?:([0-9]+)h)?(?:([0-9]+)m(?!s))?(?:([0-9]+(?:\.[0-9]+)?)s)?$/u.exec(
     value.trim(),
@@ -359,7 +340,6 @@ function retryAfterHeaderMs(header: string | null | undefined, now: number): num
   return Number.isFinite(date) ? Math.max(0, date - now) : undefined;
 }
 
-/** The URL when it is an https link on accounts.google.com, otherwise undefined. */
 export function acceptedValidationUrl(value: string | undefined): string | undefined {
   if (!value) return undefined;
   try {
@@ -385,12 +365,6 @@ export interface RpcClassificationOptions {
   now?: number | undefined;
 }
 
-/**
- * Classifies a google.rpc error. Structured details (ErrorInfo.reason, QuotaFailure,
- * RetryInfo.retryDelay, metadata) decide first, then the HTTP and rpc status. Backend prose is
- * consulted only as a last resort: for an otherwise unexplained 429 and, through Pi's own
- * overflow patterns, for a request rejected as too long.
- */
 export function antigravityErrorFromRpc(
   rpc: AntigravityRpcError | undefined,
   options: RpcClassificationOptions = {},
@@ -434,7 +408,6 @@ export function antigravityErrorFromRpc(
   kind ??= kindForStatus(status) ?? (rpc?.status ? RPC_STATUS_KINDS.get(rpc.status) : undefined);
   kind ??= "server";
 
-  // Last resort: an unexplained 429 whose text announces a quota wall, and overflow wording.
   if (kind === "rate_limited" && reasons.length === 0 && violations.length === 0) {
     if (/quota/iu.test(rawMessage) && /reached|exhausted|exceeded/iu.test(rawMessage)) {
       kind = "quota_exhausted";
@@ -459,7 +432,6 @@ export function antigravityErrorFromRpc(
   });
 }
 
-/** Classifies a non-2xx HTTP response from a v1internal method. */
 export function antigravityErrorFromHttp(
   status: number,
   bodyText: string,
@@ -474,12 +446,10 @@ export function antigravityErrorFromHttp(
   );
 }
 
-/** A transport failure (DNS, TLS, reset, timeout) before a complete response arrived. */
 export function antigravityNetworkError(detail: string, cause?: unknown): AntigravityError {
   return new AntigravityError({ kind: "network", detail, cause });
 }
 
-/** A 2xx response whose body does not match the expected schema. */
 export function antigravityMalformedResponse(detail: string): AntigravityError {
   return new AntigravityError({ kind: "malformed_response", detail });
 }

@@ -1,12 +1,6 @@
 import type { ProtocolDictionary } from "./runtime-values.ts";
 import type { RuntimeValue } from "./runtime-values.ts";
 import { isRuntimeFunction, isRuntimeNumber, isRuntimeString } from "./runtime-values.ts";
-/**
- * lsp_diagnostics tool definition
- *
- * Proactive LSP diagnostics check — single files or directories.
- * Adopted from code-yeongyu/pi-lsp-client design.
- */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -92,7 +86,6 @@ const DEFAULT_BATCH_CONCURRENCY = 8;
 const MAX_BATCH_CONCURRENCY = 16;
 const DEFAULT_BATCH_FILE_DEADLINE_MS = 15_000;
 
-// LSP severities: 1=Error, 2=Warning, 3=Information, 4=Hint
 interface SeverityNames {
   [severity: number]: string;
 }
@@ -117,23 +110,9 @@ type BatchOptions = {
   waitMs?: number;
   signal?: AbortSignal;
   onProgress?: (completed: number, total: number) => void;
-  // #571/#1198: threaded down to `collectFileDiagnosticResult`, which reserves
-  // one per-file token before awaiting the LSP result.
   nextWriteIndex?: () => number;
-  // "primary" skips every cross-cutting auxiliary scanner (ast-grep,
-  // opengrep, zizmor, typos, marksman) and only touches the file's actual
-  // language server — for when the caller just wants "does the type
-  // checker/compiler confirm this clean", not a full security/lint pass.
   serverScope?: "primary" | "all";
-  // #671: project root the workspace-diagnostics cache is rooted under
-  // (`getProjectDataDir(cwd)`) — threaded down to `collectBatchDiagnostics`
-  // so its per-file cache context lands in the same on-disk store
-  // `runWorkspaceDiagnostics` (`diagnostics_report mode=full`) reads/writes,
-  // letting a file swept by either tool benefit the other's next sweep.
   cwd?: string;
-  // #1561: per-file blocker-retire hook, threaded so a batch/directory sweep
-  // retires the same stale verdicts a single-file check does. A sibling surface
-  // left without it would be the very defect this fixes, one call site over.
   onConfirmedNoBlockers?: (info: ConfirmedNoBlockersInfo) => void;
 };
 
@@ -154,36 +133,11 @@ type FileDiagnosticResult = {
   unavailable?: string;
   error?: string;
   inconclusiveReason?: string;
-  /**
-   * #533: discriminated per-file outcome, mirroring the #240 doctrine at the
-   * LSP layer (found | clean | unresolved) up through the tool's aggregation.
-   * "found" = diagnostics.length > 0 (self-evident, doesn't need the field).
-   * "clean" = an empty result the server actually confirmed (a pull server, or
-   * a push server whose empty result isn't from a known-silent-on-clean tier).
-   * "unconfirmed" = an empty result from a push-only, silent-on-clean server
-   * (classic typescript-language-server) — indistinguishable from "still
-   * analyzing" or "never asked". Never render this bucket as "0 diagnostics".
-   */
   confirmation?: "clean" | "unconfirmed";
-  /**
-   * #570: true when `confirmation === "unconfirmed"` specifically because
-   * the priming LSP check TIMED OUT (notify write and/or diagnostics wait
-   * hit its deadline), as opposed to the server being a known silent-on-
-   * clean tier. Both land in the same "unconfirmed" bucket for counting
-   * purposes, but the reason differs and the rendered text should say so.
-   */
   timedOut?: boolean;
-  /**
-   * The file's actual language server (e.g. "typescript"), as opposed to a
-   * cross-cutting auxiliary scanner (ast-grep, opengrep, ...). Used to split
-   * `diagnostics` into a primary-confirmation section and an auxiliary-
-   * findings section so a page of aux noise never buries whether the real
-   * type checker/compiler confirmed the file clean.
-   */
   primaryServerId?: string;
 };
 
-/** The only per-file states an explicit batch exposes to an agent. */
 type BatchFileOutcome =
   | "clean"
   | "findings"
@@ -196,10 +150,6 @@ function batchFileDeadlineMs(): number {
   const raw = Number(process.env.CHOCO_PI_LSP_LSP_BATCH_FILE_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_BATCH_FILE_DEADLINE_MS;
 }
-
-// #646: `primaryServerId` moved to clients/lsp/config.ts so this tool and
-// tools/diagnostics-report.ts's mode=full sweep share the exact same
-// primary-vs-auxiliary classification instead of each keeping its own copy.
 
 function lspUnavailableMessage(
   filePath: string,
@@ -233,39 +183,6 @@ function boundedPositiveInt(
   return Math.max(min, Math.min(max, parsed));
 }
 
-/**
- * #631: fan `mapper` out across `items` (a batch/directory file list) while
- * respecting per-LSP-server affinity — previously this was a flat,
- * server-oblivious bounded-concurrency pool (up to `concurrency` files
- * in flight at once, regardless of which server they belonged to). That let
- * a single-language batch (the common case) fire many concurrent touches at
- * the SAME shared, single-threaded LSP server — exactly the pattern #387
- * found doesn't parallelize (it queues server-side and cascades per-file
- * timeouts by queue position) and that `runWorkspaceDiagnostics` (the engine
- * behind `diagnostics_report mode=full`) has been protected against since #387.
- *
- * Groups `items` by primary server via `groupFilesByPrimaryServer` (the same
- * grouping key `runWorkspaceDiagnostics` uses) and schedules them with
- * `runPerServerGroups` (both extracted from `clients/lsp/index.ts` so this
- * tool shares the real primitive instead of a second hand-copied
- * implementation): at most one in-flight `mapper` call per server group,
- * parallelized across distinct groups up to `concurrency`. A single-language
- * batch collapses to one group and runs effectively serially regardless of
- * `concurrency` — the CORRECT, intended #387 behavior, not a regression.
- *
- * Result order matches `items`' original order (not completion order),
- * matching the old flat pool's positional-assignment behavior — callers may
- * depend on `results[i]` corresponding to `items[i]`.
- *
- * #667: before a group's own per-file loop starts, calls the shared
- * `LSPService.ensureWarmForSweep` warm-check/ensure-warm step (the same one
- * `runWorkspaceDiagnostics` uses for `diagnostics_report mode=full`) against
- * the group's first file — a no-op when that group's primary server already
- * demonstrated readiness earlier this session, one bounded warm-up round
- * trip otherwise. Fixes the first-few-files-eat-cold-start-timeouts pattern
- * for THIS tool's batch/directory sweep the same way #667 fixed it for the
- * workspace-diagnostics sweep.
- */
 async function mapWithConcurrency<R>(
   items: string[],
   concurrency: number,
@@ -276,9 +193,6 @@ async function mapWithConcurrency<R>(
 ): Promise<R[]> {
   const results: R[] = [];
   let completed = 0;
-  // Multiple original indices can map to the same file path (duplicate
-  // entries in an explicit `paths` batch) — track them as a per-file queue
-  // so each occurrence still lands in its own original slot.
   const pendingIndices = new Map<string, number[]>();
   items.forEach((item, index) => {
     const queue = pendingIndices.get(item);
@@ -302,8 +216,6 @@ async function mapWithConcurrency<R>(
         if (signal?.aborted) return;
       }
       for (const item of group.files) {
-        // Honor cancellation (Escape / turn abort): stop pulling new items
-        // rather than grind the whole batch. Completed entries are returned.
         if (signal?.aborted) return;
         const index = pendingIndices.get(item)!.shift()!;
         results[index] = await mapper(item, index);
@@ -316,13 +228,6 @@ async function mapWithConcurrency<R>(
   return results;
 }
 
-/**
- * Project-ignore predicate rooted at `root`, fail-open. Lets a directory scan
- * honor the user's `.choco-pi-lsp.json` / `.gitignore` patterns — not just the
- * canonical dir-name list — so `lsp_diagnostics` stays consistent with the
- * workspace-diagnostics walk and every other scan surface (#243/#297/#298). A
- * config-probe error never blocks a scan (matches the walkers' behaviour).
- */
 function projectIgnorePredicate(root: string): (fullPath: string, isDir: boolean) => boolean {
   try {
     const matcher = getProjectIgnoreMatcher(root);
@@ -332,22 +237,6 @@ function projectIgnorePredicate(root: string): (fullPath: string, isDir: boolean
   }
 }
 
-/**
- * #1137: async so a directory read never blocks the event loop (and pi's TUI).
- *
- * This walk was fully synchronous with NO yielding of any kind, bounded only by
- * `maxFiles` *kept* — an ignored-heavy or cloud-backed (OneDrive/network) tree
- * could traverse unboundedly many entries, and a single stalled `readdirSync`
- * held the loop for the whole stall. It is also called once PER LANGUAGE in
- * `runDirectoryDiagnostics`'s `LANG_EXTENSIONS` loop, so a directory-mode
- * `lsp_diagnostics` could pay that cost several times over.
- *
- * The traversal is deliberately still **depth-first with immediate descent**
- * (not the shared stack-based `walkTreeStackAsync`): the `maxFiles` cap makes
- * traversal ORDER observable — a stack walk would keep a different subset of
- * files on an over-large tree. Only scheduling changes here; the returned list
- * is identical. Awaiting each directory read is itself the yield point.
- */
 async function collectFiles(
   dir: string,
   extensions: string[],
@@ -380,22 +269,8 @@ async function collectFiles(
 }
 
 export function createLspDiagnosticsTool(
-  // #571/#1198: same shared write-ordering token source `diagnostics_report`
-  // mode=full uses (index.ts injects `() => runtime.nextWriteIndex()`). A
-  // confirmed result reconciled into the footer reserves its token when the
-  // per-file check starts, so settlement order cannot make an older result look
-  // newer. Optional/undefined in tests.
   nextWriteIndex?: () => number,
-  // #1561: #571 wired this tool's confirmed result into the widget footer and
-  // stopped there. The inline-blocker map is a SECOND agent-facing store fed by
-  // the same dispatch verdict, and nothing retired it — so choco-pi-lsp kept
-  // injecting "Unresolved from this turn" for three more turns after answering
-  // "confirmed clean" for the same file. index.ts injects
-  // `runtime.retireInlineBlockerOnConfirmedClean`. Optional/undefined in tests.
   onConfirmedNoBlockers?: (info: ConfirmedNoBlockersInfo) => void,
-  // choco-pi fork: resolved-flag getter (index.ts injects getLensFlag) so the
-  // tool reports gracefully instead of spawning servers while LSP usage is
-  // toggled off (`/lsp off`, `--no-lsp`, or `lsp.enabled=false`).
   getFlag?: (name: string) => boolean | string | undefined,
 ) {
   return {
@@ -421,7 +296,6 @@ export function createLspDiagnosticsTool(
       unconfirmed?: boolean;
       timedOut?: boolean;
     }>(({ details, args, isError, text }) => {
-      // Streaming progress partials render the live bar (see scanningSummaryLine).
       const scanning = scanningSummaryLine(details, text);
       if (scanning) return scanning;
       if (isError) {
@@ -433,9 +307,6 @@ export function createLspDiagnosticsTool(
       const scope =
         isRuntimeNumber(files) && files > 1 ? ` across ${files} files` : target ? ` ${target}` : "";
       const noun = count === 1 ? "diagnostic" : "diagnostics";
-      // #533: a batch/directory result with any unconfirmed files must NEVER
-      // compact-render as a bare "N diagnostics" — that erases the fact some
-      // files' clean status was never actually confirmed by the server.
       const unconfirmedFiles = details?.unconfirmedFiles ?? 0;
       if (unconfirmedFiles > 0) {
         const cleanFiles = details?.cleanFiles ?? 0;
@@ -456,9 +327,6 @@ export function createLspDiagnosticsTool(
       if ((details?.incompleteFiles ?? 0) > 0) {
         return `lsp_diagnostics${scope} — incomplete (${details?.incompleteFiles} files not confirmed)`;
       }
-      // Single-file mode: 0 diagnostics from an unconfirmed result — either a
-      // silent-on-clean server or (#570) a timed-out check — is not a clean
-      // render either.
       if (count === 0 && details?.unconfirmed) {
         return details?.timedOut
           ? `lsp_diagnostics${scope} — timed out (result may be incomplete)`
@@ -520,11 +388,7 @@ export function createLspDiagnosticsTool(
           details: { lspDisabled: true },
         };
       }
-      // Escape aborts the turn via ctx.signal; honor both it and the tool-call
-      // signal so a batch/directory scan cancels rather than grinding on.
       const signal = combineAbortSignals(_signal, ctx.signal);
-      // Stream a throttled progress bar for batch/directory scans (opaque for
-      // seconds-to-minutes otherwise).
       const onProgress = makeProgressReporter(onUpdate, "Scanning LSP diagnostics");
       // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
       const typedParams = params as {
@@ -583,9 +447,6 @@ export function createLspDiagnosticsTool(
             details: { mode: "batch", filesChecked: 0 },
           };
         }
-        // Preserve input order (including duplicate entries); normalize each
-        // path before grouping so Windows separators and dot segments cannot
-        // change cache/group identity. Explicit lists never enter the walker.
         const absPaths = rawPaths.map((entry) =>
           path.normalize(path.isAbsolute(entry) ? entry : path.resolve(cwd, entry)),
         );
@@ -655,48 +516,10 @@ export function createLspDiagnosticsTool(
 
 type DiagnosticsCollectionResult = {
   diagnostics: LSPDiagnostic[];
-  /**
-   * #570: true when the priming `touchFile` call could not confirm its
-   * result (notify write and/or diagnostics wait timed out) before the
-   * follow-up `getDiagnostics` read below. An empty result in that case is
-   * NOT a confirmed clean answer — treat it the same as the existing
-   * "unconfirmed" (silent-on-clean server) bucket rather than reporting a
-   * bare 0.
-   */
   timedOut: boolean;
-  /**
-   * True only when `touchFile` explicitly preserved completion of its configured
-   * diagnostics policy. This is distinct from merely receiving an empty array;
-   * scope-specific consumers may still require a stricter fallback (see
-   * `canTrustTouchConfirmation`).
-   */
   confirmedByTouch: boolean;
-  /**
-   * #1470/#1493: server ids the touch carries no evidence for — an auxiliary whose
-   * push wait was cut off by the aux grace timer (#1470), or one that stayed silent
-   * with no stored publication for this content (#1493). Empty when every spawned
-   * server got to answer. `confirmedByTouch` stays TRUE in that case: the primary's
-   * own confirmation is untouched, and conflating the two would report a hung or
-   * silent opengrep as "typescript could not confirm clean", a different lie. The caller
-   * demotes the FILE-level verdict to "unconfirmed" while keeping the primary line
-   * honest.
-   */
   unconfirmedServerIds: readonly string[];
-  /**
-   * #692: the file content read while collecting (undefined only when the
-   * read itself failed) — reused by the widget-reconcile caller so it can
-   * derive `fileRole` for `retagAuxiliaryDiagnostics`'s `skipTestFiles` gate
-   * without a second disk read.
-   */
   content?: string;
-  /**
-   * #1095: content binding of the collected result — whether these diagnostics
-   * were computed against current disk. `boundToCurrentDisk === false` means the
-   * server's view diverged from disk; the caller demotes such a result to
-   * "unconfirmed" so a stale-but-fresh-looking result never re-cements the
-   * widget (#1092). Undefined when the touch path wasn't taken (openFile-only /
-   * warm-attach / getDiagnostics fallback) → treated as "unknown" (no demotion).
-   */
   binding?: DiagnosticBinding;
 };
 
@@ -708,22 +531,11 @@ async function collectDiagnosticsForFile(
 ): Promise<DiagnosticsCollectionResult> {
   let timedOut = false;
   let content: string | undefined;
-  // `touchFile` is the authoritative collection boundary for every scope: it
-  // preserves per-touch timeout, content-binding, and silent-clean confirmation
-  // metadata while returning diagnostics from only the requested clients. The
-  // legacy openFile/getDiagnostics path remains only for an older/mock service
-  // without touchFile, or when touchFile cannot resolve any clients.
-  // #1179: the result is an explicit wrapper so side-channel fields survive
-  // array copies; confirmation was added when Marksman's lower-level clean verdict
-  // proved that a successful empty collection also needs explicit provenance.
   let touched: TouchFileResult | undefined;
   let usedTouch = false;
   try {
     content = fs.readFileSync(absPath, "utf-8");
     if (isWarmAttached()) {
-      // The local sweep's default service wait is bounded to the same
-      // 15-second per-file envelope used by the workspace sweep. An explicit
-      // waitMs remains the tighter caller-selected cap.
       const attachedBudgetMs = waitMs ?? 15_000;
       const attached = await tryWarmAttachedDiagnostics(
         absPath,
@@ -744,24 +556,9 @@ async function collectDiagnosticsForFile(
         return {
           diagnostics: filtered,
           timedOut: false,
-          // #1253: the incumbent's touch carries the same confirmation
-          // provenance a local touch does (an `available: true` answer is
-          // already gated on `fresh && !inconclusive`, but that is NOT
-          // evidence a silent-on-clean server was confirmed — only the
-          // explicit flag is). The incumbent always touches with
-          // `clientScope: "with-auxiliary"`, so this is an AGGREGATE
-          // confirmation: it carries the same caveat all-scope local
-          // touches do, and classic TypeScript still needs the primary-only
-          // tsserver sync check below rather than this verdict.
-          // #1470: `"partial"` counts, for the same reason the local touch
-          // branch below accepts it — the incumbent's primary confirmed; only
-          // a named auxiliary did not.
           confirmedByTouch:
             attached.response.confirmation !== undefined &&
             primaryServerId(absPath) !== "typescript",
-          // #1470: the incumbent's narrowed verdict, carried as an explicit DTO
-          // field across the socket. An older incumbent omits it → empty → the
-          // pre-#1470 handling, unchanged.
           unconfirmedServerIds: attached.response.unconfirmedServerIds ?? [],
           content,
         };
@@ -796,53 +593,24 @@ async function collectDiagnosticsForFile(
         preserveDiagnostics: false,
       });
     }
-  } catch {
-    // Non-fatal: getDiagnostics may still have stale/health information.
-  }
+  } catch {}
 
-  // Only fall through to the unscoped getDiagnostics() read when the touch
-  // branch wasn't taken (openFile-only path, which never collected anything
-  // and genuinely needs the follow-up call) or couldn't resolve any clients
-  // at all (touched stays undefined despite usedTouch). When touched IS
-  // defined it's already the answer — reusing it is what makes
-  // serverScope:"primary" actually skip auxiliary scanners and drops the
-  // common case back to a single LSP round trip instead of two.
   const diagnostics =
     usedTouch && touched !== undefined
       ? touched.diags
       : await lspService.getDiagnostics(absPath, waitMs !== undefined ? "document" : "full");
-  // #586: honor each auxiliary profile's native inline-suppression comment
-  // (e.g. opengrep's `// nosemgrep`, #441) the same way the per-edit dispatch
-  // runner does — previously this standalone query path ignored it entirely.
-  // #692: also honor a profile's `skipTestFiles` gate (e.g. ast-grep, #687) —
-  // this standalone-query path had no test-file gating of its own, so an
-  // `lsp_diagnostics` check on a test file surfaced ast-grep findings the
-  // per-edit dispatch runner would have suppressed. `content` is only unset
-  // if the read itself failed above; fail-open (no filtering) rather than
-  // lose diagnostics over an unrelated read error.
   const filtered =
     content !== undefined
       ? applyAuxiliarySuppressions(diagnostics, content, {
           fileRole: detectFileRole(absPath, content),
         })
       : diagnostics;
-  // #1095: surface the touch's content binding (only the touch path carries
-  // one; the openFile-only / getDiagnostics fallback leaves it undefined →
-  // "unknown", no demotion).
   const binding = usedTouch ? touched?.binding : undefined;
-  // #1470: `"partial"` counts here. `confirmedByTouch` feeds
-  // `canTrustTouchConfirmation`, which asks about the PRIMARY's own verdict —
-  // and a partial touch is one whose primary confirmed while an auxiliary was
-  // cut off. Excluding it would render "Primary LSP: unconfirmed" for a primary
-  // that did confirm. The coverage gap is carried separately, below.
   const confirmedByTouch = usedTouch && touchCompletedConfirmationPolicy(touched);
   return {
     diagnostics: filtered,
     timedOut,
     confirmedByTouch,
-    // #1470: only a touch actually contributes a coverage gap; the
-    // openFile+getDiagnostics fallback never reports one, which is honest —
-    // that path claims no confirmation at all.
     unconfirmedServerIds: usedTouch ? touchCoverageGap(touched) : [],
     content,
     binding,
@@ -861,20 +629,6 @@ function diagnosticsToFileDiags(file: string, diagnostics: LSPDiagnostic[]): Fil
   }));
 }
 
-/**
- * #533: classify an EMPTY diagnostic result as "clean" (the server actually
- * confirmed no issues) or "unconfirmed" (came from a push-only,
- * silent-on-clean server — classic typescript-language-server — that
- * publishes nothing on a clean→clean transition, so an empty result here is
- * indistinguishable from "still analyzing" or "never asked"). Reuses the same
- * capability-snapshot classifier the #458 cascade lane already trusts
- * (`classifyCascadeWaitTier`) so this tool's notion of "silent tier-3" stays
- * in lockstep with the rest of the LSP layer instead of drifting via a second
- * copy of the server-strategy table. Fail-safe: any error or missing snapshot
- * (server not alive, capability probe failure) reads as "clean" — the same
- * default this tool has always had — rather than manufacturing a new failure
- * mode from a best-effort classification.
- */
 async function classifyEmptyResult(
   file: string,
   lspService: NonNullable<ReturnType<typeof getLSPService>>,
@@ -888,24 +642,6 @@ async function classifyEmptyResult(
   }
 }
 
-// --- #611/#707: tier-3 silent escape hatch (typescript.tsserverRequest sync
-// commands) — implementation extracted to clients/lsp/tsserver-sync.ts and
-// re-used from there by the per-edit dispatch path (#707). ---
-
-/**
- * #611: resolve an EMPTY diagnostic result for a Tier-3 silent server (see
- * `classifyCascadeWaitTier` — today only classic typescript-language-server,
- * native-ts7 is explicitly excluded there) with a definitive answer instead of
- * defaulting straight to "unconfirmed". `confirmed: true` with an empty
- * `diagnostics` array is a genuinely confirmed clean result; `confirmed: true`
- * with a non-empty array means the sync command surfaced real diagnostics the
- * server had computed but never published (silentOnClean) — these must be
- * surfaced to the caller, not discarded. `confirmed: false` is the existing
- * "unconfirmed" fallback (command unavailable, error, or the file isn't part
- * of any project). Fail-safe: any error in the tier classification itself
- * (missing snapshot, server not alive) reads as `confirmed: true` with no
- * diagnostics — the same "clean" default this tool has always had.
- */
 async function resolveEmptyResult(
   file: string,
   lspService: NonNullable<ReturnType<typeof getLSPService>>,
@@ -926,13 +662,6 @@ async function resolveEmptyResult(
   }
 }
 
-/**
- * A primary-scope touch is authoritative because `touchFile` runs that
- * primary's own confirmation path (including TypeScript's sync fallback). For
- * all-scope TypeScript touches, the aggregate silent-clean gate can settle
- * without that primary-only sync request, so preserve `resolveEmptyResult`'s
- * existing tsserver fallback instead of accepting the aggregate verdict.
- */
 function canTrustTouchConfirmation(
   file: string,
   serverScope: "primary" | "all",
@@ -941,65 +670,11 @@ function canTrustTouchConfirmation(
   return confirmedByTouch && (serverScope === "primary" || primaryServerId(file) !== "typescript");
 }
 
-/**
- * #571: reconcile this tool's fresh LSP result into the footer cache
- * (`widget-state.ts`'s `allDiagnostics`) — same shared choke point
- * `diagnostics_report` mode=full uses (`clients/widget-state.ts`'s
- * `reconcileScanDiagnostics`). A manual `lsp_diagnostics` check that proves a
- * stale footer error is actually gone (the real-world case that surfaced
- * #571) is exactly the kind of confirmed result that should correct it.
- * Direct `lsp_diagnostics` deliberately does not perform a second disk read at
- * this reconciliation seam: its collecting touch already read the content and
- * supplies the binding verdict. `false` is unconfirmed and is never written;
- * `true` is trusted, while an absent/`unknown` verdict preserves the legacy
- * fail-open policy for servers that cannot bind their diagnostics to content.
- *
- * `rawDiags` (pre-severity-filter) is what gets written — the footer records
- * the true known state, independent of this call's display-only severity
- * filter. A non-empty result is definitionally confirmed (the server DID
- * answer with real diagnostics); an empty result is only confirmed when
- * `classifyEmptyResult` (#533) says "clean", not "unconfirmed" (silent
- * push-only server — indistinguishable from still-analyzing/never-asked, so
- * must not overwrite a real prior footer entry).
- *
- * #692: `retagAuxiliaryDiagnostics` re-tags aux-sourced entries (ast-grep,
- * opengrep, zizmor, typos) with their real tool id + semantic policy before
- * they're written — the same treatment the per-edit dispatch runner gives
- * them — so a scan-reconciled entry no longer keeps tool `"lsp"`. `content`
- * is the file content `collectDiagnosticsForFile`/the cache already read (or
- * undefined for a cache-hit branch, whose `rawDiags` were already suppression-
- * /skipTestFiles-filtered at write time — an empty string here is then a safe
- * no-op re-check, not a behavior gap).
- */
-/**
- * #1561: what the reconcile actually established about this file.
- *
- * `confirmed: false` means the result was not trustworthy enough to write
- * anywhere (unconfirmed, content-binding mismatch, or the reconcile threw), and
- * `blocking` is then pinned `true` — an unknown verdict must never read as
- * evidence of clean.
- */
 type LspReconcileVerdict = {
   confirmed: boolean;
   blocking: boolean;
 };
 
-/**
- * #1561 F1: what this check is entitled to speak for.
- *
- * Inline blockers are raised by the whole dispatch — eslint, biome-check,
- * actionlint, ast-grep security rules — while this tool only ever consults
- * language servers. Retiring one therefore needs an explicit coverage claim,
- * and the honest claim is exactly the servers this check consulted and got an
- * answer from. `serverScope: "primary"` consults only the primary, so its claim
- * is `"lsp"` alone; an all-scope check adds each auxiliary server by id, which
- * is the same vocabulary `retagAuxiliaryDiagnostics` tags their findings with.
- *
- * A server named in `unconfirmedServerIds` is dropped: it produced no evidence
- * for this content, so claiming coverage for it would be the #1470/#1493 lie one
- * layer up. (Today an aux gap also demotes the whole verdict to "unconfirmed",
- * so the hook does not fire at all — this stays correct if that ever narrows.)
- */
 function coveredSourcesForCheck(
   file: string,
   serverScope: "primary" | "all",
@@ -1015,35 +690,17 @@ function coveredSourcesForCheck(
       role?: string;
     }>;
   } catch {
-    // A registry we cannot read is not a coverage claim. Returning an empty
-    // set makes every retire fail closed, which is the safe direction for a
-    // commit gate.
     return [];
   }
   for (const server of servers) {
     const auxiliary = server.role === "auxiliary";
     if (auxiliary && serverScope === "primary") continue;
     if (unconfirmed.has(server.id)) continue;
-    // The dispatch runner tags the primary language server's findings `lsp`;
-    // auxiliaries keep their own tool id.
     covered.add(auxiliary ? server.id : "lsp");
   }
   return [...covered];
 }
 
-/**
- * #1645 review F3: `lsp_diagnostics` writes into the SAME widget store as
- * `diagnostics_report mode=full`. Two tools writing one store must apply ONE rule
- * for "is this file's diagnostics demoted" — otherwise an orphan file blocks or
- * does not depending purely on which tool ran last, which is the #1633-V1
- * lesson. Every path in this file that reaches `reconcileWidgetFromLspResult`
- * or the rendered output routes its raw diagnostics through here first, so the
- * store, the counts, and the text all agree.
- *
- * Applied AFTER the confirmation verdict is computed, never before: confirmation
- * asks "did the server answer for this content", which the demotion must not
- * influence.
- */
 function demoteInferredForFile(
   file: string,
   diagnostics: LSPDiagnostic[],
@@ -1057,7 +714,6 @@ function demoteInferredForFile(
   });
 }
 
-/** #1561: everything the retire decision needs, as one argument. */
 export type ConfirmedNoBlockersInfo = {
   filePath: string;
   writeIndex?: number;
@@ -1072,26 +728,12 @@ function reconcileWidgetFromLspResult(
   writeIndex: number | undefined,
   cwd: string,
   content: string | undefined,
-  // #1095: true when the result's content binding demonstrably mismatches disk
-  // (boundToCurrentDisk === false). Such a result — even a NON-EMPTY one, which
-  // the pre-#1095 "non-empty is definitionally confirmed" doctrine would have
-  // written straight through — must NOT re-cement the footer with a stale view
-  // (#1092's window-1 transcript: 17 live-looking diagnostics while tsc exits
-  // 0). "unknown"/true bindings leave the doctrine unchanged (fallback preserved
-  // for servers that never bind a version).
   boundMismatch = false,
-  // #1093: when these `rawDiags` were actually OBSERVED. Fresh touches observe
-  // now (`undefined` → `Date.now()`); a cache HIT replays diagnostics scanned
-  // earlier, so its caller passes the cache entry's `scannedAt` here so the
-  // footer's `touchedAt` isn't re-armed to now() and the mtime-staleness gate
-  // stays live (the #1092 re-arming defect).
   observedAt?: number,
 ): LspReconcileVerdict {
   const confirmed = (rawDiags.length > 0 || confirmation !== "unconfirmed") && !boundMismatch;
   if (!confirmed) return { confirmed: false, blocking: true };
   try {
-    // #692: provenance label ONLY — must never affect `rule`/identity (see
-    // `ConvertLspDiagnosticsOptions.scanOrigin`'s doc comment).
     const diagnostics = convertLspDiagnostics(rawDiags, file, {
       scanOrigin: "lsp_diagnostics",
     });
@@ -1100,14 +742,8 @@ function reconcileWidgetFromLspResult(
       fileRole: detectFileRole(file, content),
     });
     reconcileScanDiagnostics(file, retagged, true, writeIndex, observedAt);
-    // #1561: the blocking tally comes from the SAME `isBlocking` predicate the
-    // footer counts with — no second severity rule for the blocker-retire
-    // decision to drift away from.
     return { confirmed: true, blocking: retagged.some(isBlocking) };
   } catch {
-    // Never let a footer-reconciliation hiccup fail the diagnostics check.
-    // A verdict we could not compute is NOT evidence of clean: report it as
-    // still-blocking so no caller retires a blocker off a failed reconcile.
     return { confirmed: false, blocking: true };
   }
 }
@@ -1119,26 +755,11 @@ async function collectFileDiagnosticResult(
   waitMs?: number,
   nextWriteIndex?: () => number,
   serverScope: "primary" | "all" = "all",
-  // #671: shared workspace-diagnostics cache (see `createWorkspaceDiagnostics
-  // CacheContext`'s doc) — optional so single-file callers of this function
-  // (there are none today, but keep it non-breaking) can omit it and simply
-  // always touch. Only `collectBatchDiagnostics` (the batch/directory sweep)
-  // passes these.
   cacheCtx?: WorkspaceDiagnosticsCacheContext,
   scopeKey?: string,
-  // #692: threaded through so `reconcileWidgetFromLspResult` can compute
-  // `allowBlocking(cwd)` for a scan-reconciled aux finding — defaults to
-  // `process.cwd()` for any call site that predates this (there are none
-  // today besides the two below, both of which now pass it explicitly).
   cwd: string = process.cwd(),
-  // #1561: see `createLspDiagnosticsTool`'s parameter doc. Called only for a
-  // FRESH observation — never on the cache-hit replay below, whose `rawDiags`
-  // are an OLD observation (#1093) and therefore no evidence about now.
   onConfirmedNoBlockers?: (info: ConfirmedNoBlockersInfo) => void,
 ): Promise<FileDiagnosticResult> {
-  // Reserve the ordering token when this diagnostic operation starts, not when
-  // its LSP promise settles. A slower old result must not receive a newer token
-  // merely because it completed later (#1198).
   const writeIndex = nextWriteIndex?.();
   let stat: ReturnType<typeof fs.statSync>;
   try {
@@ -1152,28 +773,11 @@ async function collectFileDiagnosticResult(
 
   if (cacheCtx && scopeKey !== undefined) {
     const cached = cacheCtx.lookup(file, scopeKey);
-    // #1095: a cached entry whose content binding demonstrably mismatches disk
-    // (bytes changed without the mtime bump the freshness gate would catch) is
-    // NOT served — fall through to a fresh touch instead of replaying a stale
-    // cached result. "unknown"/true bindings serve as before.
     if (cached && cached.binding.boundToCurrentDisk !== false) {
       const confirmation: "clean" | undefined =
         cached.diagnostics.length === 0 ? "clean" : undefined;
-      // #1645 review F3: a cache REPLAY writes the widget store exactly like a
-      // fresh touch does, so it gets the same demotion. Without this, replaying
-      // yesterday's cached blocker would re-cement an orphan file as blocking
-      // after mode=full had demoted it.
       const cachedDiags = await demoteInferredForFile(file, cached.diagnostics, cwd, lspService);
       const filteredDiags = applySeverityFilter(cachedDiags, severity);
-      // #692: cached.diagnostics were already suppression-/skipTestFiles-
-      // filtered at write time (this same code path); no file content was
-      // cached alongside them, so `undefined` here is a safe re-check, not
-      // a gap.
-      // #1093: this is a CACHE HIT — a replay of an OLD observation. Stamp the
-      // footer's `touchedAt` with the cache entry's original `scannedAt`, NOT
-      // now(), or a repeat check that only re-serves the cache would keep
-      // re-arming the mtime-staleness gate and a resolved finding would render
-      // forever (the #1092 defect).
       reconcileWidgetFromLspResult(
         file,
         cachedDiags,
@@ -1181,9 +785,6 @@ async function collectFileDiagnosticResult(
         writeIndex,
         cwd,
         undefined,
-        // This branch only runs when the cache binding is not a mismatch
-        // (guarded above), so boundMismatch is false; #1093's observedAt is
-        // the cache entry's original scan time.
         false,
         cached.scannedAt,
       );
@@ -1206,13 +807,6 @@ async function collectFileDiagnosticResult(
   } = await collectDiagnosticsForFile(file, lspService, waitMs, serverScope);
   // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
   const health = lspService.getDiagnosticsHealth?.(file) as LspHealthLike | undefined;
-  // #570: a timed-out priming check is never a confirmed "clean" — treat it
-  // as unconfirmed without consulting the (unrelated) silent-tier
-  // classifier, and remember why so the rendered text is accurate.
-  // #611: a genuinely empty (not just severity-filtered-away) push-based
-  // result gets a shot at the tier-3 sync escape hatch before "unconfirmed"
-  // — it may surface real diagnostics the server never published, which must
-  // be merged in rather than discarded.
   let effectiveRawDiags = rawDiags;
   let confirmation: "clean" | "unconfirmed" | undefined;
   if (timedOut) {
@@ -1234,22 +828,11 @@ async function collectFileDiagnosticResult(
   } else if (applySeverityFilter(rawDiags, severity).length === 0) {
     confirmation = await classifyEmptyResult(file, lspService);
   }
-  // #1095: a result whose content binding demonstrably mismatches disk is
-  // demoted to "unconfirmed" — it must neither confirm the footer nor be cached
-  // as clean, regardless of how many diagnostics it carries (the #1092
-  // re-cementing path). "unknown"/true bindings leave the verdict untouched.
   const boundMismatch = binding?.boundToCurrentDisk === false;
   if (boundMismatch) confirmation = "unconfirmed";
-  // #1470/#1493: an auxiliary that never reported — cut off by the aux grace timer,
-  // or silent with nothing published for this content — contributed no evidence
-  // about this file, so a "clean" verdict computed from the merged result would
-  // be claiming coverage this batch does not have. Demote it — that also keeps
-  // the entry out of the workspace cache below, which would otherwise replay the
-  // partial answer as a confirmed clean on every later sweep.
   if (unconfirmedServerIds.length > 0 && confirmation === "clean") {
     confirmation = "unconfirmed";
   }
-  // #1645 review F3: one demotion rule for every writer of the widget store.
   effectiveRawDiags = await demoteInferredForFile(file, effectiveRawDiags, cwd, lspService);
   const filteredDiags = applySeverityFilter(effectiveRawDiags, severity);
   const verdict = reconcileWidgetFromLspResult(
@@ -1269,13 +852,6 @@ async function collectFileDiagnosticResult(
       cwd,
     });
   }
-  // #671: only a CONFIRMED outcome ("clean", or a non-empty result — either
-  // is definitionally confirmed per this function's own doctrine above) is
-  // safe to cache; "unconfirmed" (timeout OR a silent-tier server's
-  // unescapable empty push) must never be persisted as a cacheable clean
-  // result — same false-clean bug class `runWorkspaceDiagnostics`'s cache
-  // wiring guards against. #1095: the entry carries the content fingerprint so a
-  // later lookup can verify it against disk beyond the mtime proxy.
   if (cacheCtx && scopeKey !== undefined && confirmation !== "unconfirmed") {
     cacheCtx.record(
       file,
@@ -1303,12 +879,8 @@ async function runFileDiagnostics(
   nextWriteIndex?: () => number,
   serverScope: "primary" | "all" = "all",
   cwd: string = process.cwd(),
-  // #1561: see `createLspDiagnosticsTool`'s parameter doc. This is the path the
-  // live incident took (`mode: "file"`).
   onConfirmedNoBlockers?: (info: ConfirmedNoBlockersInfo) => void,
 ) {
-  // Reserve the token before awaiting this file's LSP result. The direct-file
-  // path performs its own confirmation/reconciliation below (#1198).
   const writeIndex = nextWriteIndex?.();
   const {
     diagnostics: rawDiags,
@@ -1321,15 +893,6 @@ async function runFileDiagnostics(
   // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
   const lspHealth = lspService.getDiagnosticsHealth?.(absPath) as LspHealthLike | undefined;
   const unavailable = lspUnavailableMessage(absPath, lspHealth);
-  // #533: an empty result needs a confirmed/unconfirmed verdict — a push-only,
-  // silent-on-clean server (classic typescript) publishes nothing on a
-  // clean→clean edit, so "0 diagnostics" from it is unverifiable, not clean.
-  // #570: a timed-out priming check is a second, distinct reason a result
-  // can be unconfirmed — checked first since it's a property of THIS check,
-  // not a general server-capability classification.
-  // #611: a genuinely empty (not just severity-filtered-away) result gets a
-  // shot at the tier-3 sync escape hatch before "unconfirmed" — real
-  // diagnostics it surfaces are merged in, not discarded.
   let effectiveRawDiags = rawDiags;
   let confirmation: "clean" | "unconfirmed" | undefined;
   if (timedOut) {
@@ -1351,21 +914,10 @@ async function runFileDiagnostics(
   } else if (applySeverityFilter(rawDiags, severity).length === 0) {
     confirmation = await classifyEmptyResult(absPath, lspService);
   }
-  // #1095: demote a result whose content binding mismatches disk to
-  // "unconfirmed" (the #1092 re-cementing path) — a non-empty stale result is no
-  // longer "definitionally confirmed". "unknown"/true bindings are unchanged.
   const boundMismatch = binding?.boundToCurrentDisk === false;
   if (boundMismatch) confirmation = "unconfirmed";
-  // #1470/#1493: NARROWED, not collapsed. An auxiliary that never reported — the aux
-  // grace timer cut it off, or it stayed silent with nothing published for this
-  // content — makes the FILE-level verdict unconfirmed. The merged result is missing
-  // whatever that scanner would have said, and this tool is the security lane's read surface. The
-  // PRIMARY's own verdict is untouched (`primaryCoverageGapOnly` below), so a
-  // TypeScript answer stays "confirmed clean" on its own line while an explicit
-  // line names the scanner whose coverage is absent.
   const primaryCoverageGapOnly = unconfirmedServerIds.length > 0 && confirmation === "clean";
   if (primaryCoverageGapOnly) confirmation = "unconfirmed";
-  // #1645 review F3: one demotion rule for every writer of the widget store.
   effectiveRawDiags = await demoteInferredForFile(absPath, effectiveRawDiags, cwd, lspService);
   const filtered = applySeverityFilter(effectiveRawDiags, severity);
   const total = filtered.length;
@@ -1381,10 +933,6 @@ async function runFileDiagnostics(
     collectedContent,
     boundMismatch,
   );
-  // #1561: a confirmed current view with nothing at the blocking tier retires
-  // this file's stale inline blocker — the store #571 corrected the footer for
-  // but never reached, which is how a resolved cross-file finding kept being
-  // injected as "Unresolved from this turn" for the rest of the session.
   if (verdict.confirmed && !verdict.blocking) {
     onConfirmedNoBlockers?.({
       filePath: absPath,
@@ -1398,9 +946,6 @@ async function runFileDiagnostics(
   const primaryDiags = limited.filter((d) => d.source === primaryId);
   const auxiliaryDiags = limited.filter((d) => d.source !== primaryId);
 
-  // Primary confirmation is always its own line, independent of how many
-  // auxiliary findings exist — a wall of ast-grep/opengrep noise must never
-  // bury whether the actual language server confirmed the file clean.
   const primaryLine = (() => {
     if (timedOut) {
       return (
@@ -1409,10 +954,6 @@ async function runFileDiagnostics(
         "Re-check after the server settles, or increase wait_ms."
       );
     }
-    // #1470: a file demoted ONLY because an auxiliary was cut off must not render
-    // the silent-on-clean text — the primary did confirm, and saying otherwise is
-    // the same overclaim in the opposite direction. The coverage line below names
-    // what is actually missing.
     if (unconfirmed && !primaryCoverageGapOnly) {
       return (
         `Primary LSP${primaryId ? ` (${primaryId})` : ""}: unconfirmed — ` +
@@ -1428,9 +969,6 @@ async function runFileDiagnostics(
     return `Primary LSP${primaryId ? ` (${primaryId})` : ""}: ${primaryDiags.length} diagnostic${primaryDiags.length === 1 ? "" : "s"}.`;
   })();
 
-  // #1470: this is the narrowing made readable. It states exactly which servers
-  // this result does NOT speak for, so "no auxiliary findings" can never be read
-  // as "the security scanners found nothing".
   const coverageLine =
     unconfirmedServerIds.length > 0
       ? `Auxiliary coverage INCOMPLETE — ${[...unconfirmedServerIds].join(", ")} did not answer within the wait budget, so ${unconfirmedServerIds.length === 1 ? "its findings are" : "their findings are"} NOT included here. This is not a clean bill of health for ${unconfirmedServerIds.length === 1 ? "that scanner" : "those scanners"}; re-check after the next edit, or use wait_ms to wait longer.`
@@ -1483,8 +1021,6 @@ async function runFileDiagnostics(
       truncated,
       unconfirmed,
       timedOut: unconfirmed ? timedOut : undefined,
-      // #1470: which servers this result does NOT speak for. Absent when it
-      // speaks for all of them.
       ...(unconfirmedServerIds.length > 0 && {
         unconfirmedServerIds: [...unconfirmedServerIds],
       }),
@@ -1494,14 +1030,6 @@ async function runFileDiagnostics(
   };
 }
 
-/**
- * #533: tally the per-file discriminated outcome across a batch/directory
- * result set. `unconfirmed` files are those whose diagnostics collapsed to an
- * empty array from a push-only, silent-on-clean server (see
- * `classifyEmptyResult`) — they must never be folded into "clean" in the
- * aggregate render, or a majority-unconfirmed result reads as a false "0
- * diagnostics across N files".
- */
 function tallyConfirmation(results: FileDiagnosticResult[]) {
   let clean = 0;
   let unconfirmed = 0;
@@ -1510,8 +1038,6 @@ function tallyConfirmation(results: FileDiagnosticResult[]) {
     if (result.diagnostics.length > 0) continue;
     if (result.confirmation === "unconfirmed") {
       unconfirmed += 1;
-      // #570: timed-out checks are a subset of "unconfirmed" — tallied
-      // separately so the aggregate text can say WHY, not just THAT.
       if (result.timedOut) timedOut += 1;
     } else {
       clean += 1;
@@ -1522,9 +1048,6 @@ function tallyConfirmation(results: FileDiagnosticResult[]) {
 
 function classifyBatchFileOutcome(result: FileDiagnosticResult): BatchFileOutcome {
   if (result.error) return "failed";
-  // A timed-out/unconfirmed answer may contain partial findings, but it cannot
-  // honestly be called a complete findings result. Keep the raw findings for
-  // investigation while making the aggregate incomplete.
   if (result.timedOut || result.confirmation === "unconfirmed") {
     return "inconclusive";
   }
@@ -1547,13 +1070,6 @@ function inconclusiveBatchResult(file: string, reason: string): FileDiagnosticRe
   };
 }
 
-/**
- * #570: build the explanatory clause for a batch/directory result that has
- * unconfirmed files, distinguishing timed-out checks from the pre-existing
- * #533 silent-on-clean-server bucket — both are "unconfirmed" for counting,
- * but the reason differs and misreporting a timeout as "server can't confirm
- * clean" would itself be misleading.
- */
 function unconfirmedReasonClause(unconfirmed: number, timedOut: number): string {
   const silent = unconfirmed - timedOut;
   if (timedOut > 0 && silent > 0) {
@@ -1573,20 +1089,6 @@ function unconfirmedReasonClause(unconfirmed: number, timedOut: number): string 
   );
 }
 
-/**
- * Fan out `collectFileDiagnosticResult` across a file list at bounded
- * concurrency and reduce the results into the shape both batch-style callers
- * (`runBatchFileDiagnostics`/`runDirectoryDiagnostics`) render from —
- * previously duplicated identically between them (SonarCloud
- * `new_duplicated_lines_density` gate, surfaced when #571 added the
- * `nextWriteIndex` threading to both call sites). Purely mechanical
- * extraction: no behavior change, and does NOT touch the confirmed/
- * unconfirmed semantics `collectFileDiagnosticResult`/`tallyConfirmation`
- * already encode — those, and `diagnostics_report` mode=full's separate,
- * deliberately different confirmation gate in `tools/diagnostics-report.ts`,
- * are unrelated to this file's internal duplication and are left exactly
- * as they were.
- */
 async function collectBatchDiagnostics(
   files: string[],
   severity: string,
@@ -1607,14 +1109,6 @@ async function collectBatchDiagnostics(
   outcomeCounts: Record<BatchFileOutcome, number>;
   incompleteFiles: number;
 }> {
-  // #671: one cache context for this whole batch/directory sweep — loaded
-  // once, written back once after every file has been processed (see the
-  // `persist()` call below), rather than round-tripping the on-disk cache
-  // file per-file. Shared store with `runWorkspaceDiagnostics` (`lens_
-  // diagnostics mode=full`'s engine); `scopeKey` keeps the two tools'
-  // differently-scoped touches (this tool never excludes any server, that
-  // one excludes opengrep — see `buildScopeKey`'s doc) from cross-serving
-  // entries that wouldn't actually match what each asked for.
   const resolvedCwd = options.cwd ?? process.cwd();
   const cacheCtx = createWorkspaceDiagnosticsCacheContext(resolvedCwd);
   const scopeKey = buildScopeKey(options.serverScope ?? "all");
@@ -1667,9 +1161,6 @@ async function collectBatchDiagnostics(
     options.signal,
     options.onProgress,
   );
-  // Persist whatever was recorded, including a partial/aborted sweep's
-  // already-completed files — same "don't throw away confirmed work"
-  // posture as `runWorkspaceDiagnostics`.
   cacheCtx.persist();
   const fileErrors = results.flatMap((result) => (result.error ? [result.error] : []));
   const lspHealthWarnings = results.flatMap((result) =>
@@ -1689,10 +1180,6 @@ async function collectBatchDiagnostics(
       (outcome) => [outcome, results.filter((result) => result.outcome === outcome).length],
     ),
   ) as Record<BatchFileOutcome, number>;
-  // Per-file primary-server lookup so a flattened multi-file `display` list
-  // can still be split into "primary findings" vs "auxiliary findings" —
-  // `clean`/`unconfirmed` above already reflect ONLY the primary server's
-  // confirmation; this split does the same job for the listed diagnostics.
   const primaryIdByFile = new Map(results.map((r) => [r.file, r.primaryServerId] as const));
   const primaryDisplay = display.filter((d) => d.source === primaryIdByFile.get(d.file));
   const auxiliaryDisplay = display.filter((d) => d.source !== primaryIdByFile.get(d.file));
@@ -1776,12 +1263,6 @@ async function runBatchFileDiagnostics(
   if (lspHealthWarnings.length > 0) {
     lines.push("", "LSP health warnings:", ...lspHealthWarnings.slice(0, 10));
   }
-  // #533/#570: surface unconfirmed files regardless of whether OTHER files in
-  // the batch found real diagnostics — a mixed found/unconfirmed result must
-  // not let the unconfirmed files silently pass as clean just because the
-  // batch as a whole isn't "0 diagnostics". This tally is primary-server-only
-  // (see collectFileDiagnosticResult) — it's the batch-level equivalent of
-  // the single-file "Primary LSP: ..." line, always reported on its own.
   if (unconfirmed > 0) {
     lines.push(
       "",
@@ -1895,9 +1376,6 @@ async function runDirectoryDiagnostics(
 
   let text: string;
   if (total === 0) {
-    // #533/#570: an unconfirmed-containing directory result must never
-    // render as a bare "no diagnostics" — that reads as an affirmative
-    // clean scan the server never actually gave for those files.
     const cleanLine =
       unconfirmed > 0
         ? `${clean} clean · ${unconfirmed} unconfirmed: ` +
@@ -1919,9 +1397,6 @@ async function runDirectoryDiagnostics(
       ...(lspHealthWarnings.length > 0
         ? ["", "LSP health warnings:", ...lspHealthWarnings.slice(0, 10)]
         : []),
-      // #533/#570: the remaining clean-looking files in a mixed scan may
-      // still be unconfirmed — say so even though the directory as a
-      // whole found diagnostics elsewhere.
       ...(unconfirmed > 0
         ? [
             "",
@@ -1982,8 +1457,6 @@ async function runDirectoryDiagnostics(
     },
   };
 }
-
-// ── helpers ─────────────────────────────────────────────────────────────
 
 function applySeverityFilter<T extends { severity: number }>(diags: T[], severity: string): T[] {
   if (severity === "all") return diags;

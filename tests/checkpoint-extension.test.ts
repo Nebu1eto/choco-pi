@@ -163,8 +163,6 @@ function restoreForkSelector(): void {
 }
 
 test("Pi exposes each new user entry after the owning turn_start event", () => {
-  // Host API contract: turn_start carries only turn metadata and can repeat;
-  // message_start is where a new user entry is distinguishable by role.
   const userMessage = (text: string): MessageStartEvent =>
     reinterpretHostValue<MessageStartEvent>({
       type: "message_start",

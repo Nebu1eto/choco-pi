@@ -7,22 +7,18 @@ import {
   type PiToolResult,
 } from "../../pi-rpc/protocol.ts";
 
-/** Nested containers Pi has been observed to wrap bash arguments in. */
 const BASH_COMMAND_CONTAINERS = ["args", "input", "rawInput", "toolInput", "details"] as const;
 
-/** Terminal identity metadata Zed reads to render an execute tool as a terminal. */
 export type BashTerminalInfo = {
   terminal_id: string;
   cwd: string;
 };
 
-/** Incremental terminal output metadata for one bash tool call. */
 export type BashTerminalOutput = {
   terminal_id: string;
   data: string;
 };
 
-/** Terminal completion metadata for one bash tool call. */
 export type BashTerminalExit = {
   terminal_id: string;
   exit_code: number;
@@ -37,12 +33,10 @@ export function isBashTool(toolName: string): boolean {
   return toolName.toLowerCase() === "bash";
 }
 
-/** Read `key` from an undecoded value without deciding what the field holds. */
 function propertyValue(value: BoundaryValue, key: string): BoundaryValue {
   return isBoundaryRecord(value) ? value[key] : undefined;
 }
 
-/** First field that is present (neither `null` nor `undefined`), in caller order. */
 function firstPresent(candidates: readonly BoundaryValue[]): BoundaryValue {
   for (const candidate of candidates) {
     if (candidate !== undefined && candidate !== null) return candidate;
@@ -100,9 +94,6 @@ export function bashTerminalContent(toolCallId: string): ToolCallContent[] {
 }
 
 export function bashTerminalInfoMeta(toolCallId: string, cwd: string): BashTerminalInfoMeta {
-  // Zed renders ACP `execute` tools as display-only terminals when paired with
-  // terminal content plus terminal metadata. See ACP execute tool schema:
-  // https://agentclientprotocol.com/protocol/schema#param-execute
   return { terminal_info: { terminal_id: toolCallId, cwd } };
 }
 

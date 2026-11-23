@@ -1,8 +1,3 @@
-/**
- * Capability gate hooks: the cooldown observer fires only when a cooldown
- * starts, `setCooldownMs` applies to the next failure, and `auth` cools for a
- * fixed, capped wait that never doubles.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 

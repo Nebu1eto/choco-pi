@@ -1,11 +1,3 @@
-/**
- * PDF Content Extractor
- *
- * Converts PDFs to Markdown. The `auto` provider chain runs Datalab
- * (deterministic, layout-aware) first, with unpdf as the deterministic local
- * fallback; the chain can also be pinned with `pdf.provider`.
- */
-
 import {
   getCachedWebSearchConfig,
   isConfigObject,
@@ -127,9 +119,6 @@ async function getUnpdf() {
   return { getDocumentProxy: unpdf.getDocumentProxy, VerbosityLevel };
 }
 
-/**
- * Extract text from a PDF buffer and save it to a Markdown file.
- */
 export async function extractPDFToMarkdown(
   buffer: ArrayBuffer,
   url: string,
@@ -283,9 +272,6 @@ function shouldRethrowExtractionError(cause: unknown, signal?: AbortSignal): boo
   return message.startsWith("Failed to parse ");
 }
 
-/**
- * Extract a reasonable title from URL
- */
 function extractTitleFromURL(url: string): string {
   try {
     const urlObj = new URL(url);
@@ -308,9 +294,6 @@ function extractTitleFromURL(url: string): string {
   }
 }
 
-/**
- * Sanitize string for use as filename
- */
 function sanitizeFilename(name: string): string {
   return (
     name
@@ -323,9 +306,6 @@ function sanitizeFilename(name: string): string {
   );
 }
 
-/**
- * Check if URL or content-type indicates a PDF
- */
 export function isPDF(url: string, contentType?: string): boolean {
   if (contentType?.includes("application/pdf")) {
     return true;

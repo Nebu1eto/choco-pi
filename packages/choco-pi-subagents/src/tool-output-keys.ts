@@ -1,7 +1,3 @@
-/**
- * Model-visible snake_case views of workflow snapshots. The in-memory WorkflowResult and the
- * `subagents:*` event payloads keep their camelCase names; only tool content text uses these.
- */
 import type { WorkflowResult, WorkflowStepResult } from "./workflow.ts";
 
 function workflowStepView(step: WorkflowStepResult) {

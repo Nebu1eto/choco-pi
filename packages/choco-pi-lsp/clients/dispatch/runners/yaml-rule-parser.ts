@@ -1,17 +1,3 @@
-/**
- * YAML Rule Parser for ast-grep
- *
- * Parses simplified YAML rule files for structural code analysis.
- * Supports pattern matching, kind matching, and structured conditions
- * (has/any/all/not/regex).
- *
- * Features:
- * - Mtime caching for bundled rules; content/path caching for project rules
- * - Severity filtering (error-only for blocking mode)
- * - Complexity scoring for performance optimization
- * - Overly broad pattern detection
- */
-
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -21,24 +7,14 @@ import { isRuntimeString } from "../../../tools/runtime-values.ts";
 import yaml from "../../deps/js-yaml.ts";
 import { BoundedLruCache } from "../../bounded-cache.ts";
 
-// --- Types ---
-
 export interface YamlRuleCondition {
   kind?: string;
-  // `pattern` accepts both a string shorthand (`foo($A)`) and the rich form
-  // (`{context, selector}`), which is the canonical ast-grep way to match a
-  // specific node kind inside a syntactic context. The napi engine and the
-  // CLI both accept the object form, but it must be guarded in any helper
-  // that calls string methods on `pattern`.
   pattern?: string | YamlRichPattern;
   regex?: string;
   has?: YamlRuleCondition;
   any?: YamlRuleCondition[];
   all?: YamlRuleCondition[];
   not?: YamlRuleCondition;
-  // Relational/structural conditions — all handled natively by napi's engine.
-  // `has`/`inside` default to direct child/parent (`stopBy: neighbor`); set
-  // `stopBy: end` for a recursive descendant/ancestor search.
   inside?: YamlRuleCondition;
   follows?: YamlRuleCondition;
   precedes?: YamlRuleCondition;
@@ -57,24 +33,7 @@ export interface YamlRule {
   metadata?: { weight?: number; category?: string };
   rule?: YamlRuleCondition;
   constraints?: Record<string, { regex?: string }>;
-  // Reusable named matchers referenced from `rule`/`constraints` via
-  // `matches: <name>`. Standard ast-grep YAML syntax
-  // (https://ast-grep.github.io/guide/rule-config/utility-rule.html);
-  // napi's native `findAll` accepts the same top-level `utils` key
-  // (`NapiConfig.utils: Record<string, Rule>`) so this parses straight
-  // through unchanged. Without it, `matches: <name>` can't resolve and the
-  // rule silently produces zero matches (#663).
   utils?: Record<string, YamlRuleCondition>;
-  /**
-   * Skip this rule on files whose path (relative to the project root,
-   * forward-slashed) matches any of these glob patterns — e.g. a
-   * `scripts` directory glob plus a `logger.ts` basename glob for a
-   * debug-output rule that's expected to fire in CLI entry points and the
-   * logging sink itself (#965). Mirrors the tree-sitter query loader's
-   * `ignore_paths` field (`clients/tree-sitter-query-loader.ts`) — same
-   * shape/matching, kept as a separate opt-in per-rule field rather than a
-   * blanket path exclusion so most rules are unaffected.
-   */
   ignores?: string[];
 }
 
@@ -88,30 +47,20 @@ interface ContentCachedRules {
   signature: string;
 }
 
-// Rich pattern form: match a specific AST kind from a contextual snippet.
-// https://ast-grep.github.io/reference/rule.html#pattern-object
 export interface YamlRichPattern {
   context?: string;
   selector?: string;
   strictness?: string;
 }
 
-// --- Constants ---
-
-/** Overly broad patterns that match everything (cause false positive explosions) */
 export const OVERLY_BROAD_PATTERNS = ["$NAME", "$FIELD", "$_", "$X", "$VAR", "$EXPR"];
 
-/** Maximum complexity score for rules in blockingOnly mode */
 export const MAX_BLOCKING_RULE_COMPLEXITY = 8;
-
-// --- Caches ---
 
 const rulesCache = new BoundedLruCache<string, CachedRules>(64);
 const blockingRulesCache = new BoundedLruCache<string, CachedRules>(64);
 const contentRulesCache = new BoundedLruCache<string, ContentCachedRules>(64);
 const contentBlockingRulesCache = new BoundedLruCache<string, ContentCachedRules>(64);
-
-// --- Public API ---
 
 export function clearRulesCache(): void {
   rulesCache.clear();
@@ -169,7 +118,6 @@ export function loadYamlRulesUncached(ruleDir: string, severityFilter?: "error")
   return loadYamlRuleFiles(findYamlRuleFiles(ruleDir), severityFilter);
 }
 
-/** Content/path-aware cache used for mutable project-owned rule trees. */
 export function loadYamlRulesFresh(ruleDir: string, severityFilter?: "error"): YamlRule[] {
   const files = findYamlRuleFiles(ruleDir);
   const hash = createHash("sha256");
@@ -269,8 +217,6 @@ const YamlRuleSchema = obj(
 const isYamlRule = compile(YamlRuleSchema).check;
 
 export function isOverlyBroadPattern(pattern: string | YamlRichPattern | undefined): boolean {
-  // The rich pattern form ({context, selector, ...}) is structured and never a
-  // single-metavar trap; only string patterns can be overly-broad literals.
   if (!pattern) return false;
   if (!isRuntimeString(pattern)) return false;
   if (OVERLY_BROAD_PATTERNS.includes(pattern.trim())) return true;
@@ -287,11 +233,6 @@ export function isValidCondition(condition: YamlRuleCondition | undefined): bool
 
 export function isStructuredRule(rule: YamlRule): boolean {
   if (!rule.rule) return false;
-  // The rich pattern form ({context, selector, …}) is itself a structured
-  // match — it specifies a context snippet plus the AST node to pick out.
-  // Without recognizing it as structure, an otherwise-rich rule with only
-  // `pattern: {context, selector}` and no other combinators would be wrongly
-  // classified as "unstructured single-metavar" and dropped by the runner.
   const hasRichPattern = isYamlRichPattern(rule.rule.pattern);
   return !!(
     hasRichPattern ||
@@ -325,18 +266,6 @@ export function calculateRuleComplexity(condition: YamlRuleCondition | undefined
   return score;
 }
 
-// --- YAML Parser ---
-
-/**
- * Parse a single YAML rule document into a {@link YamlRule}.
- *
- * Uses `js-yaml` so the full ast-grep rule grammar — nested `any`/`all`/`has`,
- * `field`/`inside`/`stopBy`, and metavariable `constraints` — survives intact and
- * can be handed straight to napi's native engine. (The former hand-rolled parser
- * flattened nested structures and dropped constraints, which is why those rules
- * had to be skipped; see #206.) A malformed document returns `null` rather than
- * throwing, so callers skip just that rule.
- */
 export function parseSimpleYaml(content: string): YamlRule | null {
   let parsed;
   try {

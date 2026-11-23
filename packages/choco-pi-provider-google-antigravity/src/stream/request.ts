@@ -23,23 +23,16 @@ type GeminiContent = ReturnType<typeof convertMessages>[number];
 type GeminiTools = NonNullable<ReturnType<typeof convertTools>>;
 type FunctionCallingMode = NonNullable<ReturnType<typeof resolveGoogleFunctionCallingMode>>;
 
-/** Where the Pi system prompt travels. agy sends it as systemInstruction (the capture). */
 export const SYSTEM_PROMPT_PLACEMENTS = ["system_instruction", "first_user_turn"] as const;
 export type SystemPromptPlacement = (typeof SYSTEM_PROMPT_PLACEMENTS)[number];
-/** Environment switch for the unverified first-user-turn placement (see docs/transport.md). */
 export const ENV_SYSTEM_PROMPT_PLACEMENT = "CHOCO_PI_ANTIGRAVITY_SYSTEM_PROMPT_PLACEMENT";
 const isPlacement = compile(oneOf(SYSTEM_PROMPT_PLACEMENTS)).check;
 
-/** Resolves the placement switch; anything but "first_user_turn" keeps the captured default. */
 export function systemPromptPlacement(value: string | undefined): SystemPromptPlacement {
   const normalized = value?.trim().toLowerCase();
   return isPlacement(normalized) ? normalized : "system_instruction";
 }
 
-/**
- * request.labels as agy sends them: string values only, and only values this client actually
- * has (no fabricated execution ids).
- */
 export interface AntigravityLabels {
   cascade_id: string;
   last_step_index: string;
@@ -52,15 +45,12 @@ export interface AntigravityLabels {
   used_non_gemini_model: "true" | "false";
 }
 
-/** v1internal GenerateContentRequest as agy fills it (S/proxylog2 014). */
 export interface AntigravityGenerateRequest {
   contents: GeminiContent[];
   systemInstruction?: { role: "user"; parts: { text: string }[] };
-  /** Gemini: parametersJsonSchema (pi-ai). Claude and GPT-OSS: OpenAPI-subset parameters. */
   tools?: GeminiTools;
   toolConfig?: { functionCallingConfig: { mode: FunctionCallingMode } };
   labels: AntigravityLabels;
-  /** agy sends no sampling parameters (temperature, topP, topK) for any model. */
   generationConfig: {
     maxOutputTokens: number;
     thinkingConfig?: AntigravityThinkingConfig;
@@ -68,7 +58,6 @@ export interface AntigravityGenerateRequest {
   sessionId: string;
 }
 
-/** The streamGenerateContent envelope. Key order follows the capture. */
 export interface AntigravityStreamEnvelope {
   project: string;
   requestId: string;
@@ -78,9 +67,6 @@ export interface AntigravityStreamEnvelope {
   requestType: "agent";
 }
 
-// Pi routes both stream() (GoogleOptions: thinking, toolChoice "any") and streamSimple()
-// (reasoning) through the provider-level streamSimple, so the GoogleOptions members are read
-// through a schema instead of the declared SimpleStreamOptions type.
 const GoogleStreamOptionsSchema = obj(
   {
     thinking: opt(
@@ -94,10 +80,6 @@ const isGoogleStreamOptions = compile(GoogleStreamOptionsSchema).check;
 const isCatalogLevel = compile(oneOf(CATALOG_LEVELS)).check;
 const isToolChoice = compile(oneOf(["auto", "none", "any"])).check;
 
-/**
- * The Pi thinking level a request asks for. undefined means "not requested": the lowest
- * advertised variant without thought summaries, as Pi's Gemini adapter disables thinking.
- */
 export function requestedThinkingLevel(
   model: GoogleModel,
   options: SimpleStreamOptions | undefined,
@@ -109,7 +91,6 @@ export function requestedThinkingLevel(
   if (thinking === undefined) return undefined;
   if (!thinking.enabled || !model.reasoning) return "off";
   const level = thinking.level?.toLowerCase();
-  // A bare budget has no level equivalent; it asks for thinking, so the top level is used.
   return clampThinkingLevel(model, isCatalogLevel(level) ? level : "high");
 }
 
@@ -140,7 +121,6 @@ export interface BuildRequestInput {
   context: TranscriptContext;
   options: SimpleStreamOptions | undefined;
   projectId: string;
-  /** Unix ms for the requestId timestamp segment. */
   now: number;
   placement: SystemPromptPlacement;
 }
@@ -151,11 +131,6 @@ export interface BuiltRequest {
   identity: ConversationIdentity;
 }
 
-/**
- * Builds the streamGenerateContent envelope. contents and tools come from pi-ai's Gemini
- * converters unchanged (no prompt rewriting); the runtime model id, thinkingConfig and output
- * cap come from the catalog; ids derive from Pi's session id.
- */
 export function buildAntigravityRequest(input: BuildRequestInput): BuiltRequest {
   const { model, context, options } = input;
   const resolution = resolveRuntimeModel(model.id, requestedThinkingLevel(model, options));
@@ -169,10 +144,6 @@ export function buildAntigravityRequest(input: BuildRequestInput): BuiltRequest 
   if (placeFirst) contents = placeInFirstUserTurn(contents, systemPrompt);
 
   const currentTools = getCurrentTools(context.messages);
-  // Every family gets JSON Schema (parametersJsonSchema). Live probes against the service
-  // (docs/transport.md): Claude rejects any anyOf sent through the OpenAPI "parameters" field after
-  // Google translates it, while parametersJsonSchema passed all 102 choco-pi tool schemas for
-  // Claude and GPT-OSS.
   const tools = convertTools(currentTools, false, strict);
   const mode =
     currentTools.length > 0
@@ -200,11 +171,8 @@ export function buildAntigravityRequest(input: BuildRequestInput): BuiltRequest 
   const generationConfig: AntigravityGenerateRequest["generationConfig"] = {
     maxOutputTokens: Math.max(1, clampMaxTokensToContext(model, context, requestedMax)),
   };
-  // options.temperature is not forwarded: agy never sends sampling parameters, and Google says
-  // Gemini 4 ignores them and rejects out-of-range values with HTTP 400.
   if (resolution.thinkingConfig) generationConfig.thinkingConfig = resolution.thinkingConfig;
 
-  // The capture's key set; JSON key order carries no meaning on this API.
   const request: AntigravityGenerateRequest = {
     contents,
     labels,

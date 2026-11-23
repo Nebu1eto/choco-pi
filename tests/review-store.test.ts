@@ -208,7 +208,6 @@ test("a save whose directory another session's clean-up removes mid-save creates
     cleanup: false,
     beforeWrite: async (repositoryDirectory) => {
       if (removed.length > 0) return;
-      // What the clean-up's removeIfEmpty does to a directory it has just emptied.
       await rm(repositoryDirectory, { recursive: true });
       removed.push(repositoryDirectory);
     },
@@ -248,14 +247,10 @@ test("a save does not retry a failure other than a missing directory", async (t)
   assert.equal(attempts, 1);
 });
 
-/* ----------------------------- an abandoned save never overwrites a newer one */
-
-/** Until the save the test holds is waiting in its write. */
 async function held(gates: readonly unknown[]): Promise<void> {
   while (gates.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
 }
 
-/** A store whose writes wait, in order, until the test releases them; the rest run as normal. */
 function heldWrites(directory: string) {
   const gates: Array<{ release: () => void; fail: (error: Error) => void }> = [];
   const holds: boolean[] = [];

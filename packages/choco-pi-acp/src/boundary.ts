@@ -1,8 +1,3 @@
-/**
- * Any value crossing an I/O boundary before it has been decoded into a domain
- * type. This is the JavaScript value universe, not JSON: it includes undefined,
- * bigint, symbol and functions.
- */
 export type BoundaryValue =
   | undefined
   | null
@@ -16,17 +11,12 @@ export type BoundaryValue =
   | BoundaryRecord
   | {};
 
-/** An undecoded object crossing an I/O boundary, keyed by arbitrary strings. */
 interface KeyedValues<Value> {
   [key: string]: Value;
 }
 
 export type BoundaryRecord = KeyedValues<BoundaryValue>;
 
-// Primitive checks never coerce or call user code. Object(primitive) returns a
-// fresh wrapper, while Object(object) returns the same reference, so the
-// identity comparison rejects every object (including boxed strings) before
-// instanceof runs. The Number.is* helpers return false for non-numbers.
 export function isString(value: BoundaryValue): value is string {
   const boxed = Object(value);
   return boxed !== value && boxed instanceof String;
@@ -76,13 +66,6 @@ export function errorCode(error: BoundaryValue): string | undefined {
   return isString(code) ? code : undefined;
 }
 
-/**
- * Decode one NDJSON line into an undecoded boundary value.
- *
- * Returns `undefined` for malformed input. JSON text can never decode to
- * `undefined`, so `undefined` unambiguously reports a decode failure and callers
- * can fail closed without catching.
- */
 export function parseJsonLine(text: string): BoundaryValue {
   try {
     const value: BoundaryValue = JSON.parse(text);

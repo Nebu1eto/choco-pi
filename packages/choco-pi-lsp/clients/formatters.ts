@@ -1,14 +1,3 @@
-/**
- * Formatter Definitions for choco-pi-lsp
- *
- * Auto-detects formatters based on:
- * - Config files (biome.json, .prettierrc, etc.)
- * - Dependencies (package.json, requirements.txt, etc.)
- * - Binary availability (which/where)
- *
- * Inspired by OpenCode's formatter.ts pattern
- */
-
 import { logExtension } from "./extension-log.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as fs from "node:fs/promises";
@@ -71,16 +60,6 @@ import {
   OXFMT_SUPPORTED_EXTENSIONS,
 } from "./tool-policy.ts";
 
-/**
- * Lazy-install a formatter's tool, through the shared seam (#1537).
- *
- * This used to own a second copy of the attempt guard — `_lazyInstallAttempts`,
- * a Set keyed before the install ran and never cleared — so a `gem install
- * rubocop` that died on a network blip was never retried for the session. The
- * state, the transient/durable classification and the retry ladder now live in
- * `lazy-installer.ts`; what stays here is the one thing that is formatter
- * business: a fresh binary on PATH invalidates every "not found" verdict (#1495).
- */
 export async function tryLazyInstallFormatterTool(
   tool: "rubocop" | "rustfmt",
   cwd: string,
@@ -90,64 +69,18 @@ export async function tryLazyInstallFormatterTool(
   return ok;
 }
 
-// --- Types ---
-
-/**
- * Sentinel a `resolveCommand` returns to mean "do not format this file at
- * all" — distinct from `null`, which means "fall back to the static
- * `command`". #1144's style-preserving resolvers return this when the repo
- * has no config AND the file's indentation is undetectable: running the
- * stock command there is exactly the stock-style imposition the fix bans.
- */
 export const SKIP_FORMATTING = "skip-formatting" as const;
 export type ResolvedFormatterCommand = string[] | null | typeof SKIP_FORMATTING;
 
 export interface FormatterInfo {
   name: string;
-  command: string[]; // Command with $FILE placeholder — used as fallback
+  command: string[];
   extensions: string[];
-  /** Basenames (lowercase) this formatter applies to regardless of extension. */
   filenames?: readonly string[];
-  /** Detect if this formatter should be used for a project */
   detect(cwd: string): Promise<boolean>;
-  /**
-   * Optionally resolve the full command at runtime (venv, vendor/bin, bundle exec).
-   * Return null to fall back to the static `command` field.
-   * filePath is already resolved to an absolute path.
-   */
   resolveCommand?(filePath: string, cwd: string): Promise<ResolvedFormatterCommand>;
-  /**
-   * Opt OUT of exit-code strictness, with the justification as the value.
-   *
-   * `formatFile` is strict BY DEFAULT (#1337): a nonzero exit is a formatting
-   * failure, because a formatter that never ran leaves the file byte-identical
-   * and that is indistinguishable from "already formatted". The old default was
-   * the reverse — opt-IN strictness — and it let `ruff format` reject invented
-   * flags with exit 2 and report a clean no-op for a full release cycle (#1336).
-   *
-   * Set this ONLY for lint-autofix formatters, which exit nonzero when offenses
-   * remain AFTER a successful rewrite (`rubocop -a`, `ktlint -F`,
-   * `standardrb --fix`, `sqlfluff fix`); failing those would surface an error on
-   * every file with an unfixable offense. The type is a string rather than a
-   * boolean so the evidence is structurally required at the opt-out site — an
-   * opt-out with no documented benign-nonzero mode cannot be written silently.
-   * `tests/clients/dispatch/formatter-exit-code-posture.test.ts` pins the set.
-   */
   lenientExitCode?: string;
-  /**
-   * The EXACT nonzero statuses the documented benign mode covers (#1343
-   * review): lenient tools distinguish "offenses remain after a successful
-   * rewrite" (typically 1) from command/config/crash failure (typically 2+).
-   * Required whenever `lenientExitCode` is set -- a lenient formatter
-   * accepting ALL nonzero statuses would let a bad flag or crashed child
-   * read as success (the #1336 bug surviving behind the lenient label).
-   */
   lenientStatuses?: number[];
-  /**
-   * Exact nonzero output that means the existing target was intentionally
-   * excluded rather than rejected. Status and diagnostic must both match so a
-   * real formatter error at the same status remains a failure.
-   */
   ignoredFileExit?: IgnoredFileExit;
 }
 
@@ -156,8 +89,6 @@ export interface FormatterResult {
   changed: boolean;
   error?: string;
 }
-
-// --- Utility Functions ---
 
 async function fileExists(filePath: string): Promise<boolean> {
   try {
@@ -193,81 +124,23 @@ async function findUp(
 
 const WHICH_BUDGET_MS = 5000;
 
-/**
- * PATH lookups, governed by the shared availability policy (#1495).
- *
- * `which()` is a spawn on a 5 s budget, not a filesystem check, and around a
- * dozen `detect*` implementations gate on it. A transient timeout used to drop
- * the formatter AND get written to `detectionCache` as an empty enabled-list —
- * a cache invalidated only by a config file's mtime or size, never by time. One
- * stalled `which rustfmt` therefore disabled Rust formatting for the session
- * unless the user happened to edit a config file.
- *
- * Now: only a genuine absence latches, a stall expires on a cooldown, and the
- * detection pass refuses to cache an empty result a stall caused.
- */
 const whichLatchByCommand = new Map<
   string,
   { latch: AvailabilityLatch; resolved: string | null }
 >();
 
-/**
- * Commands whose CURRENT `which` verdict is transient — a probe that never got a
- * fair hearing, still inside its cooldown.
- *
- * Scoped per command on purpose (#1495 review). The first cut counted transient
- * verdicts process-wide and compared the count across a detection pass, which
- * over-suppressed: one stalled `which rustfmt` stopped an unrelated Python or
- * shell detection from caching, and stamped `reason: "probe-timeout"` on
- * selections where nothing had timed out. A command leaves the set as soon as
- * its verdict becomes trustworthy — a resolved path or a genuine absence.
- */
 const whichTransientCommands = new Set<string>();
 
-/**
- * The binaries `which()` was asked about inside the current `detect()` call
- * (#1539).
- *
- * This replaces the `command[0]` approximation the poison guard used to run on.
- * `command[0]` is the formatter's own binary, which is exact for most
- * `detect()`s and wrong for the ones that consult a second binary — and the
- * "extras are harmless" argument does not hold: `rustfmt` answering a GENUINE
- * absence while `which rustup` stalls skips the lazy install and leaves nothing
- * in the transient set for `command[0]` to match. Recording the actual probes
- * makes the guard exact in both directions: it also stops a leftover transient
- * verdict for some other pass's binary from being blamed on this decision.
- *
- * `AsyncLocalStorage` because `detect()` is async and two selection passes can
- * be in flight at once (`tests/clients/formatters-which-latch.test.ts` runs
- * exactly that); a module-level set would let one pass's probes leak into the
- * other's verdict. Built eagerly — unlike `extension-log.ts`'s lazy console
- * capture, this store is entered on every detection pass, so there is no window
- * where paying for it is avoidable.
- */
 const probedCommandsStorage = new AsyncLocalStorage<Set<string>>();
 
-/**
- * How a single candidate was eliminated — the per-candidate CAUSE the selection
- * pass needs and a boolean `detect()` cannot carry (#1539).
- *
- * `unreachable` is the one that matters: it means the candidate was never
- * actually asked, so neither "it won" nor "it lost" is a fact about this
- * project.
- */
 type CandidateVerdict = "available" | "missing" | "unreachable";
 
 interface CandidateOutcome {
   name: string;
   verdict: CandidateVerdict;
-  /** Binaries this candidate probed whose verdict is currently transient. */
   stalledCommands: string[];
 }
 
-/**
- * Run one candidate's `detect()` and read the per-candidate verdict back out of
- * the PATH latch (#1539). `detected` is the plain boolean the caller still needs
- * for selection; `verdict` is why.
- */
 async function detectCandidate(
   formatter: FormatterInfo,
   cwd: string,
@@ -278,9 +151,6 @@ async function detectCandidate(
   try {
     detected = await probedCommandsStorage.run(probed, () => formatter.detect(cwd));
   } catch (err) {
-    // A `detect()` that threw still probed whatever it probed first, and those
-    // probes are the fact the guard needs. Swallowing them here would let a
-    // stall inside a throwing detection cache as a clean "not this project".
     error = err;
   }
   const stalledCommands = [...probed].filter((command) => whichTransientCommands.has(command));
@@ -295,30 +165,14 @@ async function detectCandidate(
   };
 }
 
-/** Drop the PATH verdicts, so a newly installed binary is visible at once. */
 function resetWhichLatches(): void {
   whichLatchByCommand.clear();
   whichTransientCommands.clear();
   cooldownRecordedForRetryAtMs.clear();
 }
 
-/**
- * Last `retryAtMs` a cooldown-served record was emitted for, per command.
- *
- * The bound (#1539): the memo branch used to return before
- * `logAvailabilityDecision`, so a formatter held off by a transient cooldown
- * produced ONE record for arbitrarily many decisions — a reader counting
- * `availability_decision` rows undercounted how long it had been off. Logging
- * every cache hit is not an option either: this seam is consulted per save.
- * One extra row per cooldown WINDOW is the compromise, and `retryAtMs` is the
- * window's identity, so the ladder itself does the rate limiting.
- */
 const cooldownRecordedForRetryAtMs = new Map<string, number>();
 
-/**
- * Record that a still-cooling verdict was served from the latch, at most once
- * per cooldown window (#1539's second defect).
- */
 function noteCooldownServedVerdict(command: string, latch: AvailabilityLatch): void {
   if (latch.getOutcome() !== "transient") return;
   const retryAtMs = latch.getRetryAtMs();
@@ -327,16 +181,6 @@ function noteCooldownServedVerdict(command: string, latch: AvailabilityLatch): v
   cooldownRecordedForRetryAtMs.set(command, retryAtMs);
   const cause = latch.getCause();
   if (cause === null) {
-    // `getOutcome() === "transient"` is only ever set by `noteUnavailable` in
-    // the same call that sets `cause`, so this is unreachable today. It is
-    // still not a throw (#1539 review F2): this runs inside `which()`, which
-    // runs inside `detect()`, and the smart-default branch of the selection
-    // pass rethrows a detection failure — so an invariant break in a LOGGING
-    // helper could take down formatting for the file. Nothing is fabricated
-    // either (#1535's rule: a made-up cause would mislabel WHY a formatter is
-    // off, in the record this fix exists to make honest). The row is dropped
-    // and the anomaly is reported, bounded by the same once-per-window gate
-    // this function already passed.
     logExtension({
       subsystem: "format",
       message: `which latch: transient outcome with no cause for ${command}; cooldown-served record dropped`,
@@ -399,16 +243,6 @@ async function which(command: string): Promise<string | null> {
   }
 
   entry.resolved = null;
-  // A `which`/`where` that RAN and found nothing exits nonzero with NO spawn
-  // error, and only that is a genuine absence an install would fix.
-  //
-  // An UNSPAWNABLE prober is the opposite (#1495 review): EACCES, `spawn
-  // UNKNOWN`, EMFILE, an unresolvable cwd, or `where`/`which` itself missing
-  // says nothing about the tool that was asked for. Claiming `missing` there
-  // was the worst version of this bug, because the prober is shared by every
-  // which-gated formatter — one EACCES would have latched a dozen of them off
-  // for the session. So the `missing` override is granted only to a prober that
-  // ran, and anything that stopped it from running stays transient.
   const proberRan = !result.error;
   const classified = classifyProbeFailure(result, {
     hostStallMs,
@@ -422,8 +256,6 @@ async function which(command: string): Promise<string | null> {
   const retryAfterMs = entry.latch.noteUnavailable(outcome, cause);
   if (outcome === "transient") whichTransientCommands.add(command);
   else whichTransientCommands.delete(command);
-  // A fresh probe opens a new cooldown window (or ends the cooldown), so the
-  // next cache hit is entitled to its own record.
   cooldownRecordedForRetryAtMs.delete(command);
   logAvailabilityDecision({
     tool: command,
@@ -455,12 +287,6 @@ async function resolveGoFmtBinary(): Promise<string | null> {
   return (await fileExists(binary)) ? binary : null;
 }
 
-// --- Venv / Local Binary Helpers ---
-
-/**
- * Walk up from cwd looking for a binary in .venv or venv.
- * Returns the absolute path if found, null otherwise.
- */
 async function findInVenv(binary: string, cwd: string): Promise<string | null> {
   const isWin = process.platform === "win32";
   const candidates = isWin
@@ -486,10 +312,6 @@ async function findInVenv(binary: string, cwd: string): Promise<string | null> {
   return null;
 }
 
-/**
- * Check vendor/bin for PHP Composer-managed tools.
- * Walks up from cwd to find vendor/bin/<binary>.
- */
 async function findInVendorBin(binary: string, cwd: string): Promise<string | null> {
   const isWin = process.platform === "win32";
   const names = isWin ? [`${binary}.bat`, binary] : [binary];
@@ -507,10 +329,6 @@ async function findInVendorBin(binary: string, cwd: string): Promise<string | nu
   return null;
 }
 
-/**
- * Check node_modules/.bin for locally installed Node tools.
- * Walks up from cwd to find node_modules/.bin/<binary>.
- */
 async function findInNodeModules(binary: string, cwd: string): Promise<string | null> {
   const isWin = process.platform === "win32";
   let dir = cwd;
@@ -532,10 +350,6 @@ async function findInNodeModules(binary: string, cwd: string): Promise<string | 
   return null;
 }
 
-/**
- * Returns true if `bundle exec <gem>` should be used:
- * bundle binary is available AND Gemfile.lock exists in the tree.
- */
 async function canUseBundleExec(cwd: string): Promise<boolean> {
   if ((await which("bundle")) === null) return false;
   const lockfiles = await findUp(["Gemfile.lock"], cwd);
@@ -555,36 +369,9 @@ async function resolveManagedSmartDefaultCommand(
   return [installed, ...args, filePath];
 }
 
-/**
- * One entry per formatter that can be selected via explicit project config
- * (the `formatterPolicy` "explicit-config" branch of `getFormattersForFile`).
- * A formatter with NO entry here can never win that branch — the switch this
- * table replaced had exactly that failure mode for `psscriptanalyzer-format`
- * (#1572: `.ps1`'s policy sets `defaultWhenUnconfigured: false` AND the
- * formatter had no config check, so neither selection branch could ever pick
- * it).
- *
- * This table IS the source of truth for "which formatters have an explicit-
- * config check" — `FORMATTERS_WITH_EXPLICIT_CONFIG_CHECK` below derives its
- * membership from these keys rather than hand-listing them a second time, so
- * the coverage guard in formatter-policy-consistency.test.ts (#1572) can never
- * drift from what this function actually does.
- */
-// A `Map`, not an object literal: an object literal's lookup inherits
-// `Object.prototype`, so `checks["toString"]` or `checks["constructor"]`
-// resolves to a real (non-formatter) function instead of `undefined` —
-// a formatter genuinely NAMED one of those prototype properties would read
-// as "has an explicit-config check" when it has none (review finding, #1572).
-// `Map.prototype.get` has no such inherited-key hazard.
 const EXPLICIT_FORMATTER_CONFIG_CHECKS = new Map<string, (cwd: string, ext: string) => boolean>([
   ["biome", (cwd) => hasBiomeConfig(cwd)],
   ["prettier", (cwd) => hasPrettierConfig(cwd) || hasNearestPackageJsonField(cwd, "prettier")],
-  // .svelte is conditional beyond "an oxfmt config exists": oxfmt requires the
-  // `svelte` package installed AND the config's `svelte` flag enabled
-  // (verified empirically — see hasOxfmtSvelteConfig). The generic checks
-  // below are NOT sufficient for .svelte — an oxfmt.toml with no svelte flag,
-  // or an oxfmt dependency alone, both fail at runtime for .svelte
-  // specifically (other extensions are unaffected by this stricter gate).
   [
     "oxfmt",
     (cwd, ext) =>
@@ -592,8 +379,6 @@ const EXPLICIT_FORMATTER_CONFIG_CHECKS = new Map<string, (cwd: string, ext: stri
         ? hasOxfmtSvelteConfig(cwd)
         : hasOxfmtConfig(cwd) ||
           hasVitePlusConfig(cwd) ||
-          // The published package is `oxfmt`; `@oxc-project/oxfmt` does not
-          // exist on npm. Accept both (scoped kept for forward-compat).
           hasNearestPackageJsonDependency(cwd, "oxfmt") ||
           hasNearestPackageJsonDependency(cwd, "@oxc-project/oxfmt"),
   ],
@@ -612,10 +397,6 @@ const EXPLICIT_FORMATTER_CONFIG_CHECKS = new Map<string, (cwd: string, ext: stri
   ["cljfmt", (cwd) => hasCljfmtConfig(cwd)],
   ["cmake-format", (cwd) => hasCmakeFormatConfig(cwd)],
   ["psscriptanalyzer-format", (cwd) => hasPSScriptAnalyzerConfig(cwd)],
-  // #1595 sweep — see the comment above hasCsharpierConfig et al. in
-  // tool-policy.ts for why nixfmt (the 8th formatter #1572 flagged) is NOT
-  // wired here: it has no config-file convention and no manifest-marker
-  // equivalent to `.terraform.lock.hcl`, so there is no honest opt-in signal.
   ["csharpier", (cwd) => hasCsharpierConfig(cwd)],
   ["ormolu", (cwd) => hasOrmoluConfig(cwd)],
   ["taplo", (cwd) => hasTaploConfig(cwd)],
@@ -629,15 +410,9 @@ function hasExplicitFormatterConfig(formatterName: string, cwd: string, ext: str
   return EXPLICIT_FORMATTER_CONFIG_CHECKS.get(formatterName)?.(cwd, ext) ?? false;
 }
 
-// Exported for the "every registered formatter is selectable" coverage guard
-// (formatter-policy-consistency.test.ts, #1572): derived from the table above,
-// not hand-listed, so it cannot drift from what `hasExplicitFormatterConfig`
-// actually checks.
 export const FORMATTERS_WITH_EXPLICIT_CONFIG_CHECK = new Set<string>(
   EXPLICIT_FORMATTER_CONFIG_CHECKS.keys(),
 );
-
-// --- Formatter Definitions ---
 
 async function hasEditorConfig(cwd: string): Promise<boolean> {
   try {
@@ -663,7 +438,6 @@ async function indentationArgs(
   try {
     content = await fs.readFile(filePath, "utf8");
   } catch {
-    // Resolution tests and callers may probe a path before it exists.
     return [];
   }
   if (!hasDetectableIndentation(content)) return null;
@@ -678,10 +452,6 @@ async function indentationArgs(
     ];
   }
   if (tool === "ruff") {
-    // `ruff format` has NO --indent-style/--indent-width flags (it errors with
-    // "unexpected argument" and exits 2, which formatFile reported as a silent
-    // clean no-op back when exit-code strictness was opt-in). Style is pinned
-    // through inline TOML overrides instead (#1144 follow-up).
     return [
       "--config",
       `indent-width=${indentation.width}`,
@@ -692,20 +462,6 @@ async function indentationArgs(
   return ["--indent-style", indentation.style, "--indent-width", String(indentation.width)];
 }
 
-/**
- * Every biome invocation must carry this. Biome exits 1 with "No files were
- * processed in the specified paths" when the path is ignored by the repo's own
- * biome.json or carries an extension biome does not handle — a benign outcome
- * that, under #1337's strict default, would otherwise report a formatting
- * failure on every edit under an ignored directory. Verified against biome
- * 2.4.12: ignored path → exit 1, +flag → exit 0; unsupported extension → exit
- * 1, +flag → exit 0; and a real syntax error still exits 1 WITH the flag, so
- * strictness is preserved for actual failures.
- *
- * `clients/dispatch/runners/biome-check.ts:108` already passes this on the lint
- * path; the formatter path did not, which is what made biome the one
- * misclassified formatter in the #1337 audit.
- */
 const BIOME_UNMATCHED_FLAG = "--no-errors-on-unmatched";
 
 export const biomeFormatter: FormatterInfo = {
@@ -718,8 +474,6 @@ export const biomeFormatter: FormatterInfo = {
     const args = ["format", "--write", BIOME_UNMATCHED_FLAG, ...editorConfigFlag, ...styleArgs];
     const local = await findInNodeModules("biome", cwd);
     if (local) return [local, ...args, filePath];
-    // Any package manager's global bin dir (npm/pnpm/yarn/bun) before we
-    // auto-install — catches a `pnpm add -g @biomejs/biome` PATH misses (#375).
     const global = await findGlobalBinary("biome");
     if (global) return [global, ...args, filePath];
     const toolId = getAutoInstallToolIdForFormatter("biome");
@@ -762,7 +516,6 @@ export const prettierFormatter: FormatterInfo = {
     const args = ["--write", ...styleArgs];
     const local = await findInNodeModules("prettier", cwd);
     if (local) return [local, ...args, filePath];
-    // Global bin of any manager (npm/pnpm/yarn/bun) before auto-install (#375).
     const global = await findGlobalBinary("prettier");
     if (global) return [global, ...args, filePath];
     return resolveManagedSmartDefaultCommand("prettier", filePath, args);
@@ -805,11 +558,6 @@ export const prettierFormatter: FormatterInfo = {
 export const oxfmtFormatter: FormatterInfo = {
   name: "oxfmt",
   command: ["oxfmt", "$FILE"],
-  // #1337 audit: oxfmt (and the `vp fmt --write` path) publish no exit-code
-  // table. `--write` is the default and `--check` is the separate verification
-  // mode, so there is no documented nonzero-on-reformat. Absent a documented
-  // benign-nonzero mode, it stays strict — the safe direction, since the failure
-  // mode of guessing wrong the other way is a silent no-op (#1336).
   ignoredFileExit: OXFMT_IGNORED_FILE_EXIT,
   async resolveCommand(filePath, cwd) {
     if (hasVitePlusConfig(cwd)) {
@@ -824,15 +572,11 @@ export const oxfmtFormatter: FormatterInfo = {
     if (found) return [found, filePath];
     return null;
   },
-  // Single source of truth: OXFMT_SUPPORTED_EXTENSIONS in tool-policy.ts.
-  // Do not hand-maintain a second copy of this list (#1134 — previously two
-  // parallel hand-maintained lists, the #883 single-source-of-truth class).
   extensions: [...OXFMT_SUPPORTED_EXTENSIONS],
   async detect(cwd: string) {
     return (
       hasOxfmtConfig(cwd) ||
       hasVitePlusConfig(cwd) ||
-      // Published package is `oxfmt` (the scoped name does not exist on npm).
       hasNearestPackageJsonDependency(cwd, "oxfmt") ||
       hasNearestPackageJsonDependency(cwd, "@oxc-project/oxfmt")
     );
@@ -843,10 +587,6 @@ export const ruffFormatter: FormatterInfo = {
   name: "ruff",
   command: ["ruff", "format", "$FILE"],
   extensions: [".py", ".pyi"],
-  // Strict (the #1337 default): `ruff format` exits 0 on a successful in-place
-  // rewrite and 2 on argument rejection / syntax error (verified, ruff 0.x:
-  // well-formed → 0, reformatted → 0, unparseable → 2). The exit-2 no-op is
-  // exactly what hid the bad --indent-style flags for a full release cycle.
   async resolveCommand(filePath, cwd) {
     const styleArgs = await indentationArgs(filePath, "ruff", cwd);
     if (styleArgs === null) return SKIP_FORMATTING;
@@ -862,8 +602,6 @@ export const ruffFormatter: FormatterInfo = {
   },
   async detect(cwd: string) {
     if (hasRuffConfig(cwd)) return true;
-    // No-config fallback: if Ruff is already available, allow formatter usage.
-    // This keeps Python default behavior consistent with startup defaults.
     const { getToolPath } = await import("./installer/index.ts");
     const installed = await getToolPath("ruff");
     return Boolean(installed);
@@ -924,7 +662,6 @@ export const rustfmtFormatter: FormatterInfo = {
   extensions: [".rs"],
   async detect(cwd: string) {
     if ((await which("rustfmt")) !== null) return true;
-    // If we're in a Rust project, attempt one lazy install of rustfmt component.
     const rustProject = (await findUp(["Cargo.toml"], cwd)).length > 0;
     if (!rustProject) return false;
     if ((await which("rustup")) === null) return false;
@@ -972,9 +709,6 @@ export const shfmtFormatter: FormatterInfo = {
 export const nixfmtFormatter: FormatterInfo = {
   name: "nixfmt",
   command: ["nixfmt", "$FILE"],
-  // #1337 audit: nixfmt's README documents in-place formatting but has no
-  // exit-code section and no change-detection mode, so nothing documents a
-  // benign nonzero. Strict by default (see oxfmt above for the rationale).
   extensions: [".nix"],
   async detect(_cwd: string) {
     return (await which("nixfmt")) !== null;
@@ -1040,7 +774,6 @@ export const ktlintFormatter: FormatterInfo = {
 
 export const ktfmtFormatter: FormatterInfo = {
   name: "ktfmt",
-  // ktfmt formats in place when given a file path (no flag needed).
   command: ["ktfmt", "$FILE"],
   extensions: [".kt", ".kts"],
   async resolveCommand(filePath, _cwd) {
@@ -1051,8 +784,6 @@ export const ktfmtFormatter: FormatterInfo = {
     return installed ? [installed, filePath] : null;
   },
   async detect(cwd: string) {
-    // Opt-in only: ktfmt becomes the formatter when the project elects it,
-    // otherwise ktlint stays the Kotlin smart-default (#129).
     return hasKtfmtConfig(cwd);
   },
 };
@@ -1104,7 +835,6 @@ export const gleamFormatter: FormatterInfo = {
   command: ["gleam", "format", "$FILE"],
   extensions: [".gleam"],
   async detect(cwd: string) {
-    // Present if gleam.toml exists (any Gleam project)
     const found = await findUp(["gleam.toml"], cwd);
     if (found.length > 0) return (await which("gleam")) !== null;
     return false;
@@ -1125,9 +855,6 @@ export const terragruntHclFormatter: FormatterInfo = {
   command: ["terragrunt", "hcl", "fmt", "--file", "$FILE"],
   extensions: [],
   filenames: TERRAGRUNT_FILENAMES,
-  // Strict (the #1337 default): verified exit 0 on a successful in-place format
-  // against terragrunt v1.1.2. A binary predating the `hcl` command group exits
-  // nonzero and touches nothing, which unguarded reads as "already formatted".
   async detect(_cwd: string) {
     return (await which("terragrunt")) !== null;
   },
@@ -1146,7 +873,6 @@ export const phpCsFixerFormatter: FormatterInfo = {
     const vendorBin = await findInVendorBin("php-cs-fixer", cwd);
     const globalBin = await which("php-cs-fixer");
     if (!vendorBin && !globalBin) return false;
-    // Only run if project has explicit config
     const configs = [".php-cs-fixer.php", ".php-cs-fixer.dist.php"];
     const found = await findUp(configs, cwd);
     return found.length > 0;
@@ -1155,17 +881,12 @@ export const phpCsFixerFormatter: FormatterInfo = {
 
 export const csharpierFormatter: FormatterInfo = {
   name: "csharpier",
-  // CSharpier ≥1.0 is a standalone `csharpier format <file>`; the `dotnet
-  // csharpier <file>` form was removed (a bare `dotnet csharpier` now errors
-  // "a dotnet-prefixed executable with this name could not be found"). Keep the
-  // legacy form as a fallback for CSharpier 0.x via resolveCommand.
   command: ["csharpier", "format", "$FILE"],
   extensions: [".cs"],
   async resolveCommand(filePath, _cwd) {
     if ((await which("csharpier")) !== null) {
       return ["csharpier", "format", filePath];
     }
-    // CSharpier 0.x: invoked through the dotnet driver.
     if ((await which("dotnet")) !== null) {
       const legacy = await safeSpawnAsync("dotnet", ["csharpier", "--version"], {
         timeout: 5000,
@@ -1177,9 +898,7 @@ export const csharpierFormatter: FormatterInfo = {
     return null;
   },
   async detect(_cwd: string) {
-    // CSharpier ≥1.0 standalone binary …
     if ((await which("csharpier")) !== null) return true;
-    // … or the legacy dotnet-driver form (CSharpier 0.x).
     if ((await which("dotnet")) === null) return false;
     const result = await safeSpawnAsync("dotnet", ["csharpier", "--version"], {
       timeout: 5000,
@@ -1211,17 +930,12 @@ export const styluaFormatter: FormatterInfo = {
   command: ["stylua", "$FILE"],
   extensions: [".lua"],
   async resolveCommand(filePath, cwd) {
-    // Project binary first (#1731, discipline B): stylua has no choco-pi-lsp
-    // managed install, so before this the ONLY resolution was a bare
-    // `stylua` PATH lookup — a project-local install via npm
-    // `@johnnymorganz/stylua` (`node_modules/.bin/stylua`) was invisible.
     const local = findLocalBinUpwards("stylua", cwd);
     return local ? [local, filePath] : null;
   },
   async detect(cwd: string) {
     const local = findLocalBinUpwards("stylua", cwd);
     if (!local && (await which("stylua")) === null) return false;
-    // Prefer explicit config but also run if binary is present in a Lua project
     const configs = ["stylua.toml", ".stylua.toml"];
     const found = await findUp(configs, cwd);
     return found.length > 0;
@@ -1285,10 +999,6 @@ export const cmakeFormatFormatter: FormatterInfo = {
 
 export const cueFormatter: FormatterInfo = {
   name: "cue",
-  // `cue fmt <file>` rewrites in place already. There is no `-w`: the only
-  // flags are --check, -d/--diff and --files, so `cue fmt -w` aborts with
-  // "unknown shorthand flag: 'w'" on every .cue write (verified on cue
-  // v0.17.1).
   command: ["cue", "fmt", "$FILE"],
   extensions: [".cue"],
   async detect(_cwd: string) {
@@ -1296,30 +1006,7 @@ export const cueFormatter: FormatterInfo = {
   },
 };
 
-/**
- * The PowerShell one-liner behind `psscriptanalyzer-format`.
- *
- * #1337 audit finding: without `$ErrorActionPreference = 'Stop'`, a failing
- * `Invoke-Formatter` is a NON-TERMINATING error — pwsh still exits 0, so this
- * formatter could never report a failure through the strict seam and the #1336
- * silent-no-op class survived intact for `.ps1/.psm1/.psd1`. Verified: an
- * `Invoke-Formatter` argument-validation failure exits 0 under the old script.
- *
- * Two more defects fixed here rather than left as landmines:
- *  - the old script ran `Set-Content -Value $formatted` even when `$formatted`
- *    was `$null`, which TRUNCATES the file it was asked to format;
- *  - single-quoted interpolation broke on any path containing an apostrophe.
- * An empty/whitespace-only file exits 0 without touching anything, so "nothing
- * to format" stays a clean no-op rather than a reported failure.
- *
- * `settingsPath`, when the project has one (#1572 review F2), is passed
- * straight to `Invoke-Formatter -Settings`. Gating selection on the file's
- * presence without ever reading its rules would run the project through the
- * stock `CodeFormatting` ruleset regardless of what it declared — the same
- * stock-style imposition #1144 banned for the other config-first formatters.
- */
 function psScriptAnalyzerCommand(filePath: string, settingsPath?: string): string {
-  // PowerShell single-quoted strings escape an apostrophe by doubling it.
   const quoted = filePath.replace(/'/g, "''");
   const settingsArg = settingsPath ? ` -Settings '${settingsPath.replace(/'/g, "''")}'` : "";
   return [
@@ -1346,7 +1033,6 @@ export const psscriptanalyzerFormatFormatter: FormatterInfo = {
   async detect(_cwd: string) {
     const pwsh = (await which("pwsh")) ?? (await which("powershell"));
     if (!pwsh) return false;
-    // Check PSScriptAnalyzer module is available
     const result = await safeSpawnAsync(
       pwsh,
       [
@@ -1360,12 +1046,6 @@ export const psscriptanalyzerFormatFormatter: FormatterInfo = {
   },
 };
 
-// --- Registry ---
-
-// Exported for the formatter/policy drift guard (tests/clients/
-// formatter-policy-consistency.test.ts, #1135): the test cross-checks these
-// definitions against tool-policy.ts's FORMATTER_POLICY_BY_EXTENSION so the two
-// hand-maintained inverse mappings can never silently diverge.
 export const ALL_FORMATTERS: FormatterInfo[] = [
   biomeFormatter,
   prettierFormatter,
@@ -1403,27 +1083,13 @@ export const ALL_FORMATTERS: FormatterInfo[] = [
   psscriptanalyzerFormatFormatter,
 ];
 
-// Basenames claimed by a filename-keyed formatter, e.g. terragrunt.hcl.
 const FILENAME_FORMATTER_BASENAMES = new Set(ALL_FORMATTERS.flatMap((f) => f.filenames ?? []));
 
-// Cache for detection results - stores array of enabled formatter names per cwd+ext
 const detectionCache = new BoundedLruCache<
   string,
   { signature: string; entries: Map<string, string[]> }
 >(32);
 
-// These are the formatter configuration files consulted by the policy helpers
-// above. Their metadata is part of detection cache identity: changing a file
-// must re-run detection even when PATH and installed tools are unchanged. A
-// filename a `has*Config` check reads but this list omits is invisible to the
-// cache: the signature never moves when that file is added, so a project that
-// opts in AFTER the first `getFormattersForFile` call for its cwd keeps
-// getting the stale (pre-opt-in) cached answer for the rest of the session
-// (#1572 review F1 — proved for psscriptanalyzer-format's settings file;
-// swept against every `EXPLICIT_FORMATTER_CONFIG_CHECKS` entry below, which
-// turned up the same gap for google-java-format, cljfmt, cmake-format, the
-// Kotlin/Spotless gradle files, sqlfluff's setup.cfg, and oxfmt's
-// vite-plus.json / additional vite.config extensions).
 const FORMATTER_CONFIG_FILES = [
   "package.json",
   "biome.json",
@@ -1489,7 +1155,6 @@ const FORMATTER_CONFIG_FILES = [
   "vite.config.cjs",
   "PSScriptAnalyzerSettings.psd1",
   "ScriptAnalyzerSettings.psd1",
-  // #1595 sweep additions.
   ".csharpierrc",
   ".csharpierrc.json",
   ".csharpierrc.yaml",
@@ -1520,34 +1185,20 @@ async function formatterConfigSignature(cwd: string): Promise<string> {
   return parts.join("|");
 }
 
-// --- Public API ---
-
 export async function getFormattersForFile(
   filePath: string,
   cwd: string,
 ): Promise<FormatterInfo[]> {
   const ext = path.extname(filePath).toLowerCase();
   const base = path.basename(filePath).toLowerCase();
-  // Filename-keyed formatters (e.g. terragrunt.hcl) can share an extension
-  // with unrelated files in the same dir (.terraform.lock.hcl next to
-  // terragrunt.hcl). Fold the basename into the cache key only when a
-  // filename-based formatter actually applies, so a plain .hcl file cached
-  // first doesn't poison the cache for terragrunt.hcl/root.hcl, or vice versa.
   const normalizedCwd = normalizeMapKey(cwd);
   const cacheKey = FILENAME_FORMATTER_BASENAMES.has(base)
     ? `${normalizedCwd}:${ext}:${base}`
     : `${normalizedCwd}:${ext}`;
 
   const configSignature = await formatterConfigSignature(cwd);
-  // Check cache
   let cached = detectionCache.get(normalizedCwd);
   if (cached && cached.signature !== configSignature) {
-    // An EXISTING entry whose signature moved is the user telling us the world
-    // changed. Re-probe PATH too, so "install the tool, touch the config" still
-    // works within one session now that a durable absence latches (#1495).
-    // Scoped to a real change on purpose: keying this off "no entry yet" would
-    // drop every PATH verdict on the first save in each new directory, which in
-    // a monorepo means re-probing forever.
     detectionCache.delete(normalizedCwd);
     cached = undefined;
     resetWhichLatches();
@@ -1560,11 +1211,9 @@ export async function getFormattersForFile(
   if (cached.entries.has(cacheKey)) {
     const enabledNames = cached.entries.get(cacheKey);
     if (!enabledNames || enabledNames.length === 0) return [];
-    // Return cached formatters by name (preserves priority order)
     return ALL_FORMATTERS.filter((f) => enabledNames.includes(f.name));
   }
 
-  // Detect formatters for this extension (or exact filename, e.g. terragrunt.hcl)
   const matching = ALL_FORMATTERS.filter(
     (f) => f.extensions.includes(ext) || f.filenames?.includes(base),
   );
@@ -1576,28 +1225,17 @@ export async function getFormattersForFile(
     : matching;
 
   let selected: FormatterInfo | undefined;
-  /**
-   * One entry per candidate this pass actually ASKED, in the order it asked
-   * them (#1539). Candidates eliminated without a probe — an explicit-config
-   * decision is pure filesystem — contribute nothing, which is the point: a
-   * decision that never probed cannot have been degraded by a probe.
-   */
   const candidateOutcomes: CandidateOutcome[] = [];
   if (formatterPolicy) {
     const explicitlyConfigured = candidateFormatters.filter((formatter) =>
       hasExplicitFormatterConfig(formatter.name, cwd, ext),
     );
     if (explicitlyConfigured.length > 0) {
-      // A formatter with explicit project config was found — use it.
-      // Prefer the policy's defaultFormatter only if it has explicit config,
-      // otherwise pick the first explicitly-configured formatter.
       selected = formatterPolicy.defaultFormatter
         ? (explicitlyConfigured.find((f) => f.name === formatterPolicy.defaultFormatter) ??
           explicitlyConfigured[0])
         : explicitlyConfigured[0];
     } else if (smartDefaultFormatterName) {
-      // Reached only when explicitlyConfigured is empty, so no candidate
-      // has explicit config. Safe to activate the smart-default.
       const smartDefaultFormatter = candidateFormatters.find(
         (f) => f.name === smartDefaultFormatterName,
       );
@@ -1608,8 +1246,6 @@ export async function getFormattersForFile(
         } else {
           const { detected, error, outcome } = await detectCandidate(smartDefaultFormatter, cwd);
           candidateOutcomes.push(outcome);
-          // This branch never caught a throwing detection, and still
-          // does not: `detectCandidate` catches only so the probes survive.
           if (error !== undefined) throw error;
           if (detected) selected = smartDefaultFormatter;
         }
@@ -1620,7 +1256,6 @@ export async function getFormattersForFile(
       const { detected, error, outcome } = await detectCandidate(formatter, cwd);
       candidateOutcomes.push(outcome);
       if (error !== undefined) {
-        // choco-pi-lsp-ignore: missing-error-propagation — optional formatter detection, skip on failure
         logExtension({
           subsystem: "format",
           message: `Detection failed for ${formatter.name}: ${
@@ -1638,39 +1273,11 @@ export async function getFormattersForFile(
   }
 
   const enabled = selected ? [selected] : [];
-  // The #925/#1467 `wouldPoisonCache` shape: an empty result produced while a
-  // PATH probe was timing out is not a finding about this project. Caching it
-  // would survive until a config file's mtime or size changed, so leave the
-  // cache untouched and let the next turn re-detect.
-  // Which of THIS file's candidates are currently un-answered? Read off the
-  // binaries the candidates' own `detect()`s actually probed (#1539), so a
-  // stalled `which rustfmt` cannot stop a shell or Python detection from
-  // caching (#1495 review) AND a leftover transient verdict for a binary this
-  // pass never consulted cannot be blamed on this decision.
-  //
-  // This replaces the `command[0]` approximation, which missed both shapes of
-  // extra probe: a co-equal ALTERNATIVE (`pwsh` ?? `powershell`) and — the
-  // case the old comment wrongly called harmless — an install FALLBACK reached
-  // after the primary answered a GENUINE absence. `rustfmt` missing plus a
-  // stalled `which rustup` skips the lazy install, and nothing named `rustfmt`
-  // is transient, so the empty result used to cache for the session.
-  //
-  // Residual: the record covers this module's own `which()` only. A detection
-  // that reaches PATH some other way is invisible to it — ktlint's `detect()`
-  // falls back to the installer's `getToolPath("ktlint")`, which has its own
-  // probe and its own 24-hour cache. Widening the record to those is deferred to
-  // the installer-side follow-up rather than bolted on here.
   const stalledCandidateCommands = [
     ...new Set(candidateOutcomes.flatMap((outcome) => outcome.stalledCommands)),
   ];
   const poisonedByTransientProbe = enabled.length === 0 && stalledCandidateCommands.length > 0;
 
-  // A NON-empty result the poison guard cannot see (#1539): the winner won only
-  // because a candidate ahead of it was never asked. `candidateOutcomes` is in
-  // ask order and the loop stops at the winner, so every entry before the
-  // winner's is a candidate that lost — and an `unreachable` one did not lose
-  // on the merits. Caching this would hand the session to the runner-up until
-  // a config file's mtime or size changed.
   const winnerIndex = selected
     ? candidateOutcomes.findIndex((outcome) => outcome.name === selected.name)
     : -1;
@@ -1684,9 +1291,6 @@ export async function getFormattersForFile(
   if (poisonedByTransientProbe) {
     selectionReason = "probe-timeout";
   } else if (degradedSelection) {
-    // The reason now describes how the winner WON, not just what the config
-    // looks like. "explicit-config" on a selection whose preferred candidate
-    // was never reachable was the most misleading record in this seam.
     selectionReason = "preferred-unreachable";
   } else if (!selected) {
     selectionReason = "none";
@@ -1715,12 +1319,8 @@ export async function getFormattersForFile(
     },
   });
 
-  // Provisional either way: not cached, so the next pass re-detects once the
-  // cooldown expires and the preferred formatter's recovery takes effect
-  // without waiting on a config-file edit.
   if (provisional) return enabled;
 
-  // Store the list of enabled formatter names in cache
   const enabledNames = enabled.map((f) => f.name);
   cached.entries.set(cacheKey, enabledNames);
   return enabled;
@@ -1734,51 +1334,23 @@ export function clearFormatterCache(): void {
 export function clearFormatterRuntimeState(): void {
   detectionCache.clear();
   resetWhichLatches();
-  // NO `resetLazyInstallAttempts()` here (#1537 review F1). This function runs
-  // from `resetFormatService()`, which `handleTurnEnd` calls every turn — so
-  // clearing the lazy-install hold here made "held for the session" mean "held
-  // for a turn", and a failing install re-ran every turn. The hold's only reset
-  // is `session_start`'s block in runtime-session.ts.
 }
 
-// ESC is built via fromCharCode so no raw control byte sits in the source.
 const ANSI_ESCAPE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, "g");
 const BOX_DRAWING_GLOBAL = /[\u2500-\u257F]/g;
 const HAS_BOX_DRAWING = /[\u2500-\u257F]/;
 
-/**
- * First line of `text` that actually carries a diagnostic.
- *
- * #1337 made nonzero exits user-visible, which put whatever this returns in
- * front of the agent (`clients/pipeline.ts`) and in the end-of-turn summary
- * (`clients/runtime-agent-end.ts`) — so "first line of stderr" is no longer
- * good enough. Biome opens stderr with a decorated section rule
- * (`format ━━━━━━━━━━━`), which as an error message is pure noise.
- *
- * Skips blank lines, pure box-drawing rules, and short banner headings; strips
- * ANSI colour so the message stays readable in a plain-text surface.
- */
 export function firstDiagnosticLine(text: string | undefined): string | undefined {
   for (const raw of (text ?? "").split("\n")) {
     const line = raw.replace(ANSI_ESCAPE, "").trimEnd();
     const stripped = line.replace(BOX_DRAWING_GLOBAL, "").trim();
     if (!stripped) continue;
-    // "format ━━━━━━━━" is a section banner, not a diagnostic. Require a rule
-    // AND a short remainder so a real one-line error containing a box
-    // character is not discarded.
     if (HAS_BOX_DRAWING.test(line) && stripped.length <= 24) continue;
     return stripped.slice(0, 300);
   }
   return undefined;
 }
 
-/**
- * Resolve a formatter command without allowing the static command fallback to
- * bypass a resolver's style-preservation refusal (#1345). `null` means the
- * primary command is unavailable; the explicit sentinel means formatting is
- * forbidden for this file and must be returned before the static command is
- * materialized.
- */
 async function resolveFormatterCommand(
   formatter: FormatterInfo,
   absolutePath: string,
@@ -1790,13 +1362,7 @@ async function resolveFormatterCommand(
   if (resolved === SKIP_FORMATTING) return SKIP_FORMATTING;
   if (resolved !== null) return resolved;
   const fallback = formatter.command.map((c) => c.replace("$FILE", absolutePath));
-  // Trust gate on the install-capable static fallback (#1334 S5): npx can
-  // DOWNLOAD packages, so an untrusted project treats the fallback as
-  // unavailable -- a skip, not a formatter failure; may converge next turn.
   if (fallback[0] === "npx" && !assertInstallAllowed(`formatter npx fallback: ${formatter.name}`)) {
-    // No second ledger entry here (#1366 review): assertInstallAllowed just
-    // recorded the trust-refusal with this formatter's context — recording
-    // formatter-skip too would count one user-visible degradation twice.
     return SKIP_FORMATTING;
   }
   return fallback;
@@ -1811,26 +1377,15 @@ export async function formatFile(
     const cwd = path.dirname(absolutePath);
     const contentBefore = await fs.readFile(absolutePath, "utf-8");
 
-    // Resolve command: prefer local (venv/vendor/node_modules) over global.
-    // The shared seam must honor SKIP_FORMATTING before selecting the static
-    // command, including its npx fallback (#1345).
     const cmd = await resolveFormatterCommand(formatter, absolutePath, cwd);
     if (cmd === SKIP_FORMATTING) {
-      // Style-preserving refusal (#1144): no repo config and no detectable
-      // indentation to pin — formatting would impose the tool's stock style.
       return { success: true, changed: false };
     }
-    // Run formatter without blocking the event loop.
     const result = await safeSpawnAsync(cmd[0], cmd.slice(1), {
       timeout: 15000,
       cwd,
     });
 
-    // Strict by default (#1337): only a formatter with a documented
-    // benign-nonzero mode (`lenientExitCode`) may exit nonzero and still be
-    // read as a successful run. Everything else that exits nonzero never
-    // rewrote the file, and reporting {success: true, changed: false} there is
-    // indistinguishable from "already formatted" — the #1336 silent no-op.
     const lenientOk =
       formatter.lenientExitCode !== undefined &&
       result.status !== null &&
@@ -1845,15 +1400,11 @@ export async function formatFile(
         error:
           result.error?.message ||
           firstDiagnosticLine(result.stderr) ||
-          // biome, ktlint and `mix format` report on STDOUT; without this
-          // their diagnostic is discarded and the user is told only that
-          // the tool "exited with status 1".
           firstDiagnosticLine(result.stdout) ||
           `${formatter.name} exited with status ${result.status}`,
       };
     }
 
-    // Check if content changed
     const contentAfter = await fs.readFile(absolutePath, "utf-8");
     const changed = contentBefore !== contentAfter;
 

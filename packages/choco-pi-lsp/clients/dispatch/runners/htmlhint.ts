@@ -22,7 +22,6 @@ const HTMLHINT_RULES = {
 
 function parseHtmlhintOutput(raw: string, filePath: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
-  // unix format: "file:line:col: message [severity/rule]"
   const lineRe = /^.+?:(\d+):(\d+): (.+?) \[(error|warning)\/([^\]]+)\]/;
 
   for (const line of raw.split("\n")) {

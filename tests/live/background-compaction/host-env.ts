@@ -2,13 +2,11 @@ import { mkdir, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { InMemoryCredentialStore, type Credential } from "@earendil-works/pi-ai";
 
-/** An injected in-memory store; sealed before the session so refresh/write fails closed. */
 export class ReadOnlyMemoryCredentials extends InMemoryCredentialStore {
   private locked = false;
   seal(): void {
     this.locked = true;
   }
-  /** Stores the one live credential in memory, then seals the store. */
   async seedAndSeal(provider: string, credential: Credential): Promise<void> {
     if (this.locked) throw new Error("Credential store already sealed");
     await super.modify(provider, async () => structuredClone(credential));
@@ -32,11 +30,9 @@ export interface RuntimeDirs {
   readonly projectDir: string;
   readonly sessionDir: string;
   readonly homeDir: string;
-  /** True when this launch created the root (mkdtemp); reused roots are caller-owned. */
   readonly created: boolean;
 }
 
-/** Owned runtime tree: a fresh mkdtemp root, or a caller-provided root reused across launches. */
 export async function prepareRuntimeDirs(
   scratchRoot: string,
   runtimeRoot?: string,
@@ -62,7 +58,6 @@ export async function prepareRuntimeDirs(
 }
 
 const SCOPED_ENV = ["PI_CODING_AGENT_DIR", "HOME", "USERPROFILE"] as const;
-/** Proxy variables would route the Codex virtual socket or fetch elsewhere; cleared while owned. */
 const CLEARED_ENV = [
   "HTTPS_PROXY",
   "HTTP_PROXY",
@@ -76,11 +71,6 @@ export interface EnvScope {
   restore(): void;
 }
 
-/**
- * Scopes process-global state for one launcher: agent dir, HOME (so extensions
- * such as hooks never read the user's real ~/.claude settings), proxies, and a
- * global fetch that refuses every call.
- */
 export function scopeProcessEnv(
   dirs: RuntimeDirs,
   blockedFetch: typeof globalThis.fetch,

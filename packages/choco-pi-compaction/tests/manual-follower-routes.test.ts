@@ -1,13 +1,3 @@
-/**
- * Manual follower routes (D6) through a real `createAgentSession` (captured
- * Anthropic provider stream, fake transports, no network), background on with
- * the Anthropic and text lanes; `/compact` starts a native candidate:
- * - a candidate cancelled by a branch switch stops silently: no text candidate
- *   and no warning;
- * - `auth` stops with one warning and no text retry;
- * - a classified lane failure retries once on the text lane and tells the
- *   user once, naming both lanes; the journal records the failed candidate.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -112,7 +102,6 @@ function errorResponse(status: number, error: JsonObject): Response {
   });
 }
 
-/** Resolve on `gate`, or reject like fetch when `signal` aborts first. */
 function heldUntil(gate: Promise<void>, signal: AbortSignal | undefined): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const abort = (): void => reject(new DOMException("aborted", "AbortError"));
@@ -276,15 +265,12 @@ async function waitFor(label: string, predicate: () => boolean): Promise<void> {
   }
 }
 
-/** Let pending follower work run to completion. */
 async function drain(): Promise<void> {
   for (let tick = 0; tick < 20; tick++) await new Promise((resolve) => setTimeout(resolve, 5));
 }
 
-/** The request's start notice ("continuing in the background") is shown once by `/compact`. */
 const START_NOTICE = /continuing in the background/u;
 
-/** Outcome notices of the manual request (its start notice excluded, and asserted once). */
 function compactionNotices(rig: Rig): string[] {
   const notices = rig.notices.filter((notice) => notice.startsWith(NOTICE_PREFIX));
   assert.equal(notices.filter((notice) => START_NOTICE.test(notice)).length, 1, "one start notice");

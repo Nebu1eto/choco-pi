@@ -26,11 +26,6 @@ export interface CodexRequestRouting {
   routingHint?: string | undefined;
 }
 
-/**
- * Mirrors openai/codex `build_routing_hint_header`: the originator is a fixed client identity
- * independent of the tier, and every Codex-backend request carries `model=<slug>`, plus
- * `;tier=<tier>` only when the body sends a `service_tier`.
- */
 export function resolveCodexRequestRouting(options: {
   model: string;
   serviceTier?: string | undefined;
@@ -128,7 +123,6 @@ function buildBaseCodexHeaders(
   return headers;
 }
 
-/** Codex's per-request compatibility headers: window id always, turn metadata with a kind. */
 function applyCodexWindowHeaders(
   headers: Headers,
   threadId: string,
@@ -174,8 +168,6 @@ export function buildSSEHeaders(
   return headers;
 }
 
-// Account lookups reuse the Responses auth assembly but request plain JSON;
-// transport-specific stream, beta, routing, and session headers are omitted.
 export function buildVerifiedAccessHeaders(
   modelHeaders: Record<string, string> | undefined,
   additionalHeaders: ProviderHeaders | undefined,

@@ -1,4 +1,3 @@
-/** Preparation: participants, snapshot selection, admission, and the scheduled backend run with retries. */
 import { randomUUID } from "node:crypto";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type {
@@ -45,8 +44,6 @@ import {
   validate,
 } from "./state.ts";
 
-// ---- preparation: participants -> snapshot selection -> admission -> scheduled backend run ----
-
 async function runParticipants(
   state: CoordinatorState,
   current: Candidate,
@@ -91,7 +88,6 @@ export function entriesThrough(
   return entries.slice(0, entries.findIndex((entry) => entry.id === cutEntryId) + 1);
 }
 
-/** Capture the branch, ask the snapshot builder for a cut, and freeze it on the candidate. */
 function selectSnapshot(
   state: CoordinatorState,
   current: Candidate,
@@ -101,7 +97,6 @@ function selectSnapshot(
   current.branchKey = state.deps.port.getBranchKey();
   const selected = state.deps.freezeSnapshot(captured);
   if (isRefused(selected)) {
-    // A refused cut is a property of this branch, not of the provider scope: no cooldown.
     fail(state, current, { reason: "no-legal-cut", detail: selected.detail, cool: false });
     return undefined;
   }
@@ -124,7 +119,6 @@ function selectSnapshot(
   return snapshot;
 }
 
-/** Effective limits: the configured ceiling narrowed by the owner model's window. */
 function effectiveLimits(state: CoordinatorState): {
   maxInputTokens: number;
   maxOutputTokens: number;
@@ -141,18 +135,11 @@ function counterActive(state: CoordinatorState): boolean {
   return state.settings.countTokens && state.deps.tokenCounter !== undefined;
 }
 
-/** A provider count, or none plus the counter's fallback note. */
 interface PromptCount {
   readonly counted: number | undefined;
   readonly detail?: string;
 }
 
-/**
- * Admit the snapshot when its prompt fits the effective input budget. A
- * provider count replaces the estimate; otherwise the rendered-prompt
- * estimate is used, then the raw estimate for snapshots that carry none. An
- * oversized prefix refuses this cut only: it does not cool the scope.
- */
 function admitTokens(
   state: CoordinatorState,
   current: Candidate,
@@ -182,10 +169,6 @@ function admitTokens(
   return false;
 }
 
-/**
- * Provider count of the rendered prompt, or an undefined count (with the
- * counter's last diagnostic, if any) to fall back to the estimate.
- */
 async function countPromptTokens(
   state: CoordinatorState,
   current: Candidate,
@@ -208,7 +191,6 @@ async function countPromptTokens(
   return valid ? { counted } : { counted: undefined, detail };
 }
 
-/** Synchronous admission; with a counter the token gate runs inside the scheduled slot instead. */
 function admitSnapshot(
   state: CoordinatorState,
   current: Candidate,
@@ -255,7 +237,6 @@ interface AttemptContext {
 
 type AttemptOutcome = "retry" | "stop";
 
-/** Runs inside the process limiter slot: capability, legality, then bounded attempts. */
 async function runPreparation(
   state: CoordinatorState,
   current: Candidate,
@@ -326,9 +307,6 @@ async function retryAfterFailure(
   if (RATE_LIMIT_REASONS.has(failure.reason))
     cool(state, current, Math.max(settings.cooldownMs, failure.retryAfterMs ?? 0));
   if (!failure.retryable || attempt === settings.maxAttempts) {
-    // Only a refusal of this particular cut leaves the scope uncooled; every
-    // other terminal failure (auth, unsupported, oversized, transport) cools it
-    // so the next request waits, honoring a reported retry delay.
     const refusal = CUT_REFUSALS.has(failure.reason);
     fail(state, current, {
       reason: failure.reason,
@@ -369,13 +347,11 @@ function recordForCheckpoint(
   if (!record) return { reason: "malformed" };
   if (Buffer.byteLength(JSON.stringify(record), "utf8") > state.settings.maxResultBytes)
     return { reason: "oversized", detail: "result-bytes" };
-  // The reasoning reserve is part of the output cap the backend was allowed to send.
   if (checkpoint.usage.output > effectiveLimits(state).maxOutputTokens)
     return { reason: "oversized", detail: "output-over-budget" };
   return { record };
 }
 
-/** Validate the backend result, persist its candidate record, and mark the candidate ready. */
 async function recordPreparedCheckpoint(
   context: AttemptContext,
   checkpoint: PreparedCheckpoint,
@@ -393,7 +369,6 @@ async function recordPreparedCheckpoint(
 }
 
 function launch(state: CoordinatorState, current: Candidate, backend: Backend): void {
-  // Convert the background promise into a fulfilled observation. The explicit observer rethrows.
   state.preparation = prepare(state, current, backend).then(
     (): WorkSettlement => ({ ok: true }),
     (cause: unknown): WorkSettlement => {
@@ -454,7 +429,6 @@ export function requestPreparation(
     state.deps.port.getBranch(),
     `${backend.id}|${state.deps.cutSalt?.(backend.id) ?? ""}`,
   );
-  // No owner recheck here: a read that lost the owner leaves the candidate to be discarded as stale by `prepare`.
   if (suppressed(state, request, backend.id, fingerprint))
     return { accepted: false, reason: "no-legal-cut" };
   const attempt = (state.cutAttempts.get(fingerprint) ?? 0) + 1;

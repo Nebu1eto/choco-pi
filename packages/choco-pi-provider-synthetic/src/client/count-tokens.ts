@@ -32,14 +32,9 @@ export type CountTokensResult =
 
 export interface CountSyntheticTokensOptions {
   apiKey: string;
-  /** Synthetic model ID, e.g. `hf:zai-org/GLM-5.3`. */
   model: string;
   system: string;
   promptText: string;
-  /**
-   * Synthetic API root, OpenAI-compatible base (`.../openai/v1`), Anthropic-compatible
-   * base (`.../anthropic/v1`), or a utility-API proxy root. Defaults to the Synthetic API.
-   */
   baseUrl?: string;
   fetch?: typeof fetch;
   signal?: AbortSignal;
@@ -48,10 +43,6 @@ export interface CountSyntheticTokensOptions {
 
 const COMPAT_SUFFIX = /\/(?:openai|anthropic)(?:\/v1)?$/;
 
-/**
- * Map any accepted Synthetic base URL to its Anthropic-compatible base on the same origin
- * and path prefix. Throws on an invalid URL or non-http(s) protocol (programmer error).
- */
 export function resolveSyntheticAnthropicBaseUrl(baseUrl?: string): string {
   const raw = baseUrl?.trim() || DEFAULT_SYNTHETIC_API_BASE_URL;
   let url: URL;
@@ -80,12 +71,6 @@ function errorCodeForStatus(status: number): CountTokensErrorCode {
   return "http";
 }
 
-/**
- * Count input tokens for a single-user-message summarization prompt via Synthetic's
- * Anthropic-compatible `POST /messages/count_tokens`. Provider, network, timeout, and
- * abort failures resolve to `{ ok: false }`; only missing apiKey/model or an invalid
- * baseUrl/timeoutMs throw.
- */
 export async function countSyntheticTokens(
   options: CountSyntheticTokensOptions,
 ): Promise<CountTokensResult> {

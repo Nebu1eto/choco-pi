@@ -1,9 +1,6 @@
 import type { LSPSymbol } from "./lsp/client.ts";
 import { getLSPService } from "./lsp/index.ts";
 
-// Grounded against this repo's workspace-native TypeScript 7.0.2 server
-// (`tsc --lsp --stdio`) on 2026-07-30: 20 already-open documentSymbol calls
-// measured p50 3.70 ms / p95 5.28 ms. Keep generous headroom for slower hosts.
 export const LSP_DOCUMENT_SYMBOL_TIMEOUT_MS = 150;
 
 interface SYMBOLKINDNAMESValues extends Record<number, string> {}
@@ -101,14 +98,6 @@ export function findDocumentSymbolAtLine(
   return best;
 }
 
-/**
- * Full owner chain for a FLAT SymbolInformation result: hierarchical results
- * carry ancestry directly, but native-ts7 (measured: TypeScript 7.0.2 via
- * tsc --lsp) returns flat symbols whose only containment signal is the
- * immediate `containerName`. Walk containerName links through the full result
- * so nested owners qualify completely (Outer.Inner.method, #951 review) —
- * cycle-guarded and depth-capped.
- */
 export function containerNameChain(
   symbol: LSPSymbol,
   allSymbols: readonly LSPSymbol[] | undefined,

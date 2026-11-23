@@ -1,7 +1,3 @@
-/**
- * One file's block in the changes view: its row, its hunks as rendered and
- * cached, quoted excerpts, and loading its body from the store.
- */
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import type { FileExcerpt, FileSummary } from "../git/model.ts";
 import { leadingColumns, lineTextColumn, MIN_SPLIT_WIDTH } from "../render/diff-render.ts";
@@ -57,7 +53,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
       ...(index.byPath.get(path) ?? []).map((finding) => `finding:${findingKey(finding)}`),
       ...(index.commentsByPath.get(path) ?? []).map((comment) => `comment:${comment.id}`),
     ];
-    // Which items are closed: toggling one draws its file again.
     const closed = ids.filter((id) => !this.isItemOpen(id)).join("\u0001");
     return [
       this.notes?.version ?? 0,
@@ -67,7 +62,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
       this.selectedPath === path ? (this.selectedItem ?? "") : "",
       closed,
       this.revealed.has(path) ? 1 : 0,
-      // Host badges can change without a new snapshot (a risk score is not one).
       this.rowBadges ? JSON.stringify(this.rowBadges(path)) : "",
       this.selectedHunk?.path === path ? `${this.cursorLine ?? ""}/${this.anchorLine ?? ""}` : "",
     ].join(",");
@@ -78,7 +72,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
     const key = `${width}\u0000${revision}\u0000${file.path}\u0000${expanded ? 1 : 0}\u0000${this.decorationKey(file.path)}`;
     const cached = this.cache.get(key);
     if (cached) {
-      // Most recently drawn last: the blocks dropped below are the ones no frame uses.
       this.cache.delete(key);
       this.cache.set(key, cached);
       return cached;
@@ -108,7 +101,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
       }
     }
     this.cache.set(key, block);
-    // Every cursor position makes a block of its file; only the newest are drawn again.
     const kept = Math.max(MIN_CACHED_BLOCKS, 2 * this.files().length);
     for (const stale of this.cache.keys()) {
       if (this.cache.size <= kept) break;
@@ -117,12 +109,10 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
     return block;
   }
 
-  /** True when the pane may show (and load) this file's contents. */
   canShowContents(file: FileSummary): boolean {
     return !isSensitiveFile(file) || this.revealed.has(file.path);
   }
 
-  /** Hide every revealed sensitive file again and forget its body (a host closing the view). */
   hideRevealed(): void {
     for (const path of this.revealed) this.bodies.delete(path);
     this.revealed.clear();
@@ -149,7 +139,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
         push(row, { path, itemId });
       }
     };
-    // Items between hunks: those without a line, then each quote of the file with its items.
     const pushGap = (hunkIndex: number) => {
       const here = placed.items.filter(
         (entry) => entry.place.kind === "before" && entry.place.hunkIndex === hunkIndex,
@@ -179,7 +168,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
       return block;
     };
     if (!this.canShowContents(file)) {
-      // Never quoted: the items are listed, as the contents are not.
       push(note(HIDDEN_CONTENTS, "warning"));
       for (const entry of placed.items) pushItem(entry);
       for (const entry of notes) push(this.noteLine(entry, false, width));
@@ -214,7 +202,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
     const mode = layout?.mode === "split" && innerWidth >= MIN_SPLIT_WIDTH ? "split" : "unified";
     const { file: diffFile, rows } = this.hunksRendered(path, raw, innerWidth, layout, mode);
 
-    // Notes whose hunk is gone come first; findings and comments sit at their lines.
     const hunkIds = new Set(diffFile.hunks.map((hunk) => hunk.id));
     for (const entry of notes) {
       if (!hunkIds.has(entry.hunkId)) push(this.noteLine(entry, true, width));
@@ -226,7 +213,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
       if ((place.kind !== "line" && place.kind !== "header") || !hunkIds.has(place.hunkId)) {
         continue;
       }
-      // Under its line, at that line's text, the way a reviewer's note sits in the code.
       const hunk = diffFile.hunks.find((candidate) => candidate.id === place.hunkId);
       const codeLine = place.kind === "line" ? hunk?.lines[place.lineIndex] : undefined;
       const textColumn = BODY_INDENT.length + lineTextColumn(diffFile, codeLine, mode, innerWidth);
@@ -284,7 +270,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
       if (start === undefined) continue;
       blockStops[start] = { path, hunkId: hunk.id };
       hunk.lines.forEach((_line, lineIndex) => {
-        // A line without a row of its own (a folded hunk) reports the header's.
         const row = block.rowOfLine(hunk.id, lineIndex);
         if (row !== undefined && row !== start) {
           blockStops[row] ??= { path, hunkId: hunk.id, lineIndex };
@@ -299,7 +284,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
       if (this.selectedItem === itemId && this.selectedPath === path) selectedItemRow = start;
       for (let row = start; row < start + count; row += 1) blockStops[row] = { path, itemId };
     }
-    // The hunks in order, with the quoted lines between them.
     const placedRow = Array.from({ length: block.lines.length }, () => -1);
     diffFile.hunks.forEach((hunk, hunkIndex) => {
       pushGap(hunkIndex);
@@ -334,11 +318,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
     return done();
   }
 
-  /**
-   * Lines of the file around findings between two hunks, each item after its
-   * line. While the quote loads, or when the store cannot quote, the items
-   * are drawn alone; an unavailable quote says why in one row.
-   */
   protected pushExcerpt(
     file: FileSummary,
     group: ExcerptGroup,
@@ -362,19 +341,12 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
     excerpt.lines.forEach((text, offset) => {
       const number = excerpt.from + offset;
       push(excerptLine(number, text, numberWidth, width, styler));
-      // `number ┆ ` behind the body indent; a tab is drawn as one picture column.
       const textColumn = BODY_INDENT.length + numberWidth + 3 + leadingColumns(text, 1);
       for (const entry of members) if (entry.line === number) pushItem(entry, textColumn);
     });
-    // The file ends before an item's line: it follows the last line quoted.
     for (const entry of members) if ((entry.line ?? 0) > last) pushItem(entry);
   }
 
-  /**
-   * The quote of a group for the snapshot shown, or undefined while it loads
-   * (the first call starts the read) and when the store cannot quote.
-   * Hidden sensitive files are never quoted.
-   */
   protected excerptFor(file: FileSummary, group: ExcerptGroup): FileExcerpt | undefined {
     const store = this.store;
     if (!store.loadContext || !this.canShowContents(file) || this.state.kind !== "ready") {
@@ -390,7 +362,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
     const accept = (excerpt: FileExcerpt, at: number) => {
       if (this.disposed || this.excerpts.get(key) !== "loading") return;
       const current = this.state.kind === "ready" ? this.state.snapshot.revision : undefined;
-      // A quote of another snapshot is dropped; the view asks again for its own.
       if (at !== revision || current !== revision) return;
       this.excerpts.set(key, excerpt);
       this.dropCachedBlocks(path);
@@ -413,13 +384,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
     return undefined;
   }
 
-  /**
-   * A loaded file's hunks, made terminal-safe, and their rendered rows. They
-   * are kept until the body, the width or the layout changes, or the view is
-   * invalidated (a fold, revealed context, a new theme): the cursor, notes
-   * and findings are drawn around these rows and never change them. Rows the
-   * frame's budget cut short are not kept, so a later frame draws them in full.
-   */
   protected hunksRendered(
     path: string,
     raw: DiffFile,
@@ -431,7 +395,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
     const kept = this.renderedHunks.get(path);
     if (kept && kept.raw === raw && kept.key === key) return kept;
     const expand = layout ? this.options.expandContext : undefined;
-    // Revealed context is repository text too: it is made terminal-safe with the hunk.
     const file = terminalSafeFile(
       expand ? { ...raw, hunks: raw.hunks.map((hunk) => expand(hunk)) } : raw,
     );
@@ -452,7 +415,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
     return rendered;
   }
 
-  /** The host's layout for line-cursor bodies. */
   protected layout(): BodyLayout {
     return {
       mode: this.options.mode?.() ?? "unified",
@@ -461,7 +423,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
     };
   }
 
-  /** Rows of the cursor's hunk drawn inverted: the selected lines, or its header or placeholder. */
   protected invertedRows(hunk: DiffHunk, rowCount: number, mode: "unified" | "split"): Set<number> {
     const rows = new Set<number>();
     const cursor = this.lineCursor();
@@ -482,7 +443,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
     }
   }
 
-  /** Load hunks for an expanded file unless the current revision is loaded or requested. */
   protected ensureBody(path: string): void {
     if (this.state.kind !== "ready") return;
     const file = this.state.snapshot.files.find((entry) => entry.path === path);
@@ -490,7 +450,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
     const revision = this.state.snapshot.revision;
     if (this.bodies.get(path)?.revision === revision) return;
     if (this.requested.get(path) === revision) return;
-    // A store that holds the body already (the review's) hands it over now: no loading row.
     const held = this.store.peekFile?.(path);
     if (held && held.revision === revision) {
       this.acceptBody(path, revision, held);
@@ -513,26 +472,19 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
       .catch((error: RuntimeValue) => this.bodyFailed(path, error));
   }
 
-  /** Showing a loaded body threw (a render or host call): say so in the message line. Never throws. */
   protected bodyFailed(path: string, error: RuntimeValue): void {
     if (this.disposed) return;
     const detail = error instanceof Error ? error.message : String(error);
     this.setMessage(`Cannot show ${path}: ${detail}`, "error");
     try {
       this.actions.requestRender();
-    } catch {
-      // The message is drawn with the next frame the host renders.
-    }
+    } catch {}
   }
 
   protected acceptBody(path: string, requestedAt: number, result: LoadedBody): void {
     if (this.disposed) return;
     if (this.requested.get(path) === requestedAt) this.requested.delete(path);
     if (!this.expanded.has(path)) return;
-    // Only a body of the snapshot the view shows is accepted. An older one is late: `setState`
-    // already requested the current snapshot's body (asking again here would loop on a store
-    // that is behind the view). A newer one comes from a snapshot the view has not applied
-    // yet; applying it requests that body.
     const revision = this.state.kind === "ready" ? this.state.snapshot.revision : undefined;
     if (result.revision !== revision) return;
     this.bodies.set(path, result);
@@ -560,7 +512,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
       this.pendingLine = undefined;
       this.goTo(target);
     }
-    // Placed against the new body; an item f/F went to while it loaded gets the cursor now.
     this.layouts.delete(path);
     const item = this.pendingItem;
     if (item?.path === path) {
@@ -574,7 +525,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
     this.actions.requestRender();
   }
 
-  /** Hunks of a loaded, showable file; undefined while loading. */
   visibleHunks(file: FileSummary): readonly DiffHunk[] | undefined {
     if (!this.canShowContents(file)) return [];
     const loaded = this.bodies.get(file.path);
@@ -582,7 +532,6 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
     return loaded.body.kind === "text" ? loaded.body.file.hunks : [];
   }
 
-  /** The selected hunk, when one is selected and its body is loaded. */
   currentHunk(): { file: FileSummary; hunk: DiffHunk } | undefined {
     const file = this.selectedFile();
     const selection = this.selectedHunk;
@@ -591,14 +540,12 @@ export abstract class ChangesViewBlocks extends ChangesViewBody {
     return hunk ? { file, hunk } : undefined;
   }
 
-  /** Hunks currently loaded for `path`, for note status. */
   loadedHunks(path: string): readonly DiffHunk[] | undefined {
     const loaded = this.bodies.get(path);
     if (!loaded) return undefined;
     return loaded.body.kind === "text" ? loaded.body.file.hunks : [];
   }
 
-  /** Note status against the current list and the hunks loaded so far. */
   statusOf(note: DiffNote) {
     const listed = this.files().some((file) => file.path === note.path);
     return noteStatus(note, listed, this.loadedHunks(note.path));

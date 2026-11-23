@@ -4,7 +4,6 @@ import type { CodexStreamEvent } from "./types.ts";
 
 export const CODEX_TURN_STATE_HEADER = "x-codex-turn-state";
 
-// Open wire event: unknown fields are ignored, as before.
 const turnStateEventValidator = compile(
   obj(
     {
@@ -18,7 +17,6 @@ const turnStateEventValidator = compile(
 export interface CodexTurnState {
   current(): string | undefined;
   capture(value: string | null | undefined): void;
-  /** Binds capture to the current turn generation so stale decodes cannot capture. */
   captureForTurn(): (value: string | null | undefined) => void;
   capturePrewarm(value: string | null | undefined): void;
   beginTurn(): void;

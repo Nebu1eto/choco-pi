@@ -7,13 +7,6 @@ const EXEC_TIMEOUT_MS = 30_000;
 const GIT_CONFIG = ["-c", "core.quotePath=false", "-c", "color.ui=false"];
 const DIFF_ARGS = ["--patch", "-M", "-C", "--no-color"];
 
-/**
- * Execute a child process, resolving for every process exit status.
- *
- * `opts.input` is written to stdin and stdin is closed either way. Closing it
- * unconditionally is what keeps a reader such as `gh api --input -` from
- * waiting on end-of-file that never arrives.
- */
 export const defaultExecRunner: ExecRunner = async (cmd, args, opts) => {
   const { stdout, stderr, error } = await execFileCapture(cmd, args, {
     cwd: opts?.cwd,
@@ -26,9 +19,7 @@ export const defaultExecRunner: ExecRunner = async (cmd, args, opts) => {
   if (error.killed && error.signal === "SIGTERM") {
     throw new Error(`${cmd} timed out after ${EXEC_TIMEOUT_MS} ms.`);
   }
-  // execFile reports failures such as ENOENT and EACCES before the child starts.
   if (isSpawnFailure(error)) throw error;
-  // Signals and post-spawn execution errors still resolve as non-zero exits.
   return { stdout, stderr, code: isNumber(error.code) ? error.code : 1 };
 };
 
@@ -70,7 +61,6 @@ export async function repositoryRoot(
   return (await runGit(cwd, ["rev-parse", "--show-toplevel"], runner)).trim();
 }
 
-/** Return the absolute common Git directory shared by every linked worktree. */
 export async function gitCommonDirectory(
   cwd: string,
   runner: ExecRunner = defaultExecRunner,
@@ -85,7 +75,6 @@ export type GitRemote = {
   urls: string[];
 };
 
-/** List fetch remotes and every configured URL without assuming an `origin`. */
 export async function listRemotes(
   cwd: string,
   runner: ExecRunner = defaultExecRunner,
@@ -106,7 +95,6 @@ export async function listRemotes(
   );
 }
 
-/** Force-update a private ref from a remote ref, including after a force-push. */
 export function fetchRemoteRef(
   cwd: string,
   remote: string,
@@ -117,7 +105,6 @@ export function fetchRemoteRef(
   return runGit(cwd, ["fetch", "--force", remote, `${source}:${destination}`], runner);
 }
 
-/** Create a detached linked worktree at an already resolved commit. */
 export function addDetachedWorktree(
   cwd: string,
   path: string,
@@ -127,7 +114,6 @@ export function addDetachedWorktree(
   return runGit(cwd, ["worktree", "add", "--detach", path, commit], runner);
 }
 
-/** Remove one known worktree, including a stale administrative entry. */
 export function removeWorktree(
   cwd: string,
   path: string,
@@ -153,7 +139,6 @@ export async function mergeBase(
   return (await runGit(cwd, ["merge-base", left, right], runner)).trim();
 }
 
-/** Read repository-relative file content from a revision, never the working tree. */
 export function readFileAtRevision(
   cwd: string,
   revision: string,
@@ -182,7 +167,6 @@ export async function listBranches(
   ].sort((left, right) => left.localeCompare(right));
 }
 
-/** Read a patch between two committed revisions or tree objects. */
 export function readRawDiff(
   cwd: string,
   base: string,
@@ -198,7 +182,6 @@ export type ResolvedBranchTarget = {
   includesWorkingTree: boolean;
 };
 
-/** Resolve the merge-base semantics documented by ReviewTarget. */
 export async function resolveBranchTarget(
   cwd: string,
   target: Extract<ReviewTarget, { kind: "branch" }>,
@@ -216,7 +199,6 @@ export async function resolveBranchTarget(
   };
 }
 
-/** Keep Phase 2 targets representable while rejecting unsupported resolution explicitly. */
 export async function resolveReviewTarget(
   cwd: string,
   target: ReviewTarget,

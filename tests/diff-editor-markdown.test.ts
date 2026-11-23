@@ -1,5 +1,3 @@
-// /diff outside the terminal UI, when the editor (Zed through the choco-pi ACP adapter) renders
-// notifications as Markdown: the inline list and the messages carrying untrusted text.
 import assert from "node:assert/strict";
 import test from "node:test";
 import type {
@@ -35,7 +33,6 @@ function file(path: string, extra: Partial<FileSummary> = {}): FileSummary {
   };
 }
 
-/** A branch-base snapshot whose base, branch and file names are all hostile. */
 function hostileState(): DiffStoreState {
   const files = [
     file("[a](http://evil).md"),
@@ -126,7 +123,6 @@ async function run(
   return notices;
 }
 
-/** C0 other than newline and tab, DEL, C1, and bidirectional controls. */
 function hasUnsafe(text: string): boolean {
   for (const character of text) {
     const code = character.codePointAt(0) ?? 0;

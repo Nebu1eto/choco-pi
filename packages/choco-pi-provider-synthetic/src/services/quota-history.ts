@@ -60,7 +60,6 @@ const HistoryLineSchema = obj(
 const isHistoryLine = compile(HistoryLineSchema).check;
 
 export interface QuotaHistoryOptions {
-  /** Override the state directory. `null` disables disk persistence. */
   directory?: string | null;
   now?: () => number;
   retentionMs?: number;
@@ -76,13 +75,6 @@ interface HistoryFile {
   size: number;
 }
 
-/**
- * Feature-scoped persistent quota history.
- *
- * Construction performs no filesystem work. Call `initialize()` only after
- * quota warnings are enabled. The directory is created lazily on the first
- * persisted snapshot, so users who never enable warnings get no state files.
- */
 export class QuotaHistory {
   private readonly directory: string | undefined;
   private readonly now: () => number;
@@ -111,7 +103,6 @@ export class QuotaHistory {
     this.maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
   }
 
-  /** Load retained samples without creating the history directory. */
   initialize(): Promise<void> {
     if (!this.initializePromise) {
       this.initializePromise = this.load();
@@ -119,15 +110,10 @@ export class QuotaHistory {
     return this.initializePromise;
   }
 
-  /** Current retained snapshots, ordered oldest first. */
   getSnapshots(): readonly ProjectionSnapshot[] {
     return this.snapshots;
   }
 
-  /**
-   * Add a live snapshot and queue a bounded disk append when sampling rules
-   * allow it. Callers must await `initialize()` before recording.
-   */
   record(snapshot: ProjectionSnapshot): void {
     if (!this.initialized) return;
 
@@ -169,7 +155,6 @@ export class QuotaHistory {
       .catch(() => undefined);
   }
 
-  /** Wait for queued writes. */
   async flush(): Promise<void> {
     await this.writeQueue;
   }
@@ -201,8 +186,6 @@ export class QuotaHistory {
         this.lastPersistedSignature = JSON.stringify(latest.quotas);
       }
     } catch {
-      // History is best-effort. A missing/corrupt/unreadable state directory
-      // must never prevent quota warnings from using live data.
       this.snapshots = [];
     } finally {
       this.initialized = true;
@@ -274,7 +257,6 @@ export class QuotaHistory {
         const metadata = await stat(path);
         if (metadata.isFile()) files.push({ name, path, size: metadata.size });
       } catch (error) {
-        // A concurrently removed or unreadable file can be ignored.
         void error;
       }
     }

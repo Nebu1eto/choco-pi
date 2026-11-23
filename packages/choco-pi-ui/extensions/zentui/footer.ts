@@ -515,8 +515,6 @@ export function installFooter(
           if (branchText) {
             branchParts.push("on", gitIcon, gitColor(branchText));
           } else if (commit?.detached) {
-            // `HEAD` uses git-branch style; `(hash)` uses git-commit style
-            // (bold green) per Starship `git_commit` format.
             branchParts.push("on", gitIcon, gitColor("HEAD"));
             if (config.components.footer.styles.starship.segments.gitCommit && commit.oid) {
               const shortHash = commit.oid.slice(
@@ -558,8 +556,6 @@ export function installFooter(
               config.colors.packageVersion,
             )
           : "";
-        // Skip standalone gitCommit when hash is already folded into the
-        // branch display on detached HEAD.
         const hashFoldedIntoBranch =
           commit?.detached && config.components.footer.styles.starship.segments.gitBranch;
         const gitCommitLabel =

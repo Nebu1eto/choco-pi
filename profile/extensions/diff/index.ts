@@ -1,11 +1,3 @@
-/**
- * `/diff`: a pane beside the transcript listing this session's changes.
- *
- * `lib/changes/git/` reads git and owns refresh scheduling; this entry point wires the
- * pane (`ui/`) and its hosts (`host/`) to Pi. Every dependency below is
- * called lazily: nothing reads the session, the scratch directory, or the
- * review records until the pane is used.
- */
 import { lstat } from "node:fs/promises";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -68,10 +60,8 @@ export default function diffPaneExtension(pi: ExtensionAPI): void {
     copyText: copyToClipboard,
     styler: (ctx) => ctx.ui.theme,
     listTurns: (ctx) => turnCheckpointsOf(ctx.sessionManager.getBranch()),
-    // Every entry of the session file, so /tree navigation and compaction keep the baseline.
     sessionBaseline: (ctx) => sessionBaselineOf(ctx.sessionManager.getEntries()),
     defaultBranchBase: async (cwd) => {
-      // Deadline-bound and output-capped like every store read; nothing outlives the call.
       const git = createPinnedGitRunner(
         createGitExecRunner(DEFAULT_DIFF_LIMITS),
         clock,
@@ -85,7 +75,6 @@ export default function diffPaneExtension(pi: ExtensionAPI): void {
     },
     scratchDir,
     readRecords,
-    // Read-only: the pane lists /review-assist's records and never cleans them up.
     readComments: createCommentReader(() => reviewRecordsDirectory(getAgentDir())),
     headerBox: (ctx) => loadZentuiHeaderBox(() => ctx.ui.theme),
     fileChangedAt: async (path) => {

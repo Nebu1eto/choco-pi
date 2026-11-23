@@ -230,7 +230,6 @@ function registerResolvedAgentBrowserExtension(
       return component;
     },
     execute(toolCallId, params, signal, onUpdate, ctx) {
-      // Reserve the call's turn before the first await so sibling calls keep their order.
       return toolCallAdmissions.run(async () => {
         const runtime = await getRuntime();
         return runtime.tool.execute(toolCallId, params, signal, onUpdate, ctx);

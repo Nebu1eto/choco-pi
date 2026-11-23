@@ -1,7 +1,3 @@
-/**
- * Key actions of the review that read or move through the changes: copy,
- * search, refresh, the editor, and placing the cursor.
- */
 import type { RuntimeValue } from "../../lib/runtime-values.ts";
 import { resolve } from "node:path";
 import { launchEditor } from "../core/editor-launch.ts";
@@ -15,7 +11,6 @@ import { failureLine, HIDDEN_FILE_HINT } from "./review-view-format.ts";
 import { withHostPrompt } from "./review-view-lifecycle.ts";
 import { notify, type ReviewContext } from "./review-view-state.ts";
 
-/** The copy key: the selected lines as code, or a folded hunk as a diff. */
 export function copySelection(ctx: ReviewContext, target: AskTarget): void {
   const hunk = target.hunk;
   if (!hunk) {
@@ -40,7 +35,6 @@ export function copySelection(ctx: ReviewContext, target: AskTarget): void {
   );
 }
 
-/** Fold reviewed and rule-folded hunks the first time each is seen; refreshes keep the reviewer's choices. */
 export function seedFolds(ctx: ReviewContext): void {
   const reviewed = new Set(ctx.record.cursor.reviewedHunkIds);
   const collapsed = new Set(
@@ -74,7 +68,6 @@ export function applyStoreState(ctx: ReviewContext): void {
   }
 }
 
-/** The first unreviewed hunk in risk order, as the review always opened. */
 export function placeInitialCursor(ctx: ReviewContext): void {
   const reviewed = new Set(ctx.record.cursor.reviewedHunkIds);
   const model = ctx.store.model();
@@ -154,7 +147,6 @@ export async function editCurrentHunk(ctx: ReviewContext): Promise<void> {
   );
 }
 
-/** ←/→: the previous or next file, on its first line when it is open. */
 export function moveFile(ctx: ReviewContext, delta: number): void {
   const files = ctx.changes.files();
   const file = files[Math.max(0, Math.min(files.length - 1, ctx.changes.selectedIndex + delta))];
@@ -183,11 +175,6 @@ export async function reloadFindings(ctx: ReviewContext): Promise<void> {
   }
 }
 
-/**
- * Read the changes again (`r`, or after a side-chat tool call). Reviewed
- * marks, folds and comments key on content-hash hunk ids, so an
- * unchanged hunk keeps them across the refresh.
- */
 export async function refresh(ctx: ReviewContext, reason: "manual" | "tool"): Promise<void> {
   if (!ctx.store.canRefresh) {
     if (reason === "manual") {
@@ -221,15 +208,6 @@ export async function refresh(ctx: ReviewContext, reason: "manual" | "tool"): Pr
   }
 }
 
-/**
- * A refresh read the target again: the record names the comparison now
- * shown (base, head, and the head the cursor was last moved on), so a
- * saved review never describes one comparison while its comments and
- * marks were made on another. It is saved through the normal path (q,
- * Finish); comments and reviewed marks key on content-hash hunk ids and
- * stay. A pull request cannot refresh, and its record keeps the head
- * its comments were written on, which submission checks.
- */
 export function followComparison(ctx: ReviewContext): void {
   dropMovedContext(ctx);
   followComments(ctx);

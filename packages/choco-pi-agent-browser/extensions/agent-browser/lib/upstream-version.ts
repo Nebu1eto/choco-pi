@@ -150,7 +150,6 @@ export function resolveAgentBrowserCompatibility(stdout: string): AgentBrowserCo
   };
 }
 
-/** @deprecated Version differences are advisory; use resolveAgentBrowserCompatibility. */
 export function getAgentBrowserVersionValidationError(_stdout: string): undefined {
   return undefined;
 }

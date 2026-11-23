@@ -1,13 +1,3 @@
-/**
- * headless-menus.ts — dialog-only fallbacks for `/agents` and `/btw` outside the TUI.
- *
- * Pi's RPC mode forwards select/input/confirm/notify to the host, but
- * `ctx.ui.custom()` resolves to `undefined` there. The `/agents` list, settings
- * panel, and conversation viewer are custom components, so without these
- * fallbacks an RPC host would see the menu silently reopen. Each helper keeps
- * to dialogs and notices a host can render.
- */
-
 import type { SettingItem } from "@earendil-works/pi-tui";
 import type { AgentRecord } from "../types.ts";
 import { selectItem, type SelectUI } from "./select-item.ts";
@@ -17,23 +7,16 @@ export interface HeadlessUI extends SelectUI {
   notify(message: string, type?: "info" | "warning" | "error"): void;
 }
 
-/** Longest answer body placed in one notice; longer text is cut with a marker. */
 const NOTICE_BODY_LIMIT = 4000;
 
 function clip(text: string): string {
   return text.length > NOTICE_BODY_LIMIT ? `${text.slice(0, NOTICE_BODY_LIMIT)}…` : text;
 }
 
-/**
- * Sentinel returned by {@link pickAgentType} when the user picked the explicit
- * "Back" row. Hosts have no Esc, and cancelling a dialog ends the command, so
- * sub-menus need their own way up.
- */
 export const BACK: unique symbol = Symbol("back");
 
 const BACK_LABEL = "Back";
 
-/** Choose an agent type from a numbered dialog instead of the settings list. */
 export async function pickAgentType(
   ui: SelectUI,
   items: readonly SettingItem[],
@@ -46,11 +29,6 @@ export async function pickAgentType(
   return item === BACK ? BACK : item.id;
 }
 
-/**
- * Edit subagent settings through dialogs. Each pass offers every row with its
- * current value; numeric rows take typed input and the rest a value picker.
- * Cancelling the row picker ends the loop.
- */
 export async function editSettingsWithDialogs(
   ui: HeadlessUI,
   buildItems: () => SettingItem[],
@@ -85,7 +63,6 @@ export async function editSettingsWithDialogs(
   }
 }
 
-/** The agent's latest answer, or why there is none yet. */
 export function describeAgentResult(record: AgentRecord): string {
   const answer = record.result?.trim();
   if (answer) return clip(answer);
@@ -95,7 +72,6 @@ export function describeAgentResult(record: AgentRecord): string {
     : "No answer was recorded.";
 }
 
-/** Notice text standing in for the live conversation viewer. */
 export function headlessConversationNotice(record: AgentRecord, label: string): string {
   return `${label} · ${record.status}\n\n${describeAgentResult(record)}\n\nThe live conversation view needs the terminal UI.`;
 }

@@ -99,7 +99,6 @@ test("terminal rate_limit_error closes the failed model's gate for queued childr
     }
     const failedModel = `${provider}-model`;
     assert.equal(manager.isProviderAvailable(provider, undefined, failedModel), false);
-    // A capacity failure is evidence about the failed model only.
     assert.equal(manager.isProviderAvailable(provider), true);
     assert.equal(manager.isProviderAvailable(provider, undefined, "another-model"), true);
 

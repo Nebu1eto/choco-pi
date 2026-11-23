@@ -63,8 +63,6 @@ export function createZentuiPreferencesComponent(
   const { setEditor, setMessages, setFooter } = createSettingsAppliers(deps);
   const extraSections = options.extraSections ?? [];
   const sectionMerges: SectionMerges = options.mergeSections ?? {};
-  // A host layout places every row by id, which needs every source built;
-  // the legacy layout builds only the sections the shown tab names.
   const layoutMode = options.layout !== undefined;
   const layoutSpecs =
     options.layout ?? legacyLayout(extraSections, sectionMerges, options.sectionOrder);
@@ -79,7 +77,6 @@ export function createZentuiPreferencesComponent(
       layoutMode,
     );
   const initialPlacement = layoutMode ? placeTabs() : undefined;
-  // Tabs are fixed for the panel's lifetime; an empty host tab is left out.
   const visibleSections = initialPlacement
     ? initialPlacement.tabs
         .filter((tab) => tab.groups.some((group) => group.rows.length > 0))
@@ -89,7 +86,6 @@ export function createZentuiPreferencesComponent(
     (initialPlacement?.tabs ?? layoutSpecs).map((tab) => [tab.id, tab.label]),
   );
   const labelOf = (section: string): string => tabLabels.get(section) ?? section;
-  /** The tab holding the first placed row that matches, among the visible tabs. */
   const tabHolding = (matches: (id: string) => boolean): string | undefined =>
     initialPlacement?.tabs.find(
       (tab) =>
@@ -111,21 +107,12 @@ export function createZentuiPreferencesComponent(
   const initialSection = resolveInitialSection();
   const listTheme = deps.settingsListTheme ?? getSettingsListTheme();
   let activeSection = initialSection;
-  // A submenu owns every key while it is open, so the panel's own section
-  // shortcuts and the host's tab shortcuts have to stand down.
   let submenuOpen = false;
-  // While the query is defined the panel lists matching rows from every
-  // section and the typed keys go to its filter field instead of the section
-  // shortcuts.
   let searchQuery: string | undefined;
   let settingsList: SettingsList;
-  // Section-view navigation: the shown rows, which of them are headings, and
-  // the selected row. The panel moves the selection itself so headings are
-  // never focused.
   let navItems: SettingItem[] = [];
   let navHeaders = new Set<string>();
   let navSelectedId: string | undefined;
-  // Sources with rows on the shown tab; they decide which preview renders.
   let activeSources = new Set<string>();
   let preview: WorkingLineFrames | undefined;
   let previewFrameIndex = 0;
@@ -211,11 +198,6 @@ export function createZentuiPreferencesComponent(
     if (previewChanged) startPreview();
     tui.requestRender();
   };
-  /**
-   * Builds the row list the panel currently shows: one section's rows with an
-   * Esc that closes the panel, or every section's matching rows with a search
-   * field and an Esc that only leaves the search.
-   */
   const makeListForItems = (
     items: SettingItem[],
     owners: Map<string, PreferencesExtraSection>,
@@ -271,10 +253,8 @@ export function createZentuiPreferencesComponent(
     );
     return list;
   };
-  /** Whether a section-view row can hold the selection; headings cannot. */
   const selectable = (item: SettingItem | undefined): item is SettingItem =>
     item !== undefined && !navHeaders.has(item.id);
-  /** Moves the section-view selection one selectable row, wrapping like the list does. */
   const moveSelection = (step: 1 | -1): void => {
     const count = navItems.length;
     if (count === 0) return;
@@ -287,11 +267,6 @@ export function createZentuiPreferencesComponent(
       return;
     }
   };
-  /**
-   * Page Up/Down in the section view, as the list moves them but landing on
-   * the nearest row that can hold the selection, so a heading is never
-   * focused and the panel's record of the selection stays the list's.
-   */
   const pageSelection = (data: string): boolean => {
     const current = Math.max(
       0,
@@ -300,7 +275,6 @@ export function createZentuiPreferencesComponent(
     const target = getSelectPageIndex(getKeybindings(), data, current, navItems.length, LIST_ROWS);
     if (target === undefined) return false;
     const step = target < current ? -1 : 1;
-    // On a heading, keep going the way the key moves, then try the other way.
     for (const direction of [step, -step]) {
       for (let index = target; index >= 0 && index < navItems.length; index += direction) {
         const item = navItems[index];
@@ -312,7 +286,6 @@ export function createZentuiPreferencesComponent(
     }
     return true;
   };
-  /** Which section's live preview the shown tab carries, if any. */
   const previewSource = (): "editor" | "userMessages" | "workingLine" | undefined => {
     if (searchQuery !== undefined) return undefined;
     if (activeSources.has("editor")) return "editor";
@@ -340,7 +313,6 @@ export function createZentuiPreferencesComponent(
     return list;
   };
 
-  /** The search field SettingsList keeps private, read to preserve an active query. */
   interface SettingsListSearchInternals {
     searchInput?: {
       focused: boolean;
@@ -355,18 +327,11 @@ export function createZentuiPreferencesComponent(
     return list as SettingsList & SettingsListSearchInternals;
   };
 
-  /** Rows of every section, plus the host section each contributed row belongs to. */
   interface SearchItems {
     items: SettingItem[];
     owners: Map<string, PreferencesExtraSection>;
   }
 
-  /**
-   * Every changeable row from every visible section, labeled with the section
-   * it lives on, so a search result named like another tab's row still says
-   * where it lives. Display-only rows such as source headers cannot be
-   * changed, so they cannot be found either.
-   */
   const collectSearchItems = (): SearchItems => {
     const items: SettingItem[] = [];
     const placement = placeTabs();
@@ -395,14 +360,11 @@ export function createZentuiPreferencesComponent(
     const query = searchQuery ?? "";
     const list = makeListForItems(items, owners, exitSearch, true);
     const internals = searchInternals(list);
-    // Restores the query after a change rebuilt the list and lights the
-    // cursor, which the field only draws while it believes it holds focus.
     if (internals.searchInput !== undefined) {
       internals.searchInput.focused = true;
       internals.searchInput.setValue(query);
       internals.applyFilter(query);
     }
-    // The filter resets the selection; a change keeps the row it changed.
     if (focusId !== undefined) list.selectItem(focusId);
     return list;
   };
@@ -414,7 +376,6 @@ export function createZentuiPreferencesComponent(
     tui.requestRender();
   };
 
-  /** Shows one section's rows, leaving any search; ←/→ and a click on the strip land here. */
   const showSection = (section: string): void => {
     stopPreview();
     searchQuery = undefined;
@@ -424,7 +385,6 @@ export function createZentuiPreferencesComponent(
     tui.requestRender();
   };
 
-  /** Rebuilds the shown list after a change, keeping the active search's filter and section. */
   const rebuildCurrentList = (focusId?: string): SettingsList => {
     settingsList = searchQuery === undefined ? makeSettingsList(focusId) : makeSearchList(focusId);
     return settingsList;
@@ -436,8 +396,6 @@ export function createZentuiPreferencesComponent(
     navSelectedId === options.initialFocusId &&
     options.openInitialSubmenu
   ) {
-    // Activating the focused row is what opens its submenu; the list owns that
-    // step, so replay the key rather than reaching into it.
     settingsList.handleInput("\r");
   }
   startPreview();
@@ -458,13 +416,8 @@ export function createZentuiPreferencesComponent(
       ];
     return [];
   };
-  /**
-   * Where the last frame drew the section strip and the settings list, for
-   * the mouse: rows from the panel's top, and the width it was laid out at.
-   */
   let shownFrame: { width: number; listTop: number; listRows: number } | undefined;
   const tabsRow = 1;
-  /** The settings list's answer to a mouse event over it, without its focus request. */
   const forwardToList = (event: TuiMouseEvent, row: number): TuiMouseEventResult | undefined =>
     keepHostFocus(
       settingsList.handleMouse({
@@ -473,10 +426,6 @@ export function createZentuiPreferencesComponent(
         height: shownFrame?.listRows ?? 0,
       }),
     );
-  /**
-   * The section-view item drawn on list row `row`. The list is told the
-   * panel's selection first, so it lays the window out exactly as computed.
-   */
   const itemAtRow = (row: number): SettingItem | undefined => {
     if (navSelectedId === undefined) return undefined;
     settingsList.selectItem(navSelectedId);
@@ -494,7 +443,6 @@ export function createZentuiPreferencesComponent(
         "─".repeat(Math.max(0, width)),
       );
       if (searchQuery !== undefined) {
-        // The search shows no section preview; its live rows are the result list.
         const searchRows = withSectionFooter(settingsList.render(width), theme, "search").map(
           (line) => truncateToWidth(line, width, ""),
         );
@@ -544,8 +492,6 @@ export function createZentuiPreferencesComponent(
       settingsList.invalidate();
     },
     handleInput(data: string) {
-      // While the search is up, every key types into the filter field or acts
-      // on the result list; Esc only leaves the search, it never closes.
       if (searchQuery !== undefined && !submenuOpen) {
         if (matchesKey(data, "escape")) {
           exitSearch();
@@ -560,7 +506,6 @@ export function createZentuiPreferencesComponent(
         enterSearch();
         return;
       }
-      // The panel owns section-view selection so a heading is never focused.
       if (!submenuOpen) {
         const keybindings = getKeybindings();
         let step: 1 | -1 | undefined;
@@ -591,10 +536,7 @@ export function createZentuiPreferencesComponent(
       if (frame === undefined) return undefined;
       const leftPress = event.button === "left" && event.type === "press";
       const leftClick = event.button === "left" && event.type === "click";
-      // A press must be taken for its click to follow; Pi starts a text
-      // selection on any press nothing takes.
       if (event.y === tabsRow) {
-        // An open submenu owns the panel, as it does every key.
         if (submenuOpen || (!leftPress && !leftClick)) return undefined;
         const section = sectionAtColumn(
           event.x,
@@ -610,7 +552,6 @@ export function createZentuiPreferencesComponent(
       }
       const row = event.y - frame.listTop;
       if (row < 0 || row >= frame.listRows) return undefined;
-      // A submenu and the search list keep their own state; they take the event.
       if (submenuOpen || searchQuery !== undefined) {
         const result = forwardToList(event, row);
         if (searchQuery !== undefined && !submenuOpen)
@@ -624,7 +565,6 @@ export function createZentuiPreferencesComponent(
         return { handled: true };
       }
       if (leftPress) {
-        // A heading never holds the selection, so a press on one is left to Pi.
         const item = itemAtRow(row);
         if (!selectable(item)) return undefined;
         const result = forwardToList(event, row);
@@ -632,7 +572,6 @@ export function createZentuiPreferencesComponent(
         navSelectedId = item.id;
         return result;
       }
-      // The list changes the row its press selected, as Enter would.
       if (leftClick) return forwardToList(event, row);
       return undefined;
     },
@@ -653,16 +592,6 @@ export function createZentuiPreferencesComponent(
 
 export const ZENTUI_PREFERENCES_PROVIDER_SYMBOL = Symbol.for("choco-pi.preferences-provider");
 
-/**
- * Publishes the preferences panel on the global registry so the choco-pi
- * profile can host it as the Preferences tab of its Status/Usage dialog and
- * register the `/preferences` command. The package registers no command
- * itself; without the profile host the panel is simply unused.
- *
- * A subagent child never publishes it: the slot is process-global and the
- * callbacks drive this activation's lifecycle and editor, so a child would
- * leave the main session's panel operating on a disposed child UI.
- */
 export function registerZentuiPreferencesProvider(deps: SettingsCommandDeps): void {
   if (inSubagentChildLoad()) return;
   Object.defineProperty(globalThis, ZENTUI_PREFERENCES_PROVIDER_SYMBOL, {

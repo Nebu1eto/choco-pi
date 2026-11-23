@@ -281,7 +281,6 @@ test("all lifecycle edges match the frozen table; every illegal transition throw
   for (const state of states) for (const next of states) assertTransitionEdge(state, next);
 });
 
-/** A legal edge moves the machine; an illegal one throws and leaves the state unchanged. */
 function assertTransitionEdge(state: CandidateState, next: CandidateState): void {
   const machine = new CandidateMachine();
   machine.state = state;
@@ -536,8 +535,6 @@ test("a legality refusal is diagnosable and does not cool the scope", async () =
     refused.recentFailures?.map((row) => [row.backendId, row.reason, row.detail]),
     [["fake", "no-legal-cut", "no-retained-entry"]],
   );
-  // The next request on the same scope must run at once, not report quota. The branch has not
-  // changed, so only a manual request starts again (see the no-progress suppression tests).
   f.backend.legalityVerdict = { legal: true };
   await f.coordinator.requestPreparation({ trigger: "manual" });
   await f.coordinator.waitForPreparation();
@@ -868,7 +865,6 @@ test("an in-process reload sharing the delivery ledger does not redeliver the co
   const branch = structuredClone(before.state.entries);
   const { committed, latest } = before.state;
   before.coordinator.dispose();
-  // Reload: a new coordinator generation, the same consumer ID re-registered.
   const after = fixture({ generation: 2, delivered });
   after.state.entries = branch;
   after.state.committed = committed;

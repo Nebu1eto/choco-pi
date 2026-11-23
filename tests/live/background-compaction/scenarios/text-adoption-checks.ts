@@ -9,9 +9,7 @@ import { wireToolPairs } from "../suffix.ts";
 import { containsText, mapPayload } from "../transport-capture.ts";
 import { evidence, type Host } from "./types.ts";
 
-/** Matches nothing: a live run without a committed checkpoint has no marker. */
 const NO_CHECKPOINT = "\u0000no-committed-checkpoint";
-/** Shape of a recorded `transport` evidence record (see capturePayload). */
 const TransportRecordSchema = withArtifactDefs(
   obj({ payload: obj({ messages: arr(InputSchema) }, { open: true }) }, { open: true }),
 );
@@ -22,17 +20,8 @@ const PromptInputSchema = obj(
 );
 const ActiveSchema = obj({ isStreaming: bool() }, { open: true });
 
-/**
- * Main-session text adoption must reach the compaction relay and the goal
- * subscriber. Hooks never subscribe: they query `willAdopt`/`isAdoption` instead.
- */
 const MANDATORY_MAIN_CONSUMERS = ["choco-pi-compaction:adoption-relay", "goal"];
 
-/**
- * Split-turn checkpoints quote the governing request inside the summary, so
- * marker mapping must ignore the checkpoint message when asking whether raw
- * prefix entries still travel on the wire.
- */
 function transportMessages(record: ArtifactInput): ArtifactInput[] {
   if (!matches(TransportRecordSchema, record))
     throw new Error("Transport record lacks payload messages");
@@ -44,7 +33,6 @@ function lastCheckpoint(host: Host) {
   return entry?.type === "compaction" ? entry : undefined;
 }
 
-/** Live summaries are model-written; the committed checkpoint's own summary marks its message. */
 function checkpointMarker(host: Host): string {
   if (host.mode === "fake") return FAKE_CHECKPOINT_MARKER;
   const summary = lastCheckpoint(host)?.summary ?? "";
@@ -56,7 +44,6 @@ function committedPasses(host: Host): number | undefined {
   return matches(PassesSchema, details) ? details.passes : undefined;
 }
 
-/** Every observed or mandatory consumer exactly once per committed main adoption. */
 function notificationEvidence(host: Host, result: CheckEvidence): void {
   const mainKey = host.mainCoordinator()?.ownerKey;
   if (mainKey === undefined) return;
@@ -110,7 +97,6 @@ function suffixObservations(host: Host): Observation[] {
     .flatMap((request) => suffixObservationsFor(host, request));
 }
 
-/** Branch index of the adopted candidate's cut entry; -1 when no candidate was recorded. */
 function candidateCutIndex(host: Host): number {
   const branch = host.manager.getBranch();
   const entry = branch.find((item) => item.type === "custom" && isCandidateRecord(item.data));
@@ -121,7 +107,6 @@ function candidateCutIndex(host: Host): number {
   return cut;
 }
 
-/** The checkpoint must keep only entries after the summarized cut, never the cut itself. */
 function keptStartObservation(host: Host, branchRef: number): Observation {
   const branch = host.manager.getBranch();
   const firstKept = lastCheckpoint(host)?.firstKeptEntryId;
@@ -203,7 +188,6 @@ function transportObservations(host: Host): Observation[] {
   ];
 }
 
-/** Checks shared by every main-session text adoption, read from the real branch and wire. */
 export function textAdoptionEvidence(host: Host, activeRef?: number): CheckEvidence {
   const result = evidence(host);
   const branchRef = host.snapshot();
@@ -227,11 +211,6 @@ export function textAdoptionEvidence(host: Host, activeRef?: number): CheckEvide
   notificationEvidence(host, result);
   return result;
 }
-/**
- * Codex rides choco-pi-codex's WebSocket, outside the fetch ledger. The
- * context the host built for the post-adoption turn is the observable request:
- * it must open with the committed checkpoint and carry no frozen-prefix entry.
- */
 function providerOwnedTransportObservations(host: Host): Observation[] {
   const last = host.session.messages.findLast((message) => message.role === "assistant");
   if (host.mode !== "live" || last?.role !== "assistant" || last.api === "anthropic-messages")
@@ -241,8 +220,6 @@ function providerOwnedTransportObservations(host: Host): Observation[] {
   const branch = host.manager.getBranch();
   const cut = branch.findIndex((entry) => entry.id === checkpoint.firstKeptEntryId);
   const prefixEntries = branch.slice(0, Math.max(cut, 0));
-  // Text of every summarized user turn; none of it may survive verbatim in the context.
-  // The host stores prompted user text either as a string or as text blocks.
   const UserTextSchema = obj(
     {
       role: lit("user"),

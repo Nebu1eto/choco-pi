@@ -86,9 +86,7 @@ export class CodeModeHostSession {
         }),
         shutdownDeadline(this.shutdownGraceMs),
       ]);
-    } catch {
-      // Process teardown below is authoritative.
-    }
+    } catch {}
     this.connection.close(new Error("Code-mode host shut down"));
   }
 }

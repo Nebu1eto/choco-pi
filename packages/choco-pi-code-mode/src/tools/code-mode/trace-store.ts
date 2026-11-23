@@ -74,9 +74,7 @@ export class CodeModeTraceStore {
       const droppedTraceCount = this.droppedCounts.get(cellId);
       if (droppedTraceCount) details.droppedTraceCount = droppedTraceCount;
       context.onUpdate?.({ content: [], details });
-    } catch {
-      // Rendering updates must not change nested tool execution.
-    }
+    } catch {}
   }
 
   attach(response: RuntimeResponse): RuntimeResponse {

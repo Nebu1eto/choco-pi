@@ -22,23 +22,15 @@ export type Plan = {
   sessionId: string;
   requests: string;
   daemonLog: string;
-  /** Socket Pi uses: the tier-A fake daemon, or the tier-B logging proxy. */
   socket: string;
-  /** Tier B: the real dev helper daemon socket the proxy forwards to. */
   upstream?: string;
   helperApp: string;
-  /**
-   * Tier B: this attempt's fixture log directory (also holds .cu-quit and .cu-resize), unique per
-   * attempt and session so a retry never inherits a stale .cu-quit or earlier launch rows.
-   */
   fixtureDir: string;
 };
-/** Tier B: an independently installed dev helper app and the socket its daemon serves. */
 export interface TierBHelper {
   app: string;
   socket: string;
 }
-/** `<PI_SCRATCH_DIR>/e2e` when the host provides it, else `/tmp/choco-pi/<PI_SESSION_ID>/e2e`. */
 export const scratchRoot = (
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): string =>

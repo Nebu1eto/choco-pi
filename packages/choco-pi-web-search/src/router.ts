@@ -172,7 +172,6 @@ interface SearchPlan {
   families: SearchProviderFamily[];
   fanout: boolean;
   explicit: boolean;
-  /** True when families came from the default order (`auto` without routing, or `all`). */
   implicit: boolean;
 }
 
@@ -634,11 +633,6 @@ async function attemptAdapter(
   }
 }
 
-/**
- * Default-order plans (`auto` without routing, `all`) never consider explicit-only adapters.
- * Families whose registered adapters are all explicit-only are dropped and each skipped
- * adapter is recorded as a disabled attempt.
- */
 function implicitFamilies(
   scope: SearchScope,
   families: readonly SearchProviderFamily[],

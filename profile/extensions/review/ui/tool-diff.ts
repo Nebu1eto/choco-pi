@@ -1,38 +1,4 @@
 import { isObject, isString, recordOf, type RuntimeValue } from "../../lib/runtime-values.ts";
-/**
- * Re-render Pi's file-changing tool output through the review diff renderer.
- *
- * `write`, `edit`, and `apply_patch` normally draw with Pi's plain built-in
- * diff. This module swaps only their `renderCall`/`renderResult` functions for
- * ones that build a `DiffModel` and hand it to `lib/changes/render/diff-render.ts`,
- * so tool rows get the same syntax-highlighted, token-emphasised diff as the
- * `/review-assist` view.
- *
- * ## Why a prototype patch, and why this one
- *
- * `AgentSession.getToolDefinition()` reads `_toolDefinitions`, a registry that
- * is separate from the `_toolRegistry` the agent executes from (Pi 0.84.1,
- * `dist/core/agent-session.js`). Every caller of `getToolDefinition` is a
- * rendering or inspection path, so replacing renderers there cannot reach
- * execution. Re-registering a same-named tool through `registerTool` would
- * replace `execute` wholesale and is deliberately avoided: exact-match
- * validation, uniqueness and overlap checks, the file mutation queue, and BOM
- * and EOL preservation must stay with Pi and with the `apply_patch` provider.
- *
- * `profile/extensions/command-filter.ts` is the precedent for the guarded
- * prototype patch and the applied-flag idiom that keeps an extension reload
- * from stacking wrappers.
- *
- * ## Failure policy
- *
- * Every wrapper is a decoration with a fallback. A patch that will not parse,
- * an unexpected result shape, a missing renderer, or a throw inside this
- * module all fall through to the tool's original renderer, so a future Pi
- * change degrades to stock rendering instead of breaking the tool row.
- *
- * Verified against Pi 0.84.1. The internals this module reads are listed
- * above; nothing else in the review feature touches them.
- */
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import {
@@ -50,63 +16,31 @@ import { createHighlight, DEFAULT_HIGHLIGHT } from "../../lib/changes/render/hig
 import type { DiffFile, DiffHunk, DiffLine, ResolvedReviewConfig } from "../core/types.ts";
 import { normalizePatchPath } from "@choco-pi/code-mode/patch-paths";
 
-/* ------------------------------------------------------------------ types */
-
 export type ToolDiffToolName = "write" | "edit" | "apply_patch";
 
-/** Tools this module decorates. Every other tool passes through by identity. */
 export const TOOL_DIFF_TOOLS: readonly ToolDiffToolName[] = ["write", "edit", "apply_patch"];
 
-/**
- * Transcript header labels while the call runs. The registered name is an API
- * identifier, not something to show a reader; these match the working line's
- * verbs in choco-pi-ui's `tool-labels.ts`, so a tool reads the same mid-turn
- * and in the transcript.
- */
 export const TOOL_DIFF_LABELS = {
   write: "File: Writing",
   edit: "File: Editing",
   apply_patch: "File: Patching",
 } satisfies Readonly<Record<ToolDiffToolName, string>>;
 
-/**
- * The same headers once the call has settled. A transcript row outlives the
- * work it describes, so it reads in the past tense Pi's own finished rows use
- * ("Ran", "Explored").
- */
 export const TOOL_DIFF_FINISHED_LABELS = {
   write: "File: Wrote",
   edit: "File: Edited",
   apply_patch: "File: Patched",
 } satisfies Readonly<Record<ToolDiffToolName, string>>;
 
-/**
- * Pi starts a tool row with `isPartial: true` and clears it when the final
- * result arrives, so this is the moment the header switches tense.
- */
 export function toolDiffLabel(name: ToolDiffToolName, context: RenderContextLike): string {
   return context.isPartial === false ? TOOL_DIFF_FINISHED_LABELS[name] : TOOL_DIFF_LABELS[name];
 }
 
 export type ToolDiffRenderingOptions = {
-  /**
-   * Read on every render rather than captured, so a `review.json` reload
-   * takes effect without reinstalling the patch. Missing config means the
-   * built-in highlight defaults.
-   */
   config?: () => ResolvedReviewConfig | undefined;
-  /**
-   * Tool rows are usually narrower than `MIN_SPLIT_WIDTH`, and
-   * `renderDiffFile` falls back to unified below it anyway, so `"unified"`
-   * is the default.
-   */
   mode?: "unified" | "split";
 };
 
-/**
- * Pi's `ToolRenderContext` is not exported from the package entry, so the
- * fields this module reads are declared structurally.
- */
 type RenderContextLike = {
   args?: unknown;
   toolCallId?: string;
@@ -130,28 +64,14 @@ type PatchedSessionPrototype = typeof AgentSession.prototype & {
   __chocoPiToolDiffApplied?: boolean;
 };
 
-/* -------------------------------------------------------------- constants */
-
-/** Physical diff lines shown before a collapsed row is truncated. */
 const COLLAPSED_BODY_LINES = 10;
 
-/** Upper bound on a synchronous render-time read of an on-disk file. */
 const MAX_RENDER_READ_BYTES = 2_000_000;
 
-/** Bounded so a long session cannot grow the apply_patch model cache forever. */
 const APPLY_PATCH_CACHE_LIMIT = 128;
 
 const DEFAULT_CONFIG_HIGHLIGHT: ResolvedReviewConfig["highlight"] = { ...DEFAULT_HIGHLIGHT };
 
-/* ------------------------------------------------------------- components */
-
-/**
- * Marks every component this module returns.
- *
- * Pi hands the previous component back as `context.lastComponent`. The stock
- * renderers assume they created it (`component.cache`, `component.clear()`,
- * `component.preview`), so a fallback must never pass one of ours back.
- */
 const OWNED = Symbol.for("choco-pi.review.toolDiff");
 
 function own<T extends object>(component: T): T {
@@ -163,12 +83,6 @@ function isOwned(component: RuntimeValue): boolean {
   return isObject(component) && component !== null && OWNED in component;
 }
 
-/**
- * Renders pre-formatted lines verbatim.
- *
- * `Text` word-wraps, which would break diff lines that `renderDiffFile` has
- * already truncated to the exact render width.
- */
 class DiffLinesComponent implements Component {
   private build: (width: number) => string[];
   private fallbackText: string;
@@ -192,11 +106,6 @@ class DiffLinesComponent implements Component {
     this.cachedLines = undefined;
   }
 
-  /**
-   * Rendering happens after the wrapper has returned, so the guard against a
-   * throwing renderer has to live here too: a throw during `render` would
-   * escape into the surrounding TUI redraw.
-   */
   render(width: number): string[] {
     if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
     this.cachedWidth = width;
@@ -221,8 +130,6 @@ function diffLinesComponent(
   return new DiffLinesComponent(build, fallbackText);
 }
 
-/* ------------------------------------------------------------------ paths */
-
 function displayPath(path: string, cwd: string | undefined): string {
   if (!cwd || !isAbsolute(path)) return path;
   const relativePath = relative(cwd, path);
@@ -232,8 +139,6 @@ function displayPath(path: string, cwd: string | undefined): string {
 function readSourceLines(path: string, cwd: string | undefined): string[] | undefined {
   try {
     const absolute = isAbsolute(path) ? path : resolve(cwd ?? process.cwd(), path);
-    // Rendering runs on the UI path, so an oversized file is skipped before it
-    // is read rather than after.
     if (statSync(absolute).size > MAX_RENDER_READ_BYTES) return undefined;
     return splitContentLines(readFileSync(absolute, "utf8"));
   } catch {
@@ -250,9 +155,6 @@ function splitContentLines(content: string): string[] {
     .map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
 }
 
-/* ------------------------------------------------------- diff model: write */
-
-/** Whole-content diff for `write`, rendered as an added file. */
 export function buildWriteDiffFile(path: string, content: string): DiffFile {
   const lines = splitContentLines(content);
   const diffLines: DiffLine[] = lines.map((text, index) => ({
@@ -278,17 +180,6 @@ export function buildWriteDiffFile(path: string, content: string): DiffFile {
   return { path, kind: "added", hunks, additions: lines.length, deletions: 0 };
 }
 
-/* -------------------------------------------------------- diff model: edit */
-
-/**
- * Parse the unified patch the `edit` tool reports in `EditToolDetails.patch`.
- *
- * `generateUnifiedPatch` emits bare `--- path` / `+++ path` headers with no
- * `diff --git` line, and a repository path that itself starts with `a/` would
- * be mangled by the parser's prefix stripping. Rebuilding the headers from the
- * tool's own path avoids both problems and keeps `lib/changes/patch.ts` as the single
- * unified-patch parser.
- */
 export function parseEditPatch(patch: string, path: string): DiffFile[] {
   const lines = patch.split("\n");
   const bodyStart = lines.findIndex((line) => line.startsWith("@@ "));
@@ -298,8 +189,6 @@ export function parseEditPatch(patch: string, path: string): DiffFile[] {
   const normalized = `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n${body}`;
   return parseGitDiff(normalized, "", "").files;
 }
-
-/* -------------------------------------------------- diff model: apply_patch */
 
 type CodexAction =
   | { kind: "add"; path: string; lines: string[] }
@@ -320,14 +209,6 @@ function isCodexSectionStart(line: string): boolean {
   );
 }
 
-/**
- * Parse the `*** Begin Patch` envelope `apply_patch` receives.
- *
- * This reads the same grammar the tool documents and throws on anything it
- * does not recognise, which sends the caller back to the provider's own
- * renderer. Header paths are read with the applier's own `normalizePatchPath`,
- * so the file shown is the file the patch edits.
- */
 export function parseCodexPatch(text: string): CodexAction[] {
   const lines = text.trim().split("\n");
   const last = lines.length - 1;
@@ -390,11 +271,9 @@ function codexMarker(raw: string): CodexMarker {
   if (raw.startsWith("+")) return { kind: "add", text: raw.slice(1) };
   if (raw.startsWith("-")) return { kind: "del", text: raw.slice(1) };
   if (raw.startsWith(" ")) return { kind: "context", text: raw.slice(1) };
-  // The format tolerates a dropped leading space on an unchanged line.
   return { kind: "context", text: raw };
 }
 
-/** First index at or after `from` where `needle` occurs, retrying from 0. */
 function findSequence(
   haystack: readonly string[],
   needle: readonly string[],
@@ -448,14 +327,6 @@ function wholeFileHunk(path: string, lines: string[], kind: "add" | "del"): Diff
   ];
 }
 
-/**
- * Resolve the hunks of one `*** Update File` section.
- *
- * The envelope carries no line numbers, so each section is located by
- * searching the on-disk file for its unchanged-and-removed side. When the
- * search fails, the hunk still renders with blank gutters rather than
- * inventing positions.
- */
 function updateHunks(
   path: string,
   body: readonly string[],
@@ -543,7 +414,6 @@ function diffFileOf(
     : { path, kind, hunks, additions, deletions };
 }
 
-/** Convert an `apply_patch` envelope into renderable diff files. */
 export function buildApplyPatchDiffFiles(
   patchText: string,
   cwd: string | undefined,
@@ -569,8 +439,6 @@ export function buildApplyPatchDiffFiles(
   });
 }
 
-/* -------------------------------------------------------------- rendering */
-
 function expandHint(): string {
   try {
     return keyHint("app.tools.expand", "to expand");
@@ -586,13 +454,6 @@ function totalDiffLines(files: readonly DiffFile[]): number {
   );
 }
 
-/**
- * Keep at most `limit` physical diff lines.
- *
- * Truncating the model rather than the rendered output keeps syntax
- * highlighting off the lines nobody will see, which matters for a `write` of a
- * large file.
- */
 type LimitedDiff = { files: DiffFile[]; hidden: number };
 
 function limitDiffLines(files: readonly DiffFile[], limit: number): LimitedDiff {
@@ -646,8 +507,6 @@ function renderFiles(params: {
       theme,
     );
     if (index === 0) {
-      // `renderDiffFile` always leads with a `path  +a -b` header line, so
-      // the tool label shares that line instead of duplicating the path.
       const head = label
         ? `${theme.fg("toolTitle", theme.bold(label))} ${rendered[0] ?? ""}`
         : (rendered[0] ?? "");
@@ -668,8 +527,6 @@ function renderFiles(params: {
   return output;
 }
 
-/* ---------------------------------------------------------------- helpers */
-
 function stringField(source: RuntimeValue, ...keys: string[]): string | undefined {
   if (!isObject(source) || source === null) return undefined;
   for (const key of keys) {
@@ -680,7 +537,6 @@ function stringField(source: RuntimeValue, ...keys: string[]): string | undefine
   return undefined;
 }
 
-/** Never hand one of our components back to a stock renderer. */
 function sanitized(context: RenderContextLike): RenderContextLike {
   return isOwned(context.lastComponent) ? { ...context, lastComponent: undefined } : context;
 }
@@ -717,8 +573,6 @@ function toolBackground(
   return (text) => theme.bg("toolPendingBg", text);
 }
 
-/* ------------------------------------------------------------------ write */
-
 function renderWriteCall(
   original: AnyRenderCall | undefined,
   args: RuntimeValue,
@@ -726,8 +580,6 @@ function renderWriteCall(
   context: RenderContextLike,
 ): Component {
   const label = toolDiffLabel("write", context);
-  // While arguments still stream, Pi's incremental highlighter is the better
-  // view: there is no complete file to diff yet.
   if (context.argsComplete !== true) return fallbackCall(original, label, args, theme, context);
   const path = stringField(args, "path", "file_path");
   const content = stringField(args, "content");
@@ -752,22 +604,12 @@ function renderWriteCall(
   );
 }
 
-/* ------------------------------------------------------------------- edit */
-
-/**
- * `edit` reports the patch it actually applied only in its result, so the call
- * row keeps the title and `renderResult` draws the diff underneath it. Pi
- * composes call and result into the same container in that order, so the
- * on-screen layout is unchanged.
- */
 function renderEditCall(
   original: AnyRenderCall | undefined,
   args: RuntimeValue,
   theme: Theme,
   context: RenderContextLike,
 ): Component {
-  // Before the result settles, Pi's asynchronous pre-execution preview is
-  // still the only diff available; keep it.
   if (context.isPartial !== false)
     return fallbackCall(original, TOOL_DIFF_LABELS.edit, args, theme, context);
   const path = stringField(args, "path", "file_path");
@@ -805,7 +647,6 @@ function renderEditResult(
     new DiffLinesComponent(
       (width) =>
         renderFiles({
-          // The label already sits on the call row; the diff header carries the path.
           label: "",
           files,
           theme,
@@ -818,8 +659,6 @@ function renderEditResult(
   return box;
 }
 
-/* ------------------------------------------------------------- apply_patch */
-
 const applyPatchModels = new Map<string, DiffFile[]>();
 
 function cacheApplyPatchModel(key: string, files: DiffFile[]): void {
@@ -831,17 +670,10 @@ function cacheApplyPatchModel(key: string, files: DiffFile[]): void {
   }
 }
 
-/** Exposed so tests and a session reset can drop cached render models. */
 export function clearToolDiffCache(): void {
   applyPatchModels.clear();
 }
 
-/**
- * The envelope carries no line numbers, so positions come from the file as it
- * was before the patch ran. The first resolved model for a tool call is cached
- * and reused, because a re-render after execution would search the already
- * patched file.
- */
 function applyPatchDiffFiles(patchText: string, context: RenderContextLike): DiffFile[] {
   const key =
     context.toolCallId === undefined ? undefined : `${context.toolCallId}\u0000${patchText}`;
@@ -883,8 +715,6 @@ function renderApplyPatchCall(
   );
 }
 
-/* -------------------------------------------------------------- decoration */
-
 type ToolRenderers = {
   renderCall?: (
     original: AnyRenderCall | undefined,
@@ -914,13 +744,6 @@ function isWrappedTool(name: string): name is ToolDiffToolName {
 
 const decorations = new WeakMap<object, ToolDefinition>();
 
-/**
- * Copy a tool definition with only its renderers replaced.
- *
- * The spread preserves every other field, including `renderShell`, which
- * `tool-execution.js` resolves independently of the renderers, and `execute`,
- * which keeps its original function identity.
- */
 export function decorateToolDefinition(definition: ToolDefinition): ToolDefinition {
   if (!isWrappedTool(definition.name)) return definition;
   const cached = decorations.get(definition);
@@ -965,17 +788,8 @@ export function decorateToolDefinition(definition: ToolDefinition): ToolDefiniti
   return next;
 }
 
-/* ----------------------------------------------------------------- install */
-
 let activeOptions: ToolDiffRenderingOptions = {};
 
-/**
- * Route `write`, `edit`, and `apply_patch` rendering through the review diff
- * renderer.
- *
- * Safe to call repeatedly: the prototype is patched once and later calls only
- * refresh the options, so an extension reload cannot stack wrappers.
- */
 export function installToolDiffRendering(options: ToolDiffRenderingOptions = {}): void {
   activeOptions = options;
   // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.

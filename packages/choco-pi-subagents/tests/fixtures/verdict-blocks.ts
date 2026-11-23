@@ -1,5 +1,3 @@
-/** Structured final-message blocks for the verdict-record tests. */
-
 export const WORK_TASK = "demo-task";
 
 export function fence(info: string, body: string): string {

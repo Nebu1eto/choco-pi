@@ -1,14 +1,3 @@
-/**
- * revival-journal.ts — saved-record schema, reducer and startup disposition for
- * durable subagent revival.
- *
- * The manager appends one `subagent-journal` custom entry to the ROOT session
- * file on every material record transition. On startup the entries are reduced
- * (file order, latest per agent wins, foreign forks ignored) and each snapshot
- * gets a disposition: revive, re-arm a usage wait, stay dormant, or stop at the
- * unclean-revival cap. Everything here is pure; the manager owns the effects.
- */
-
 import {
   arr,
   bool,
@@ -28,16 +17,10 @@ import type { UsageLimitClassification } from "./usage-limit-seam.ts";
 
 export const SUBAGENT_JOURNAL_ENTRY = "subagent-journal";
 
-/** Result/error text cap per snapshot (UTF-8 bytes, note included). */
 export const JOURNAL_TEXT_CAP_BYTES = 64 * 1024;
 
-/** Consecutive automatic revivals allowed after unclean exits. */
 export const MAX_UNCLEAN_REVIVALS = 2;
 
-/**
- * Terminal error journaled once for an agent that reached the automatic
- * revival cap; it then stays dormant and is never reported again.
- */
 export const CAPPED_REVIVAL_ERROR = `Automatic revival stopped after ${MAX_UNCLEAN_REVIVALS} automatic revivals ended in unexpected exits; resume manually.`;
 
 const ThinkingLevelSchema = oneOf(["minimal", "low", "medium", "high", "xhigh", "max"]);
@@ -54,7 +37,6 @@ const JournalBudgetsSchema = obj(
   { open: true },
 );
 
-/** Mirrors `AgentInvocation` (UI display snapshot); every field is plain data. */
 const JournalInvocationSchema = obj(
   {
     modelName: opt(str()),
@@ -74,13 +56,6 @@ const JournalInvocationSchema = obj(
   { open: true },
 );
 
-/**
- * Serializable subset of the spawn/run options a revival needs to re-run the
- * agent with the same settings. Excludes callbacks, AbortSignals, contexts,
- * `mainSessionFork`, `hookWorktreePath` (the journaled `worktree` replaces it),
- * `reclaim`/`resumeSessionFile` (derived from the snapshot) and the live
- * `Model` object (journaled separately as `agent.model`).
- */
 export const JournalRunOptionsSchema = obj(
   {
     maxTurns: opt(finiteNum()),
@@ -92,18 +67,15 @@ export const JournalRunOptionsSchema = obj(
     cwd: opt(str()),
     configCwd: opt(str()),
     isBackground: opt(bool()),
-    /** Restricted read-only child; a revival must never widen it. */
     readOnly: opt(bool()),
     sideConversation: opt(bool()),
     workflowId: opt(str()),
     workflowStepId: opt(str()),
     maxSubagentDepth: opt(finiteNum()),
-    /** Agent-definition transcript switch, when the caller resolved it. */
     outputTranscript: opt(bool()),
     outputFile: opt(str()),
     fastModeRequested: opt(bool()),
     daybreakRequested: opt(union([bool(), lit("auto")])),
-    /** Parent's scoped models (`provider/id`) at spawn; empty = unrestricted. */
     scopedModels: opt(arr(str())),
     invocation: opt(JournalInvocationSchema),
   },
@@ -111,7 +83,6 @@ export const JournalRunOptionsSchema = obj(
 );
 export type JournalRunOptions = Static<typeof JournalRunOptionsSchema>;
 
-/** Copy of the root usage-limit contract's classification schema. */
 export const JournalUsageClassificationSchema = obj(
   {
     kind: oneOf(["quota", "billing", "transient"]),
@@ -121,7 +92,6 @@ export const JournalUsageClassificationSchema = obj(
     resetAt: opt(finiteNum()),
     confidence: oneOf(["structured", "parsed", "inferred"]),
     sessionId: opt(str()),
-    /** Additive: models a model-scoped limit covers; absent means the whole account. */
     scope: opt(obj({ name: str(), models: arr(str()), exact: opt(bool()) }, { open: true })),
   },
   { open: true },
@@ -175,9 +145,7 @@ export const JournalAgentSnapshotSchema = obj(
           branch: str(),
           baseSha: str(),
           repo: str(),
-          /** Additive: subdirectory-scoped cwd inside the worktree. */
           workPath: opt(str()),
-          /** Additive: worktree supplied by a WorktreeCreate hook. */
           hookManaged: opt(bool()),
         },
         { open: true },
@@ -188,12 +156,7 @@ export const JournalAgentSnapshotSchema = obj(
     stoppedByUser: opt(bool()),
     result: opt(str()),
     error: opt(str()),
-    /**
-     * Additive: steering accepted but not yet delivered when a queued or
-     * running record was suspended; the revival prompt carries them.
-     */
     steers: opt(arr(str())),
-    /** Additive: the child session lived in memory (`persist_session: false`). */
     inMemorySession: opt(bool()),
   },
   { open: true },
@@ -212,16 +175,11 @@ export const SubagentJournalDataSchema = obj(
 );
 export type SubagentJournalData = Static<typeof SubagentJournalDataSchema>;
 
-// Reader acceptance: every schema above is open (unknown keys allowed), so old
-// and foreign journal entries keep loading. The writer below is stricter: it
-// strips unknown keys with `projectJournalJson` before validating.
 const subagentJournalDataValidator = compile(SubagentJournalDataSchema);
 const journalAgentSnapshotValidator = compile(JournalAgentSnapshotSchema);
 
-/** Whether `value` is a journalable agent snapshot (unknown keys allowed). */
 export const isJournalAgentSnapshot = journalAgentSnapshotValidator.check;
 
-/** Decoded JSON, the only values the writer projection ever sees. */
 type JournalJson =
   | string
   | number
@@ -230,10 +188,6 @@ type JournalJson =
   | JournalJson[]
   | { [key: string]: JournalJson };
 
-/**
- * Known fields of a journal payload. `null` is a leaf kept verbatim (valid or
- * not); an object lists the fields to keep when the value is a plain object.
- */
 interface JournalWhitelist {
   readonly [field: string]: JournalWhitelist | null;
 }
@@ -331,44 +285,29 @@ function isJsonObject(value: JournalJson): value is { [key: string]: JournalJson
   return value !== null && !Array.isArray(value) && Object(value) === value;
 }
 
-/**
- * Hand-written replacement for `Value.Clean`: copy only the fields `whitelist`
- * names, recursively. A known field that is invalid (wrong type, non-object
- * where an object is expected) is kept verbatim so validation rejects the
- * entry; nothing is coerced, defaulted or silently dropped except unknown keys.
- * The result shares no objects with `value`.
- */
 function projectJournalJson(value: JournalJson, whitelist: JournalWhitelist | null): JournalJson {
-  // Leaves are deep-copied so the projection never aliases its input.
   if (whitelist === null || !isJsonObject(value)) return structuredClone(value);
   const projected: { [key: string]: JournalJson } = {};
   for (const [field, child] of Object.entries(whitelist)) {
-    // Own properties only: inherited names like `constructor` are never data.
     if (!Object.hasOwn(value, field)) continue;
     projected[field] = projectJournalJson(value[field], child);
   }
   return projected;
 }
 
-/** Writer projection exposed for tests: strips unknown keys without repairing known ones. */
 export function projectJournalDataForWrite(value: JournalJson): JournalJson {
   return projectJournalJson(value, JOURNAL_DATA_FIELDS);
 }
 
-/** A reduced snapshot plus where it came from in the session file. */
 export type JournalSnapshotWithMeta = SubagentJournalData & {
-  /** Session entry id of the winning entry. */
   entryId: string;
-  /** Position of the winning entry in the reduced entry list. */
   index: number;
 };
 
-/** Compile-time proof that every live record status is journalable. */
 export function journalStatusOf(status: AgentRecord["status"]): JournalAgentStatus {
   return status;
 }
 
-/** Plain-data copy of a contract classification for the journal. */
 export function journalClassificationOf(
   classification: UsageLimitClassification,
 ): JournalUsageClassification {
@@ -388,14 +327,12 @@ export function journalClassificationOf(
   return copy;
 }
 
-/** A journaled classification is a valid contract classification. */
 export function usageClassificationOf(
   classification: JournalUsageClassification,
 ): UsageLimitClassification {
   return classification;
 }
 
-/** Input for `buildJournalData`; `at` defaults to `Date.now()`. */
 export interface JournalDataInput {
   rootSessionId: string;
   at?: number;
@@ -411,14 +348,11 @@ function truncationNote(sessionFile: string | undefined, shown: number, total: n
   return `\n\n[Truncated for the subagent journal: ${shown} of ${total} bytes kept. The full output is in ${where}.]`;
 }
 
-/** Cap `text` at `JOURNAL_TEXT_CAP_BYTES` UTF-8 bytes including the note. */
 export function capJournalText(text: string, sessionFile: string | undefined): string {
   const bytes = Buffer.from(text, "utf8");
   if (bytes.length <= JOURNAL_TEXT_CAP_BYTES) return text;
-  // The note's digits depend on the kept length; size it for the largest value.
   const noteBudget = Buffer.byteLength(truncationNote(sessionFile, bytes.length, bytes.length));
   let end = Math.max(0, JOURNAL_TEXT_CAP_BYTES - noteBudget);
-  // Back off to a UTF-8 code-point boundary (continuation bytes are 10xxxxxx).
   while (end > 0 && (bytes[end] & 0xc0) === 0x80) end -= 1;
   return bytes.subarray(0, end).toString("utf8") + truncationNote(sessionFile, end, bytes.length);
 }
@@ -474,12 +408,6 @@ function pickRunOptions(options: JournalRunOptions): JournalRunOptions {
   };
 }
 
-/**
- * Build one journal payload: copies only known plain-data fields (callers may
- * pass live objects structurally), caps result/error, drops `prompt` once the
- * child session file exists, strips `undefined`, and validates the result.
- * Throws if the input cannot form a valid entry.
- */
 export function buildJournalData(input: JournalDataInput): SubagentJournalData {
   const agent = input.agent;
   const picked: SubagentJournalData = {
@@ -534,8 +462,6 @@ export function buildJournalData(input: JournalDataInput): SubagentJournalData {
       inMemorySession: agent.inMemorySession,
     },
   };
-  // Round-trip to drop undefined keys and prove the payload survives JSONL,
-  // then strip anything a structural caller smuggled into nested objects.
   let serialized: JournalJson;
   try {
     serialized = JSON.parse(JSON.stringify(picked));
@@ -552,7 +478,6 @@ export function buildJournalData(input: JournalDataInput): SubagentJournalData {
   return cleaned;
 }
 
-/** Minimal structural view of a Pi session entry (`SessionEntry` satisfies it). */
 export interface JournalEntryView {
   type: string;
   id: string;
@@ -569,16 +494,6 @@ const AgentIdProbeSchema = obj(
 );
 const agentIdProbeValidator = compile(AgentIdProbeSchema);
 
-/**
- * Reduce journal entries (pass `getEntries()`, which is file order, not the
- * current branch) to the latest valid snapshot per agent for `rootSessionId`.
- *
- * Entries written by another root (a fork or clone carrying the file's
- * history) are ignored. A malformed entry is skipped; when it still names an
- * agent of this root, it also discards that agent's earlier snapshot, because
- * the agent's real latest state is then unknown and reviving from an older
- * state could re-run finished work. A later valid entry restores it.
- */
 export function reduceJournal(
   entries: readonly JournalEntryView[],
   rootSessionId: string,
@@ -605,20 +520,6 @@ export type StartupDisposition =
   | { kind: "dormant" }
   | { kind: "capped"; revivals: number };
 
-/**
- * Decide what startup does with one reduced snapshot.
- *
- * - explicit stop (`stoppedByUser` or status `stopped`) => dormant, never revived;
- * - `waiting_for_reset` => re-arm the usage wait;
- * - `interrupted` written by a graceful suspend => clean revival, revivals 0;
- * - `running`/`queued`/`interrupted` not written by a graceful suspend => unclean
- *   exit: revive with revivals+1 while below the cap, otherwise `capped`;
- * - every other terminal status => dormant.
- *
- * `running`/`queued` with `suspended: true` breaks the contract (a graceful
- * suspend journals `interrupted`); it is treated as unclean so a buggy writer
- * cannot produce an uncapped revival loop.
- */
 export function startupDisposition(
   snapshot: Pick<SubagentJournalData, "suspended" | "agent">,
 ): StartupDisposition {
@@ -636,19 +537,12 @@ export function startupDisposition(
   return { kind: "dormant" };
 }
 
-/** A delegated run being revived for the agent that receives the prompt. */
 export interface InterruptedChildRun {
   id: string;
   handle?: string;
   description: string;
 }
 
-/**
- * Continuation prompt for a revived agent. Queued steering messages follow in
- * order, each delimited so the agent can tell them apart. `unclean` undefined
- * means the cause is unknown (a manual resume of a dormant interrupted agent).
- * `children` lists the agent's own delegated runs revived with it.
- */
 export function buildInterruptionPrompt(input: {
   unclean: boolean | undefined;
   steers: readonly string[];

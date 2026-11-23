@@ -1,17 +1,3 @@
-/**
- * Host-neutral analysis facade for the MCP path.
- *
- * This is the heart of the "real review loop": it runs the *same* per-edit
- * dispatch pipeline choco-pi-lsp runs inside pi (`dispatchLintWithResult`) on a file,
- * and returns a structured, JSON-serializable result — diagnostics plus the
- * latency record for that dispatch, in the same schema pi writes to latency.log.
- *
- * Because the only host coupling is `getFlag` (see host-shim), this runs with no
- * pi process: an MCP server (or a `fresh` worker importing the freshly-built
- * dist) can drive it directly, letting Claude observe a commit's real behavioral
- * + perf impact first-hand rather than inferring it from pasted logs.
- */
-
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { CacheManager, MCP_TURN_STATE_OWNER_ID } from "../cache-manager.ts";
@@ -42,26 +28,8 @@ import { logWordIndex } from "../word-index-logger.ts";
 import { idleEvictionTimersSuspended, registerIdleTimerRelease } from "../idle-timer-release.ts";
 import { createMcpHost } from "./host-shim.ts";
 
-// #536: module-scoped FactStore for the warm-analyze graph seam, mirroring the
-// per-edit cascade path's own module-level `sessionFacts` singleton
-// (clients/dispatch/integration.ts) — buildOrUpdateGraph's incremental/cached
-// tiers key off a stable FactStore instance across calls, so a fresh FactStore
-// per call would defeat that reuse. Scoped separately from integration.ts's
-// singleton since this file has no dependency on that module's internal state.
 const warmGraphFacts = new FactStore();
 
-// #536 rider (issue body: "when #348 phase 2 lands, the word-index per-edit
-// update should ride the SAME seam so both indexes stay warm together"):
-// MCP has no RuntimeCoordinator/`runtime.wordIndex` to hold a live index the
-// way pi's per-edit seam does (clients/dispatch/integration.ts's
-// `updateWordIndexForCascade`, called from clients/runtime-tool-result.ts with
-// `runtime.wordIndex`) — this process-scoped Map is the MCP-side equivalent: a
-// per-cwd live WordIndex, loaded once from the persisted snapshot and mutated
-// in place thereafter, mirroring `runtime.wordIndex`'s lifecycle for a process
-// that has no other place to hold it. `undefined` cached value = "checked,
-// nothing usable" (index missing or pre-phase-2/no-forward-map), distinct from
-// "never checked" (key absent) — avoids re-attempting a snapshot load with no
-// forward index on every single analyze call.
 const DEFAULT_WORD_INDEX_IDLE_EVICT_MS = 20 * 60_000;
 const DEFAULT_WORD_INDEX_MAX_WARM_ROOTS = 8;
 
@@ -93,8 +61,6 @@ function clearWarmWordIndexTimer(entry: WarmWordIndexEntry): void {
   entry.timer = undefined;
 }
 
-// Primary session_shutdown releases idle handles (entries stay warm; the next
-// use re-arms) so a shut-down module graph is not pinned for the idle window.
 registerIdleTimerRelease(() => {
   for (const entry of warmWordIndexes.values()) clearWarmWordIndexTimer(entry);
 });
@@ -143,14 +109,6 @@ export interface WarmWordIndexLease {
   release(): void;
 }
 
-/**
- * Look up (loading from the persisted snapshot on first use per cwd) the warm
- * in-memory word index this analyze facade keeps mutated in place. Exported so
- * `symbolSearch()` (clients/lsp-engine.ts) can prefer this live copy over a
- * fresh disk read when one exists for the cwd — otherwise a query immediately
- * following a warm `pilens_analyze` call in the SAME process would read a
- * stale on-disk snapshot until the debounced persist (default 1500ms) flushes.
- */
 export function acquireWarmWordIndex(cwd: string): WarmWordIndexLease {
   const key = path.resolve(cwd);
   let entry = warmWordIndexes.get(key);
@@ -186,10 +144,6 @@ export function acquireWarmWordIndex(cwd: string): WarmWordIndexLease {
   };
 }
 
-/**
- * Test-only reset — the module-level warm cache otherwise survives across
- * unrelated test cases in the same vitest worker.
- */
 export function _resetWarmWordIndexCacheForTests(): void {
   for (const entry of warmWordIndexes.values()) clearWarmWordIndexTimer(entry);
   warmWordIndexes.clear();
@@ -203,18 +157,9 @@ export function _getWarmWordIndexCacheStateForTests() {
   };
 }
 
-// Generous warm-up budgets: a cold language server needs to spawn AND publish
-// diagnostics. The per-edit dispatch runner caps these tightly (spawn budget +
-// 2500ms) for latency; a review tool prioritises completeness, so we pre-warm
-// with room to spare, then the measured dispatch reads the warm cache.
-// Bounded so a cold analysis can't hang: enough for fast servers (pyright,
-// rust-analyzer, gopls) and a warm typescript-language-server, but NOT enough to
-// fully load a large TS project from cold — that exceeds any per-call budget and
-// is the persistent warm server's job (see the `lsp` honesty signal + Tier 2).
 const WARMUP_CLIENT_WAIT_MS = 10_000;
 const WARMUP_DIAGNOSTICS_WAIT_MS = 6_000;
 
-/** One diagnostic, flattened to the fields an MCP consumer needs. */
 export interface McpAnalyzeDiagnostic {
   line?: number;
   column?: number;
@@ -228,7 +173,6 @@ export interface McpAnalyzeDiagnostic {
   fixSuggestion?: string;
 }
 
-/** Per-runner timing, mirroring the latency.log `runners[]` schema. */
 export interface McpRunnerLatency {
   runnerId: string;
   durationMs: number;
@@ -240,7 +184,6 @@ export interface McpAnalyzeResult {
   filePath: string;
   cwd: string;
   fileKind: string | undefined;
-  /** Wall-clock time the facade spent in dispatch (includes provider warmup). */
   durationMs: number;
   hasBlockers: boolean;
   counts: {
@@ -250,20 +193,12 @@ export interface McpAnalyzeResult {
     fixed: number;
   };
   diagnostics: McpAnalyzeDiagnostic[];
-  /**
-   * The LSP runner's outcome, surfaced explicitly so a cold/indexing server's
-   * `0 diagnostics` is never silently mistaken for "clean". On a large project a
-   * cold language server can take longer to load than any per-call warm-up, so
-   * `ran` + `status` + `durationMs` let the consumer judge completeness (and
-   * prefer warm mode / a re-run once the persistent server has indexed).
-   */
   lsp?: {
     ran: boolean;
     status: string;
     diagnosticCount: number;
     durationMs: number;
   };
-  /** The dispatch latency report for this run (latency.log schema), if captured. */
   latency?: {
     totalDurationMs: number;
     stoppedEarly: boolean;
@@ -272,53 +207,12 @@ export interface McpAnalyzeResult {
 }
 
 export interface AnalyzeFileOptions {
-  /** Per-call flag overrides for the host shim (e.g. `{ "no-lsp": true }`). */
   flags?: Record<string, boolean | string | undefined>;
-  /**
-   * Only run blocking (error-level) rules — pi's fast on-write path. Default
-   * false: a review wants the full picture (warnings + structural smells).
-   */
   blockingOnly?: boolean;
-  /**
-   * Pre-warm the LSP (spawn + wait for published diagnostics) before the
-   * measured dispatch, so a cold server doesn't make the run report 0 LSP
-   * diagnostics. Default true; the `fresh` worker relies on it (always cold).
-   */
   warmLsp?: boolean;
-  /**
-   * Record results into the session widget-state + diagnostic tracker so the
-   * query tools (`diagnostics_report`, `lsp_health`) reflect this analysis.
-   * Default true; harmless (and discarded) in the short-lived `fresh` worker.
-   */
   record?: boolean;
-  /**
-   * Mark the file as edited-this-turn in on-disk turn-state, so a subsequent
-   * `pilens_turn_end` (knip/jscpd/dep/tests/cascade) picks it up with no
-   * explicit file list. Default false — only the edit-detection paths (the
-   * warm `pilens_analyze` and the PostToolUse-hook bin) enable it, so `fresh`
-   * benchmarking doesn't pollute the real turn-state.
-   */
   registerTurnState?: boolean;
-  /**
-   * Maintain the review graph for this file after a successful dispatch — the
-   * SAME `buildOrUpdateGraph` call pi's per-edit cascade path makes
-   * (`computeCascadeForFile`, clients/dispatch/integration.ts), so
-   * `pilens_module_report`'s usedBy/blastRadius and `pilens_symbol_search`'s
-   * centrality reflect files analyzed via MCP, not just session-start state.
-   * Default false — this is a DELIBERATE opt-in gate (#536), not a
-   * per-call-site inference from cwd/process, because `analyzeFile` is the
-   * shared facade for BOTH the warm in-process path (mcp/server.ts) and the
-   * `fresh` worker (mcp/worker.ts, forked per-call, always cold, exits after
-   * one result) — the fresh worker's process-lifetime is too short for the
-   * persist debounce to ever flush, and building/persisting a graph from a
-   * one-shot throwaway process on every fresh analysis would be pure waste
-   * plus a needless disk write. Only mcp/server.ts's two warm call sites (the
-   * IPC handler and the direct tool dispatch) set this true. This retires the
-   * #256 "read-only facade" contract for warm mode specifically; `fresh`
-   * stays read-only.
-   */
   updateGraph?: boolean;
-  /** Explicit MCP writer identity; null must never erase a pi owner. */
   ownerId?: string;
 }
 
@@ -337,11 +231,6 @@ function toMcpDiagnostic(diagnostic: Diagnostic): McpAnalyzeDiagnostic {
   };
 }
 
-/**
- * Pre-warm the LSP for a file: spawn the server and wait for it to publish
- * diagnostics, so the subsequent dispatch reads a warm cache instead of a cold
- * (empty) one. Best-effort — failures never block the analysis.
- */
 async function warmLspForFile(
   absPath: string,
   host: ReturnType<typeof createMcpHost>,
@@ -364,32 +253,15 @@ async function warmLspForFile(
       maxDiagnosticsWaitMs: WARMUP_DIAGNOSTICS_WAIT_MS,
       source: "mcp-warmup",
     });
-  } catch {
-    // Best-effort warm-up; the dispatch runner still tries on its own.
-  }
+  } catch {}
 }
 
-/**
- * Run the dispatch pipeline on `filePath` and return a structured result.
- *
- * Unlike pi's per-edit path this defaults to the *full* analysis (warnings +
- * structural smells, not just blocking errors), pre-warms the LSP so a cold
- * server doesn't under-report, records into the session diagnostic state so the
- * query tools compose, and runs delta-free so a repeated analysis of an
- * unchanged file is a consistent full snapshot rather than "new issues only".
- *
- * The latency report is matched against the dispatches appended *during this
- * call* (we snapshot the report count first), so concurrent callers don't pick
- * up each other's timings.
- */
 export async function analyzeFile(
   filePath: string,
   cwd: string,
   options: AnalyzeFileOptions = {},
 ): Promise<McpAnalyzeResult> {
   const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
-  // no-delta by default → a full snapshot every call (not delta-filtered);
-  // caller flags win over the default.
   const host = createMcpHost({ "no-delta": true, ...options.flags }, cwd);
 
   if (options.warmLsp !== false) {
@@ -398,18 +270,12 @@ export async function analyzeFile(
 
   const reportsBefore = getLatencyReports().length;
   const start = Date.now();
-  // No telemetryModel/telemetryProvider here (#1448): this MCP facade has no
-  // RuntimeCoordinator to hold a host-reported identity (see the module doc
-  // above), so any worklog entries this dispatch produces get a blank
-  // model/provider — that's correct, not a gap.
   const result = await dispatchLintWithResult(absPath, cwd, host, undefined, undefined, {
     blockingOnly: options.blockingOnly ?? false,
   });
   const durationMs = Date.now() - start;
 
   if (options.record !== false) {
-    // Mirror pipeline.ts's recording so diagnostics_report (mode=all) and
-    // lsp_health see what this analysis found.
     recordDiagnostics(absPath, result.diagnostics);
     if (result.diagnostics.length > 0) {
       getDiagnosticTracker().trackShown(result.diagnostics);
@@ -417,9 +283,6 @@ export async function analyzeFile(
   }
 
   if (options.registerTurnState) {
-    // Full-file range, importsChanged=true (conservative → dep/knip re-check
-    // broadly). Clear any stale pi session ID because the MCP Stop route owns
-    // this workspace-scoped worklist independently. Best-effort.
     try {
       const lineCount = fs.readFileSync(absPath, "utf8").split("\n").length;
       new CacheManager().addModifiedRange(
@@ -430,49 +293,17 @@ export async function analyzeFile(
         options.ownerId ?? MCP_TURN_STATE_OWNER_ID,
         "mcp",
       );
-    } catch {
-      // unreadable — skip turn-state registration
-    }
+    } catch {}
   }
 
   if (options.updateGraph && !result.hasBlockers) {
-    // #536: maintain the review graph on a successful warm analysis — the same
-    // call pi's per-edit cascade path makes (computeCascadeForFile), gated the
-    // same way (CASCADE_GRAPH_KINDS: only languages the graph actually models,
-    // and skipped when the file has blockers, matching the cascade path's own
-    // "primary_has_blockers" skip). buildOrUpdateGraph owns its own debounced
-    // persist + seq machinery internally — this is the ONLY call needed; no
-    // separate persist/flush step. Best-effort: a graph build failure must
-    // never fail the analysis itself (the diagnostics are already computed).
     const fileKind = detectFileKind(absPath);
     if (fileKind && CASCADE_GRAPH_KINDS.has(fileKind)) {
       try {
         await buildOrUpdateGraph(cwd, [absPath], warmGraphFacts);
-      } catch {
-        // Best-effort — the graph update is additive; a failure here must not
-        // surface as an analyze failure.
-      }
+      } catch {}
     }
 
-    // #536 rider: ride the SAME seam for the word index (#348 phase 2's
-    // per-edit primitive), mirroring pi's `updateWordIndexForCascade`
-    // (clients/dispatch/integration.ts) rule-for-rule rather than reusing it
-    // directly — that function is module-private and reads its file-content
-    // argument from the pipeline's already-read buffer, whereas this seam
-    // reads the file itself (no pipeline hook here). Same rules: a cached
-    // index with no `forward` map (or none loaded) ⇒ no-op (no incremental
-    // primitive available — the eventual full rebuild covers it); an
-    // oversized file is REMOVED, never partially indexed; the update is
-    // synchronous (no interleaving hazard — MCP is single-process, same as
-    // pi); a successful update schedules the SAME debounced persist
-    // (`scheduleWordIndexPersist`, `CHOCO_PI_LSP_WORD_INDEX_PERSIST_DEBOUNCE_MS`)
-    // pi's path uses — no second persist mechanism.
-    //
-    // Key shape: `absPath` (`path.resolve` of the tool-input path). Since #1025
-    // the word index's path maps fold every key through `wordIndexKey`
-    // INTERNALLY (PathKeyedMap), so this edit-form key and the build path's
-    // walk-derived key converge on the same entry regardless of casing/
-    // separator — the old duplicate-orphan hazard is gone at the map layer.
     const warmLease = acquireWarmWordIndex(cwd);
     const warmIndex = warmLease.index;
     try {
@@ -486,19 +317,13 @@ export async function analyzeFile(
             updateWordIndexDocument(warmIndex, { path: absPath, content });
           }
           scheduleWordIndexPersist(cwd, warmIndex);
-        } catch {
-          // unreadable/deleted, or an update failure — best-effort, same as the
-          // graph update above.
-        }
+        } catch {}
       }
     } finally {
       warmLease.release();
     }
   }
 
-  // dispatchForFile appended a latency report during the call above. Match the
-  // newly-added report for this exact path; fall back to the most recent new
-  // report if the path normalization differs.
   const newReports = getLatencyReports().slice(reportsBefore);
   const latencyReport =
     newReports.find((report) => path.resolve(report.filePath) === absPath) ??

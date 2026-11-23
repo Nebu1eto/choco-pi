@@ -15,7 +15,6 @@ import {
   registerCompactionTokenCounter,
   registeredTokenCounter,
 } from "../src/background-host/token-counter-registry.ts";
-// The provider packages register these on activation; this test loads no provider extension.
 import {
   ANTIGRAVITY_COUNT_TOKENS_ENV,
   registerAntigravityCompactionTokenCounter,
@@ -33,7 +32,6 @@ after(() => {
   for (const unregister of unregisterProviders.splice(0)) unregister();
 });
 
-/** Count Google Antigravity prompts regardless of the environment. */
 const ANTIGRAVITY_ON = new Map([[ANTIGRAVITY_COUNT_TOKENS_ENV, true]]);
 
 function model(provider: string, id: string, baseUrl: string): Model<Api> {
@@ -58,7 +56,6 @@ const ANTIGRAVITY = model(
   "gemini-3.8-flash",
   "https://daily-cloudcode-pa.googleapis.com",
 );
-/** The packed registry key of the provider, with obviously fake values. */
 const ANTIGRAVITY_KEY = JSON.stringify({ token: "fake-access-token", project_id: "fake-project" });
 
 interface Call {
@@ -66,7 +63,6 @@ interface Call {
   readonly init: RequestInit | undefined;
 }
 
-/** Fetch stub recording every call and answering from a queue of responders. */
 function stubFetch(...responders: ((call: Call) => Promise<Response>)[]) {
   const calls: Call[] = [];
   const fetch: typeof globalThis.fetch = (input, init) => {
@@ -80,7 +76,6 @@ function stubFetch(...responders: ((call: Call) => Promise<Response>)[]) {
   return { fetch, calls };
 }
 
-/** A count_tokens reply body; `tokens` models a wrong-shaped payload. */
 interface CountReply {
   readonly input_tokens?: number;
   readonly tokens?: number;
@@ -98,7 +93,6 @@ const json =
 
 const empty500 = () => Promise.resolve(new Response("", { status: 500 }));
 
-/** A google.rpc error body with the given HTTP status. */
 const rpcError = (status: number, rpcStatus: string) => () =>
   Promise.resolve(
     new Response(
@@ -118,7 +112,6 @@ const totalTokens = (count: number) => () =>
     }),
   );
 
-/** Never resolves until the request signal aborts, then rejects with its reason. */
 const hang = (call: Call) =>
   new Promise<Response>((_resolve, reject) => {
     const signal = call.init?.signal;
@@ -274,7 +267,6 @@ test("google (Antigravity): counting is off unless the env flag is 1 at creation
     const auth = registry(ANTIGRAVITY_KEY);
     const off = createProviderTokenCounter({ registry: auth, fetch: stub.fetch });
     const notes: string[] = [];
-    // Set after creation: the flag is read once, so this counter stays off.
     process.env[ANTIGRAVITY_COUNT_TOKENS_ENV] = "1";
     assert.equal(await off.countTokens(input(ANTIGRAVITY, notes)), undefined);
     assert.equal(stub.calls.length, 0);
@@ -377,7 +369,6 @@ test("google (Antigravity): an abort is not cached; an unknown model is", async 
 });
 
 test("google (Antigravity): a Gemini API key or another non-OAuth key is skipped without a request", async () => {
-  // Pi's inherited google API-key auth resolves GEMINI_API_KEY or a stored API key verbatim.
   for (const key of ["AIzaFAKE-gemini-api-key-for-tests", "not-json", '{"token":"t"}']) {
     const none = stubFetch();
     const counter = createProviderTokenCounter({

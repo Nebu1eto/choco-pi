@@ -51,7 +51,6 @@ function createHarness() {
   };
 }
 
-/** Mirrors the host: a user turn composes the prompt, then the run starts. */
 async function userTurn(harness: ReturnType<typeof createHarness>) {
   await harness.emit("before_agent_start");
   harness.setLivePrompt(COMPOSED);
@@ -124,7 +123,6 @@ test("a host-triggered run that fell back to the base prompt sends the composed 
   await userTurn(harness);
   assert.equal(await harness.request({ instructions: COMPOSED }), undefined);
 
-  // The run ended, a tool-set change reset the live prompt, and a custom message started a run.
   harness.setLivePrompt(BASE);
   assert.deepEqual(await harness.request({ instructions: BASE }), { instructions: COMPOSED });
 });

@@ -1,4 +1,3 @@
-/** Small insertion-ordered LRU used for process-lifetime memo tables. */
 export class BoundedLruCache<K, V> {
   private readonly entries = new Map<K, V>();
   private readonly maxEntries: number;

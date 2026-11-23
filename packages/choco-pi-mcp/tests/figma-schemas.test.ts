@@ -27,14 +27,12 @@ test("required fields are enforced and optional fields may be omitted", () => {
 });
 
 test("file_key-only tools accept file_key and reject the former fileKey", () => {
-  // figma_get_styles, figma_get_variables, figma_get_components, figma_get_component_sets
   const single = compile(FigmaSingleFileParams);
   assert.equal(single.check({ file_key: "k" }), true);
   assert.equal(single.check({ file_key: "k", max_response_chars: 2000 }), true);
   assert.equal(single.check({ fileKey: "k" }), false);
   assert.equal(single.check({ file_key: "k", maxResponseChars: 2000 }), false);
   assert.equal(single.check({}), false);
-  // figma_get_file
   const file = compile(FigmaGetFileParams);
   assert.equal(file.check({ file_key: "k", depth: 2 }), true);
   assert.equal(file.check({ fileKey: "k", depth: 2 }), false);

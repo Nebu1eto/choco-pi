@@ -1,4 +1,3 @@
-// /diff source branch without a base: the remote's default branch, then main, then master, else a clear message.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
@@ -50,7 +49,6 @@ async function tempDir(t: { after(fn: () => Promise<void>): void }): Promise<str
   return path;
 }
 
-/** A repository whose only branch is the given one, with one commit. */
 async function repository(root: string, branch: string): Promise<string> {
   await git(root, "init", "-q", "-b", branch);
   await git(root, "config", "user.name", "Diff Test");
@@ -95,7 +93,6 @@ test("the default base is the remote's default branch, then main, then master, e
 
 type Handler = (event: RuntimeValue, ctx: ExtensionContext) => RuntimeValue;
 
-/** The pane with the real store and the real default-base resolver, as index.ts wires them. */
 function pane(cwd: string) {
   const handlers = new Map<string, Handler[]>();
   const commands = new Map<string, Omit<RegisteredCommand, "name" | "sourceInfo">>();

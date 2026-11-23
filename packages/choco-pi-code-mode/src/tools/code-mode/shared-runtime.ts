@@ -55,10 +55,6 @@ export interface CodeModeToolProvider {
   richRendering?(): boolean;
   executionKind?(ctx: BoundaryValue): CodeModeExecutionKind;
   notebookOptions?(ctx: BoundaryValue): NotebookRuntimeOptions;
-  /**
-   * Port (AsyncCodeModeCallHook): consumes a provider's record that this exec
-   * call was issued as a native async Code Mode call, so exec yields early.
-   */
   consumeAsyncCall?(owner: string, toolCallId: string): boolean;
 }
 
@@ -134,7 +130,6 @@ export class SharedCodeModeRuntime {
     );
   }
 
-  /** Every provider consumes its own record; any match marks the call async. */
   consumeAsyncCall(owner: string, toolCallId: string): boolean {
     let found = false;
     for (const provider of this.providers.values())
@@ -185,9 +180,7 @@ export class SharedCodeModeRuntime {
     return this.getClient(ctx).then(() => undefined);
   }
 
-  async checkpointNotebook(): Promise<void> {
-    // Notebook Mode was removed from this fork; nothing to checkpoint.
-  }
+  async checkpointNotebook(): Promise<void> {}
 
   async shutdownHost(): Promise<void> {
     while (this.clientPromise) {
@@ -197,9 +190,7 @@ export class SharedCodeModeRuntime {
       this.clientStartupAbort = undefined;
       try {
         await (await pending).shutdown();
-      } catch {
-        // Startup failure already reached the caller.
-      }
+      } catch {}
     }
   }
 

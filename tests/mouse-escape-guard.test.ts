@@ -1,6 +1,3 @@
-// The mouse escape guard on pi-tui's real input path: raw bytes into a real
-// StdinBuffer (10 ms escape timeout, as in Pi), its sequences into a real
-// TuiAltScreen or TuiMainScreen, its listeners and the focused component.
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
@@ -56,7 +53,6 @@ class FakeTerminal implements Terminal {
   setProgramStatus(_status: ProgramStatus): void {}
 }
 
-/** Stands in for the focused /diff pane: records every key it is given. */
 class Recorder implements Component {
   readonly inputs: string[] = [];
   render(): string[] {
@@ -79,12 +75,9 @@ class FakeStdin extends EventEmitter implements RawInput {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** Keep the event loop busy, as a render while scrolling does. */
 function busy(ms: number): void {
   const until = performance.now() + ms;
-  while (performance.now() < until) {
-    // spin
-  }
+  while (performance.now() < until) {}
 }
 
 function uiFor(tui: TUI) {
@@ -119,7 +112,6 @@ function harness(screen: "fullscreen" | "main", focus: "editor" | "pane", guarde
   tui.addChild(pane);
   tui.setFocus(focus === "editor" ? editor : pane);
   tui.start();
-  // What the TUI receives from the stdin buffer, before any extension listener.
   const parsed: string[] = [];
   tui.addInputListener((data) => {
     parsed.push(data);
@@ -128,13 +120,11 @@ function harness(screen: "fullscreen" | "main", focus: "editor" | "pane", guarde
   const stdin = new FakeStdin();
   const buffer = new StdinBuffer({ escapeTimeout: 10 });
   buffer.on("data", (sequence) => terminal.input(sequence));
-  // ProcessTerminal's own stdin listener, registered before any extension's.
   stdin.on("data", (chunk: string) => buffer.process(chunk));
   const installed = guarded
     ? installMouseEscapeGuard({ mode: "tui", ui: uiFor(tui) }, stdin)
     : undefined;
   if (guarded) assert.ok(installed, "the guard installs on a real TUI");
-  // A listener registered after the guard, like the /diff pane's double-Esc listener.
   const later: string[] = [];
   tui.addInputListener((data) => {
     later.push(data);
@@ -162,7 +152,6 @@ function harness(screen: "fullscreen" | "main", focus: "editor" | "pane", guarde
 
 type Harness = ReturnType<typeof harness>;
 
-/** The reproduced split: ESC read alone, the loop busy past the escape timeout, the tail read later. */
 async function splitWheelReport(h: Harness): Promise<void> {
   h.send(WHEEL);
   h.send(ESC);
@@ -178,7 +167,6 @@ for (const screen of ["fullscreen", "main"] as const) {
       const h = harness(screen, focus);
       try {
         await splitWheelReport(h);
-        // The split really happened: a bare ESC, then the tail as single characters.
         const escIndex = h.parsed.indexOf(ESC);
         assert.ok(escIndex >= 0, "the stdin buffer flushed a bare ESC");
         assert.deepEqual(h.parsed.slice(escIndex), [ESC, ...SPLIT_TAIL]);
@@ -212,7 +200,7 @@ test("a broken report flushed as ESC [<digits is dropped with its rest", async (
   const h = harness("fullscreen", "editor");
   try {
     h.send(`${ESC}[<64;19`);
-    await sleep(70); // past the stdin buffer's 50 ms timeout for an unfinished sequence
+    await sleep(70);
     h.send("1;47M");
     await sleep(HOLD_MS * 3);
     assert.ok(h.parsed.includes(`${ESC}[<64;19`));
@@ -227,7 +215,7 @@ test("an Escape without recent mouse input is delivered at once", async () => {
   const h = harness("fullscreen", "pane");
   try {
     h.send(ESC);
-    await sleep(20); // the stdin buffer's 10 ms, well short of the guard's hold
+    await sleep(20);
     assert.deepEqual(h.pane.inputs, [ESC]);
     assert.deepEqual(h.later, [ESC]);
   } finally {
@@ -354,7 +342,6 @@ test("dispose drops a held Escape and detaches from stdin and the TUI", async ()
     assert.equal(h.stdin.listenerCount("data"), stdinListeners);
     await sleep(HOLD_MS * 3);
     assert.deepEqual(h.pane.inputs, []);
-    // Detached: the next scroll and Escape behave as without the guard.
     h.send(WHEEL);
     h.send(ESC);
     await sleep(20);

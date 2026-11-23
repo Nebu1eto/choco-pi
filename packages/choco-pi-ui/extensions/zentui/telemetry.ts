@@ -70,7 +70,6 @@ function resolveAutoCompaction(
   }
 }
 
-/** Resolve optional Pi telemetry without depending on private session or TUI fields. */
 export function resolveFooterTelemetry(
   ctx: ExtensionContext,
   capabilities: TelemetryCapabilities = {},

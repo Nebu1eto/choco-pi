@@ -20,14 +20,7 @@ import { buildCommentAnchor } from "../profile/extensions/review/core/anchor.ts"
 import { createReviewStore, unreviewedHunks } from "../profile/extensions/review/core/store.ts";
 import type { ReviewComment, ReviewRecord } from "../profile/extensions/review/core/types.ts";
 
-/**
- * /review-assist reads local targets through the shared change layer. Saved
- * reviews point at hunks by id, so the layer must produce the hunk ids the
- * old route produced: `git diff --patch -M -C` text through `parseGitDiff`.
- */
-
 const execFileAsync = promisify(execFile);
-// A user's global git configuration must not change what either route reads.
 const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 process.env.GIT_CONFIG_GLOBAL = "/dev/null";
 process.env.GIT_CONFIG_NOSYSTEM = "1";
@@ -53,18 +46,14 @@ async function gitAllowing(cwd: string, args: string[]): Promise<string> {
   }
 }
 
-/* ------------------------------------------------- the old route, verbatim */
-
 const OLD_GIT_CONFIG = ["-c", "core.quotePath=false", "-c", "color.ui=false"];
 const OLD_DIFF_ARGS = ["--patch", "-M", "-C", "--no-color"];
 
-/** The committed `readRawDiff`: a patch between two revisions or trees. */
 async function oldRange(root: string, base: string, head: string): Promise<DiffModel> {
   const patch = await git(root, ...OLD_GIT_CONFIG, "diff", ...OLD_DIFF_ARGS, base, head, "--");
   return parseGitDiff(patch, base, head);
 }
 
-/** The committed `readRawDiffToWorkingTree`: tracked patch, then each untracked file. */
 async function oldWorking(root: string, base: string, headSha: string): Promise<DiffModel> {
   const tracked = await git(root, ...OLD_GIT_CONFIG, "diff", ...OLD_DIFF_ARGS, base, "--");
   const untracked = (
@@ -92,8 +81,6 @@ async function oldWorking(root: string, base: string, headSha: string): Promise<
     .join("");
   return parseGitDiff(raw, base, headSha);
 }
-
-/* ------------------------------------------------------------- fixtures */
 
 type Cleanup = { after(fn: () => void | Promise<void>): void };
 
@@ -131,12 +118,6 @@ type Fixture = {
   featureTree: string;
 };
 
-/**
- * main: the base. feature: a rename with edits, a pure rename, a deletion,
- * a file without a trailing newline, CRLF lines, a mode-only change, a
- * binary change and edits to odd names. The working tree adds untracked
- * files, one more edit, and a type change.
- */
 async function fixture(t: Cleanup): Promise<Fixture> {
   const root = await repository(t);
   await put(root, "keep.txt", "same\n");
@@ -182,7 +163,6 @@ async function load(options: Omit<LoadDiffModelOptions, "isCurrent">): Promise<D
   return (await loadDiffModel({ ...options, isCurrent: () => true })).model;
 }
 
-/** (path, kind, oldPath, hunk ids) per file, sorted by path: what saved reviews depend on. */
 function identity(model: DiffModel, without: readonly string[] = []): string[] {
   return model.files
     .filter((file) => !without.includes(file.path))
@@ -199,21 +179,17 @@ function identity(model: DiffModel, without: readonly string[] = []): string[] {
 
 const TYPE_CHANGE = "typechange.txt";
 
-/* ---------------------------------------------------------------- tests */
-
 test("every local target lists the files, kinds and hunk ids the old route produced", async (t) => {
   const f = await fixture(t);
   const turns = {
     listTurns: async () => [{ turnIndex: 1, tree: f.mainTree, label: "turn 1" }],
   };
 
-  // branch <base>: the working tree against merge-base(HEAD, base).
   const branchOld = await oldWorking(f.root, f.mainSha, f.featureSha);
   const branchNew = await load({ cwd: f.root, source: { kind: "branch-base", base: "main" } });
   assert.deepEqual(identity(branchNew, [TYPE_CHANGE]), identity(branchOld, [TYPE_CHANGE]));
   assert.deepEqual([branchNew.baseSha, branchNew.headSha], [f.mainSha, f.featureSha]);
 
-  // session: the working tree against the first turn's tree.
   const sessionOld = await oldWorking(f.root, f.mainTree, f.featureSha);
   const sessionNew = await load({
     cwd: f.root,
@@ -223,7 +199,6 @@ test("every local target lists the files, kinds and hunk ids the old route produ
   assert.deepEqual(identity(sessionNew, [TYPE_CHANGE]), identity(sessionOld, [TYPE_CHANGE]));
   assert.deepEqual([sessionNew.baseSha, sessionNew.headSha], [f.mainTree, f.featureSha]);
 
-  // session turn <n> that has a later turn, and branch <base> <target>: tree against tree.
   for (const [base, head] of [
     [f.mainTree, f.featureTree],
     [f.mainSha, f.featureSha],
@@ -237,7 +212,6 @@ test("every local target lists the files, kinds and hunk ids the old route produ
     assert.deepEqual([rangeNew.baseSha, rangeNew.headSha], [base, head]);
   }
 
-  // The fixture covers what it claims to.
   const kinds = new Map(branchNew.files.map((file) => [file.path, file.kind]));
   assert.equal(kinds.get("rename-edit new.txt"), "renamed");
   assert.equal(kinds.get("pure-renamed.txt"), "renamed");
@@ -344,7 +318,6 @@ test("a review saved from the old route keeps its reviewed marks and comments", 
     [],
     "every comment still sits on its hunk and line",
   );
-  // Binary and renamed files keep their identity although a binary file has no hunks.
   const binary = current.files.find((file) => file.path === "image.bin");
   assert.deepEqual([binary?.kind, binary?.hunks.length], ["binary", 0]);
   const renamed = current.files.find((file) => file.path === "pure-renamed.txt");
@@ -400,7 +373,6 @@ test("a checkpoint file that is untracked now is compared by content, not listed
   await commitAll(root, "base");
   await put(root, "same.txt", "unchanged scratch\n");
   await put(root, "edited.txt", "old line\nkept\n");
-  // The checkpoint captured both untracked files, as file-checkpoints does.
   const index = join(root, ".git", "checkpoint-index");
   const env = { ...GIT_ENV, GIT_INDEX_FILE: index };
   await execFileAsync("git", ["add", "-A"], { cwd: root, env });
@@ -432,7 +404,6 @@ test("a checkpoint file that is untracked now is compared by content, not listed
 test("loading never writes the index", async (t) => {
   const f = await fixture(t);
   const indexPath = join(f.root, ".git", "index");
-  // Make the index stat data stale, which a porcelain diff would refresh and rewrite.
   await put(f.root, "keep.txt", "same\n");
   const before = await stat(indexPath);
   await new Promise((resolve) => setTimeout(resolve, 20));
@@ -451,7 +422,6 @@ test("losing ownership stops the load: no git call starts after it", async (t) =
     calls += 1;
     if (!current) callsAfterLoss += 1;
     const result = await real(cmd, args, opts);
-    // Ownership ends during the first body read.
     if (args.includes("--patch")) current = false;
     return result;
   };
@@ -465,7 +435,6 @@ test("losing ownership stops the load: no git call starts after it", async (t) =
     DiffLoadCancelledError,
   );
   assert.ok(calls > 0);
-  // Up to three other body reads may already have started; none begins later.
   const settled = calls;
   await new Promise((resolve) => setTimeout(resolve, 300));
   assert.equal(calls, settled);

@@ -26,7 +26,6 @@ interface PendingCompletionData {
   shells: ShellResult[];
 }
 
-// In-process numbers must stay finite (TypeBox rejected NaN/Infinity; pi-schema accepts them).
 const finiteNumber = () => num({ minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE });
 
 const persistedShellSchema = obj(
@@ -81,7 +80,6 @@ function isTerminal(shell: ShellResult): boolean {
   return shell.state === "exited" || shell.state === "stopped" || shell.state === "failed";
 }
 
-/** Resolve the optional Codex bridge without coupling this package to its publisher. */
 export function isNativeSteerPending(sessionId: string): boolean {
   try {
     // SAFETY: The symbol-keyed slot is a candidate until its method is proven callable.
@@ -184,7 +182,6 @@ export class ShellNotificationGate {
     this.tryFlush();
   }
 
-  /** A completion is held and not yet delivered. */
   hasPending(): boolean {
     return !this.stopped && this.held.size > 0;
   }
@@ -215,7 +212,6 @@ export class ShellNotificationGate {
     try {
       this.appendEntry(SHELL_COMPLETION_PENDING_ENTRY, { keys, shells });
     } catch (error) {
-      // Keep the held batch intact when it was not successfully persisted.
       // SAFETY: catch produces unknown; the helper narrows before reading the message.
       if (!isStaleContextError(error as RuntimeValue)) {
         console.error("[choco-pi-shells] Shell completion persistence failed", error);
@@ -281,8 +277,6 @@ export class ShellNotificationGate {
         this.manager.acknowledgeCompletion(shell);
       }
     } catch (error) {
-      // Failed delivery leaves the manager ledger unacknowledged for reconciliation.
-      // A stale host deactivates this gate; other failures allow later attempts.
       // SAFETY: catch produces unknown; the helper narrows before reading the message.
       if (isStaleContextError(error as RuntimeValue)) {
         this.stopped = true;

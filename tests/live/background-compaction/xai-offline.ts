@@ -1,10 +1,3 @@
-/**
- * Offline xAI subject for the foreground server-side path: a Grok mirror on
- * the installed openai-responses adapter behind production's xAI capturing
- * stream (`xai/capture.ts`), answered by a scoped fake transport, and a
- * scripted `POST /v1/responses/compact` lane on global fetch (production's
- * compact client uses global fetch when no transport is injected).
- */
 import { getCurrentSystemPrompt, type JsonObject, type Model } from "@earendil-works/pi-ai";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { arr, obj, opt, str, unknown } from "@earendil-works/pi-schema";
@@ -21,11 +14,6 @@ import type { Recorder } from "./artifacts.ts";
 import type { HostState } from "./host-state.ts";
 import { requestOrigin } from "./live-transport.ts";
 
-/**
- * Mirrors the installed catalog entry `xai/grok-4.7` (openai-responses at
- * `https://api.x.ai/v1`, 500,000 window), so production's xAI gate admits it
- * by its default policy. Cost is zeroed; transport is the scoped fake only.
- */
 export const XAI_GROK_MIRROR: Model<"openai-responses"> = {
   id: "grok-4.7",
   name: "Grok 4.7 (offline mirror)",
@@ -38,9 +26,7 @@ export const XAI_GROK_MIRROR: Model<"openai-responses"> = {
   contextWindow: 500_000,
   maxTokens: 128_000,
 };
-/** API-key-shaped synthetic credential (xAI keys start `xai-`); never a real key. */
 export const FAKE_XAI_KEY = "xai-harness-offline-placeholder";
-/** The opaque item the scripted lane returns; protected like a signature. */
 export const XAI_HARNESS_ITEM = {
   type: "compaction",
   encrypted_content: "harness-xai-synthetic-opaque-item-never-record-verbatim",
@@ -59,7 +45,6 @@ const CompactRequestSchema = obj(
 
 type Frame = JsonObject & { readonly type: string };
 
-/** A streamed Responses answer with one text message and fixed usage. */
 function textResponse(text: string, index: number): Response {
   const id = `msg_harness_${index}`;
   const message = { type: "message", id, role: "assistant" };
@@ -106,7 +91,6 @@ function textResponse(text: string, index: number): Response {
   );
 }
 
-/** One offline foreground request: recorded (derived fields only), answered with text. */
 function serveForeground(
   state: HostState,
   dispatch: { readonly index: number; readonly summary: boolean },
@@ -139,17 +123,11 @@ function serveForeground(
   return response;
 }
 
-/**
- * Registers the offline xAI provider: production's capturing Responses stream
- * over the scoped fake transport. Returns a re-register function, since
- * bindExtensions/reload can replace providers.
- */
 export function registerOfflineXaiProvider(
   runtime: ModelRuntime,
   options: {
     readonly state: HostState;
     readonly model: Model<"openai-responses">;
-    /** More models of the same provider (switch targets), served the same way. */
     readonly extraModels?: readonly Model<"openai-responses">[];
     readonly apiKey: string;
   },
@@ -179,7 +157,6 @@ export function registerOfflineXaiProvider(
   return register;
 }
 
-/** Scripted `/responses/compact` answer: the harness item with fixed usage. */
 function compactResponse(recorder: Recorder, model: Model<"openai-responses">): Response {
   recorder.record("xai-lane-response", { status: 200, outputItems: 1 });
   return new Response(
@@ -204,11 +181,6 @@ function requestPath(input: Parameters<typeof globalThis.fetch>[0]): string {
   }
 }
 
-/**
- * Offline global fetch for the xAI foreground path: a compact request to the
- * model origin gets the scripted item; everything else goes to `fallback`
- * (the blocker).
- */
 export function scriptedXaiCompactFetch(
   state: HostState,
   model: Model<"openai-responses">,

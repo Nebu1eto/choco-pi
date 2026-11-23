@@ -1,16 +1,3 @@
-/**
- * Complexity Metrics Client for choco-pi-lsp
- *
- * Language-agnostic AST-based code complexity metrics, computed over the shared
- * tree-sitter client (#402 — no `typescript` compiler dependency). Supported
- * grammars are keyed in LANGUAGE_NODES (JS/TS, Python, Go, Rust today; adding a
- * language is one table entry).
- *
- * Tracks: max nesting depth, function length, cyclomatic + cognitive complexity,
- * maintainability index (Halstead-free), LOC/comments, code entropy, and AI-slop
- * indicators. These are silent metrics surfaced in the session summary.
- */
-
 import { createSubsystemLogger } from "./extension-log.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -22,22 +9,19 @@ import {
   walk,
 } from "./tree-sitter-shared.ts";
 
-// --- Types ---
-
 export interface FileComplexity {
   filePath: string;
   maxNestingDepth: number;
   avgFunctionLength: number;
   maxFunctionLength: number;
   functionCount: number;
-  cyclomaticComplexity: number; // Average across functions
-  maxCyclomaticComplexity: number; // Most complex function
+  cyclomaticComplexity: number;
+  maxCyclomaticComplexity: number;
   cognitiveComplexity: number;
-  maintainabilityIndex: number; // 0-100
+  maintainabilityIndex: number;
   linesOfCode: number;
   commentLines: number;
-  codeEntropy: number; // Shannon entropy in bits
-  // AI slop indicators
+  codeEntropy: number;
   maxParamsInFunction: number;
   aiCommentPatterns: number;
   singleUseFunctions: number;
@@ -53,28 +37,17 @@ export interface FunctionMetrics {
   nestingDepth: number;
 }
 
-// --- Per-language node categories ---
-
 interface LangNodes {
-  /** Function/method/lambda nodes. */
   functionLike: Set<string>;
-  /** Control structures that increase nesting depth. */
   nesting: Set<string>;
-  /** Decision points that add +1 cyclomatic (if/loops/case/ternary). */
   decision: Set<string>;
-  /** Structures that add cognitive complexity (nesting-weighted). */
   cognitive: Set<string>;
-  /** Node types that ARE a logical operator (e.g. Python `boolean_operator`). */
   logicalOpNodes: Set<string>;
-  /** Operator child types inside a `binary_expression` (&& || ??). */
   logicalBinaryOps: Set<string>;
-  /** Node type for a try/catch block, if the language has one. */
   tryNode?: string;
-  /** Child node types to read a function's name from (in priority order). */
   nameChildTypes: string[];
 }
 
-// JS/TS/JSX share one grammar shape.
 const JSTS: LangNodes = {
   functionLike: new Set([
     "function_declaration",
@@ -189,7 +162,7 @@ const GO: LangNodes = {
   ]),
   logicalOpNodes: new Set(),
   logicalBinaryOps: new Set(["&&", "||"]),
-  tryNode: undefined, // Go has no try/catch (error returns)
+  tryNode: undefined,
   nameChildTypes: ["identifier", "field_identifier"],
 };
 
@@ -220,7 +193,7 @@ const RUST: LangNodes = {
   ]),
   logicalOpNodes: new Set(),
   logicalBinaryOps: new Set(["&&", "||"]),
-  tryNode: undefined, // Rust uses Result/? — no try/catch
+  tryNode: undefined,
   nameChildTypes: ["identifier"],
 };
 
@@ -235,8 +208,6 @@ const LANGUAGE_NODES = {
 
 const COMMENT_TYPES = new Set(["comment", "line_comment", "block_comment"]);
 
-// --- Metric helpers (module-level, node-config-driven) ---
-
 function isLogicalOp(node: TsNode, nodes: LangNodes): boolean {
   if (nodes.logicalOpNodes.has(node.type)) return true;
   if (nodes.logicalBinaryOps.size > 0 && node.type === "binary_expression") {
@@ -245,7 +216,6 @@ function isLogicalOp(node: TsNode, nodes: LangNodes): boolean {
   return false;
 }
 
-/** Cyclomatic contribution of a subtree: decision points + logical operators. */
 function subtreeCyclomatic(root: TsNode, nodes: LangNodes): number {
   let cc = 0;
   walk(root, (n) => {
@@ -255,11 +225,9 @@ function subtreeCyclomatic(root: TsNode, nodes: LangNodes): number {
   return cc;
 }
 
-/** Cognitive complexity (SonarSource-style: base + nesting penalty). */
 function subtreeCognitive(node: TsNode, nesting: number, nodes: LangNodes): number {
   let complexity = 0;
   if (nodes.cognitive.has(node.type)) complexity += 1 + nesting;
-  // Labeled break/continue add complexity.
   if (
     (node.type === "break_statement" || node.type === "continue_statement") &&
     (node.children ?? []).some(
@@ -349,7 +317,6 @@ function countLines(content: string, root: TsNode) {
   const codeLines = lines.filter((line, i) => {
     if (line.trim().length === 0) return false;
     if (!commentLineSet.has(i)) return true;
-    // Line has a comment — keep it only if code remains after stripping it.
     const stripped = line
       .replace(/\/\/.*$/, "")
       .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -407,10 +374,6 @@ function calculateCodeEntropy(sourceText: string): number {
   return entropy;
 }
 
-/**
- * Maintainability index, Halstead-free variant:
- * MI = max(0, (171 - 0.23·Cyclomatic - 16.2·ln(LOC)) · 100/171) + comment bonus.
- */
 function calculateMaintainabilityIndex(cyclomatic: number, loc: number, comments: number): number {
   if (loc === 0) return 100;
   const lnLOC = Math.log(loc);
@@ -421,7 +384,6 @@ function calculateMaintainabilityIndex(cyclomatic: number, loc: number, comments
 }
 
 function calculateMaxParams(functions: FunctionMetrics[]): number {
-  // Estimate from average function length (kept from the original heuristic).
   return Math.min(
     10,
     Math.max(
@@ -440,8 +402,6 @@ function countSingleUseFunctions(functions: FunctionMetrics[]): number {
   ).length;
 }
 
-// --- Client ---
-
 export class ComplexityClient {
   private log: (msg: string) => void;
 
@@ -449,13 +409,11 @@ export class ComplexityClient {
     this.log = verbose ? createSubsystemLogger("complexity") : () => {};
   }
 
-  /** True if the file's grammar has a complexity node mapping. */
   isSupportedFile(filePath: string): boolean {
     const languageId = resolveTreeSitterLanguage(filePath);
     return Boolean(languageId && languageId in LANGUAGE_NODES);
   }
 
-  /** Analyze complexity metrics for a file (null if unsupported / unparseable). */
   async analyzeFile(filePath: string): Promise<FileComplexity | null> {
     const absolutePath = path.resolve(filePath);
     const languageId = resolveTreeSitterLanguage(absolutePath);

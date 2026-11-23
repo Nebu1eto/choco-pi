@@ -79,7 +79,6 @@ function customEntry(id: string, customType: string, data: RuntimeValue): Sessio
   return { type: "custom", id, parentId: null, timestamp: "", customType, data };
 }
 
-/** Holds callers at `wait()` until `release()`; open when not held. */
 class Gate {
   private held: Promise<void> | undefined;
   private open: () => void = () => undefined;
@@ -101,10 +100,6 @@ class Gate {
   }
 }
 
-/**
- * Typed host fixture: implements the controller's `UsageLimitHost` port (the
- * `ExtensionAPI` members it uses) and builds `UsageLimitHostContext` values.
- */
 class Harness implements UsageLimitHost<ModelStub, HarnessContext> {
   readonly handlers: HostHandlers = {};
   readonly branch: SessionEntry[] = [];
@@ -113,15 +108,12 @@ class Harness implements UsageLimitHost<ModelStub, HarnessContext> {
   readonly setModelCalls: string[] = [];
   readonly timers: Timer[] = [];
   readonly refusedModels = new Set<string>();
-  /** customType of every appended entry, on whichever branch was current. */
   readonly appended: string[] = [];
   readonly goalOwners: string[] = [];
   readonly accountIds = new Map<string, string>();
   readonly accountLookups: string[] = [];
   readonly preferenceListeners = new Set<(change: UsageLimitPreferenceChange) => void>();
-  /** Held: `setModel` awaits authentication before it mutates, like `AgentSession.setModel`. */
   readonly auth = new Gate();
-  /** Held: every usage snapshot read waits (corroboration in flight). */
   readonly snapshotGate = new Gate();
   private readonly preferenceGate = new Gate();
   snapshotReads = 0;
@@ -129,7 +121,6 @@ class Harness implements UsageLimitHost<ModelStub, HarnessContext> {
   goal: GoalRecoveryOwnership | undefined;
   probe: ChildSessionProbe | undefined;
   snapshot: ProviderUsageSnapshot | undefined;
-  /** Synthetic quota store payload answered to both refresh and read requests. */
   synthetic: RuntimeValue = undefined;
   available: ModelStub[] = [OPUS, SOL, SOL_OLD, KIMI];
   currentModel: ModelStub | undefined = OPUS;
@@ -254,12 +245,10 @@ class Harness implements UsageLimitHost<ModelStub, HarnessContext> {
     });
   }
 
-  /** Holds every preference read until the returned release runs. */
   holdPreference(): () => void {
     return this.preferenceGate.hold();
   }
 
-  /** Writes the preference and notifies subscribers synchronously, like `writeAgentPreference`. */
   changePreference(value: OnUsageLimit): void {
     this.preferences = [value];
     for (const listener of this.preferenceListeners) {
@@ -308,7 +297,6 @@ class Harness implements UsageLimitHost<ModelStub, HarnessContext> {
     await handler(event, this.ctx());
   }
 
-  /** A user `/model` choice: the host applies the model, then emits `model_select`. */
   async selectModel(next: ModelStub): Promise<void> {
     this.currentModel = next;
     this.thinking = "high";
@@ -354,7 +342,6 @@ class Harness implements UsageLimitHost<ModelStub, HarnessContext> {
     });
   }
 
-  /** Advances the fake clock, running due timers and letting their async work finish. */
   async advance(ms: number): Promise<void> {
     this.clock += ms;
     for (const timer of this.liveTimers.filter((entry) => entry.at <= this.clock)) {
@@ -406,7 +393,6 @@ function available(observedAt: number): ProviderUsageSnapshot {
   return { observedAt, windows: [{ label: "5h", percent: 20, qualifier: "used" }] };
 }
 
-/** Synthetic quota store payload whose request subscription is used up. */
 function syntheticExhausted(updatedAt: number, renewsAt: number): RuntimeValue {
   return {
     source: "api",
@@ -549,7 +535,6 @@ test("auto-resume caps a wait at 24 hours and polls when no reset is known", asy
     h.preferences = ["auto-resume"];
     h.sessionId = "poll-1";
   });
-  // An exhausted window without a reset time confirms the limit but gives no wake-up time.
   unknown.snapshot = {
     observedAt: T0,
     windows: [{ label: "5h", percent: 100, qualifier: "used" }],
@@ -731,7 +716,6 @@ test("the controller's own model_select does not cancel; a user model_select doe
   });
   await harness.start("startup");
   assert.equal(harness.liveTimers.length, 1);
-  // First read keeps the armed recovery; the second routes this limit through fallback.
   harness.preferences = ["auto-resume", "fallback"];
   harness.snapshot = exhausted(T0 + HOUR_MS, T0);
   harness.pushAssistant("anthropic", "claude-opus-5-5", ANTHROPIC_429);
@@ -925,7 +909,6 @@ test("an inferred limit without usage data closes only the failed model and does
   await fallback.settle();
   assert.deepEqual(fallback.setModelCalls, ["openai-codex/gpt-6-sol"]);
   assert.equal(fallback.sent.length, 1);
-  // Nothing confirmed the limit: only the failed model is closed, never the account.
   const unavailable = getUsageLimitPolicy("unavailable-fallback");
   assert.equal(unavailable?.isClosed("anthropic", "default", T0 + 1, "claude-opus-5-5"), true);
   assert.equal(unavailable?.isClosed("anthropic", "default", T0 + 1, "claude-sonnet-5-5"), false);
@@ -1184,7 +1167,6 @@ test("the root controller tags its classification so its own Codex entry is used
     customType: CODEX_USAGE_LIMIT_ENTRY,
     data: { observedAt: T0, resetAt, accountId: "acct" },
   });
-  // No window data: only the structured branch entry can confirm the limit.
   harness.pushAssistant("openai-codex", "gpt-6-sol", CODEX_LIMIT);
   await harness.settle();
   const [pending] = harness.pending();

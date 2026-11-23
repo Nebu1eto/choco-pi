@@ -19,7 +19,6 @@ import {
   writeAgentPreference,
 } from "../profile/extensions/lib/agent-preferences.ts";
 
-// Every test reads presets from an isolated agent directory, never the user's.
 const agentDir = await mkdtemp(path.join(tmpdir(), "model-context-cap-"));
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -29,7 +28,6 @@ test.after(async () => {
   await rm(agentDir, { recursive: true, force: true });
 });
 
-/** Reset the presets on disk: the soft cap to standard (the default is permissive), the point to its default. */
 async function resetPresets(): Promise<void> {
   await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, "standard", agentDir);
   await writeAgentPreference(AUTO_COMPACTION_POINT_KEY, undefined, agentDir);
@@ -57,7 +55,6 @@ function model(contextWindow: number): Model<Api> {
   };
 }
 
-/** A host context whose usage sits past the default 450K compaction point. */
 function overThresholdContext(options: { model: Model<Api>; onCompact: () => void }) {
   return {
     cwd: process.cwd(),
@@ -94,7 +91,6 @@ test("policy compaction starts only past the compaction point", () => {
   assert.equal(shouldRequestCompaction(450_001, 450_000), true);
 });
 
-/** A cwd whose `.pi/extensions/context-cap.json` holds `config`. */
 async function withProjectConfig(
   config: Record<string, RuntimeValue>,
   run: (cwd: string) => Promise<void>,
@@ -145,7 +141,6 @@ test("a context-cap.json left in a project is ignored without a notice", async (
         },
       };
       await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
-      // Standard presets govern: neither the override cap nor its point applies.
       assert.equal(activeModel.contextWindow, 600_000);
       tokens = 500_001;
       await handlers.get("agent_settled")?.({ type: "agent_settled" }, context);
@@ -182,7 +177,6 @@ test("changing a preset re-applies the cap without a restart", async (t) => {
   await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, "strict", agentDir);
   assert.equal(activeModel.contextWindow, 400_000);
   await writeAgentPreference(AUTO_COMPACTION_POINT_KEY, "strictest", agentDir);
-  // The strictest point (200K) now triggers compaction below the old 450K point.
   tokens = 200_000;
   await handlers.get("agent_settled")?.({ type: "agent_settled" }, context);
   assert.equal(compactionRequests, 0);
@@ -190,12 +184,10 @@ test("changing a preset re-applies the cap without a restart", async (t) => {
   await handlers.get("agent_settled")?.({ type: "agent_settled" }, context);
   assert.equal(compactionRequests, 1);
 
-  // A scheduled re-application uses the live presets, not ones captured at session start.
   registryModel = model(1_000_000);
   t.mock.timers.tick(2_000);
   assert.equal(registryModel.contextWindow, 400_000);
 
-  // After a session switch the old context no longer follows preference changes.
   handlers.get("session_before_switch")?.({ type: "session_before_switch" }, context);
   await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, "permissive", agentDir);
   assert.equal(activeModel.contextWindow, 400_000);
@@ -237,7 +229,6 @@ test("compaction is requested only after the agent run settles", async () => {
   };
 
   await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
-  // A turn boundary re-applies caps but never requests compaction mid-run.
   await handlers.get("turn_end")?.({ type: "turn_end" }, context);
   assert.equal(compactionRequests, 0);
   await handlers.get("agent_settled")?.({ type: "agent_settled" }, context);
@@ -271,7 +262,6 @@ test("caps are re-applied to models replaced by a catalog refresh", async () => 
   await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
   assert.equal(startupModel.contextWindow, 600_000);
 
-  // A catalog refresh replaces the registry entry with an uncapped object.
   registryModel = model(1_000_000);
   handlers.get("before_agent_start")?.({ type: "before_agent_start" }, context);
   assert.equal(registryModel.contextWindow, 600_000);
@@ -303,7 +293,6 @@ test("a model object swapped in mid-run is capped at the next turn boundary", as
   handlers.get("before_agent_start")?.({ type: "before_agent_start" }, context);
   assert.equal(startupModel.contextWindow, 600_000);
 
-  // The host refreshes the session model from the registry without model_select.
   for (const boundary of ["turn_start", "turn_end"]) {
     registryModel = model(1_000_000);
     context.model = registryModel;
@@ -332,7 +321,6 @@ test("a replaced session cancels pending re-applications instead of crashing Pi"
     cwd: process.cwd(),
     sessionManager: { getSessionId: () => "root-session" },
     model: startupModel,
-    // Pi's real context throws from this getter once the session is replaced.
     get modelRegistry() {
       if (stale)
         throw new Error("This extension ctx is stale after session replacement or reload.");
@@ -349,8 +337,6 @@ test("a replaced session cancels pending re-applications instead of crashing Pi"
 
   stale = true;
   const readsBeforeStaleTick = registryReads;
-  // A timer firing against a replaced session must not escape as an uncaught
-  // exception, and the remaining retries must stop touching that context.
   assert.doesNotThrow(() => t.mock.timers.tick(2_000));
   assert.doesNotThrow(() => t.mock.timers.tick(20_000));
   assert.equal(registryReads, readsBeforeStaleTick);
@@ -388,7 +374,6 @@ test("session shutdown stops scheduled re-applications", async (t) => {
 
   await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
   handlers.get("session_shutdown")?.({ type: "session_shutdown" }, context);
-  // Shutdown itself reads the registry once to restore native windows.
   const readsAfterShutdown = registryReads;
   t.mock.timers.tick(20_000);
   assert.equal(registryReads, readsAfterShutdown);
@@ -410,7 +395,6 @@ test("session end restores native windows so a reloaded module sees them", async
   await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
   assert.equal(activeModel.contextWindow, 600_000);
 
-  // Pi emits session_shutdown before it re-evaluates extensions on /reload.
   handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "reload" }, context);
   assert.equal(activeModel.contextWindow, 1_000_000);
 
@@ -429,14 +413,11 @@ test("a child session's shutdown leaves the caps its parent and siblings share",
   await resetPresets();
   const MANAGER_SLOT = Symbol.for("pi-subagents:manager");
   const previous = Object.getOwnPropertyDescriptor(globalThis, MANAGER_SLOT);
-  // The subagents registry answers for a live child only: the manager drops
-  // the id before it emits the child's session_shutdown.
   let childLive = true;
   Object.defineProperty(globalThis, MANAGER_SLOT, {
     value: { isChildSessionId: (id: string) => childLive && id === "child-session" },
     configurable: true,
   });
-  // Parent and child share one model object, as a child's model runtime is its parent's.
   const sharedModel = model(1_000_000);
   const contextFor = (sessionId: string) => ({
     cwd: process.cwd(),
@@ -488,8 +469,6 @@ test("a reloaded module never takes a capped window for the native one", async (
   await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
   assert.equal(activeModel.contextWindow, 600_000);
 
-  // Even when the old module's shutdown never ran (a crash or a host that
-  // skips the event), the recorded native window on the object survives.
   await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, "permissive", agentDir);
   const reloadedHandlers = await registerReloadedCap("without-shutdown");
   await reloadedHandlers.get("session_start")?.(
@@ -502,7 +481,6 @@ test("a reloaded module never takes a capped window for the native one", async (
   await resetPresets();
 });
 
-/** A host context whose registry holds only `activeModel`. */
 function singleModelContext(activeModel: Model<Api>) {
   return {
     cwd: process.cwd(),
@@ -528,13 +506,9 @@ test("unlimited restores the native window of a capped model the host persisted 
   await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, liveContext);
   assert.equal(liveModel.contextWindow, 800_000);
 
-  // Pi's remote catalog keeps the stored model objects as live registry
-  // entries and persists them again (a 304 revalidation) after the cap has
-  // mutated them; the models store serializes with structuredClone.
   const persisted = structuredClone(liveModel);
   handlers.get("session_shutdown")?.({ type: "session_shutdown" }, liveContext);
 
-  // The next Pi process restores that entry with a fresh module.
   const restoredModel = structuredClone(persisted);
   const restoredContext = singleModelContext(restoredModel);
   const reloadedHandlers = await registerReloadedCap("persisted-restore");
@@ -559,9 +533,7 @@ test("a copy of a capped model keeps its native window unless the copy sets its 
   await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
   assert.equal(original.contextWindow, 800_000);
 
-  // A spread copy (registry recomposition) carries the capped window.
   const copy: Model<Api> = { ...original, baseUrl: "https://copy.example.com" };
-  // A copy that sets its own window (a models.json override) is native at that window.
   const overridden: Model<Api> = { ...original, contextWindow: 500_000 };
   handlers.get("model_select")?.({ type: "model_select", model: copy, source: "set" }, context);
   handlers.get("model_select")?.(
@@ -579,7 +551,6 @@ test("a copy of a capped model keeps its native window unless the copy sets its 
   assert.equal(overridden.contextWindow, 500_000);
   assert.equal(original.contextWindow, 1_000_000);
 
-  // A model whose native window is the permissive cap stays there.
   const nativeAtCap = model(800_000);
   handlers.get("model_select")?.(
     { type: "model_select", model: nativeAtCap, source: "set" },
@@ -611,7 +582,6 @@ type CapHandler = (
   context: RuntimeValue,
 ) => RuntimeValue | Promise<RuntimeValue>;
 
-/** Register the cap against a minimal host and return its event handlers. */
 function registerCap(): Map<string, CapHandler> {
   const handlers = new Map<string, CapHandler>();
   const pi = reinterpretHostValue<ExtensionAPI>({
@@ -628,11 +598,6 @@ function isCapModule<Candidate>(
   return isJsonRecord(value) && value.default instanceof Function;
 }
 
-/**
- * A fresh instance of the extension module with empty state, as Pi's
- * per-extension loader produces after a reload. The query string defeats the
- * ESM module cache.
- */
 async function registerReloadedCap(tag: string): Promise<Map<string, CapHandler>> {
   const specifier = new URL(
     `../profile/extensions/model-context-cap.ts?reload=${tag}`,
@@ -652,7 +617,6 @@ async function registerReloadedCap(tag: string): Promise<Map<string, CapHandler>
 
 const ADOPTION_SLOT = Symbol.for("choco-pi:compaction-background-adoption");
 
-/** What a test publishes on the slot; a foreign value may omit `adoptReady`. */
 interface AdoptionSlotValue {
   readonly version: number;
   readonly adoptReady?: (
@@ -662,7 +626,6 @@ interface AdoptionSlotValue {
   ) => boolean;
 }
 
-/** Publish `value` on the background-adoption slot for the duration of `run`. */
 async function withAdoptionSlot(value: AdoptionSlotValue, run: () => Promise<void>): Promise<void> {
   const previous = Object.getOwnPropertyDescriptor(globalThis, ADOPTION_SLOT);
   Object.defineProperty(globalThis, ADOPTION_SLOT, {
@@ -709,13 +672,10 @@ test("a ready background candidate takes the cap's compaction instead of the sum
       ["session-1"],
     );
 
-    // While adoption is in flight the cap does not request a second compaction.
     await handlers.get("agent_settled")?.({ type: "agent_settled" }, context);
     assert.equal(routed.length, 1);
     assert.equal(compactionRequests, 0);
 
-    // A refused adoption settles false; with no ready candidate left the cap
-    // falls back to its existing ctx.compact() path.
     routed[0]?.settle(false);
     ready = false;
     await handlers.get("agent_settled")?.({ type: "agent_settled" }, context);

@@ -20,7 +20,6 @@ export function fingerprintPrefix(
   return fingerprintEntries(entries.slice(0, cut + 1));
 }
 
-/** Strict scope identity: every provider, model, endpoint, auth, and account field is equal. */
 function scopesStrictlyEqual(left: ProviderScope, right: ProviderScope): boolean {
   return (
     left.provider === right.provider &&
@@ -43,7 +42,6 @@ function snapshotIdentity(snapshot: FrozenSnapshot): SnapshotIdentity {
   };
 }
 
-/** Unvalidated record shape; {@link parseRecord} decides whether it is a candidate record. */
 interface RecordDraft {
   readonly customType: string;
   readonly schemaVersion: number;
@@ -89,7 +87,6 @@ interface IdentityComparison {
 }
 
 interface RevalidateOptions {
-  /** Recovery adopts records written by an earlier generation of the same owner. */
   readonly acceptEarlierGeneration?: boolean;
 }
 

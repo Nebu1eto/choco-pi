@@ -16,11 +16,6 @@ import type { OwnerSpec } from "./owner-spec.ts";
 import { resolveProviderScope } from "./provider-scope.ts";
 import { type HostRuntime, registryUsable } from "./runtime.ts";
 
-// ---------------------------------------------------------------------------
-// Child sessions: the subagent runner's bridge attaches a coordinator per child
-// ---------------------------------------------------------------------------
-
-/** The provider this registration publishes for the subagent runner's bridge. */
 export function createChildProvider(rt: HostRuntime): ChildCompactionProvider {
   return {
     version: 1,
@@ -31,23 +26,15 @@ export function createChildProvider(rt: HostRuntime): ChildCompactionProvider {
 
 function childCompactionEnabled(rt: HostRuntime): boolean {
   const settings = rt.loaded.settings;
-  // The same switch as the main session: any enabled lane (text, Codex, Anthropic).
   return backgroundCompactionActive(settings) && registryUsable(rt, rt.parent?.ctx);
 }
 
-/** Provider, model and endpoint only: the scope a child keeps when its auth cannot be read. */
 function plainScope(model: Model<Api>): ProviderScope {
   const scope: ProviderScope = { provider: model.provider, model: model.id };
   if (model.baseUrl.length > 0) scope.baseUrl = model.baseUrl;
   return scope;
 }
 
-/**
- * A child's provider scope, resolved like the main session's (auth mode for
- * Anthropic, hashed account for Codex) so its native backends admit it. An
- * unreadable credential keeps the plain scope: native capability checks then
- * fail closed and the text lane still serves the child.
- */
 async function childScope(
   model: Model<Api>,
   registry: ChildHostRegistry,
@@ -74,14 +61,12 @@ async function createChildAttachment(
   if (!childCompactionEnabled(rt) || host === undefined || model === undefined) return undefined;
   const report = (message: string): void => rt.notify(host.ctx, `subagent: ${message}`);
   const scope = await childScope(model, host.modelRegistry, settings, report);
-  // Detached (cancel, timeout, disposal) while the scope resolved: attach nothing.
   if (child.signal.aborted) return undefined;
   const core = await createOwnerCore(
     childOwnerSpec(rt, { host, child, model, scope, report }),
     rt.options,
   );
   if (core === undefined) return undefined;
-  // An abort before the listener exists would never dispose the core.
   if (child.signal.aborted) {
     core.dispose();
     return undefined;
@@ -91,7 +76,6 @@ async function createChildAttachment(
   return {
     coordinator: core.coordinator,
     observeBoundary: (boundary) => {
-      // The previous boundary has completed; an uncommitted proposal returns to ready.
       void core.settle();
       core.observeUsage(boundary.contextUsage);
     },
@@ -101,22 +85,9 @@ async function createChildAttachment(
   };
 }
 
-/**
- * The runtime fields a child owner spec reads. The journal, transition memo,
- * Anthropic session switch and shared gate are optional only for partial test
- * runtimes; the host always passes its full runtime.
- */
 export type ChildSpecRuntime = Pick<HostRuntime, "loaded" | "xaiMode" | "xaiGate"> &
   Partial<Pick<HostRuntime, "journal" | "transitions" | "serverSide" | "foregroundGate">>;
 
-/**
- * The owner spec of a child coordinator: the child's own session, model and
- * scope, the parent's registry and policies, and the provider-native lanes
- * the child's model selects — the same {@link nativeLaneSwitches} the main
- * session's spec uses, so a Codex child gets the Codex backend, an Anthropic
- * child the Anthropic native backend, and an admitted xAI child leaves the
- * compaction to xAI server-side, exactly as in the main session.
- */
 export function childOwnerSpec(
   rt: ChildSpecRuntime,
   parts: {
@@ -129,8 +100,6 @@ export function childOwnerSpec(
 ): OwnerSpec {
   const { host, child, model, scope, report } = parts;
   const childSessionId = child.childSessionId;
-  // The bridge persists candidate records only, so a child's lane records are
-  // journaled through this registration under the child's session id.
   const journal = (record: LaneRecordInput): void => {
     if (!child.signal.aborted) rt.journal?.(record);
   };
@@ -148,8 +117,6 @@ export function childOwnerSpec(
     settings: rt.loaded.settings,
     scope,
     appendRecord: child.appendRecord,
-    // The bridge appends a model-invisible anchor entry in the child and
-    // returns its ID ("" once detached, which fails closed in the coordinator).
     appendAnchor: () => child.appendAnchor(),
     isOwnerCurrent: () => !child.signal.aborted,
     ...nativeLaneSwitches(rt, model),

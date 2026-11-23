@@ -14,7 +14,6 @@ import {
 
 const plain = { fg: (_color: string, text: string) => text, inverse: (text: string) => `«${text}` };
 
-/** context, two deletions, three additions, context: the pairs are unequal. */
 const HUNK: DiffHunk = {
   id: "h1",
   header: "@@ -1,4 +1,5 @@",
@@ -62,7 +61,6 @@ test("split rows pair deletions with additions; unequal runs take the longer run
     HUNK.lines.map((_line, index) => splitRowForLine(HUNK, index)),
     [0, 1, 2, 1, 2, 3, 4],
   );
-  // Unified: one row per line after the header; split: the paired rows.
   assert.equal(hunkRowOfLine(HUNK, 8, 5, "unified"), 6);
   assert.equal(hunkRowOfLine(HUNK, 6, 5, "split"), 4);
   assert.equal(hunkRowOfLine(HUNK, 2, 5, "unified"), undefined, "rows that do not map");
@@ -147,8 +145,6 @@ test("review: a comment on an added line sits under its paired row in split mode
   }
 });
 
-/* ------------------------------------------ uneven replacements at a hunk's end */
-
 function unevenHunk(deleted: number, added: number): DiffHunk {
   const lines: DiffHunk["lines"] = [{ kind: "context", oldLine: 1, newLine: 1, text: "keep" }];
   for (let index = 0; index < deleted; index += 1) {
@@ -220,7 +216,6 @@ test("laying the same rendered rows out again gives the same rows for every gutt
       plain,
     ).slice(1);
   const rows = renderHunkRows(FILE, render);
-  /** An id no hunk has: nothing is marked. */
   const NO_HUNK = "none";
   const layout = (width: number, marked: boolean, inverted: number[] = []) =>
     bodyBlock({
@@ -231,7 +226,6 @@ test("laying the same rendered rows out again gives the same rows for every gutt
       markedHunkId: marked ? HUNK.id : NO_HUNK,
       inverted: new Map([[HUNK.id, new Set(inverted)]]),
     }).lines;
-  // A fresh render of the same file is the reference for each variant.
   const fresh = (width: number, marked: boolean, inverted: number[] = []) =>
     bodyBlock({
       hunks: FILE.hunks,

@@ -102,7 +102,6 @@ test(
     // SAFETY: the fixture supplies every host member the section touches.
     const sections = buildCodexPreferencesSections(ctx as never, deps);
 
-    // The host layout places each row by id; Codex publishes one source.
     assert.deepEqual(
       sections.map((section) => section.id),
       [CODEX_SECTION_ID],
@@ -124,7 +123,6 @@ test(
     ]) {
       assert.ok(placed.includes(expected), `missing row ${expected}`);
     }
-    // Rows whose default needs no control were dropped from the panel.
     for (const removed of [
       "allProviders",
       "codexAboutGithub",
@@ -137,8 +135,6 @@ test(
       assert.ok(!placed.includes(removed), `${removed} must no longer render`);
     }
     assert.equal(new Set(placed).size, placed.length, "row ids must stay unique across sections");
-    // The panel draws its own group headings, so /codex's dim heading rows
-    // would only add focusable blank rows.
     for (const heading of [
       "transportHeader",
       "compactionHeader",

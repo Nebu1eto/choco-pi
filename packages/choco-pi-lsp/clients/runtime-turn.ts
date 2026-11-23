@@ -51,9 +51,6 @@ import type { TestResult, TestRunnerClient } from "./test-runner-client.ts";
 import { MAX_ADVISORY_AFFECTED_FILES, snapshotAdvisoryProvenance } from "./advisory-provenance.ts";
 import { sweepInlineBlockerFreshness } from "./blocker-freshness.ts";
 import { sweepInlineBlockerPastEof } from "./blocker-past-eof.ts";
-// #1631 review V2: moved to its own leaf module so a low-level store
-// (widget-state.ts) can use the marker without importing this orchestrator —
-// see clients/stale-marker.ts's doc comment.
 import { STALE_LINE_MARKER } from "./stale-marker.ts";
 import type { TestRunnerFindingsCache } from "./project-diagnostics/runner-adapters/runner-findings.ts";
 
@@ -64,20 +61,12 @@ interface TurnEndDeps {
   runtime: RuntimeCoordinator;
   cacheManager: CacheManager;
   testRunnerClient: TestRunnerClient;
-  /** Explicit owner for MCP Stop-hook calls; pi calls use runtime identity. */
   owner?: TurnStateOwner;
   resetLSPService: () => void;
   resetFormatService: () => void;
 }
 
-// LSP idle reset scheduling — prevents thrashing by delaying shutdown
 let lspIdleResetTimeout: ReturnType<typeof setTimeout> | null = null;
-// #1618: set while this timer's fire is deferred behind an in-flight
-// workspace sweep (see `scheduleLSPIdleReset`'s `isWorkspaceSweepActive`
-// branch). `cancelLSPIdleReset` must be able to cancel THIS too — otherwise
-// an active-editing turn that cancels idle reset while a sweep is still
-// running would have it silently resurrected once the sweep finishes, even
-// though the session is no longer idle.
 let pendingSweepRearm: { cancelled: boolean } | null = null;
 
 function emitIdleResetReporterWarning(reportErr: LspBoundaryValue): void {
@@ -86,7 +75,6 @@ function emitIdleResetReporterWarning(reportErr: LspBoundaryValue): void {
       code: "CHOCO_PI_LSP_LSP_IDLE_RESET_REPORTER_FAILED",
     });
   } catch {
-    // Preserve the detached-timer invariant: this path must never crash.
     void reportErr;
   }
 }
@@ -111,11 +99,6 @@ function scheduleLSPIdleReset(
     onError?: (err: LspBoundaryValue) => void;
   } = {},
 ): void {
-  // Clear any pending reset to avoid multiple timers. #1618: also cancel a
-  // rearm still waiting on a prior sweep's hold — otherwise re-scheduling
-  // here (this call) leaves that OLD waiter armed too, and the sweep's
-  // eventual release would fire a SECOND, independent `scheduleLSPIdleReset`
-  // alongside this fresh one.
   if (lspIdleResetTimeout) {
     clearTimeout(lspIdleResetTimeout);
   }
@@ -125,14 +108,6 @@ function scheduleLSPIdleReset(
   }
   lspIdleResetTimeout = setTimeout(() => {
     lspIdleResetTimeout = null;
-    // #1618: a full workspace sweep (`diagnostics_report mode=full`) grants
-    // itself a wall-clock ceiling that can outlive this timer's delay — this
-    // used to fire straight into an in-flight sweep and destroy the very
-    // service the sweep was actively touching, mislabeling every file the
-    // sweep had not yet reached as budget exhaustion. Defer instead of
-    // firing: re-arm a FRESH `delayMs` timer once the sweep releases its
-    // hold, rather than resuming a countdown that's already elapsed (which
-    // would fire the instant the hold releases) or destroying mid-sweep.
     if (isWorkspaceSweepActive()) {
       const rearmToken = { cancelled: false };
       pendingSweepRearm = rearmToken;
@@ -149,60 +124,26 @@ function scheduleLSPIdleReset(
       }
       resetFn();
     } catch (err) {
-      // Detached timers run outside a pi event boundary. They must never crash
-      // the extension process (for example if a host UI object was invalidated
-      // by session replacement before the timer fired).
       reportIdleResetError(options.onError, err);
     }
   }, delayMs);
-  // unref so this timer does not prevent the process from exiting naturally
-  // (critical for subagent / --mode json -p usage where the process should
-  // exit after completing its work, not wait 240 seconds for this to fire)
   lspIdleResetTimeout.unref();
 }
 
-// #1618 acceptance criterion 6: FULL_SCAN_WALL_CLOCK_MS (the full-sweep wall
-// clock ceiling, `tools/diagnostics-report.ts`) must stay under EVERY idle
-// reset delay this module can arm — derived, not asserted, so the constants
-// can't drift back into a relationship where a still-running sweep can
-// outlive the timer. The AC1 hold above already makes a mid-sweep fire
-// impossible regardless of this margin; this is defense in depth against a
-// future caller that touches the LSP service outside
-// `runWorkspaceDiagnostics`' hold. `SWEEP_IDLE_SAFETY_MARGIN_MS` is
-// single-sourced from `workspace-sweep-hold.ts`, which also uses it for its
-// own max-hold-age failsafe — one tunable, not two.
 const DEFAULT_LSP_IDLE_RESET_MS = 240_000;
 
 function sweepDerivedFloorMs(): number {
   return getFullScanWallClockMs() + SWEEP_IDLE_SAFETY_MARGIN_MS;
 }
 
-/** The normal (non-subagent, non-budget-pressured) idle-reset delay. */
 function getBaseLspIdleResetMs(): number {
   return Math.max(DEFAULT_LSP_IDLE_RESET_MS, sweepDerivedFloorMs());
 }
 
-/**
- * #1618 (R4): the subagent-light (#713) and cross-process-budget-pressured
- * (#449) paths used to arm a flat, much SHORTER delay (60s default) than the
- * sweep's own 300s ceiling — a 5:1 inversion covered only by the AC1 hold.
- * Deriving this path too means AC6 ("the sweep's ceiling stays under every
- * idle-reset delay") holds universally, not just for the common path, and an
- * env override to either constant can never invert it (`Math.max` floors at
- * the derived value no matter how small the override pushes the other side).
- *
- * Accepted cost (deliberate, not incidental — see R6 in the PR body): under
- * default settings this now ALSO arms the ~360s derived floor rather than a
- * true 60s teardown, trading some of #713's "release a short-lived
- * subagent's fleet fast" benefit for AC6 holding without exceptions.
- */
 function getShortenedLspIdleResetMs(): number {
   return Math.max(getLspBudgetIdleTimeoutMs(), sweepDerivedFloorMs());
 }
 
-/** The idle-reset delay `handleTurnEnd` actually arms on a file-less turn —
- *  exported so tests assert against the REAL computed value instead of a
- *  hand-derived literal that can silently drift from this function. */
 export function getEffectiveLspIdleResetMs(): number {
   return isSubagentSession() || shouldShortenLspIdleTimeout()
     ? getShortenedLspIdleResetMs()
@@ -249,29 +190,11 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
     resetFormatService,
   } = deps;
 
-  // #449 slice 1: piggyback the instance-registry heartbeat on this existing
-  // per-turn touchpoint rather than adding a new timer/interval. Cheap (reads
-  // process.memoryUsage().rss, one read-modify-write of instances.json) and
-  // fire-and-forget — the kill-switch check + no-op behavior live inside
-  // updateHeartbeat itself, so this call site doesn't need to know about it.
-  //
-  // #620: intentionally RSS-only here — CPU%/LSP-child sampling (which shells
-  // out to `pidusage`, and a full CIM query on Windows for a spawn's process
-  // tree) is left to the quiet-window "instance_registry_heartbeat" task
-  // (clients/quiet-window.ts's `buildHeartbeatResourcePatch`), which fires on
-  // the idle `agent_settled` window rather than every single turn end. Every
-  // turn end is a much hotter path than an idle window, and the issue's own
-  // guardrail is not to let the measurement itself become a new source of
-  // per-turn overhead worth investigating.
-  void updateHeartbeat().catch(() => {
-    // best-effort observability — never fail turn_end over this
-  });
+  void updateHeartbeat().catch(() => {});
 
   const cwd = ctxCwd ?? process.cwd();
   let turnState = cacheManager.readTurnState(cwd);
 
-  // A live foreign writer owns this worklist. Do not clear or consume another
-  // pi/MCP session's files; a dead/aged owner is safely evicted instead.
   const currentOwner: TurnStateOwner = owner ?? {
     kind: "pi",
     id: runtime.telemetrySessionId,
@@ -299,17 +222,7 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
 
   const files = Object.keys(turnState.files);
 
-  // R1 (#1443 follow-up): a read-only turn (no files touched) must not take
-  // the fast idle-reset path while a carried cascade run — or one still
-  // settling — is waiting for its delivery opportunity. Falling through to
-  // the normal pipeline lets the settle/drain/merge logic below run exactly
-  // as it does for an edit turn, so a carried finding reaches the agent
-  // instead of dying unrendered. `hasCascadeRuns()` is a cheap peek (no
-  // pending work almost every turn), so the common read-only turn still
-  // takes the early return below.
   if (files.length === 0 && !runtime.hasCascadeRuns()) {
-    // A genuinely clean session must invalidate the persisted guard record.
-    // Blocker records are retained only while the runtime still reports one.
     if (getFlag("lens-guard") && !runtime.gitGuardHasBlockers) {
       const guardRecord = cacheManager.readCache<Partial<TurnEndFindingsCache>>(
         "turn-end-findings",
@@ -322,14 +235,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
         cacheManager.clearCache("turn-end-findings", cwd);
       }
     }
-    // #713: subagent sessions use a shorter idle reset (nominally 60s) — a
-    // short-lived task agent holding a warm fleet for 4 minutes after its
-    // last turn is pure waste under fan-out. Classify ONCE here so every
-    // tick in this call path shares the same answer. CHOCO_PI_LSP_SUBAGENT_FULL=1
-    // restores the base delay via isSubagentSession() returning false.
-    // #1618: both branches route through `getEffectiveLspIdleResetMs` so
-    // AC6's derivation applies universally — see that function's doc for
-    // why the "shorter" path is not always literally 60s anymore.
     const idleResetMs = getEffectiveLspIdleResetMs();
     dbg(`turn_end: no modified files, scheduling LSP idle reset (${idleResetMs / 1000}s)`);
     if (!getFlag("no-lsp")) {
@@ -343,13 +248,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
     return;
   }
 
-  // Cancel any pending idle reset since we're actively working. #1618: also
-  // checks `pendingSweepRearm` — a timer deferred behind an in-flight
-  // workspace sweep already nulled `lspIdleResetTimeout` (the setTimeout
-  // callback clears it before checking the hold), so this guard used to
-  // read "nothing pending" and skip the cancel while a rearm was still
-  // queued to fire the instant the sweep released its hold — resurrecting
-  // idle reset on a session that had since gone back to active editing.
   if (lspIdleResetTimeout || pendingSweepRearm) {
     cancelLSPIdleReset();
     dbg("turn_end: cancelled pending LSP idle reset (active editing)");
@@ -369,23 +267,11 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
 
   const turnEndStart = Date.now();
   const blockerParts: string[] = [];
-  /**
-   * #1622 review M2: findings the freshness gate demoted. A third tier between
-   * blockers and advisories — not a blocker, because the cached coordinate is
-   * untrustworthy; not an advisory, because the advisory label reads "no action
-   * required this turn" and these DO require a re-scan. Each part carries its
-   * own imperative preamble rather than inheriting that label.
-   */
   const staleSecretParts: string[] = [];
   const advisoryParts: string[] = [];
   const projectDiagnosticsDelta: ProjectDiagnostic[] = [];
   const projectDiagnosticsSources = new Set<string>();
 
-  // #1641: past-EOF gate. Runs BEFORE the dependency-drift sweep below — a
-  // cheap statSync per cited file is worth paying first so the pricier
-  // import-parsing sweep can skip anything already taken out of the
-  // authoritative channel this turn (see blocker-past-eof.ts's module doc
-  // for the full composition rule with #1631's gate).
   const blockerPastEofStart = Date.now();
   const blockerPastEof = sweepInlineBlockerPastEof(runtime, cwd);
   logLatency({
@@ -402,11 +288,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
     },
   });
 
-  // #1631: freshness gate. A cached blocker is a verdict about the file AND
-  // everything it imports; before re-serving it, sweep for out-of-band drift of
-  // the file or its forward imports and demote drifted entries to a
-  // `[stale — re-run to confirm]` advisory instead of re-asserting them at full
-  // authority (#1419 demote-not-drop).
   const blockerFreshnessStart = Date.now();
   const blockerFreshness = await sweepInlineBlockerFreshness(runtime, cwd);
   logLatency({
@@ -424,27 +305,16 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
     },
   });
 
-  // Re-surface inline blockers from this turn that the agent didn't fix.
-  // These were shown inline during write/edit but the agent moved on without resolving them.
   const unresolvedBlockers = runtime.getInlineBlockersSnapshot();
   for (const { filePath: bPath, summary, stale } of unresolvedBlockers) {
     const displayPath = toRunnerDisplayPath(cwd, bPath);
     if (stale) {
-      // #1631: demoted — out of the authoritative blocker channel and into the
-      // advisory channel with a stale marker, so the agent is told to re-run
-      // rather than pressured by a verdict that may already be resolved.
-      // @delivery-surface: runtime-turn:unresolved-inline-blocker
       advisoryParts.push(`${STALE_LINE_MARKER} ${displayPath}:\n${summary}`);
     } else {
-      // @delivery-surface: runtime-turn:unresolved-inline-blocker
       blockerParts.push(`Unresolved from this turn — ${displayPath}:\n${summary}`);
     }
   }
 
-  // Drain the deferred cascade computes kicked off this turn (#450). They ran
-  // concurrently off the write hot path; wait a bounded time for them here so
-  // their runs are available to the merge below. A compute still in flight at
-  // the cap is carried over to the next turn_end (never dropped).
   const cascadeSettleStart = Date.now();
   const { settled, timedOut } = await runtime.settleCascadeRuns(cascadeSettleWaitMs(), {
     trackTurnEndClock: true,
@@ -458,38 +328,10 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
     metadata: { settled, timedOut },
   });
 
-  // Merge accumulated cascade results from all pipeline runs this turn.
-  // Two-pass dedup:
-  //   1. Primary-level: dedup by primary file (last writer wins).
-  //   2. Neighbor-level: each neighbor is claimed by the latest cascade result
-  //      that covers it — suppresses stale neighbor state from earlier writes.
   const t0 = Date.now();
   const cascadeRuns = runtime.consumeCascadeRuns().filter((run) => {
     const originSeq = run.origin?.projectSeq;
     const originTurn = run.origin?.turnSeq;
-    // A deferred result from AFTER a later write is not current state. Old test
-    // fixtures without provenance remain accepted for compatibility.
-    //
-    // #1443: `turnSeq` alone is NOT a supersede signal, and it used to be an
-    // unconditional reject. Every LATE run — one whose compute missed the
-    // settle cap and was re-parked by `settleCascadeRuns`, and one the
-    // quiet-window reconcile appended after this turn's predecessor already
-    // consumed (carried across turn_start by `beginTurn`) — is BY DEFINITION
-    // from an earlier turn, so `originTurn === runtime.turnIndex` was always
-    // false for exactly the runs the carry-over was built to preserve. Both
-    // producers' contracts were dead code: the measured cases were the two
-    // highest-fan-out cascades of the day (38 and 40 neighbours).
-    //
-    // R2 (#1443 follow-up): `projectSeq` alone is NOT a per-file supersede
-    // signal — it is GLOBAL, advancing on every pi-observed write anywhere in
-    // the project. Rejecting on any mismatch meant an edit to an unrelated
-    // file superseded a run that had nothing to do with it, reintroducing the
-    // exact 38/40-neighbour loss #1443 was written to fix, one filter down.
-    // `getFilesChangedSince` (#451) is the honest per-file signal: a run is
-    // superseded only if its own primary file or one of its neighbours was
-    // actually rewritten since it launched. A late-but-not-superseded run is
-    // surfaced; a superseded one is dropped with a RECORD (never silently),
-    // so the loss stays countable.
     if (originSeq !== undefined) {
       const changedSince = runtime.getFilesChangedSince(originSeq);
       if (changedSince.length > 0) {
@@ -524,21 +366,12 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
     return true;
   });
   const cascadeResults = cascadeRuns.flatMap((r) => (r.result ? [r.result] : []));
-  // #1550 class sweep: every cascade record below summarises `cascadeResults`
-  // — runs, which carry their own paths and can be carried across turns
-  // (#1443) — so labelling them with the turn's first EDITED file is the same
-  // mis-attribution the `cascade_indeterminate` fix removes. On a read-only
-  // drain turn `files` is empty and the old `?? cwd` fallback stamped a bare
-  // DIRECTORY as the record's file. These three are turn-level AGGREGATES (no
-  // per-file cause is claimed), so one label suffices; the edited file and cwd
-  // stay as fallbacks.
   const cascadeLogFilePath = cascadeResults[0]?.filePath ?? files[0] ?? cwd;
   if (cascadeResults.length > 0) {
     const seen = new Map<string, (typeof cascadeResults)[number]>();
     for (const result of cascadeResults) {
       seen.set(normalizeMapKey(result.filePath), result);
     }
-    // Iterate in reverse so the latest result claims each neighbor first.
     const neighborOwner = new Map<string, string>();
     for (const result of [...seen.values()].reverse()) {
       const pk = normalizeMapKey(result.filePath);
@@ -548,11 +381,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
       }
     }
     const parts: string[] = [];
-    // #1446 item 1: track what actually gets injected — a suppressed result
-    // (real formatted cascade text, but every one of its neighbors was claimed
-    // by a LATER result — see the reverse-iteration ownership pass above) was
-    // previously indistinguishable from "no output"; this counts it explicitly
-    // instead of letting it vanish.
     let injectedNeighborCount = 0;
     let injectedDiagnosticCount = 0;
     let suppressedByOwnership = 0;
@@ -569,7 +397,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
         suppressedByOwnership++;
       }
     }
-    // Suggest tests for cascade neighbors (files with diagnostics)
     const neighborFilesWithErrors = cascadeResults
       .flatMap((r) => r.neighbors)
       .filter((n) => n.diagnostics.length > 0)
@@ -580,10 +407,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
     if (uniqueNeighborFiles.length > 0 && isFunction(testRunnerClient.suggestTestFiles)) {
       const testSuggestions = testRunnerClient.suggestTestFiles(uniqueNeighborFiles, cwd);
       testSuggestionCount = testSuggestions.length;
-      // #1446 item 2: this path previously emitted nothing to any log — a
-      // zero-suggestion outcome (neighbors had errors but no test file
-      // resolved for any of them) is the more interesting case, so it is
-      // recorded on the same phase rather than only logging on a hit.
       logCascade({
         phase: "cascade_test_targets",
         filePath: cascadeLogFilePath,
@@ -609,17 +432,7 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
     }
     if (parts.length > 0) {
       const section = parts.join("\n\n");
-      // @delivery-surface: runtime-turn:cascade-blocker
       blockerParts.push(section);
-      // #1446 item 1: proves the cascade section reached `blockerParts` —
-      // i.e. it was QUEUED for persistence into the turn-end advisory — not
-      // that it reached the agent. The counters alone (cascade_result,
-      // cascade_turn_end) never confirmed even that much, only computation.
-      // Actual delivery happens later, via consumeTurnEndFindings/
-      // peekTurnEndFindings, and can still be suppressed after this point
-      // (e.g. allFilesDeleted, cross-turn dedup, or the session ending
-      // before the next turn_end drains it) — this record does not prove
-      // the agent ever saw the text.
       logCascade({
         phase: "cascade_injected",
         filePath: cascadeLogFilePath,
@@ -646,29 +459,8 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
       },
     });
   }
-  // #1023: surface an HONEST note whenever a cascade run could not compute
-  // downstream impact (degraded/over-cap graph, missing node, a thrown compute,
-  // or a deliberately budget-truncated neighbor set) — never a silent all-clear
-  // (#533). This goes to the ADVISORY tier,
-  // NOT the blocker tier: in an over-cap monorepo the graph is `skipped` on
-  // every edit, so a blocker would fire hard and never clear turn state every
-  // turn (over-escalation — the mirror of the silent-all-clear bug). Advisory
-  // still reaches the agent, just without the blocker mechanics. Keyed strictly
-  // off the `indeterminate` marker threaded by the compute; a healthy build
-  // with a genuinely empty dependent set carries no marker and stays silent
-  // (over-correction guard).
   const indeterminateRuns = cascadeRuns.filter((r) => r.indeterminate);
   if (indeterminateRuns.length > 0) {
-    // #1104 (review P3 on PR #1143, rides with the resultId main body): this
-    // preamble used to hardcode a graph-unavailability frame for EVERY
-    // indeterminate reason. That's accurate for `graph_degraded`/
-    // `missing_node`/`error` (the graph really couldn't produce a dependent
-    // set), but `lsp_binding_rejected` is a DIFFERENT failure shape — the
-    // graph WAS available and dependents WERE derived; only their LSP
-    // diagnostics display was withheld because a fallback snapshot's content
-    // binding didn't match current disk. Saying "the review graph was
-    // unavailable" for that case mis-attributes the cause. Bucket by reason
-    // family so each gets its own accurate frame.
     const buildAdvisory = (
       runs: typeof indeterminateRuns,
       frame: {
@@ -696,13 +488,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
       return `${frame.lead(fileCount, reasons)}\n${lines.join("\n")}`;
     };
 
-    // #1445: `excluded_by_role` (test files excluded from the graph BY DESIGN,
-    // #260) is never agent-facing — it is not a graph failure, and #1080
-    // already excludes test-role files from every neighbor surface, so "a
-    // clean result does not cover them" would itself be a false claim. It
-    // stays visible in the `cascade_indeterminate` log below (metadata-only,
-    // info-level) so the log can tell an intentional exclusion from a real
-    // graph gap, but it never reaches `buildAdvisory`/the agent.
     const graphRuns = indeterminateRuns.filter(
       (r) =>
         r.indeterminate?.reason !== "lsp_binding_rejected" &&
@@ -714,17 +499,11 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
       (r) =>
         r.indeterminate?.reason === "lsp_binding_rejected" && r.indeterminate?.budget === undefined,
     );
-    // Budget coverage can be merged into a graph or binding marker, so its
-    // advisory bucket follows the evidence rather than replacing that reason.
     const budgetRuns = indeterminateRuns.filter(
       (r) =>
         r.indeterminate?.reason === "budget_truncated" || r.indeterminate?.budget !== undefined,
     );
 
-    // Factual/informational phrasing — the advisory tier wraps this with an
-    // "ℹ️ Advisory — no action required this turn:" label, so an imperative
-    // ("review dependents manually") would contradict it. The #533 substance
-    // stays: a clean cascade result does NOT cover these files' dependents.
     const graphAdvisory = buildAdvisory(graphRuns, {
       lead: (fileCount, reasons) =>
         `Cascade could not compute downstream impact for ${fileCount} edited file(s) this turn — ` +
@@ -735,7 +514,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
           ? "changed file not in the review graph"
           : "review graph unavailable",
     });
-    // @delivery-surface: runtime-turn:cascade-coverage-advisory
     if (graphAdvisory) advisoryParts.push(graphAdvisory);
 
     const bindingAdvisory = buildAdvisory(bindingRuns, {
@@ -745,7 +523,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
         `cascade result does not cover them.`,
       fallbackDetail: () => "cascade diagnostics withheld (binding rejected)",
     });
-    // @delivery-surface: runtime-turn:cascade-coverage-advisory
     if (bindingAdvisory) advisoryParts.push(bindingAdvisory);
 
     const budgetAdvisory = buildAdvisory(budgetRuns, {
@@ -762,21 +539,9 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
           : detail;
       },
     });
-    // @delivery-surface: runtime-turn:cascade-coverage-advisory
     if (budgetAdvisory) advisoryParts.push(budgetAdvisory);
 
     const fileCount = new Set(indeterminateRuns.map((r) => normalizeMapKey(r.filePath))).size;
-    // #1550: attribute each reason to the file that PRODUCED it. This record
-    // used to stamp `filePath: files[0] ?? cwd` — the turn's first EDITED file
-    // — and a bare `reasons` array with no file association. The two sets are
-    // disjoint: a run can be carried across turns (#1443), and an edited file
-    // can skip the graph entirely (markdown/JSON return `non_code` before
-    // computeImpactCascade ever runs). So the log blamed a file that could not
-    // have produced the reason — a markdown file credited with `missing_node`,
-    // a non-test source file credited with `excluded_by_role` — and the defect
-    // read as "concentrated on test files" only because the first edited file
-    // of a turn usually is one. `fileCount` and the agent-facing advisory
-    // already keyed off `r.filePath`; only this record's labels did not.
     const byFile = indeterminateRuns.map((r) => ({
       file: toRunnerDisplayPath(cwd, r.filePath),
       reason: r.indeterminate?.reason,
@@ -788,8 +553,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
     }));
     logCascade({
       phase: "cascade_indeterminate",
-      // The first indeterminate run's own file. `files[0] ?? cwd` survives only
-      // as a last resort for a run with no path at all.
       filePath: indeterminateRuns[0]?.filePath ?? files[0] ?? cwd,
       metadata: {
         fileCount,
@@ -827,34 +590,12 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
     },
   });
 
-  // choco-pi fork: the knip and cross-file dead-code turn_end passes are
-  // removed with their clients (see VENDORED.md).
-
-  // choco-pi fork: the govulncheck / gitleaks / trivy turn_end reporting
-  // lanes are removed with their clients (see VENDORED.md). The unified
-  // secrets seam below survives with ast-grep as the only producer.
-  // Locations already surfaced as session-scan secret blockers — used to
-  // suppress the duplicate ast-grep copy from the actionable-warnings
-  // advisory below. Empty in the choco-pi fork (no session secret scanners),
-  // kept so the downstream suppression seam is unchanged.
   const secretBlockedLocations = new Set<string>();
-  // choco-pi fork: the turn_end madge (circular-dependency) pass is removed
-  // with the dependency-checker client (see VENDORED.md).
 
-  // --- Test runner: fire once per turn after all edits are done ---
-  // Runs for each unique test target across modified files; results appear
-  // in the next turn's context injection alongside jscpd/madge findings.
   if (!getFlag("no-tests") && files.length > 0) {
     const seen = new Set<string>();
     const targets: NonNullable<ReturnType<TestRunnerClient["getTestRunTarget"]>>[] = [];
 
-    // #628: also target the test companions of this turn's cascade neighbors
-    // (files that import an edited file) — a neighbor's own tests can break
-    // even though the neighbor's source wasn't touched. Reuses `cascadeResults`,
-    // already computed above (from the same #450 deferred-cascade drain) for the
-    // LSP cascade-diagnostics merge — no second reverse-dependency walk, and the
-    // neighbor set inherits whatever budget the cascade compute already applied
-    // (CASCADE_NEIGHBOUR_BUDGET), so this can't turn into unbounded per-edit work.
     const candidates: Array<{
       display: string;
       abs: string;
@@ -941,11 +682,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
                 publishedAgainst.files[index]?.sha256 !== file.sha256 ||
                 publishedAgainst.files[index]?.path !== file.path,
             );
-          // #628: the turn advancing while tests ran no longer means the
-          // results are thrown away — a late result is still real
-          // information about what's currently broken. It's tagged `stale`
-          // so a downstream consumer can distinguish it from a result that
-          // arrived in time, but it's cached either way.
           const stale = runtime.turnIndex !== firedAtTurn;
           const failures: string[] = [];
           const resultValues: TestResult[] = [];
@@ -957,40 +693,13 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
             resultValues.push(r.value);
             const { file, runner, passed, failed, duration, error } = r.value;
             const shortFile = path.basename(file);
-            // #1479: `(0ms)` used to be printed for a run nobody
-            // timed — a payload with no suite timestamps, an
-            // unrecognised summary line, or an empty result — and
-            // that is the same string a genuinely sub-millisecond
-            // run produces. A reader could not tell "measured 0"
-            // from "not measured", which is the confusion #1452 was
-            // reported for. `duration` is now absent when it was
-            // never measured, and this line says which one it has.
-            //
-            // #1480: the test is `formatRunDurationMs`, not an
-            // inline comparison. The "absent = unmeasured" contract
-            // was being re-derived at every site that read a
-            // duration, and a site that gets it slightly wrong —
-            // treating a measured `0` as absent — puts the bug back
-            // without touching this comment.
             const elapsed = formatRunDurationMs(duration);
-            // Lifted out of the template below for the same reason
-            // `elapsed` is: the pair read as a nested ternary, which
-            // this line only got flagged for because #1479 touched it.
             const verdict = failed > 0 ? "FAIL" : "PASS";
             const summary =
               error && passed === 0 && failed === 0
                 ? `error: ${error}`
                 : `${verdict} ${passed}p/${failed}f (${elapsed})`;
             dbg(`turn_end: ${stale ? "[stale] " : ""}test ${runner} ${shortFile} → ${summary}`);
-            // #1524: also fires on `error` alone, not just `failed > 0`.
-            // A runner-error result (the suite never started — spawn/
-            // config failure) has `failed === 0` by construction, so
-            // gating on `failed > 0` alone dropped it silently: the
-            // agent got no context at all, and the empty `failures`
-            // array below sent this result down the "all tests
-            // passed" branch, clearing any prior real test-failure
-            // git-guard blocker. `formatResult` already renders the
-            // error-only case as "Could not run tests: ...".
             if (failed > 0 || error) {
               const formatted = testRunnerClient.formatResult(r.value);
               if (formatted) failures.push(formatted);
@@ -1025,19 +734,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
               cwd,
             );
             if (getFlag("lens-guard") && firedSessionId === runtime.telemetrySessionId) {
-              // #1524: `&& !value.error` — a runner-error result has
-              // `failed === 0` (the suite never ran, so nothing could
-              // fail), but it is not a pass. Without the filter it
-              // would clear a prior real test-failure git-guard
-              // blocker on the strength of a suite that never
-              // started. And the call itself is skipped when this
-              // list is empty rather than passed as `[]`:
-              // `clearGitGuardTestFailure`'s own empty-array
-              // fallback treats "no files named" as "clear every
-              // blocked file", so an all-error batch (one go file,
-              // runner-error, zero clean files) would otherwise
-              // clear every blocker through that fallback instead
-              // of clearing none.
               const cleanFiles = resultValues
                 .filter((value) => value.failed === 0 && !value.error)
                 .map((value) => value.file);
@@ -1085,25 +781,9 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
     );
   }
 
-  // Session summaries are intentionally suppressed at turn_end to avoid
-  // distracting the agent with non-blocking telemetry.
-
-  // Call-graph impact analysis — surface WillBreak/MayBreak callers for modified
-  // symbols. MUST run BEFORE the writeProjectDiagnosticsDeltaReport serialization
-  // below: it is a delta contributor (like knip above), pushing into
-  // projectDiagnosticsDelta / projectDiagnosticsSources. If it ran after the
-  // single write, a call-graph-only turn would persist nothing and a mixed turn
-  // would drop the call-graph entries — so diagnostics_report (which only reads the
-  // persisted report) would never surface the findings (#179/#533).
   if (runtime.callGraph && files.length > 0) {
     const coverage = runtime.callGraph.coverage;
     if (!coverage || coverage.complete !== true) {
-      // An incomplete graph can still contain useful edges, but emitting them
-      // as ordinary impact findings would turn unsupported/partial extraction
-      // into an authoritative-looking clean result for the rest of the file.
-      // Keep the limitation visible and require a complete graph for this
-      // user-facing impact surface (#1070).
-      // @delivery-surface: runtime-turn:call-graph-advisory
       advisoryParts.push(
         "Call-graph impact was not emitted because call-graph extraction coverage is incomplete; " +
           "the affected files may have unreported callers.",
@@ -1119,23 +799,12 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
           results: ReturnType<typeof impact>;
         }[] = [];
         for (const filePath of files.slice(0, 5)) {
-          // Turn-state files may be cwd-relative while graph keys are absolute,
-          // and persisted graphs can contain either slash style/casing. Compare
-          // through the shared normalized path seam; keep the original filePath
-          // only for display and diagnostics.
           const changedFileKey = normalizeMapKey(resolveRunnerPath(cwd, filePath));
           const fileCallerKeys = [...runtime.callGraph.callers.keys()].filter((k) => {
             const graphFilePath = parseSymbolKey(k).filePath;
             return normalizeMapKey(resolveRunnerPath(cwd, graphFilePath)) === changedFileKey;
           });
           for (const calleeKey of fileCallerKeys.slice(0, 3)) {
-            // #1080: drop KNOWN test-role callers BEFORE both the human advisory
-            // (formatImpact below) and the persisted delta (impactFindings →
-            // callGraphImpactToProjectDiagnostics) — the advisory is rendered
-            // first, so the filter must reach the shared `results` set that feeds
-            // both. A test caller supplied by an old/fixture/expanded graph must
-            // appear in neither surface. Fail-open: an unparseable/unclassifiable
-            // key is retained (the adapter re-applies the same predicate).
             const results = impact(runtime.callGraph, calleeKey).filter((r) => {
               const callerFile = parseSymbolKey(r.symbolKey).filePath;
               return !callerFile || !isTestRoleCollateral(resolveRunnerPath(cwd, callerFile));
@@ -1151,7 +820,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
           }
         }
         if (impactLines.length > 0) {
-          // @delivery-surface: runtime-turn:call-graph-advisory
           advisoryParts.push(
             `📊 Call-graph impact (changed symbols have callers):\n${impactLines.join("\n")}`,
           );
@@ -1163,10 +831,7 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
             projectDiagnosticsSources.add("call-graph");
           }
         }
-        // Non-fatal — call graph is best-effort
-      } catch {
-        // Non-fatal — call graph is best-effort
-      }
+      } catch {}
     }
   }
 
@@ -1209,9 +874,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
         turnIndex: runtime.turnIndex,
         files,
         modifiedRangesByFile,
-        // Suppress the ast-grep secret advisory at any location already
-        // surfaced in the unified secrets blocker above (#131 Mode 3) — the
-        // secret is reported once, not twice.
         dispatchWarnings: runtime
           .peekActionableWarnings()
           .filter(
@@ -1232,7 +894,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
       writeActionableWarningsReport(cacheManager, cwd, report);
       appendActionableWarningsHistory(cwd, report);
       const advisory = formatActionableWarningsAdvisory(report);
-      // @delivery-surface: runtime-turn:actionable-warnings-advisory
       if (advisory) advisoryParts.push(advisory);
       logActionableWarningsEvent({
         event: advisory ? "advisory_injected" : "advisory_skipped",
@@ -1281,7 +942,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
     writeCodeQualityWarningsReport(cacheManager, cwd, qualityReport);
     appendCodeQualityWarningsHistory(cwd, qualityReport);
     const advisory = formatCodeQualityWarningsAdvisory(qualityReport);
-    // @delivery-surface: runtime-turn:code-quality-warnings-advisory
     if (advisory) advisoryParts.push(advisory);
     logLatency({
       type: "phase",
@@ -1311,8 +971,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
   const labeledAdvisoryParts = advisoryParts.map(
     (p) => `ℹ️ Advisory — no action required this turn:\n${p}`,
   );
-  // Stale-secret parts sit between the two tiers and are NOT relabelled — they
-  // ship the imperative preamble they were built with (#1622 review M2).
   const findingParts = [...blockerParts, ...staleSecretParts, ...labeledAdvisoryParts];
   if (findingParts.length > 0) {
     dbg(
@@ -1454,9 +1112,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
   }
   if (blockerParts.length === 0) {
     cacheManager.clearTurnState(cwd, currentOwner);
-    // `staleSecretParts` counts here too (#1622 review M2): clearing the
-    // findings record while a stale secret is still unverified would drop the
-    // only surviving trace of it.
     if (
       getFlag("lens-guard") &&
       advisoryParts.length === 0 &&
@@ -1484,9 +1139,6 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
     toolName: "turn_end",
     filePath: cwd,
     durationMs: Date.now() - turnEndStart,
-    // #1622 review M2: a pending stale secret is NOT a clean turn. It gets its
-    // own result rather than being promoted to `blockers_found`, which would
-    // undo the demotion the freshness gate just made.
     result:
       blockerParts.length > 0
         ? "blockers_found"

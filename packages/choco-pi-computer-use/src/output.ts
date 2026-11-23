@@ -73,9 +73,7 @@ function storeOutput(value: string): StoredOutput {
     outputBytes -= oldest.storedBytes;
     try {
       unlinkSync(oldest.filePath);
-    } catch {
-      /* already removed */
-    }
+    } catch {}
   }
   return entry;
 }
@@ -186,9 +184,7 @@ export function clearStoredOutputs(): void {
   if (outputDirectory) {
     try {
       rmSync(outputDirectory, { recursive: true, force: true });
-    } catch {
-      /* best-effort session cleanup */
-    }
+    } catch {}
   }
   outputDirectory = undefined;
   outputBytes = 0;

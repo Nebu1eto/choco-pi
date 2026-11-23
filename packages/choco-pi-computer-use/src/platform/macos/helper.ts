@@ -60,7 +60,6 @@ const COMMAND_TIMEOUT_MS = 15_000;
 const CANCEL_ACK_TIMEOUT_MS = 500;
 const RELEASE_TIMEOUT_MS = 500;
 const HELPER_PROTOCOL_VERSION = 7;
-/** Commands the helper admits only from the owning session (protocol 7). */
 const OWNER_GATED_COMMANDS = new Set([
   "act",
   "actBatch",
@@ -70,8 +69,6 @@ const OWNER_GATED_COMMANDS = new Set([
   "endInputSuppression",
   "restoreUserFocus",
 ]);
-// The installer compiles the helper from Swift sources (about 15 s warm here;
-// a cold module cache or a slow Mac takes longer), then signs and installs it.
 const HELPER_SETUP_TIMEOUT_MS = 180_000;
 
 export const HELPER_BUNDLE_ID = "com.injaneity.pi-computer-use";
@@ -90,7 +87,6 @@ const usingExternalHelperSocket = HELPER_SOCKET_PATH !== DEFAULT_HELPER_SOCKET_P
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const SETUP_HELPER_SCRIPT = path.join(PACKAGE_ROOT, "scripts", "setup-helper.ts");
 
-/** What the helper answered on the original connection while a cancel was in flight. */
 export interface HelperInterruptedResponse {
   ok: boolean;
   code?: string;
@@ -99,9 +95,7 @@ export interface HelperInterruptedResponse {
 }
 
 export class HelperTransportError extends Error {
-  /** Acknowledgement of the `cancel` sent after a timeout, when a semantic request id existed. */
   cancel?: HelperCancelAck;
-  /** False only when the cancel acknowledgement proved nothing was delivered. */
   effectPossible?: boolean;
   response?: HelperInterruptedResponse;
   interruption?: HelperInterruption;
@@ -112,7 +106,6 @@ export class HelperTransportError extends Error {
   }
 }
 
-/** The caller aborted an in-flight command; `cancel` records the helper's acknowledgement. */
 export class HelperAbortedError extends Error {
   cancel?: HelperCancelAck;
   effectPossible?: boolean;
@@ -126,13 +119,9 @@ export class HelperAbortedError extends Error {
 }
 
 export class HelperCommandError extends PlatformCommandError {
-  /** From `error.effectPossible`; false only when the helper proved nothing was delivered. */
   readonly effectPossible?: boolean;
-  /** Partial result the helper attached to the error (for example `cancelled`). */
   readonly result?: JsonValue;
-  /** Present for `cancelled` and `owned_by_other_session`. */
   readonly interruption?: HelperInterruption;
-  /** Owner-gated requests in flight, reported with `owned_by_other_session` and `owner_busy`. */
   readonly activeRequests?: number;
 
   constructor(
@@ -150,8 +139,6 @@ export class HelperCommandError extends PlatformCommandError {
     this.effectPossible = details?.effectPossible;
     this.result = details?.result;
     this.activeRequests = details?.activeRequests;
-    // The helper itself answered: a `cancelled` request reached a checkpoint
-    // and stopped; an ownership refusal delivered nothing.
     if (code === "cancelled" || code === "owned_by_other_session")
       this.interruption = new HelperInterruption({
         code,
@@ -182,7 +169,6 @@ function numberField(value: JsonField): number | undefined {
   return isNumber(value) && Number.isFinite(value) ? value : undefined;
 }
 
-/** Typed `error.evidence` of a refusal; undefined when absent or carrying no known field. */
 export function parseRefusalEvidence(value: JsonField): HelperRefusalEvidence | undefined {
   if (!isJsonObject(value)) return undefined;
   const evidence: HelperRefusalEvidence = {};
@@ -226,14 +212,12 @@ function batchActions(wire: JsonObject): JsonObject[] {
   return Array.isArray(wire.actions) ? wire.actions.filter(isJsonObject) : [];
 }
 
-/** Semantic request id of an act (`requestId`) or batch (first action's `requestId`). */
 function semanticRequestId(wire: JsonObject): string | undefined {
   if (isString(wire.requestId)) return wire.requestId;
   const action = batchActions(wire).find((candidate) => isString(candidate.requestId));
   return action && isString(action.requestId) ? action.requestId : undefined;
 }
 
-/** Session carried by an act request or the first batch action. */
 function requestSession(wire: JsonObject): PlatformRequestSession | undefined {
   return parseSession(wire.session) ?? parseSession(batchActions(wire)[0]?.session);
 }
@@ -247,7 +231,6 @@ function interruptedResponse(envelope: HelperResponseEnvelope): HelperInterrupte
   };
 }
 
-/** The request exactly as it goes on the wire, as JSON. */
 function wireArgs<TArgs extends object>(args: TArgs): JsonObject {
   const wire: JsonValue = JSON.parse(JSON.stringify(args));
   return isJsonObject(wire) ? wire : {};
@@ -287,17 +270,11 @@ async function isResolvedHelperExecutable(filePath?: string): Promise<boolean> {
   return actualPath === expectedPath;
 }
 
-/** Finite positive epoch seconds, or undefined (absent, malformed, or non-positive). */
 function toStartedAt(value: JsonField): number | undefined {
   const seconds = toFiniteNumber(value, 0);
   return seconds > 0 ? seconds : undefined;
 }
 
-/**
- * Why a live daemon cannot serve this client, or undefined when it can. The
- * daemon outlives Pi and reinstalls, so a same-protocol rebuild is caught by
- * comparing the installed executable's mtime with the daemon's start time.
- */
 async function helperStaleReason(diagnostics: PlatformDiagnostics): Promise<string | undefined> {
   if (diagnostics.protocolVersion !== HELPER_PROTOCOL_VERSION)
     return `protocol ${diagnostics.protocolVersion} (expected ${HELPER_PROTOCOL_VERSION})`;
@@ -305,7 +282,6 @@ async function helperStaleReason(diagnostics: PlatformDiagnostics): Promise<stri
     return `executable ${diagnostics.executablePath ?? "unknown"} (expected ${HELPER_APP_EXECUTABLE_PATH})`;
   if (diagnostics.startedAt === undefined)
     return "no startedAt in diagnostics (daemon predates the rebuild check)";
-  // An unreadable executable is not evidence of a rebuild on its own.
   const mtimeMs = await stat(HELPER_APP_EXECUTABLE_PATH).then(
     (stats) => stats.mtimeMs,
     () => undefined,
@@ -381,7 +357,6 @@ export class MacosHelperClient {
   private daemonAvailable = false;
   private requestSequence = 0;
   private diagnosticsCache?: PlatformDiagnostics;
-  /** Session learned from the latest act request; the helper owner identity. */
   private session?: PlatformRequestSession;
   private claimedSession?: PlatformRequestSession;
 
@@ -395,14 +370,10 @@ export class MacosHelperClient {
 
   async ensureInstalled(signal?: AbortSignal): Promise<void> {
     if (usingExternalHelperSocket) return;
-    // Installation is a deployment/repair operation, not part of every new
-    // agent process's hot path. Protocol compatibility is checked against the
-    // live daemon immediately afterwards.
     if (await isExecutable(HELPER_APP_EXECUTABLE_PATH)) {
       return;
     }
 
-    // Re-enter Electron and Bun standalone hosts as their JavaScript runtimes.
     await runProcess(
       process.execPath,
       [SETUP_HELPER_SCRIPT, "--runtime"],
@@ -426,8 +397,6 @@ export class MacosHelperClient {
         `External helper socket is unavailable at ${HELPER_SOCKET_PATH}.`,
       );
     await mkdir(path.dirname(HELPER_SOCKET_PATH), { recursive: true });
-    // Open the resolved bundle directly so a legacy system-wide copy with the
-    // same bundle id cannot win LaunchServices resolution.
     await runProcess(
       "open",
       ["-n", "-g", HELPER_APP_PATH, "--args", "serve", "--socket", HELPER_SOCKET_PATH],
@@ -462,8 +431,6 @@ export class MacosHelperClient {
         cleanup();
         finish();
       };
-      // Abort/timeout of an act: ask the helper to stop the semantic request on
-      // a second connection, record its acknowledgement, then drop the socket.
       const interrupt = (error: HelperTransportError | HelperAbortedError) => {
         if (settled || interrupted) return;
         interrupted = true;
@@ -477,10 +444,6 @@ export class MacosHelperClient {
         }
         void this.sendCancel(requestId).then((ack) => {
           error.cancel = ack;
-          // A late `cancelled` answer on the original connection is the
-          // helper's own terminal report; otherwise the ack state stands. A
-          // `stopping` ack is non-terminal: the request may still deliver
-          // until its next checkpoint, so an effect stays possible.
           const stoppedByHelper = lateResponse?.error?.code === "cancelled";
           const state = stoppedByHelper ? "stopped" : ack.state;
           if (state === "stopping") error.effectPossible = true;
@@ -557,7 +520,6 @@ export class MacosHelperClient {
     });
   }
 
-  /** Sends `cancel` for a semantic request id and waits at most 500 ms for the ack. */
   private async sendCancel(requestId: string): Promise<HelperCancelAck> {
     return await new Promise<HelperCancelAck>((resolve) => {
       const socket = net.createConnection(HELPER_SOCKET_PATH);
@@ -599,10 +561,6 @@ export class MacosHelperClient {
     });
   }
 
-  /**
-   * Records the session an act request carries and stamps the known session on
-   * owner-gated commands that do not carry one (focusWindow, setWindowFrame).
-   */
   private withSession(cmd: string, wire: JsonObject): JsonObject {
     const carried = requestSession(wire);
     if (carried) {
@@ -613,12 +571,6 @@ export class MacosHelperClient {
     return { ...wire, session: { id: this.session.id, generation: this.session.generation } };
   }
 
-  /**
-   * Claims helper ownership for the session learned from act requests. Before
-   * the first act there is no session yet; the helper then admits the first
-   * act and makes its session the owner. Throws `owned_by_other_session` when
-   * another live session owns the helper.
-   */
   async claim(signal?: AbortSignal): Promise<HelperClaimResult | undefined> {
     const session = this.session;
     if (!session) return undefined;
@@ -627,15 +579,11 @@ export class MacosHelperClient {
     return result;
   }
 
-  /** Releases ownership held by this client's session; failures are not fatal. */
   async release(signal?: AbortSignal): Promise<boolean> {
     const session = this.claimedSession ?? this.session;
-    // Forget the session first so a second shutdown sends nothing.
     this.claimedSession = undefined;
     this.session = undefined;
     if (!session) return false;
-    // Teardown never installs or launches the helper: talk only to a socket
-    // that already exists, bounded, and bypass command()/ensureDaemon().
     try {
       if (!(await stat(HELPER_SOCKET_PATH)).isSocket()) return false;
       const result = await this.daemonCommand<{ released?: boolean }>(
@@ -731,11 +679,6 @@ export class MacosHelperClient {
     let diagnostics = await this.diagnosticsCommand(signal);
     if ((await helperStaleReason(diagnostics)) === undefined) return diagnostics;
 
-    // The helper daemon outlives Pi, so restarting/reloading Pi alone does not
-    // replace a stale daemon, one launched from the legacy system location, or
-    // one still running code from before the installed binary was rebuilt.
-    // Stop it through the backwards-compatible command channel and relaunch
-    // the exact app bundle that ensureInstalled() resolved.
     await this.restart(signal);
     diagnostics = await this.diagnosticsCommand(signal);
     const relaunchedStaleReason = await helperStaleReason(diagnostics);

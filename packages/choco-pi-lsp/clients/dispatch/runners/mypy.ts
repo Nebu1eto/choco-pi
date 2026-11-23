@@ -10,13 +10,6 @@ import {
 
 const mypy = createAvailabilityChecker("mypy", "");
 
-// mypy output: file.py:10: error: Incompatible types [assignment]
-//
-// mypy follows imports and reports errors in OTHER modules, not just the file
-// it was invoked on. Attribute each diagnostic to the file mypy names (group 1,
-// resolved against cwd) rather than blanket-stamping ctx.filePath — otherwise a
-// cross-file regression is mis-located onto the edited file (#265 A2). We do NOT
-// filter to the edited file: surfacing the cross-file impact is the point.
 export function parseMypyOutput(raw: string, fallbackPath: string, cwd: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const linePattern =
@@ -24,7 +17,7 @@ export function parseMypyOutput(raw: string, fallbackPath: string, cwd: string):
   for (const match of raw.matchAll(linePattern)) {
     const [, file, lineNum, col, level, message, errorCode] = match;
     if (!lineNum || !level || !message) continue;
-    if (level === "note") continue; // skip contextual notes
+    if (level === "note") continue;
     const severity = level === "error" ? "error" : "warning";
     const rule = errorCode ?? "mypy";
     const filePath =
@@ -55,7 +48,6 @@ const mypyRunner: RunnerDefinition = {
   async run(ctx: DispatchContext): Promise<RunnerResult> {
     const cwd = ctx.cwd || process.cwd();
 
-    // Only run if mypy config exists — avoids false positives in untyped projects
     if (!hasMypyConfig(cwd)) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }

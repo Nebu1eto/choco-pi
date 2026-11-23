@@ -1,13 +1,3 @@
-/**
- * Conservative list of paths whose contents neither the pane nor the review
- * puts into the prompt editor, sends to a model, or renders before the user
- * asks to see that file.
- *
- * Matching is case-insensitive. File-name patterns test the last path
- * segment; "secret" and "credential" match anywhere in the path, so a file
- * inside a `secrets/` directory counts too.
- */
-
 const NAME_PATTERNS: readonly RegExp[] = [
   /^\.env$/u,
   /^\.env\..+$/u,
@@ -32,7 +22,6 @@ export function isSensitivePath(path: string): boolean {
   return NAME_PATTERNS.some((pattern) => pattern.test(name));
 }
 
-/** A rename or copy is sensitive when either side is. */
 export function isSensitiveFile(file: { path: string; oldPath?: string }): boolean {
   return (
     isSensitivePath(file.path) || (file.oldPath !== undefined && isSensitivePath(file.oldPath))

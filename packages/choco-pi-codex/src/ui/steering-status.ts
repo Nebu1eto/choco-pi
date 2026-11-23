@@ -7,13 +7,11 @@ import type {
 } from "../providers/openai-codex/native-steering.ts";
 
 const WIDGET = "codex-steering";
-/** Native mid-turn steering needs the openai-codex websocket; stock `openai` streams over SSE. */
 export const OPENAI_STEERING_UNAVAILABLE_REASON =
   "native steering unavailable on openai (SSE transport)";
 type SteeringUIContext = Pick<ExtensionContext, "hasUI"> & {
   sessionManager: Pick<ExtensionContext["sessionManager"], "getSessionId">;
   ui: { setWidget(key: string, lines: string[] | undefined): void };
-  /** Optional; when it is the stock `openai` provider, receipts state steering is unavailable. */
   model?: Readonly<{ provider: string }> | undefined;
 };
 const labels = {
@@ -31,7 +29,6 @@ interface Row {
   status: SteeringStatus | "queued" | "unavailable";
 }
 
-/** Session-local, per-submission receipts. Never enters model context or session history. */
 export class SteeringStatusWidget {
   private generation = 0;
   private sequence = 0;
@@ -79,7 +76,6 @@ export class SteeringStatusWidget {
       )
         return;
       row.status = status;
-      // Keep host UI calls outside the provider's protocol-error containment.
       queueMicrotask(draw);
     };
   }

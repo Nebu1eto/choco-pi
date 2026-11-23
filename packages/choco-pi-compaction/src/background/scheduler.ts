@@ -30,11 +30,9 @@ interface Job {
 
 interface ScheduledWork {
   readonly accepted: boolean;
-  /** Always fulfilled: errors are retained for the owner to observe and rethrow. */
   readonly completed: Promise<WorkSettlement>;
 }
 
-/** One module-level instance shares quota across owners in this process, not across processes. */
 export class PreparationLimiter {
   private readonly queued: Job[] = [];
   private readonly active = new Map<string, Job>();
@@ -89,8 +87,6 @@ export class PreparationLimiter {
   }
 
   private pump(): void {
-    // Oldest first. Equal-clock jobs gain bypass credit before urgency breaks ties,
-    // so even a frozen/coarse clock cannot let newer parents starve queued children.
     this.queued.sort(
       (a, b) =>
         a.queuedAt - b.queuedAt ||
@@ -107,7 +103,6 @@ export class PreparationLimiter {
       for (const waiting of this.queued) waiting.bypasses++;
       next.detach();
       this.active.set(next.ownerKey, next);
-      // run's physical lifetime, including an abort-ignoring backend, owns the slot.
       void Promise.resolve()
         .then(next.run)
         .then(

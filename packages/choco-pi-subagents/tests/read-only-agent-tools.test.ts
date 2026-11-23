@@ -1,11 +1,3 @@
-/**
- * Read-only children and the advisor's lookup tools, through the real runner.
- *
- * `runAgent` builds a real child AgentSession against a scripted faux model.
- * The only substitute is choco-pi-lsp, replaced by a fixture extension with the
- * same tool names and activation defaults, loaded from a `choco-pi-lsp`
- * directory so `extensions:` and `ext:` selectors resolve as in production.
- */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -85,7 +77,6 @@ interface Fixture {
   close(): Promise<void>;
 }
 
-/** A parent session that registers the faux provider, plus an isolated agent dir. */
 async function fixture(): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), "choco-pi-read-only-"));
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -205,7 +196,6 @@ async function runChild(f: Fixture, type: string, steps: FauxResponseStep[]): Pr
   return { session, activeAtStart, registered };
 }
 
-/** Text of every tool result for `toolName`, in transcript order. */
 function toolResults(
   session: AgentSession,
   toolName: string,
@@ -262,16 +252,9 @@ function lspNavigationOperations(): string[] {
 }
 
 interface BridgeOutcome {
-  /** "ran:direct", "ran:session", or the bridge's error message. */
   outcome: string;
 }
 
-/**
- * One `exec`-bridged `lsp_navigation` call inside `session`, through
- * choco-pi-codex's real bridge. `active` lists the tool as session-callable
- * (`ctx.executeTool()` path); otherwise the bridge runs `execute()` directly,
- * without Pi's `tool_call` hooks.
- */
 async function bridgedNavigation(
   session: AgentSession,
   active: boolean,
@@ -357,7 +340,6 @@ test("the advisor runs with exactly its lookup tools, lsp_navigation active on t
   const previousAgents = new Map<string, AgentConfig>();
   try {
     publishLeanSurface();
-    // The profile's roles install as global agents, as scripts/install-profile.ts links them.
     const agentDir = process.env.PI_CODING_AGENT_DIR;
     assert.ok(agentDir, "the fixture sets PI_CODING_AGENT_DIR");
     await symlink(join(REPO_ROOT, "profile", "agents"), join(agentDir, "agents"));
@@ -433,8 +415,6 @@ test("an explore-like child without edit and write is guarded; one with them is 
       ),
     );
 
-    // The exec bridge refuses the same call on both dispatch paths, with the
-    // hook's reason; a read operation still runs.
     const rename = { operation: "rename", path: "a.ts", new_name: "b", apply: true };
     const refused = `Code mode tool error [blocked]: ${readOnlyToolCallBlock("lsp_navigation", rename)?.reason}`;
     assert.equal(

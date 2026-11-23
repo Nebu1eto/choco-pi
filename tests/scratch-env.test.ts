@@ -76,7 +76,6 @@ function response(content: AssistantMessage["content"], stopReason: "stop" | "to
 
 type Prepare = (sessionId: string) => (() => void) | undefined;
 
-/** Runs the real bash tool inside a real session and returns its output. */
 async function runBash(prepare?: Prepare): Promise<{ output: string; sessionId: string }> {
   const root = await mkdtemp(join(tmpdir(), "choco-scratch-env-"));
   let calls = 0;

@@ -299,7 +299,6 @@ test("provider requests strip access_programs and never add it", async () => {
       controller?.report("blue", controller.getState().revision);
       const stripped = session.request({ model: "m", access_programs: ["daybreak_blue"] });
       assert.ok(isJsonRecord(stripped) && !("access_programs" in stripped));
-      // Nothing to strip: the hook never adds the field, whatever else it decides.
       const untouched = session.request({ model: "m" });
       assert.ok(
         untouched === undefined || (isJsonRecord(untouched) && !("access_programs" in untouched)),
@@ -426,7 +425,6 @@ test("openai sign-in Daybreak is unavailable with a reason and never sends acces
     },
   );
   const sessionManager = { getSessionId: () => "db-sign-in", getBranch: () => [] };
-  // No account id, no credential read: only the synchronous auth-type query.
   const signIn = {
     model: signInModel(),
     sessionManager,

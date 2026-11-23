@@ -1,8 +1,3 @@
-/**
- * Typed fixtures for usage-limit tests: real SDK sessions, real registry
- * models, a delegating ExtensionContext builder, an injectable model switch,
- * and a policy installer that owns the process-global policy slot.
- */
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   SessionManager,
@@ -51,16 +46,9 @@ export async function flush(): Promise<void> {
   }
 }
 
-/** Real built-in models from three distinct providers. */
 export interface UsageLimitModels {
-  /** anthropic/claude-opus-4-5 — the parent's and children's default model. */
   opus: Model<Api>;
-  /**
-   * openai/gpt-5.6-sol. Not openai-codex: that provider is OAuth-only, so an
-   * in-memory api_key credential leaves its models out of getAvailable().
-   */
   sol: Model<Api>;
-  /** moonshotai/kimi-k3 */
   kimi: Model<Api>;
 }
 
@@ -75,21 +63,12 @@ export interface ContextOverrides {
 
 export interface UsageLimitEnv {
   pi: ExtensionAPI;
-  /** Real context captured from the base SDK session. */
   base: ExtensionContext;
-  /** Session id of the base context; the default policy owner. */
   owner: string;
   models: UsageLimitModels;
-  /**
-   * Complete ExtensionContext delegating to `base`, with model defaulting to
-   * opus and scopedModels defaulting to [sol, opus].
-   */
   context(overrides?: ContextOverrides): ExtensionContext;
-  /** A fresh real SessionManager, i.e. a distinct owner session id. */
   freshSessionManager(cwd?: string): SessionManager;
-  /** A new real child AgentSession on `model` (default opus). */
   childSession(model?: Model<Api>): Promise<AgentSession>;
-  /** Disposes the base session and every child session this env created. */
   dispose(): void;
 }
 
@@ -99,17 +78,11 @@ function requireModel(context: ExtensionContext, provider: string, id: string): 
   return found;
 }
 
-/**
- * Build the environment. Must run before mock timers are enabled: SDK
- * initialization awaits real timers. `credentialed` controls which providers
- * `modelRegistry.getAvailable()` reports (default: all three).
- */
 export async function createUsageLimitEnv(
   credentialed: readonly string[] = USAGE_LIMIT_PROVIDERS,
 ): Promise<UsageLimitEnv> {
   const fixture = await createSdkFixture(undefined, [], credentialed);
   const base = fixture.ctx;
-  // refreshOnCreate is off in the SDK fixture; populate availability offline.
   await base.modelRegistry.refresh({ allowNetwork: false });
   const models: UsageLimitModels = {
     opus: requireModel(base, "anthropic", "claude-opus-4-5"),
@@ -189,11 +162,9 @@ export interface FakePolicyState {
   corroborate: (count: number) => FakeCorroboration;
   pick?: { provider: string; id: string };
   isClosed?: (providerKey: string, accountId: string, now?: number) => boolean;
-  /** Published as the policy's optional `accountId(provider)` when set. */
   accountId?: (provider: string) => string;
   closed: [string, string, number][];
   corroborations: number;
-  /** Every classification handed to `corroborate`, in call order. */
   corroborated: UsageLimitClassification[];
   fallbackContexts: FallbackCandidateContext[];
 }
@@ -210,7 +181,6 @@ export function policyState(overrides: Partial<FakePolicyState>): FakePolicyStat
   };
 }
 
-/** Corroboration answer as returned across the seam; `evidence` is read structurally. */
 interface FixtureCorroborationResult {
   ready: boolean;
   classification: UsageLimitClassification;
@@ -218,12 +188,10 @@ interface FixtureCorroborationResult {
 }
 
 export interface InstalledPolicy {
-  /** The installed policy object; tests may replace its members in place. */
   policy: UsageLimitPolicy;
   remove(): void;
 }
 
-/** The map this module installs in the process-global slot. */
 const policySlot = new Map<string, UsageLimitPolicy>();
 
 function ensurePolicySlot(): void {
@@ -269,7 +237,6 @@ export function installPolicy(state: FakePolicyState, owner: string): InstalledP
   return installPolicyObject(policy, owner);
 }
 
-/** Install an already-built policy (e.g. the root's real one) for `owner`. */
 export function installPolicyObject(policy: UsageLimitPolicy, owner: string): InstalledPolicy {
   ensurePolicySlot();
   policySlot.set(owner, policy);
@@ -286,23 +253,17 @@ export interface Harness {
   runs: Deferred<RunResult>[];
   resumes: Deferred<ResumeResult>[];
   resumePrompts: string[];
-  /** Options of every `runAgent` call, in call order (drive runner callbacks). */
   runOptions: RunAgentOptions[];
-  /** Prompt of every `runAgent` call, in call order. */
   runPrompts: string[];
-  /** Agent type of every `runAgent` call, in call order. */
   runTypes: string[];
   completions: AgentRecord["status"][];
   usageEvents: string[];
-  /** Every model passed to the injected `setSessionModel`, in call order. */
   modelSwitches: Model<Api>[];
 }
 
 export interface HarnessOptions {
   maxConcurrent?: number;
-  /** Runs after the switch is recorded; throw to simulate a failed switch. */
   setSessionModel?: SetSessionModel;
-  /** Called synchronously inside each `runAgent`, e.g. to fire onSessionCreated. */
   onRunAgent?: (options: RunAgentOptions) => void;
 }
 

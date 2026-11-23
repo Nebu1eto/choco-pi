@@ -3,7 +3,6 @@ import { PRIORITY } from "../priorities.ts";
 import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
 import { createAvailabilityChecker } from "./utils/runner-helpers.ts";
 
-// fish_indent ships with fish — not separately installable, no managed fallback
 const fishIndent = createAvailabilityChecker("fish_indent");
 
 const fishIndentRunner: RunnerDefinition = {
@@ -22,7 +21,6 @@ const fishIndentRunner: RunnerDefinition = {
     const cmd = fishIndent.getCommand(cwd);
     if (!cmd) return { status: "skipped", diagnostics: [], semantic: "none" };
 
-    // --check: exits 0 if already formatted, 1 if reformatting would change the file
     const result = await safeSpawnAsync(cmd, ["--check", ctx.filePath], {
       timeout: 10000,
       cwd,
@@ -32,10 +30,8 @@ const fishIndentRunner: RunnerDefinition = {
       return { status: "succeeded", diagnostics: [], semantic: "none" };
     }
 
-    // Non-zero exit: either needs formatting or a parse error was reported on stderr
     const stderrLine = (result.stderr ?? "").split("\n").find((l) => l.trim());
     if (stderrLine) {
-      // Parse/syntax error — extract line number from "filename (line N): message" if present
       const lineMatch = stderrLine.match(/\(line\s+(\d+)\)/);
       const line = lineMatch ? Number(lineMatch[1]) : 1;
       const diagnostics: Diagnostic[] = [
@@ -54,7 +50,6 @@ const fishIndentRunner: RunnerDefinition = {
       return { status: "failed", diagnostics, semantic: "blocking" };
     }
 
-    // Clean stderr — file just needs formatting
     const diagnostics: Diagnostic[] = [
       {
         id: `fish-indent-format-${ctx.filePath}`,

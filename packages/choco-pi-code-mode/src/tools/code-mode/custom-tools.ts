@@ -120,8 +120,6 @@ export function discoverCustomToolsFromDirectories(
   for (const dir of dirs) {
     for (const path of customToolPaths(dir, errors)) {
       const name = basename(path, extname(path));
-      // A project-local definition claims its name even when invalid. Never
-      // silently fall back to a global tool with different behavior.
       byName.delete(name);
       const tool = loadCustomTool(path, errors);
       if (tool) byName.set(tool.name, tool);

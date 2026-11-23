@@ -34,7 +34,6 @@ test("internal workflow skills are hidden from model invocation; entry skills ar
   }
 });
 
-/** Every fenced block with `info` in `path`, each wrapped as a one-block message for the parser. */
 async function exampleBlocks(path: string, info: string): Promise<string[]> {
   const source = await readFile(new URL(`../${path}`, import.meta.url), "utf8");
   const pattern = new RegExp("^```" + info + "\\n[\\s\\S]*?^```$", "gmu");

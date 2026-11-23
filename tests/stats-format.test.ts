@@ -418,7 +418,6 @@ test("the throughput table shows timing columns only when a row has a figure", (
 });
 
 test("estimated rows are marked est., low samples say so, recorded timings win, and Fast splits a model", () => {
-  // 30 Codex calls priced at twice the list output rate (Fast applied), 30 at list.
   const prices = (provider: string, model: string) =>
     provider === "openai-codex" && model === "gpt-6-astra"
       ? { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 }
@@ -570,7 +569,6 @@ test("a model keeps one colour across the chart legend, By model, and throughput
     .filter(([, text]) => text === "  ●" || text === "●")
     .map(([name]) => name);
   const models = report.byModel.map((row) => row.key);
-  // By model swatches (rank order), then feature swatches, then provider, then by-model throughput swatches.
   const first = swatches.slice(0, models.length);
   const chartLegend = paints
     .filter(([, text]) => text === "●")
@@ -943,8 +941,6 @@ test("low-sample wording is long when the labels still fit, short otherwise; thi
   const thinRow = rows.find((line) => line.includes("Sonnet")) ?? "";
   const fullRow = rows.find((line) => line.includes("Opus")) ?? "";
   assert.ok(thinRow.length > 0 && fullRow.length > 0);
-  // The thin row's call count is dimmed; the confident row's is not.
-  // The test style encodes a colour token as its name length: "dim" is 3, "text" is 4.
   const dimOne = "\u001b[33m" + "1".padStart(5) + "\u001b[0m";
   assert.ok(thinRow.includes(dimOne), "thin row numbers are dim");
   const plainThirty = "\u001b[34m" + "30".padStart(5) + "\u001b[0m";
@@ -1012,7 +1008,6 @@ test("Context & Compaction never wraps at 40, 54, 80, or 140 columns", () => {
         const section = body.split("Context & Compaction")[1]?.split("\nThroughput")[0] ?? "";
         for (const line of section.split("\n").slice(1)) {
           assert.ok(visibleWidth(line) <= width, `${width}/${expanded}: ${line}`);
-          // Every line is an indented row, never a wrapped tail at column 0.
           assert.ok(
             line === "" || line.startsWith("  ") || line.startsWith("\u001b"),
             `${width}/${expanded} wrapped: ${line}`,
@@ -1047,7 +1042,6 @@ test("Throughput has no bars and keeps headers over right-aligned values at 40, 
         assert.ok(!/[█░]/.test(line), `${width}/${expanded} bar glyph: ${line}`);
         assert.ok(visibleWidth(line) <= width, `${width}/${expanded} wide: ${line}`);
       }
-      // Every table: the header's "calls" and "tok/s" end where the row values end.
       const headers = lines.filter((line) => /\bcalls\s+tok\/s/.test(line));
       assert.ok(headers.length >= 1);
       for (const header of headers) {
@@ -1073,7 +1067,6 @@ test("Throughput has no bars and keeps headers over right-aligned values at 40, 
           assert.match(rate, /\d\.\d$/, `${width}: tok/s ends under its header in ${row}`);
         }
       }
-      // Names and tags survive at every width.
       assert.match(section, /● Claude Sonnet 5\.5/, `${width}: whole model name`);
       assert.match(section, /● Grok 4\.7( \(xAI\))? (· )?fast\?/, `${width}: fast tag`);
     }
@@ -1213,7 +1206,6 @@ test("Throughput charts generation tok/s per day per model, leaving gaps where a
   });
   const trend = body.split("Throughput per day")[1] ?? "";
   assert.match(trend, /^ \(last 7 days, generation tok\/s per model\)/);
-  // 50 output tokens over 2000 - 300 ms of generation: 29.4 tok/s, the axis peak.
   assert.match(trend, /^\s+29 ┤/m, "the axis peaks at the fastest day");
   assert.match(trend, /└.*today$/m);
   assert.match(trend, /^  ● Claude Opus 5\.5 · ● /m, "the legend names models in By Model colours");
@@ -1409,7 +1401,6 @@ test("Summary and Throughput fit their charts to the 25-row section, never below
       `throughput fits, or its chart is at the minimum, at ${width}`,
     );
   }
-  // At 54 columns the compact summary cannot fit: the chart stops at five rows and scrolls.
   const compact = body("summary", 54, false);
   assert.equal(plotRows(compact), 5);
   assert.ok(compact.length > STATS_SECTION_ROWS);

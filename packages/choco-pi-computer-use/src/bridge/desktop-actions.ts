@@ -97,14 +97,6 @@ export function isKeyboardUiAction(action: UiAction): action is UiAction & {
   return action.action === "typeText" || action.action === "keypress";
 }
 
-/**
- * Prepares every action of a desktop transaction before anything is sent, with
- * the same focus tracking dispatch used to apply action by action: a delivered
- * action's outcome never changes how a later action is prepared, and the loop
- * stops at the first refusal, so later preparations go unused. Any error here
- * is decided before delivery. In a multi-action call it names the action and
- * states that nothing was sent; the original message follows the prefix.
- */
 export function prepareDesktopTransaction(
   actions: UiAction[],
   look: LookResponse,
@@ -126,7 +118,6 @@ export function prepareDesktopTransaction(
   });
 }
 
-/** Whether any prepared keyboard action goes to the app's focused element. */
 export function usesImplicitFocus(prepared: NativePreparedAction[]): boolean {
   return prepared.some(
     (action) =>
@@ -134,11 +125,6 @@ export function usesImplicitFocus(prepared: NativePreparedAction[]): boolean {
   );
 }
 
-/**
- * Ref-less keyboard input goes to the target app's focused element. Refuse it
- * before any delivery when the app reports that focus (or, failing that, its
- * main window) in a window other than this state's window.
- */
 export async function assertImplicitFocusWindow(
   target: ResolvedTarget,
   signal?: AbortSignal,
@@ -163,9 +149,6 @@ export async function dispatchUiTransaction(
   signal?: AbortSignal,
   ctx?: ExtensionContext,
 ): Promise<DesktopDispatch> {
-  // Strict-headless batches have one immutable delivery class. Otherwise each
-  // action is delivered once, independently; the first refusal stops the
-  // transaction and nothing is retried or escalated.
   if (headless && currentPlatformBackend.actBatch) {
     const textLength = prepared.reduce(
       (sum, action) => sum + ("text" in action.params ? action.params.text.length : 0),
@@ -212,8 +195,6 @@ export async function dispatchUiTransaction(
     try {
       step = await helperAct(target, action, headless, signal, session);
     } catch (error) {
-      // Aborts keep propagating; any other failure is reported with the
-      // actions already delivered instead of discarding their record.
       if (signal?.aborted || !(error instanceof Error)) throw error;
       failure = {
         index,
@@ -229,8 +210,6 @@ export async function dispatchUiTransaction(
   const execution = aggregateExecutions(steps);
   const state = failure?.interruption?.execution.state;
   if (state !== undefined && !TERMINAL_INTERRUPTION_STATES.has(state)) {
-    // The interrupted request may still be posting input; moving focus back now
-    // could send that input to the user's app.
     if (steps.some((step) => step.foregroundGrant === true)) {
       execution.focusRestored = false;
       execution.focusRestoreReason = "delivery_may_continue";
@@ -241,18 +220,12 @@ export async function dispatchUiTransaction(
   return { execution, failure };
 }
 
-/** Interruption states after which the helper delivers nothing more for the request. */
 export const TERMINAL_INTERRUPTION_STATES: ReadonlySet<HelperInterruptionState> = new Set([
   "stopped",
   "completed",
   "refused",
 ]);
 
-/**
- * Executed actions whose effect is not verified: the whole execution did not
- * end `worked` (after any postcondition or value check), and the action's own
- * step outcome is `unknown` or `didnt`.
- */
 export function unverifiedActions(
   execution: ExecutionTrace,
   actions: UiAction[],
@@ -276,7 +249,6 @@ export function unverifiedEffectText(unverified: UnverifiedAction[]): string {
   return ` Effect not verified for ${listed}; confirm it in the returned state before reporting success.`;
 }
 
-/** Notes the region of each unverified ref action without claiming a change. */
 export function markUnverifiedRegions(
   note: WindowNote | undefined,
   outline: Outline,
@@ -332,9 +304,7 @@ export async function terminalDesktopActionResult(
       if (exactRootAvailable) break;
       if (attempt < 2) await sleep(75);
     }
-  } catch {
-    // A failed identity probe cannot prove that the root closed.
-  }
+  } catch {}
   const targetClosed = exactRootAvailable === false;
   if (
     targetClosed &&
@@ -410,7 +380,6 @@ export async function terminalDesktopActionResult(
   };
 }
 
-/** Structured refusal: foreground delivery was needed but not granted; nothing was retried. */
 export function foregroundRequiredResult(
   target: ResolvedTarget,
   baseStateId: string,
@@ -466,18 +435,12 @@ export function foregroundRequiredResult(
   };
 }
 
-/**
- * Maps helper protocol-7 interruptions to a structured act result: `cancelled`
- * (helper stop on cancel/deadline, or a client timeout the helper acknowledged)
- * and `owned_by_other_session`. Anything else is not an interruption.
- */
 export function helperInterruption(error: Error): HelperInterruptionOutcome | undefined {
   const interruption =
     "interruption" in error && error.interruption instanceof HelperInterruption
       ? error.interruption
       : undefined;
   if (!interruption) return undefined;
-  // Pessimistic default: only an explicit false proves nothing was delivered.
   const effectPossible = interruption.effectPossible !== false;
   if (interruption.code === "owned_by_other_session") {
     return {
@@ -487,7 +450,6 @@ export function helperInterruption(error: Error): HelperInterruptionOutcome | un
     };
   }
   const { result, cancel, state } = interruption;
-  // A `stopping` ack is not a stop: the request may still be delivering.
   const stopping = state === "stopping";
   const execution: InterruptedExecutionTrace = {
     strategy: "act",
@@ -507,7 +469,6 @@ export function helperInterruption(error: Error): HelperInterruptionOutcome | un
   return { code: "cancelled", message: error.message, execution };
 }
 
-/** Headline for a cancelled act; only a terminal helper report says it stopped. */
 export function cancelledHeadline(execution: InterruptedExecutionTrace): string {
   const at = execution.stoppedAt === undefined ? "" : ` at action ${execution.stoppedAt + 1}`;
   switch (execution.state) {
@@ -534,8 +495,6 @@ export function helperInterruptedResult(
   const execution: InterruptedExecutionTrace = delivered
     ? {
         ...interruption.execution,
-        // Earlier actions of this call were delivered: the transaction is
-        // partial whatever the interrupted request itself did.
         outcome: "partial",
         effectPossible: true,
         stoppedAt: delivered.index,
@@ -585,11 +544,6 @@ export function interruptedEffectText(
   return "The helper reported that this request delivered no input. Earlier actions in the same call may have been delivered.";
 }
 
-/**
- * Whether a returned refusal leaves the base state stale: earlier actions of
- * the call were delivered, or the refused action itself may have taken effect
- * (including a background pid pointer attempt that showed no change).
- */
 export function refusalMayHaveChangedUi(
   execution: ExecutionTrace,
   refusal: ForegroundRefusal,
@@ -602,7 +556,6 @@ export function refusalMayHaveChangedUi(
   );
 }
 
-/** The failed action's step: no helper result, only the error and whether it may have landed. */
 export function failedStepTrace(failure: DesktopDispatchFailure): ExecutionTrace {
   const effectPossible = errorEffectPossible(failure.error);
   const code =
@@ -629,8 +582,6 @@ export async function performDesktopTransaction(
   const baseView = { stateId: state.currentCapture!.stateId, outline: state.currentOutline! };
   const condition = params.expect ? validateCondition(params.expect) : undefined;
   const scopeNode = condition ? conditionScopeNode(look.parsedOutline!, condition) : undefined;
-  // Every refusal before the write lock delivers nothing and keeps the base
-  // state valid: per-action validation first, then the focus-window check.
   const headless = getComputerUseConfig().headless;
   const prepared = prepareDesktopTransaction(actions, look, headless);
   const target = await ensureTargetWindowId(await resolveCurrentTarget(signal), signal);
@@ -655,7 +606,6 @@ export async function performDesktopTransaction(
         failure.interruption,
         failure.index > 0 ? { index: failure.index, execution } : undefined,
       );
-    // Nothing earlier was delivered: the failure is reported as it always was.
     if (failure?.index === 0) throw failure.error;
     if (execution.refusal) {
       if (refusalMayHaveChangedUi(execution, execution.refusal)) clearDesktopOperationState(state);
@@ -723,7 +673,6 @@ export async function performDesktopTransaction(
         await sleep(settleMsForExecution(execution), signal);
       }
       const capture = await captureCurrentTarget(signal, "auto", AUTO_IMAGE_MAX_DIMENSION, target);
-      // A partial call never becomes "worked" from observed values: an action failed.
       if (!failure)
         execution.outcome = outcomeAfterObservedValues(
           execution.outcome ?? "unknown",
@@ -733,7 +682,6 @@ export async function performDesktopTransaction(
       const unverified = unverifiedActions(execution, executedActions);
       const unverifiedIndexes = new Set(unverified.map((entry) => entry.index));
       for (const [index, action] of executedActions.entries()) {
-        // Only a verified effect marks its region "changed (acted here)".
         state.currentNote = noteAfterAct(
           state.currentNote ?? noteBefore,
           unverifiedIndexes.has(index) ? undefined : action.ref,
@@ -776,7 +724,6 @@ export async function performDesktopTransaction(
   });
 }
 
-/** Result text for a call that stopped at a delivery failure after earlier actions ran. */
 export function partialSummary(
   failure: DesktopDispatchFailure,
   actions: UiAction[],

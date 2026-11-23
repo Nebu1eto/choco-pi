@@ -13,8 +13,6 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-// Mirrors the runtime call shape: preflight may finish out of order, then the call waits
-// for its turn, enters the session queue synchronously, and releases its turn.
 async function admittedCall(
   queue: KeyedAsyncExecutionQueue,
   preflightMs: number,

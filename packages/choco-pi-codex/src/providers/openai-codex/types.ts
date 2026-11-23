@@ -23,8 +23,6 @@ import type {
 import type { CodexFastModeDecision } from "./fast-mode-decision.ts";
 import type { CodexAccessPrograms, CodexDaybreakTicket } from "./daybreak-decision.ts";
 
-// Wire request bodies: compiled once at module scope. Properties the schema does not name stay
-// open, as the TypeBox object it replaces allowed them.
 const responsesBodyRequiredValidator = compile(
   obj(
     {
@@ -51,7 +49,6 @@ const codexStreamEventValidator = compile({
   ],
 });
 
-/** Deep check of a JSON-like protocol value: finite numbers only, no undefined below the top level. */
 function isDeepProtocolValue<Value>(value: Value): boolean {
   if (isString(value) || isNumber(value) || isBoolean(value) || value === null) return true;
   if (Array.isArray(value)) return value.every((item) => isDeepProtocolValue(item));
@@ -60,7 +57,6 @@ function isDeepProtocolValue<Value>(value: Value): boolean {
 }
 
 export type ProtocolPrimitive = boolean | number | string | null;
-// Schema-derived so the dictionary contract below names its owner; any JSON value or live object.
 const protocolValueSchema: Schema<object | string | number | boolean | null> = {
   anyOf: [
     { type: "object" },
@@ -133,12 +129,6 @@ export interface CachedWebSocketContinuationState {
   lastResponseItems: ProtocolValue[];
 }
 
-/**
- * Every decision is also a valid `CodexCompactionDiagnostic.continuation`: the
- * websocket stream copies it into the compaction diagnostic, and the details
- * validator rejects any value outside that list, hiding the compaction from
- * the native display path.
- */
 export type WebSocketContinuationDecision = CodexCompactionContinuation;
 
 export type CanonicalHistoryDecision =
@@ -253,7 +243,6 @@ export type CodexProviderStreamOptions = SimpleStreamOptions & {
 export type CodexReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type OpenAICodexStreamOptions = CodexProviderStreamOptions & {
   fastModeDecision?: CodexFastModeDecision | undefined;
-  /** Minted by the registered provider entry; injected values are never trusted. */
   daybreakTicket?: CodexDaybreakTicket | undefined;
   midTurnSteering?: boolean | undefined;
   asyncCodeMode?: boolean | undefined;
@@ -264,7 +253,6 @@ export type OpenAICodexStreamOptions = CodexProviderStreamOptions & {
   websocketConnectTimeoutMs?: number | undefined;
   env?: ProviderEnv | undefined;
   canonicalCompaction?: boolean | undefined;
-  /** Isolated native preparation: no foreground turn state or responses-lite rewriting. */
   backgroundCompactionLane?: boolean | undefined;
   validateBackgroundCompactionPayload?: ((body: ResponsesBody) => boolean) | undefined;
   compactionDiagnostics?: CodexCompactionDiagnostic | undefined;
@@ -354,7 +342,6 @@ export interface CodexStreamEvent {
   [key: string]: ProtocolPropertyValue;
 }
 
-/** Any JSON value is a stream event candidate, as the former union of JSON kinds accepted. */
 export function isCodexStreamEvent<Value>(value: Value): value is Value & CodexStreamEvent {
   return codexStreamEventValidator.check(value);
 }

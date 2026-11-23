@@ -1,12 +1,3 @@
-/**
- * side-conversation.ts — BTW-style orchestrator-owned side conversations.
- *
- * A side conversation is an ordinary top-level AgentRecord with a marker. It
- * therefore shares maxConcurrent, handles, persistence, FleetView and focus
- * mode with the rest of the fleet. This controller only owns launch defaults,
- * overlay lifetime and unobtrusive completion delivery.
- */
-
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentManager } from "../agent-manager.ts";
 import { captureMainSessionFork } from "../agent-runner.ts";
@@ -42,21 +33,8 @@ export type SideConversationOptions = {
   focusAgent?: (record: AgentRecord, tui: any, theme: Theme) => boolean;
 };
 
-/** Dedicated internal agent for `/btw`; its records are named `side-chat`, `side-chat-2`, .... */
 export const SIDE_CHAT_TYPE = "side-chat";
 
-/**
- * Pick the agent type for a side conversation. The dedicated `side-chat` agent
- * wins when registered and enabled. It is normally `internal: true`, hidden from
- * caller-supplied dispatch, so it is looked up by literal name here: `/btw` is a
- * first-party spawn, like the advisor tool spawning `advisor`. The manager and
- * runner serve internal types by name; nothing on this path re-validates them.
- *
- * Without it, `general-purpose` is preferred, but harnesses run with default
- * agents disabled (`fallbackSubagent: "none"`), so fall through the configured
- * fallback, then `general`, then every caller-spawnable type. A BTW
- * conversation must work in any viable fleet.
- */
 export function resolveBtwType(): SpawnTypeResolution {
   const sideChat = getAgentConfig(SIDE_CHAT_TYPE);
   if (sideChat && sideChat.enabled !== false) return { ok: true, type: SIDE_CHAT_TYPE };
@@ -94,7 +72,6 @@ export class SideConversationController {
   private autoOpen = new Set<string>();
   private openAgentId: string | undefined;
   private closeOverlay: (() => void) | undefined;
-  /** False when the host has dialogs and notices but no terminal components (RPC). */
   private terminal = true;
 
   constructor(manager: AgentManager, options: SideConversationOptions = {}) {
@@ -107,10 +84,6 @@ export class SideConversationController {
     this.terminal = terminal;
   }
 
-  /**
-   * Fork the main agent's active branch and runtime identity into a bounded,
-   * read-only background session. The main transcript receives no turn.
-   */
   launch(pi: ExtensionAPI, ctx: ExtensionContext, type: string, question: string): string {
     const mainSessionFork = captureMainSessionFork(ctx);
     let id: string | undefined;
@@ -128,21 +101,15 @@ export class SideConversationController {
       sideConversation: true,
       readOnly: true,
       rootSessionId: ctx.sessionManager?.getSessionId?.(),
-      // Session creation is asynchronous in the real runner. Queueing also
-      // makes this safe for synchronous test doubles that invoke the callback
-      // before spawn() returns its id.
       onSessionCreated: () => queueMicrotask(reveal),
     });
-    // Without a terminal there is no overlay to reveal; the answer arrives as a notice.
     if (!this.terminal) return id;
     this.autoOpen.add(id);
 
-    // A synchronous manager double may already have attached its session.
     if (this.manager.getRecord(id)?.session) queueMicrotask(reveal);
     return id;
   }
 
-  /** Open one side conversation in the shared dismissible viewer. */
   open(record: AgentRecord): boolean {
     if (!record.sideConversation || !record.session || !this.ui) return false;
     if (!this.terminal) {
@@ -199,7 +166,6 @@ export class SideConversationController {
     return true;
   }
 
-  /** Completion never steals focus after the user dismissed the overlay. */
   onAgentComplete(record: AgentRecord): void {
     if (!record.sideConversation) return;
     this.autoOpen.delete(record.id);
@@ -207,7 +173,6 @@ export class SideConversationController {
     const handle = handleOf(record);
     const level = record.status === "error" ? "warning" : "info";
     if (!this.terminal) {
-      // No overlay can be reopened, so the notice carries the answer itself.
       this.ui?.notify(`BTW @${handle} finished.\n\n${describeAgentResult(record)}`, level);
       return;
     }

@@ -28,7 +28,6 @@ test("the provider registers as google with oauth, fallback models and its own t
 });
 
 test("the registered transport refuses a Gemini API key before any request", async () => {
-  // Pi hands the provider-level streamSimple whatever the inherited google API-key auth resolved.
   let requests = 0;
   const fetch: typeof globalThis.fetch = async () => {
     requests += 1;

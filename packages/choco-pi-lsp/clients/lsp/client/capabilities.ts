@@ -1,6 +1,3 @@
-/**
- * Dynamic capability registration, configuration-section resolution, and server capability detection.
- */
 import type { Static } from "@earendil-works/pi-schema";
 import { isRuntimeString } from "../../../tools/runtime-values.ts";
 import { isBooleanValue } from "../schema-guards.ts";
@@ -17,7 +14,6 @@ import type {
   LSPWorkspaceDiagnosticsSupport,
 } from "./types.ts";
 
-// Methods that can be registered dynamically and map to operationSupport keys
 interface DynamicOperationMethodMap {
   [method: string]: keyof LSPOperationSupport;
 }
@@ -49,13 +45,6 @@ export function applyDynamicCapabilities(state: LSPClientState): void {
     state.workspaceDiagnosticsSupport = {
       advertised: true,
       mode: "pull",
-      // #1667: workspace-pull support is what the REGISTRATION declares. The
-      // spec registers workspace pull as `registerOptions.workspaceDiagnostics`
-      // on a `textDocument/diagnostic` registration - `workspace/diagnostic` is
-      // not itself a registrable method - so reading the method name alone
-      // missed every conforming server and this client never issued a
-      // workspace pull for one. The method-name check stays as a fallback for
-      // servers that register it as a method anyway.
       workspaceDiagnostics:
         registrations.some((r) => r.workspaceDiagnostics === true) ||
         registeredMethods.has("workspace/diagnostic"),
@@ -65,7 +54,6 @@ export function applyDynamicCapabilities(state: LSPClientState): void {
     state.staticDiagnosticsMode === "push-only" &&
     state.workspaceDiagnosticsSupport.diagnosticProviderKind === "dynamic"
   ) {
-    // Was only dynamically registered, now unregistered — revert to push-only
     state.workspaceDiagnosticsSupport = {
       advertised: false,
       mode: "push-only",
@@ -85,15 +73,6 @@ function isJsonObjectValue(value: JsonValue): value is JsonObject {
   return isJsonRecord(value);
 }
 
-/**
- * Resolve a `workspace/configuration` request item's `section` (a dot-path,
- * e.g. "scan.jobs") against the server's `initializationOptions` blob.
- * - No section (undefined/empty) → the whole blob, per spec ("if a scope
- *   isn't asked for" the client returns the full settings for that scope).
- * - An unresolvable path → `null`, never the whole blob — a server asking
- *   for a section it doesn't get must not silently receive unrelated config.
- * Exported for the #983 regression test.
- */
 export function resolveConfigurationSection(
   initialization: JsonObject | undefined,
   section: string | undefined,
@@ -127,7 +106,6 @@ export function detectWorkspaceDiagnosticsSupport(
     return {
       advertised: diagnosticProvider,
       mode: diagnosticProvider ? "pull" : "push-only",
-      // The boolean form of diagnosticProvider only signals document pull.
       workspaceDiagnostics: false,
       diagnosticProviderKind: "boolean",
     };

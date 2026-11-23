@@ -1,13 +1,6 @@
 import fs from "node:fs";
 import { resolvePath } from "./paths.ts";
 
-/**
- * Commands whose output is a listing of file paths, worth scanning for
- * AGENTS.md context. Deliberately simplified from the reference's grammar:
- * no `git -C`/`--git-dir=` handling, no pipeline-aware base tracking across
- * `|`, and quoting support covers single/double quotes and backslash escapes
- * without full POSIX shell semantics.
- */
 const DISCOVERY_COMMANDS = new Set([
   "ls",
   "find",
@@ -21,10 +14,8 @@ const DISCOVERY_COMMANDS = new Set([
   "tail",
 ]);
 
-/** Commands whose first non-flag argument is a search pattern, not a path. */
 const PATTERN_FIRST_COMMANDS = new Set(["rg", "grep"]);
 
-/** Commands that only discover files when given an explicit file operand. */
 const FILE_OPERAND_COMMANDS = new Set(["cat", "head", "tail"]);
 
 function tokenize(value: string): string[] {
@@ -89,12 +80,6 @@ export function isDiscoveryShellCommand(value: string): boolean {
   return false;
 }
 
-/**
- * Resolve candidate directories for a discovery shell command: `cd` tracks
- * the working directory, and existing path-like non-flag arguments after a
- * discovery command are resolved against it. Falls back to the tracked `cwd`
- * when no path argument is found.
- */
 export function shellTargets(value: string, base: string): string[] {
   const parts = tokenize(value);
   if (!parts.length) return [base];

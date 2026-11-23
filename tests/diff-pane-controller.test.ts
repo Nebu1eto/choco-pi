@@ -40,8 +40,6 @@ import { PaneView } from "../profile/extensions/diff/ui/pane-view.ts";
 import { prefsPath, type PrefsIo } from "../profile/extensions/diff/ui/prefs.ts";
 import type { DiffPaneDefault } from "../profile/extensions/lib/agent-preferences.ts";
 
-/* ------------------------------------------------------------------ fakes */
-
 class Lines implements Component {
   readonly lines: string[];
   constructor(lines: string[]) {
@@ -125,7 +123,6 @@ class FakeTui implements PaneTui {
       this.listeners = this.listeners.filter((entry) => entry !== listener);
     };
   }
-  /** Deliver input the way the TUI does: listeners first, then the focused component. */
   input(data: string): void {
     for (const listener of this.listeners) {
       if (listener(data)?.consume) return;
@@ -353,8 +350,6 @@ function harness(
 
 const PREFS = prefsPath("/agent");
 
-/* -------------------------------------------------------------- the tests */
-
 test("nothing is created before the pane is first opened or a tool may have changed files", async () => {
   const h = harness();
   await h.fire("session_start", { reason: "startup" });
@@ -533,7 +528,6 @@ test("an unexpected layout root selects the overlay host, which shutdown hides",
   assert.equal(h.probe.session()?.host?.kind, "overlay");
   assert.equal(h.tui.overlays.length, 1);
   assert.equal(h.tui.overlays[0]?.options.nonCapturing, true);
-  // Said on the pane's own message line: a notification would be drawn under the overlay.
   assert.match(h.probe.session()?.view?.message?.text ?? "", /overlay/);
   assert.equal(h.notices.length, 0);
   await h.fire("session_shutdown", { reason: "reload" });
@@ -581,8 +575,6 @@ test("a corrupt preference file is ignored and rewritten", async () => {
   await again.fire("session_start", { reason: "startup" });
   assert.equal(again.probe.session()?.host, undefined);
 });
-
-/* ------------------------------------------------------------- view tests */
 
 function viewHarness() {
   const store = new FakeStore("/repo");

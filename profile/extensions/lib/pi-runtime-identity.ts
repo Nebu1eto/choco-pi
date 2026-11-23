@@ -65,10 +65,8 @@ export async function probeLauncherVersion(options: {
   executable?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
-  /** Environment consulted for `CHOCO_PI_LAUNCHER`; defaults to `process.env`. */
   env?: Readonly<Record<string, string | undefined>>;
 }): Promise<RuntimeVersionObservation> {
-  // The standalone launcher names itself; otherwise the PATH `pi` is probed.
   const executable = options.executable ?? ((options.env ?? process.env).CHOCO_PI_LAUNCHER || "pi");
   try {
     const result = await options.runCommand(executable, ["--version"], {

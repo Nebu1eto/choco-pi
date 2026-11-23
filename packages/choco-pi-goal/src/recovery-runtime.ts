@@ -14,7 +14,6 @@ import type { ThreadGoal } from "./types.ts";
 interface RecoveryRuntimeDeps<TContext> {
   getGoal: () => ThreadGoal | null;
   getRecoveryState: () => GoalRecoveryMachineState;
-  /** Session id that owns the shared usage-limit policy; undefined when the context cannot tell. */
   getOwnerSessionId: (ctx: TContext) => string | undefined;
   clearContinuationState: () => void;
   pauseGoalForRecovery: (ctx: TContext, recoveryReason: string) => void;

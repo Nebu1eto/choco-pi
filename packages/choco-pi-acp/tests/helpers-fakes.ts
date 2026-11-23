@@ -18,23 +18,14 @@ import type {
   PiState,
 } from "../src/pi-rpc/protocol.ts";
 
-/** The structural client contract `PiAcpSession` and `PiAcpAgent` call into. */
 export type AcpConnectionLike = AcpConnection;
 
-/** One recorded `session/prompt` call, kept for assertions. */
 type RecordedPrompt = {
   message: string;
   attachments: PiPromptImage[];
-  /** Marks the prompt's response frame as read, as `PiRpcProcess` does before resolving. */
   respondFrame: () => void;
 };
 
-/**
- * A client connection fake implementing only the ACP methods this adapter calls.
- *
- * `AgentSideConnection` holds private state, so no fake can be assignable to it;
- * `AcpConnection` is the structural contract both it and this fake satisfy.
- */
 export class FakeAgentSideConnection implements AcpConnectionLike {
   readonly updates: SessionNotification[] = [];
   readonly permissionRequests: RequestPermissionRequest[] = [];
@@ -52,21 +43,13 @@ export class FakeAgentSideConnection implements AcpConnectionLike {
   }
 }
 
-/** An in-process stand-in for `PiRpcProcess` that records calls and replays events. */
 export class FakePiRpcProcess implements PiRpcProcessLike {
   private handlers: Array<(ev: PiRpcEvent) => void> = [];
 
-  // spies
   readonly prompts: RecordedPrompt[] = [];
   readonly extensionUiResponses: PiExtensionUiResponse[] = [];
   abortCount = 0;
-  /** Decides each prompt's acknowledgement; defaults to Pi's `started` disposition. */
   promptResponder: (message: string) => Promise<PiPromptDisposition> = async () => "started";
-  /**
-   * When true (the default), each prompt's response frame counts as read as soon as the
-   * prompt is sent, so events a test emits afterwards follow it in stdout order. Set false
-   * to read the frame only when `promptResponder` resolves or the test calls `respondFrame`.
-   */
   acknowledgeImmediately = true;
 
   onEvent(handler: (ev: PiRpcEvent) => void): () => void {
@@ -114,7 +97,6 @@ export class FakePiRpcProcess implements PiRpcProcessLike {
   }
 }
 
-/** Narrow a client fake to the structural connection contract the adapter consumes. */
 export function asAgentConn(conn: FakeAgentSideConnection): AcpConnectionLike {
   return conn;
 }

@@ -6,7 +6,6 @@ import { ExecutePatchError, type ExecutePatchResult } from "../../patch/types.ts
 import { getBundledApplyPatchBinaryPath } from "./binary.ts";
 import { parseSingleJsonLine, runBundledTool } from "../native/runner.ts";
 
-// Decoded from the native binary's JSON output; open objects as the TypeBox schema was.
 const ExecutePatchResultSchema = obj(
   {
     changedFiles: arr(str()),
@@ -119,9 +118,7 @@ export async function executePatchWithRust({
       path: displayPatchPath(cwd, action.path),
       movePath: action.movePath ? displayPatchPath(cwd, action.movePath) : action.movePath,
     }));
-  } catch {
-    // Rust already produced the authoritative parse error.
-  }
+  } catch {}
   const failureAction = parsedActions.find((action) => errorMentionsAction(errorMessage, action));
   const failures = failureAction ? [{ action: failureAction, message: errorMessage }] : [];
   throw new ExecutePatchError(errorMessage, result, failures);

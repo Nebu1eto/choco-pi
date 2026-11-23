@@ -28,9 +28,6 @@ const localSigningLockPath = path.join(
   `pi-computer-use-local-signing-${process.getuid !== undefined ? process.getuid() : "user"}.lock`,
 );
 
-// --runtime marks the call from src/platform/macos/helper.ts; it changes nothing.
-// --arch overrides the host architecture (cross-compilation is untested).
-// --build-only --out <dir> compiles <dir>/bridge and installs nothing.
 function parseOptions(argv: string[]) {
   return parseArgs({
     args: argv,
@@ -117,9 +114,6 @@ export function parseCodeSigningIdentities(
 }
 
 async function findLocalSigningIdentity(): Promise<string | undefined> {
-  // Self-signed local identities appear as CSSMERR_TP_NOT_TRUSTED and are
-  // omitted by `-v`, but remain valid inputs to codesign. Match the identity
-  // list directly and return its fingerprint rather than its display name.
   const output = await commandOutput("security", ["find-identity", "-p", "codesigning"]).catch(
     () => "",
   );
@@ -346,7 +340,6 @@ async function helperHasAdhocSignature(): Promise<boolean> {
     });
     output = `${result.stdout}\n${result.stderr}`;
   } catch (error) {
-    // codesign exits non-zero for an unsigned bundle; its output still counts.
     const stdout = error instanceof Error && "stdout" in error ? String(error.stdout ?? "") : "";
     const stderr = error instanceof Error && "stderr" in error ? String(error.stderr ?? "") : "";
     output = `${stdout}\n${stderr}`;
@@ -386,11 +379,6 @@ async function helperInfoPlist(): Promise<string> {
 
 const infoPlistPath = path.join(helperAppPath, "Contents", "Info.plist");
 
-/**
- * Short-circuit before compiling: an installed helper whose source hash and
- * Info.plist match is current. It is only re-signed when a real identity can
- * replace an older ad-hoc signature. Returns undefined when a build is needed.
- */
 async function refreshCurrentHelperApp(
   sourceHash: string,
   infoPlist: string,
@@ -399,9 +387,6 @@ async function refreshCurrentHelperApp(
   const existingInfoPlist = await fs.readFile(infoPlistPath, "utf8").catch(() => undefined);
   if (existingSourceHash?.trim() !== sourceHash || existingInfoPlist !== infoPlist)
     return undefined;
-  // If a real signing identity is available, upgrade older ad-hoc installs
-  // in place so local builds have a consistent identity. macOS may still
-  // require permission review after native code changes.
   const signingIdentity =
     process.env.PI_COMPUTER_USE_NO_SIGN === "1" ? "-" : await resolveCodeSignIdentity();
   if (signingIdentity !== "-" && (await helperHasAdhocSignature())) {
@@ -447,11 +432,6 @@ async function assertSwiftcAvailable(): Promise<void> {
   }
 }
 
-/**
- * Compile the helper into `outputPath` with a module cache under
- * `scratchDir`. Compiler warnings are printed and do not fail the build.
- * The loose binary is not signed here; the installed app bundle is.
- */
 async function buildHelper(
   arch: HelperArch,
   outputPath: string,

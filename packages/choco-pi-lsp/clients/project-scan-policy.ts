@@ -75,13 +75,6 @@ export function collectProjectSourceFiles(
   return collectSourceFiles(rootDir, options);
 }
 
-/**
- * Async, chunked-yield twin of {@link collectProjectSourceFiles}. Produces the
- * exact same file list (it shares `classifyEntry` with the sync collector) but
- * yields to the event loop every N entries so a large-tree walk on a hot hook
- * tick (e.g. the per-edit cascade graph rebuild) never holds the loop in one
- * synchronous burst. Prefer this on the per-edit / per-cascade path.
- */
 export function collectProjectSourceFilesAsync(
   rootDir: string,
   options?: ProjectSourceCollectionOptions & { budgetMs?: number },
@@ -89,13 +82,6 @@ export function collectProjectSourceFilesAsync(
   return collectSourceFilesAsync(rootDir, options);
 }
 
-/**
- * Budget-aware twin of {@link collectProjectSourceFilesAsync} (#760): same
- * walk, but returns `{ files, entryBudgetExceeded }` so a caller on a hot
- * path (e.g. the per-edit cascade graph rebuild) can observe that the walk
- * stopped at its `maxScanEntries` entry budget and got a truncated
- * best-effort list rather than a complete enumeration.
- */
 export function collectProjectSourceFilesWithBudgetAsync(
   rootDir: string,
   options?: ProjectSourceCollectionOptions & { budgetMs?: number },

@@ -41,8 +41,6 @@ import { isJsonRecord, type RuntimeValue } from "../profile/extensions/lib/runti
 
 const STALE = "This extension ctx is stale after session replacement or reload.";
 
-// ---------------------------------------------------------------- fixtures
-
 interface FakeRecord {
   id: string;
   type: string;
@@ -375,8 +373,6 @@ function subagentEntryData(event: string, overrides: Record<string, RuntimeValue
   };
 }
 
-// ---------------------------------------------------------------- schema
-
 const validEntries = {
   subagent: subagentEntryData("started", {}, ["a1"]),
   shell: {
@@ -435,7 +431,6 @@ const isGoalEntry = validators.goal.check;
 const isWorkflowEntry = validators.workflow.check;
 const isProgressFrame = validators.frame.check;
 
-/** Every object path in a sample, so each field is proven required and closed. */
 function objectPaths(value: RuntimeValue, path: string[] = []): string[][] {
   if (value === null || value === undefined || Array.isArray(value) || !(value instanceof Object)) {
     if (Array.isArray(value) && value.length > 0) return objectPaths(value[0], [...path, "0"]);
@@ -476,7 +471,6 @@ describe("host-bridge schema (§6.4, frozen)", () => {
           target.extraField = 1;
         });
         assert.equal(validator.check(extended), false, `extra field at ${path.join(".")}`);
-        // Error shape: JSON Pointer path, keyword, message (replaces TypeBox's instancePath errors).
         const errors = validator.errors(extended);
         assert.ok(errors.length > 0, `extra field errors at ${path.join(".")}`);
         for (const error of errors) {
@@ -621,8 +615,6 @@ describe("record status normalization", () => {
     assert.equal(mapRecordStatus("budget_exceeded", 5), "stopped");
   });
 });
-
-// ---------------------------------------------------------------- lifecycle
 
 describe("host-bridge durable entries", () => {
   it("records C4 lifecycle payloads as closed subagent entries with the live list", () => {
@@ -847,8 +839,6 @@ describe("host-bridge durable entries", () => {
   });
 });
 
-// ---------------------------------------------------------------- frames
-
 describe("host-bridge progress frames", () => {
   it("sends changed frames only, every 250ms, only for rpc + CHOCO_PI_HOST=waku", () => {
     const registry = new FakeRegistry();
@@ -897,14 +887,12 @@ describe("host-bridge progress frames", () => {
     ]);
     assert.deepEqual(frame.shells, [{ id: "s1", status: "running", bytes: 15 }]);
 
-    // Only elapsed time changed: no frame.
     clock.advance(FRAME_INTERVAL_MS * 3);
     assert.equal(ctx.statuses.length, 1);
     record.toolUses = 2;
     clock.advance(FRAME_INTERVAL_MS);
     assert.equal(ctx.statuses.length, 2);
 
-    // Work ends: one empty frame, then the loop stops.
     record.status = "completed";
     record.completedAt = 20_000;
     pi.emit("subagents:completed", lifecyclePayload(record));
@@ -974,8 +962,6 @@ describe("host-bridge progress frames", () => {
     ]);
   });
 });
-
-// ---------------------------------------------------------------- snapshot
 
 describe("/host-bridge snapshot", () => {
   it("excludes a nested child completed between ticks from the next transition live list", () => {
@@ -1158,7 +1144,6 @@ describe("/host-bridge snapshot", () => {
     assert.equal(lost.event, "lost");
     assert.equal(lost.agent.id, "a1");
     assert.deepEqual(lost.live, []);
-    // A later lifecycle entry carries no ghost in its live list.
     const other = agentRecord("a2");
     registry.records.push(other);
     pi.emit("subagents:started", lifecyclePayload(other));
@@ -1175,8 +1160,6 @@ describe("/host-bridge snapshot", () => {
     );
   });
 });
-
-// ---------------------------------------------------------------- commands
 
 describe("/host-bridge control", () => {
   it("stops only owned subagents and shells", async () => {
@@ -1244,7 +1227,6 @@ describe("/host-bridge control", () => {
     await pi.commands.get(HOST_BRIDGE_COMMAND)?.("goal complete", ctx);
     assert.deepEqual(completions, ["root"]);
 
-    // A map entry whose owner disagrees with its key is not trusted.
     installGoalRuntime("root", "someone-else", completions);
     await assert.rejects(
       Promise.resolve(pi.commands.get(HOST_BRIDGE_COMMAND)?.("goal complete", ctx)),
@@ -1265,8 +1247,6 @@ describe("/host-bridge control", () => {
     assert.equal(pi.entries.length, 0);
   });
 });
-
-// ---------------------------------------------------------------- session lifecycle
 
 describe("host-bridge session lifecycle", () => {
   function restoredBranch(): SessionEntry[] {
@@ -1329,7 +1309,6 @@ describe("host-bridge session lifecycle", () => {
     const [shell] = pi.ofType(SHELL_ENTRY_TYPE);
     assert.ok(isShellEntry(shell));
     assert.equal(shell.event, "lost");
-    // The adopted record later completes and is recorded.
     registry.records[0]!.status = "completed";
     registry.records[0]!.completedAt = 12_000;
     clock.advance(FRAME_INTERVAL_MS);
@@ -1363,7 +1342,6 @@ describe("host-bridge session lifecycle", () => {
     registry.records.push(record);
     registry.install();
     const root = createBridge();
-    // Child extension loading runs inside the subagent async child context.
     registry.childContext = true;
     const childByLoad = createBridge();
     registry.childContext = false;
@@ -1375,7 +1353,6 @@ describe("host-bridge session lifecycle", () => {
     childCtx.branch = restoredBranch();
     childByLoad.pi.start(childCtx);
     childById.pi.start(childCtx);
-    // Each Pi session owns its own event bus; the child buses see child traffic only.
     root.pi.emit("subagents:started", lifecyclePayload(record));
     childByLoad.pi.emit("goal:changed", null);
     childById.pi.emit("subagents:started", lifecyclePayload(record));
@@ -1406,7 +1383,6 @@ describe("host-bridge session lifecycle", () => {
     pi.appendFailure = new Error(STALE);
     pi.emit("subagents:started", lifecyclePayload(record));
     pi.appendFailure = undefined;
-    // The stale failure deactivated the bridge; nothing more is recorded.
     pi.emit("goal:changed", null);
     assert.equal(pi.ofType(GOAL_ENTRY_TYPE).length, 0);
 

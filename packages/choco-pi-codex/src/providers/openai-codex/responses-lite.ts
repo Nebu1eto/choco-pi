@@ -204,7 +204,6 @@ export function applyResponsesLiteRequest<TBody extends ResponsesLiteCompatibleB
   const reasoning: ProtocolRecord = isRecord(body.reasoning) ? { ...body.reasoning } : {};
   reasoning["context"] = "all_turns";
   // SAFETY: The constructed value preserves every TBody property except the intentionally omitted
-  // instructions and tools fields, then supplies the required Responses Lite replacements.
   return {
     ...rest,
     input: [...prefix, ...prepareLiteInput(body.input)],

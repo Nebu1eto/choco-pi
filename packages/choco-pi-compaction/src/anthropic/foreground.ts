@@ -1,19 +1,3 @@
-/**
- * Foreground Anthropic server-side compaction.
- *
- * Answers the host's own `session_before_compact` (threshold, overflow or
- * `/compact`) for an admitted Anthropic model with a signed `compaction` block
- * from the isolated lane, cut at the latest legal wire position at or before
- * the host's cut. A failure returns undefined so the local reconciled
- * summarizer answers the same compaction; every fallback is journaled and
- * announced (a `/compact` every time, an automatic compaction once per
- * reason and session). A cancelled or auth-failed attempt instead answers
- * `{ cancel: true }` so the host reports the failure (`foreground-failure.ts`),
- * and so does an attempt whose session or registration changed while it ran
- * (silently: the user's session moved on).
- * The handler never produces a second result. It runs in main and subagent
- * child sessions alike and reads only its own context and session state.
- */
 import type {
   ExtensionContext,
   SessionBeforeCompactEvent,
@@ -45,7 +29,6 @@ import type { AnthropicCompactionMode, AnthropicServerSideSession } from "./mode
 import { hostTriggerOf, type CompactionTrigger } from "../trigger.ts";
 import { readSessionId } from "../shared/session.ts";
 
-/** Upper bound on one foreground summarization request. */
 const FOREGROUND_TIMEOUT_MS = 300_000;
 const FOREGROUND_MAX_RESULT_BYTES = 1_048_576;
 const NOTICE_PREFIX = "Anthropic server-side compaction";
@@ -55,17 +38,11 @@ export interface ForegroundCompactionDeps {
   readonly session: AnthropicServerSideSession;
   readonly mode: () => AnthropicCompactionMode;
   readonly codexCompaction: () => CodexCompactionSnapshot | undefined;
-  /** Registration lifecycle; any change invalidates an in-flight compaction. */
   readonly generation: () => number;
-  /** Captures of a session, oldest first. */
   readonly captures: (sessionId: string) => readonly WireCapture[];
   readonly fetch?: typeof globalThis.fetch;
   readonly stream?: LaneStream;
   readonly now?: () => number;
-  /**
-   * Journal one lane transition and notify per policy (the host's
-   * `announce`); the dedupe of automatic routes lives there.
-   */
   readonly announce: (
     ctx: ExtensionContext,
     record: AnnouncedRecord,
@@ -77,7 +54,6 @@ export interface ForegroundCompactionDeps {
 
 type ForegroundModel = NonNullable<ExtensionContext["model"]>;
 
-/** Host scalars snapshotted before the first await. */
 interface ForegroundRun {
   readonly ctx: ExtensionContext;
   readonly sessionId: string;
@@ -86,20 +62,16 @@ interface ForegroundRun {
   readonly registry: ExtensionContext["modelRegistry"];
   readonly preparation: SessionBeforeCompactEvent["preparation"];
   readonly branchEntryIds: readonly string[];
-  /** The branch's newest compaction entry; a capture sent before it is stale. */
   readonly latestCompactionId: string | undefined;
   readonly instructions: string | undefined;
   readonly signal: AbortSignal;
-  /** A typed or programmatic `/compact` (user-initiated) rather than a threshold or overflow. */
   readonly manual: boolean;
-  /** The host's reason, journaled on the fallback record. */
   readonly trigger: CompactionTrigger;
 }
 
 type Attempt =
   | { readonly kind: "compacted"; readonly result: SessionBeforeCompactResult }
   | { readonly kind: "abstain" }
-  /** The session or registration changed during an await: answer nothing for it. */
   | { readonly kind: "stale" }
   | { readonly kind: "fallback"; readonly reason: FailureReason | "no-capture" };
 
@@ -110,10 +82,6 @@ function fallback(reason: FailureReason | "no-capture"): Attempt {
   return { kind: "fallback", reason };
 }
 
-/**
- * `session_before_compact` handler for the server-side path. Undefined means
- * "not answered here": the caller runs the local summarizer next.
- */
 export function createForegroundCompactHandler(
   deps: ForegroundCompactionDeps,
 ): (
@@ -127,20 +95,12 @@ export function createForegroundCompactHandler(
     if (attempt.kind === "compacted") return attempt.result;
     if (attempt.kind === "abstain") return undefined;
     const state = runState(deps, run);
-    // The session or registration moved on during an await: nothing is answered for it.
     if (attempt.kind === "stale" || state === "stale") return SURFACED_FAILURE_RESULT;
-    // Server-side was turned off mid-flight: the local summary is a real summary.
     if (state === "disabled") return undefined;
     return announceFallback(deps, run, attempt.reason);
   };
 }
 
-/**
- * Announce a fallback and answer it: cancelled or auth-failed attempts fail
- * the host compaction (surfaced, no local summary); every other failure lets
- * the local summarizer answer. A `/compact` is told every time (one notice per
- * user action); an automatic compaction once per reason and session.
- */
 function announceFallback(
   deps: ForegroundCompactionDeps,
   run: ForegroundRun,
@@ -186,7 +146,6 @@ function snapshotRun(
   if (sessionId === undefined) return undefined;
   deps.session.bind(sessionId);
   if (deps.session.isDisabled(sessionId)) return undefined;
-  // Static policy first: an unsupported model or endpoint never reads credentials.
   const candidate: ProviderScope = {
     provider: model.provider,
     model: model.id,
@@ -210,7 +169,6 @@ function snapshotRun(
   };
 }
 
-/** Whether the run still belongs to its registration generation and session, and server-side is on. */
 function runState(
   deps: ForegroundCompactionDeps,
   run: ForegroundRun,
@@ -221,18 +179,12 @@ function runState(
   return deps.session.isDisabled(run.sessionId) ? "disabled" : "current";
 }
 
-/** The attempt to return when the run is no longer current after an await, if any. */
 function interrupted(deps: ForegroundCompactionDeps, run: ForegroundRun): Attempt | undefined {
   const state = runState(deps, run);
   if (state === "stale") return STALE;
   return state === "disabled" ? ABSTAIN : undefined;
 }
 
-/**
- * The entry the host's cut maps to in a capture: the entry before the host's
- * first kept entry, or the capture's last entry when the first kept entry was
- * appended after the capture (for example the final answer of the last turn).
- */
 function preferredCut(
   capture: WireCapture,
   firstKeptEntryId: string,
@@ -254,10 +206,6 @@ type CaptureChoice =
   | { readonly ok: true; readonly capture: WireCapture; readonly cutEntryId: string }
   | { readonly ok: false; readonly reason: "no-capture" | "no-legal-cut" };
 
-/**
- * Newest successfully answered capture of this scope with a legal cut at or
- * before the host's cut. The cut only ever moves earlier (more is kept).
- */
 function chooseCapture(
   captures: readonly WireCapture[],
   scope: ProviderScope,
@@ -268,8 +216,6 @@ function chooseCapture(
     const capture = captures[index];
     if (capture === undefined || capture.status !== 200) continue;
     if (!captureMatchesWireScope(capture, scope)) continue;
-    // A capture from before the newest compaction maps only already-compacted history;
-    // cutting it re-compacts the same prefix and the cut never advances.
     if (!capturedSince(capture.mapping, run.latestCompactionId)) continue;
     matched = true;
     const preferred = preferredCut(capture, run.preparation.firstKeptEntryId, run.branchEntryIds);
@@ -289,7 +235,6 @@ async function attemptCompaction(
   const afterAuth = interrupted(deps, run);
   if (afterAuth !== undefined) return afterAuth;
   if (run.signal.aborted) return fallback("canceled");
-  // No usable credentials: the local summarizer would call the same provider with them.
   if (!auth.ok) return fallback("auth");
   const scope: ProviderScope = {
     provider: run.model.provider,
@@ -299,7 +244,6 @@ async function attemptCompaction(
   const authMode = authModeFromAuth(auth);
   if (authMode !== undefined) scope.authMode = authMode;
   const verdict = deps.gate.check(scope);
-  // Not admitted (API key, foreign endpoint): the local path is the policy, not a failure.
   if (!verdict.supported)
     return verdict.reason === "unsupported" ? ABSTAIN : fallback(verdict.reason);
   const choice = chooseCapture(deps.captures(run.sessionId), scope, run);

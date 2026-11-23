@@ -14,13 +14,11 @@ import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.t
 import { file, flush, harness } from "./diff-actions-fakes.ts";
 import { loadZentuiModule, SKIP_WITHOUT_ZENTUI } from "./zentui-build.ts";
 
-/** Wraps colored text as <color>text</color>, so a test can read which color drew what. */
 const TAGGING: PaneStyler = {
   ...plainPaneStyler,
   fg: (color, text) => `<${color}>${text}</${color}>`,
 };
 
-/** Accent paints with color 201, every other color with 33: real escapes, so widths stay right. */
 const ACCENT = "\u001b[38;5;201m";
 const TAG_THEME = reinterpretHostValue<Theme>({
   fg: (color: string, text: string) =>

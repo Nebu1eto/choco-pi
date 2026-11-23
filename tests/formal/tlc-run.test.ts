@@ -293,7 +293,6 @@ describe("tlc.ts with a fake Java", () => {
     assert.match(result.errors.join("\n"), /does not name the rule/);
   });
 
-  // A well-formed complete run of Turnstile as TLC prints it; each case below breaks one part.
   const VERSION = msg(2262, 0, "TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)");
   const SUCCESS = msg(2193, 0, "Model checking completed. No error has been found.");
   const STATS = msg(

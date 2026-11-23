@@ -1,14 +1,3 @@
-/**
- * Real-SDK host for compaction integration tests.
- *
- * Drives the installed Pi SDK (`createAgentSession`) with a scripted fake
- * provider registered through the public `ModelRuntime.registerProvider`
- * seam. Credentials and model catalogs live in memory, the agent directory is
- * a temporary directory, and no request leaves the process. Host summarizer
- * requests are answered at once and counted separately from main requests.
- *
- * This file is not a test (`*.test.ts`); integration tests import it.
- */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,7 +33,6 @@ import { hostParams } from "./schema-bridge.ts";
 
 const FAKE_PROVIDER = "fake-provider";
 const FAKE_API_KEY = "non-secret-placeholder";
-/** Text of the host summarizer's system prompt that marks its requests. */
 const SUMMARIZER_MARKER = "context summarization assistant";
 export const PREFIX_A = "SEED-PREFIX-A";
 const PREFIX_B = "SEED-PREFIX-B";
@@ -82,7 +70,6 @@ interface ReplyOptions {
   readonly errorMessage?: string;
 }
 
-/** Deterministic assistant reply. A tool reply calls the `step` tool once. */
 export function reply(text: string, options: ReplyOptions = {}): AssistantMessage {
   const model = fakeModel();
   const message: AssistantMessage = {
@@ -116,33 +103,24 @@ export interface HostOptions {
   readonly extensions: readonly ExtensionFactory[];
   readonly respond?: Responder;
   readonly persistent?: boolean;
-  /** Host compaction settings; host compaction is off by default. */
   readonly compaction?: HostCompactionSettings;
   readonly contextWindow?: number;
-  /** Model endpoint; part of the provider scope a candidate is bound to. */
   readonly baseUrl?: string;
-  /** Working and agent directory. When given, the caller owns (and removes) it. */
   readonly dir?: string;
-  /** Use this session manager (for example a reopened session) instead of a seeded new one. */
   readonly manager?: SessionManager;
-  /** Replace the fake model's API, provider and ID (for example an `openai-codex` model). */
   readonly modelIdentity?: { readonly api: Api; readonly provider: string; readonly id: string };
 }
 
 export interface Host {
   readonly session: AgentSession;
   readonly manager: SessionManager;
-  /** Every provider request, in order (structured clones). */
   readonly calls: TranscriptContext[];
-  /** Provider requests that came from the host summarizer. */
   readonly summarizerCalls: TranscriptContext[];
-  /** AgentSession event types in emission order. */
   readonly events: string[];
   aborts(): number;
   dispose(): Promise<void>;
 }
 
-/** Tool used by tool-calling replies. */
 const STEP_TOOL = defineTool({
   name: "step",
   label: "step",
@@ -153,7 +131,6 @@ const STEP_TOOL = defineTool({
   },
 });
 
-/** What the scripted provider observed. */
 interface ProviderLog {
   readonly calls: TranscriptContext[];
   readonly summarizerCalls: TranscriptContext[];
@@ -161,7 +138,6 @@ interface ProviderLog {
   mainIndex: number;
 }
 
-/** One main-request stream, settled exactly once by the reply or an abort. */
 interface MainStream {
   readonly stream: AssistantMessageEventStream;
   settled: boolean;
@@ -198,7 +174,6 @@ function answerSummarizer(): AssistantMessageEventStream {
   return stream;
 }
 
-/** Answer main requests through the responder; a real provider ends an aborted stream promptly. */
 function streamMain(
   log: ProviderLog,
   respond: Responder,
@@ -332,7 +307,6 @@ export async function createHost(options: HostOptions): Promise<Host> {
   };
 }
 
-/** Whether a request contains `text` anywhere in its messages (use unique marker text). */
 export function mentions(context: TranscriptContext | undefined, text: string): boolean {
   return JSON.stringify(context?.messages ?? []).includes(text);
 }

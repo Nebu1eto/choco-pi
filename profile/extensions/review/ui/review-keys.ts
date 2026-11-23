@@ -1,9 +1,3 @@
-/**
- * The full-screen review's keys. Shared concepts use the pane's bindings
- * (`PANE_KEYS`); `[`/`]` move by hunk here, as resizing has no meaning in a
- * full-screen view. Review-only keys are handled by the host before the
- * shared view sees a key; `REVIEW_ONLY_KEYS` lists them so no key means two things.
- */
 import { COPY_KEY, type ChangesKeyTable } from "../../lib/changes/view/keys.ts";
 
 export const REVIEW_KEYS = {
@@ -37,10 +31,8 @@ export const REVIEW_KEYS = {
   back: [{ key: "escape" }, "q"],
 } as const satisfies ChangesKeyTable;
 
-/** The review's split-view toggle; free in both hosts (the pane binds nothing to it). */
 export const SPLIT_TOGGLE_KEY = "|";
 
-/** Literal keys the full-screen host handles itself (arrows, Tab and Ctrl+O aside). */
 export const REVIEW_ONLY_KEYS: readonly string[] = [
   "c",
   "a",
@@ -57,11 +49,9 @@ export const REVIEW_ONLY_KEYS: readonly string[] = [
   "t",
 ];
 
-/** Shown under the header while the review has focus. */
 export const REVIEW_KEY_HINT =
   "j/k line · ⏎/space fold · n/N or [/] hunk · g/G first/last · r refresh · f/F finding · v show sensitive · ? help";
 
-/** The `?` key list, one entry per line. */
 export const REVIEW_HELP_LINES: readonly string[] = [
   "j/k ↑/↓   move by line             g/G       first/last line",
   "⏎/space   fold or unfold the hunk; on a file row, expand or collapse the file",

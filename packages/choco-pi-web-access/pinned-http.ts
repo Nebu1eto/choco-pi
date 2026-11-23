@@ -18,7 +18,6 @@ export interface ApprovedAddress {
 
 export interface ApprovedRemoteUrl {
   readonly url: string;
-  /** null means the explicitly trusted environment proxy owns resolution. */
   readonly addresses: readonly ApprovedAddress[] | null;
 }
 
@@ -92,7 +91,6 @@ const zlibOptions = {
   finishFlush: constants.Z_SYNC_FLUSH,
 };
 
-/** Match native fetch's first-non-empty-chunk detection of raw and wrapped deflate. */
 class InflateStream extends Transform {
   #inflateStream: ReturnType<typeof createInflate> | undefined;
 
@@ -187,7 +185,6 @@ async function writeRequestBody(
   }
 }
 
-/** Every direct socket uses only this approval; no pooled socket or second DNS lookup is allowed. */
 export async function fetchApprovedRemoteUrl(
   approval: ApprovedRemoteUrl,
   init: RequestInit = {},

@@ -140,15 +140,12 @@ test("self exec runs a command under the same contract", async (t) => {
   assert.ok(![...lines].some((line) => line.startsWith("PI_PACKAGE_DIR=")));
 });
 
-/** A minimal app tree whose launcher and management code are copies of this checkout's. */
 async function copyApp(app: string): Promise<void> {
   await mkdir(path.join(app, "bin"), { recursive: true });
   await cp(LAUNCHER, path.join(app, "bin", "choco-pi"));
   await cp(path.join(ROOT, "scripts", "standalone"), path.join(app, "scripts", "standalone"), {
     recursive: true,
   });
-  // The management CLI's dependencies, linked one by one: tests write a stub
-  // Pi into app/node_modules, which must never reach this checkout's own.
   for (const name of ["@optique/core", "@logtape/logtape", "@earendil-works/pi-schema"]) {
     const link = path.join(app, "node_modules", name);
     await mkdir(path.dirname(link), { recursive: true });
@@ -357,8 +354,6 @@ test("AC11: --mode rpc leaves node, titled pi, as the spawned process with no sh
   if (child.exitCode === null) await once(child, "exit");
 });
 
-// ------------------------------------------------------------ runtime option
-
 type Outcome = { code: number; stdout: string; stderr: string };
 
 async function runLauncher(
@@ -376,7 +371,6 @@ async function runLauncher(
   );
 }
 
-/** A copied app with a stub Pi (prints ["PI", ...argv]) and a profile marker in \`home\`. */
 async function stubApp(directory: string, home: string): Promise<string> {
   const app = path.join(directory, "app");
   await copyApp(app);
@@ -391,7 +385,6 @@ async function stubApp(directory: string, home: string): Promise<string> {
   return path.join(app, "bin", "choco-pi");
 }
 
-/** A fake \`bun\`: answers the installer's probe as \`version\`, prints 1.6.0 for --version, else its argv. */
 async function fakeBun(directory: string, version: string): Promise<string> {
   await mkdir(directory, { recursive: true });
   const bun = path.join(directory, "bun");
@@ -559,7 +552,6 @@ test("Bun selected but unavailable exits 1 with guidance and never falls back to
   assert.deepEqual(report.runtime, { name: "bun", source: "install.json", binary: null });
 });
 
-/** A copied app that shares this checkout's node_modules (pi-schema and the real Pi). */
 async function linkedApp(directory: string): Promise<string> {
   const app = path.join(directory, "app");
   await copyApp(app);

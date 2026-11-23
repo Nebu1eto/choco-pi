@@ -1,7 +1,3 @@
-/**
- * Shared formatting utilities for the dispatch system.
- */
-
 import type { Diagnostic, OutputSemantic } from "../types.ts";
 
 interface EmojiMap {
@@ -17,9 +13,6 @@ export const EMOJI: EmojiMap = {
   none: "",
 };
 
-/**
- * Format a single diagnostic for display
- */
 export function formatDiagnostic(d: Diagnostic): string {
   const line = d.line ? `L${d.line}: ` : "";
   const indented = d.message.split("\n").join("\n  ");
@@ -27,9 +20,6 @@ export function formatDiagnostic(d: Diagnostic): string {
   return `  ${line}${indented}${fix}`;
 }
 
-/**
- * Format a group of diagnostics with semantic header
- */
 export function formatDiagnostics(
   diagnostics: Diagnostic[],
   semantic: OutputSemantic | string,

@@ -1,13 +1,11 @@
 export type FigmaScalar = string | number | boolean | null | undefined;
 export type FigmaValue = FigmaScalar | FigmaValue[] | FigmaRecord;
 
-/** Recursive object shape used by Figma REST payloads and derived tool output. */
 export interface FigmaRecord {
   [key: string]: FigmaValue;
 }
 
 export function parseFigmaJson(text: string): FigmaValue {
-  // JSON.parse can only produce JSON scalars, arrays, and string-keyed objects.
   return JSON.parse(text);
 }
 
@@ -33,7 +31,6 @@ export function isObjectValue(value: FigmaValue): value is FigmaRecord | FigmaVa
   return Array.isArray(value) || isFigmaRecord(value);
 }
 
-/** JSON objects and arrays both support the property reads used by legacy auth traversal. */
 export function isPropertyContainer(value: FigmaValue): value is FigmaRecord {
   return value !== null && Object(value) === value;
 }

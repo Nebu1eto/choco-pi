@@ -87,7 +87,6 @@ export function normalizeResponsesMessageHistory(
         assistantMsg.api === model.api &&
         assistantMsg.model === model.id;
       // SAFETY: Provider assistant messages may contain the two native item blocks represented by
-      // InternalAssistantContent; each added variant is checked by its discriminator guard below.
       const transformedContent = (assistantMsg.content as InternalAssistantContent[]).flatMap(
         (block) => {
           if (isImageGenerationCallBlock(block)) return block;
@@ -121,7 +120,6 @@ export function normalizeResponsesMessageHistory(
       return {
         ...assistantMsg,
         // SAFETY: Every transformed non-native block belongs to the host assistant content union;
-        // native blocks are retained only for same-provider replay and are parsed before wire use.
         content: transformedContent as Extract<Message, { role: "assistant" }>["content"],
       };
     }

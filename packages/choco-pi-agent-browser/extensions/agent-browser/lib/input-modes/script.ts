@@ -95,7 +95,6 @@ export interface CompiledAgentBrowserScript {
 export interface AgentBrowserScriptBrowserParams {
   args: string[];
   stdin?: string;
-  /** Internal name; the script passes it as `timeout_ms`. */
   timeoutMs?: number;
 }
 
@@ -167,7 +166,6 @@ type ScriptParentMessage =
   | { code: string; type: "start" }
   | { envelope: AgentBrowserScriptBrowserEnvelopeView; id: number; type: "response" };
 
-/** The browser() response as the script sees it: snake_case keys. */
 export interface AgentBrowserScriptBrowserEnvelopeView {
   data: AgentBrowserScriptBrowserEnvelope["data"] | ToolOutputValue;
   details: AgentBrowserScriptBrowserEnvelope["details"] | ToolOutputValue;
@@ -182,11 +180,6 @@ export interface AgentBrowserScriptBrowserEnvelopeView {
   text: string;
 }
 
-/**
- * Converts the internal envelope to the script-visible view at the IPC boundary. Wrapper-built
- * parts (details, diagnostic, next_actions) get snake_case keys; `data` follows the JSON-mode rule
- * (wrapper-compacted data converts, upstream CLI keys stay verbatim).
- */
 export function toScriptBrowserEnvelopeView(
   envelope: AgentBrowserScriptBrowserEnvelope,
 ): AgentBrowserScriptBrowserEnvelopeView {
@@ -474,7 +467,6 @@ export async function runAgentBrowserScript(
   }
 
   const child = spawn(
-    // Node's permission model sandboxes the worker; Bun would ignore or reject these flags.
     nodeExecutable(),
     [
       "--permission",

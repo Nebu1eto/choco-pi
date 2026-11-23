@@ -33,14 +33,8 @@ async function fixture(): Promise<RuntimeValue> {
   return JSON.parse(await readFile(FIXTURE, "utf8"));
 }
 
-/** An obviously fake raw Gemini API key, as Pi's inherited google API-key auth resolves one. */
 const GEMINI_KEY = "AIzaFAKE-gemini-api-key-for-tests";
 
-/**
- * A host whose `google` credential is `apiKey`. `type` is what the registry reports for it:
- * `oauth` for a Google Antigravity sign-in, `api_key` for a stored API key or GEMINI_API_KEY,
- * `unknown` when the host cannot tell (no google model listed).
- */
 function context(
   apiKey: string | undefined,
   type: "oauth" | "api_key" | "unknown" = "oauth",
@@ -111,7 +105,6 @@ test("google is absent without a credential and makes no request", async (t) => 
 test("a Gemini API key on google is not signed in: no key read, no request", async (t) => {
   const calls = mockFetch(t, () => Promise.reject(new Error("no request expected")));
   const cache = createUsageCache();
-  // A stored API-key credential or GEMINI_API_KEY: the host reports API-key auth.
   const keyReads: string[] = [];
   assert.equal(
     await googleAntigravityUsage(context(GEMINI_KEY, "api_key", keyReads), cache),
@@ -122,7 +115,6 @@ test("a Gemini API key on google is not signed in: no key read, no request", asy
   assert.deepEqual(report.providers, []);
   assert.deepEqual(report.absent, ["Claude", "ChatGPT", "Google", "Grok", "Synthetic"]);
   assert.equal(formatUsageReport(report), "");
-  // A host that cannot report the type: the resolved raw key is still not a sign-in.
   assert.equal(await googleAntigravityUsage(context(GEMINI_KEY, "unknown"), cache), undefined);
   assert.doesNotMatch(formatUsageReport(report), /AIza/u);
   assert.deepEqual(calls, []);
@@ -161,7 +153,6 @@ test("the captured quota summary becomes four used-share windows with resets", a
       ],
     ],
   );
-  // A full bucket is fresh capacity, never "exhausted".
   const now = Date.parse("2026-11-21T15:06:23Z");
   const text = formatProviderUsage(usage, undefined, now);
   assert.match(text, /^Google\n {2}Gemini Models 5-hours\n.* 0% used\n {2}resets in /);
@@ -320,7 +311,6 @@ test("a stored reading is served with a cached note when the live read fails", a
 });
 
 test("switching accounts inside the cache gate never shows the previous account's quota or plan", async (t) => {
-  // Two consumer accounts share the "aicode-consumers" project; only the credential differs.
   const oauth = createAntigravityOAuth({ env: {} });
   const apiKeyFor = (account: string) =>
     oauth.getApiKey({
@@ -364,7 +354,6 @@ test("switching accounts inside the cache gate never shows the previous account'
   assert.equal(second?.plan, "Plan B", "the plan belongs to the signed-in account");
   assert.equal(second?.windows[0]?.percent, 90, "the quota belongs to the signed-in account");
   assert.ok(calls.some((call) => call.authorization === "Bearer fake-access-b"));
-  // Neither the refresh token nor the access token shapes a report.
   assert.doesNotMatch(JSON.stringify(second), /fake-refresh|fake-access/u);
 });
 

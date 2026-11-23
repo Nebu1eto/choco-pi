@@ -19,7 +19,6 @@ const MAX_HASH_CHARS = 500_000;
 const MAX_ERRORS = 3;
 const MAX_IDENTIFIER_CHARS = 128;
 const MAX_CACHE_KEY_CHARS = 1_024;
-// 64 exceeds a plausible number of concurrent provider requests in one process.
 const MAX_TRANSPORT_RECORDS = 64;
 
 type SegmentKind = "system" | "tools" | "message";
@@ -98,16 +97,6 @@ function providerPrefixRegistry(): Map<string, ProviderPrefixMetrics> {
   return registry;
 }
 
-/**
- * Named parts of the composed system prompt, so a system-block divergence can
- * name what moved instead of only reporting that something did. A system
- * change invalidates the whole cached prefix, which is the most expensive
- * cache event there is, and the hash alone gives nothing to act on.
- *
- * Each entry is delimited by markers the harness or Pi emits verbatim. An
- * absent marker simply leaves that content in `base`, so an upgrade that
- * renames a block degrades to coarser attribution rather than to a wrong one.
- */
 const SYSTEM_REGIONS: ReadonlyArray<{ name: string; start: string; end: string }> = [
   { name: "runtime-environment", start: "<runtime_environment>", end: "</runtime_environment>" },
   {
@@ -119,7 +108,6 @@ const SYSTEM_REGIONS: ReadonlyArray<{ name: string; start: string; end: string }
   { name: "skills", start: "<skills_instructions>", end: "</skills_instructions>" },
 ];
 
-/** One hash per named region of the composed system prompt, plus `base`. */
 export type SystemRegionHashes = Readonly<Record<string, string>>;
 
 type ProbeRecord = {
@@ -158,7 +146,6 @@ type ProbeRecord = {
   note: string | null;
 };
 
-/** Produces a JSON-equivalent representation with deterministic object-key ordering. */
 export function canonicalJson(value: JsonValue): string {
   if (value === null) return "null";
   if (isString(value) || isBoolean(value)) return JSON.stringify(value);
@@ -217,7 +204,6 @@ function namesForTools(tools: JsonValue[]): string[] {
   });
 }
 
-/** Stable ordered identity for the active provider tool families. */
 export function toolNamesHash(toolNames: readonly string[]): string {
   return createHash("sha1").update(JSON.stringify(toolNames)).digest("hex");
 }
@@ -249,7 +235,6 @@ function textContent(value: JsonValue | undefined): string {
     .join("\n");
 }
 
-/** The composed system prompt as one string, however the provider carries it. */
 export function systemText(payload: JsonValue): string {
   const request = isJsonRecord(payload) ? payload : {};
   const system = request.system ?? request.instructions;
@@ -267,7 +252,6 @@ export function systemText(payload: JsonValue): string {
     .join("\n");
 }
 
-/** Provider-observed prompt and tool sizes, estimated with the Context tab's chars/4 rule. */
 export function providerPrefixMetricsFromPayload(payload: JsonValue): ProviderPrefixMetrics {
   const request: JsonRecord = isJsonRecord(payload) ? payload : {};
   const tools = Array.isArray(request.tools) ? request.tools : [];
@@ -280,12 +264,6 @@ export function providerPrefixMetricsFromPayload(payload: JsonValue): ProviderPr
   };
 }
 
-/**
- * Splits the system prompt into its named regions plus the `base` remainder,
- * and hashes each one. Regions are cut out as they are found, so `base` holds
- * exactly what no marker claimed: Pi's own prompt, the project context files,
- * and anything an unknown extension appended.
- */
 export function systemRegionHashes(systemPrompt: string) {
   const entries: Array<[string, string]> = [];
   let rest = systemPrompt;
@@ -302,7 +280,6 @@ export function systemRegionHashes(systemPrompt: string) {
   return Object.fromEntries(entries);
 }
 
-/** Region names that differ between two turns, including ones added or dropped. */
 export function changedSystemRegions(
   previous: SystemRegionHashes | undefined,
   current: SystemRegionHashes,
@@ -314,7 +291,6 @@ export function changedSystemRegions(
     .sort((left, right) => left.localeCompare(right));
 }
 
-/** Extracts the provider's complete cacheable prompt prefix without retaining its raw text. */
 export function cacheableSegments(payload: JsonValue, provider?: string): SegmentSnapshot {
   const request: JsonRecord = isJsonRecord(payload) ? payload : {};
   const collected: Array<{ kind: SegmentKind; value: JsonValue }> = [];
@@ -429,7 +405,6 @@ type RequestLinkFinish = {
   linkStatus: "linked" | "unmatched" | "ambiguous";
 };
 
-/** Correlates usage only while at most one provider request is in flight per stream. */
 export function createRequestLinker() {
   let nextRequestId = 1;
   const pendingByStream = new Map<string, PendingRequests>();
@@ -529,7 +504,6 @@ function safeIdentifier(value: string | undefined): string {
   return value;
 }
 
-/** The day's probe log under Pi's agent directory. */
 export function cacheProbeLogPath(
   now: Date,
   env: PiPathEnv = process.env,
@@ -661,7 +635,6 @@ export default function cacheProbe(pi: ExtensionAPI): void {
       previousByLane.set(laneKey, snapshot.segments);
       modelByStream.set(stream, model);
     });
-    // Intentionally return undefined: this extension is strictly observational.
   });
 
   pi.on("message_end", (event, ctx) => {

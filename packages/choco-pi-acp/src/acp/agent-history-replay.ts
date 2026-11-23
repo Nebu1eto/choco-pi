@@ -1,6 +1,3 @@
-/**
- * Session history replay: renders a restored Pi transcript to the client as ACP updates.
- */
 import type { PiMessages } from "../pi-rpc/protocol.ts";
 import type { PiAcpSession } from "./session.ts";
 import {
@@ -16,11 +13,6 @@ import {
 import { normalizePiAssistantText, normalizePiMessageText } from "./translate/pi-messages.ts";
 import { toolResultToText } from "./translate/pi-tools.ts";
 
-/**
- * Replay a restored session's messages in order: user and assistant text as message
- * chunks, and each tool result as a completed synthetic tool call (bash results as
- * terminals rooted at `cwd`).
- */
 export async function replayPiMessages(
   session: PiAcpSession,
   messages: PiMessages["messages"],
@@ -78,7 +70,6 @@ export async function replayPiMessages(
         continue;
       }
 
-      // Create a synthetic ACP tool call to render historic tool usage.
       await session.sendUpdate({
         sessionUpdate: "tool_call",
         toolCallId,

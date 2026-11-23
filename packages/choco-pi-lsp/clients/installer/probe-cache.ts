@@ -1,6 +1,3 @@
-/**
- * Persistent tool probe cache: read, change tracking, debounced flush, and verification of cached paths.
- */
 import { isRuntimeObject } from "../../tools/runtime-values.ts";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
@@ -19,26 +16,12 @@ import {
 } from "./install-attempts.ts";
 import { lastResolveTransient } from "./tool-resolution.ts";
 
-// Session-lifetime cache: once a tool path is resolved, skip the process-spawn check on subsequent calls.
 export const resolvedPathCache = new BoundedLruCache<string, string>(256);
-
-// --- Persistent probe cache ---
 
 interface ProbeCacheEntry {
   path: string;
   mtimeMs: number;
   cachedAt: number;
-  /**
-   * True when the `getToolPath` resolution that produced `path` saw a
-   * transient probe failure (a stall, a kill, an unspawnable candidate) on
-   * some tier before landing here — never a clean "not found" (#1569). Such
-   * a selection may be a degraded fallback masking a preferred tier that was
-   * merely unlucky at that moment, so it is not trusted for the full 24h
-   * TTL: it ages out after `PROBE_CACHE_TRANSIENT_COOLDOWN_MS` instead, the
-   * same window the live probe policy (`availability-policy.ts`) uses to
-   * decide a transient verdict is worth re-checking. Absent/`false` means
-   * every candidate along the way either succeeded or was cleanly missing.
-   */
   transient?: boolean;
 }
 
@@ -47,13 +30,6 @@ type ProbeCache = Record<string, ProbeCacheEntry>;
 const PROBE_CACHE_PATH = path.join(getGlobalPiLensDir(), "probe-cache.json");
 const PROBE_CACHE_LOCK_STALE_MS = 180_000;
 const PROBE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-/**
- * How long a transient-tainted entry (see `ProbeCacheEntry.transient`) is
- * served before `getToolPath` is asked again, instead of the full 24h TTL
- * (#1569). Shares the shared probe policy's transient ceiling rather than
- * inventing a new number for the same "how long is a stall worth trusting"
- * question.
- */
 const PROBE_CACHE_TRANSIENT_COOLDOWN_MS = TRANSIENT_MAX_COOLDOWN_MS;
 const PROBE_CACHE_FLUSH_LOCK_WAIT_MS = 250;
 const PROBE_CACHE_FLUSH_RETRY_DELAY_MS = 300;
@@ -65,9 +41,6 @@ let _probeCacheFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let _probeCacheWriteInFlight: Promise<ProbeCacheFlushResult> | null = null;
 let _probeCacheRetryAttempt = 0;
 let _probeCacheChangeGeneration = 0;
-// Read-modify-write deltas let a long-lived process merge with entries another
-// process discovered after this process's initial read. `null` is a deliberate
-// deletion (TTL/stale-path eviction), not an absent map value.
 const _probeCacheChanges = new Map<string, ProbeCacheEntry | null>();
 const _probeCacheChangeVersions = new Map<string, number>();
 
@@ -137,18 +110,6 @@ function snapshotProbeCacheChanges(): ProbeCacheFlushSnapshot {
   };
 }
 
-/**
- * Deserialize the on-disk probe-cache for the LOCKED write-side merge
- * (`writeProbeCache`'s `commitDurableStoreAsync` call). Unlike `readProbeCache`
- * (the ordinary session-lookup path, which already degrades a parse/shape
- * failure to `{}`), this used to THROW on a torn/corrupt file — which does
- * not crash the caller (`writeProbeCache` wraps the whole commit in try/catch
- * and retries), but it also means the corrupt file on disk is never repaired:
- * every retry re-reads the same torn bytes, re-throws, and gives up again,
- * forever (#1609 layer b). Degrading here too, exactly like `readProbeCache`,
- * lets the next successful flush's `merge` step overwrite the torn file with
- * a valid one instead of looping on it indefinitely.
- */
 function deserializeProbeCache(contents: string | undefined): ProbeCache {
   if (contents === undefined) return {};
   try {
@@ -177,12 +138,6 @@ function applyProbeCacheChanges(
   }
 }
 
-/**
- * Install-lifetime ageing belongs to the authoritative merge, not only to the
- * lookup path: a sibling process may have left expired entries on disk since
- * this process loaded its in-memory snapshot. The async durable-store lock
- * supplies the probe cache's former quarantine/stale-owner recovery.
- */
 function ageProbeCache(disk: ProbeCache): void {
   const now = Date.now();
   for (const [toolId, entry] of Object.entries(disk)) {
@@ -197,8 +152,6 @@ function publishProbeCacheWrite(
   disk: ProbeCache,
   snapshotVersions: Map<string, number>,
 ): ProbeCacheFlushResult {
-  // Publish the sibling-process merge plus any updates that arrived during
-  // the write. Only an unchanged snapshot entry is retired.
   const pendingAfterWrite = new Map(_probeCacheChanges);
   _probeCache = disk;
   for (const [toolId, entry] of pendingAfterWrite) {
@@ -218,9 +171,6 @@ function publishProbeCacheWrite(
 
 async function writeProbeCache(): Promise<ProbeCacheFlushResult> {
   try {
-    // Snapshot versions before the awaited disk read/write. A new update for
-    // the same tool may arrive while the atomic write is in flight; its newer
-    // version must remain pending for the next flush.
     const { changes, versions } = snapshotProbeCacheChanges();
     let result: ProbeCacheFlushResult = "written";
     const committed = await commitDurableStoreAsync({
@@ -252,9 +202,6 @@ async function writeProbeCache(): Promise<ProbeCacheFlushResult> {
     }
     return result;
   } catch (err) {
-    // Keep dirty state so a later timer/explicit flush can retry. The error
-    // is logged without paths, source, or command text; an unavailable cache
-    // must never look like a clean empty cache to operators.
     logSessionStart(
       // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
       `auto-install probe-cache: flush failed (${(err as NodeJS.ErrnoException | undefined)?.code ?? "write error"}); pending update retained`,
@@ -264,15 +211,11 @@ async function writeProbeCache(): Promise<ProbeCacheFlushResult> {
   }
 }
 
-/** Await pending probe-cache persistence before a one-shot process exits. */
 export async function flushProbeCache(): Promise<ProbeCacheFlushResult> {
   if (_probeCacheFlushTimer !== null) {
     clearTimeout(_probeCacheFlushTimer);
     _probeCacheFlushTimer = null;
   }
-  // #946 review F4: if the 300ms timer's write already started, the dirty
-  // flag is false but the write may still be in flight — an immediate
-  // process.exit would truncate it. Always await the in-flight write.
   if (_probeCacheWriteInFlight) {
     await _probeCacheWriteInFlight;
     if (!_probeCacheDirty) return "written";
@@ -302,8 +245,6 @@ async function verifyAstGrepProbePath(binPath: string): Promise<boolean> {
         timeout: 5000,
       });
     } catch {
-      // SYNCHRONOUS spawn throw (Windows `spawn UNKNOWN`/EINVAL, the pidusage
-      // bug class, #533) — best-effort probe, resolve rather than reject.
       resolve(false);
       return;
     }
@@ -317,16 +258,11 @@ async function verifyAstGrepProbePath(binPath: string): Promise<boolean> {
   });
 }
 
-// Exported for testing only.
 export async function checkProbeCache(toolId: string): Promise<string | undefined> {
   const cache = await readProbeCache();
   const entry = cache[toolId];
   if (!entry) return undefined;
 
-  // A transient-tainted entry (#1569) is not trusted past the shorter
-  // transient cooldown, even inside the 24h TTL — the selection it recorded
-  // may be a degraded fallback that a since-recovered preferred tier should
-  // now beat.
   const ttl = entry.transient ? PROBE_CACHE_TRANSIENT_COOLDOWN_MS : PROBE_CACHE_TTL_MS;
   if (Date.now() - entry.cachedAt > ttl) {
     logSessionStart(
@@ -361,7 +297,6 @@ export async function checkProbeCache(toolId: string): Promise<string | undefine
   }
 }
 
-// Exported for testing only.
 export async function updateProbeCache(
   toolId: string,
   resolvedPath: string,
@@ -378,12 +313,9 @@ export async function updateProbeCache(
     };
     cache[toolId] = entry;
     markProbeCacheChange(toolId, entry);
-  } catch {
-    // best-effort
-  }
+  } catch {}
 }
 
-// Exported for testing only.
 export function resetProbeCacheStateForTesting(): void {
   _probeCache = null;
   _probeCacheDirty = false;

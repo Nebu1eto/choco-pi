@@ -61,31 +61,9 @@ function shellCommandFromInput(input: LspBoundaryValue): string | undefined {
 
 const AUTHORITATIVE_CONTENT_MAX_BYTES = RUNTIME_CONFIG.pipeline.lspMaxFileBytes;
 
-/**
- * The `tool_result` payload choco-pi-lsp actually receives.
- *
- * Kept aligned with what pi BUILDS, not with what a payload might plausibly
- * carry. `AgentSession._installAgentToolHooks`'s `afterToolCall` constructs the
- * event literal with exactly eight keys —
- * `type`/`toolName`/`toolCallId`/`input`/`content`/`details`/`isError`/`usage`
- * (`@earendil-works/pi-coding-agent/dist/core/agent-session.js:243-256`, source
- * `src/core/agent-session.ts:502-516`) — and `ExtensionRunner.emitToolResult`
- * forwards that same object to every handler
- * (`dist/core/extensions/runner.js:649-651`, source `runner.ts:877-880`).
- *
- * #1655 item 2 removed seven fields this interface used to declare that pi
- * never sets on the wire: `id`, `callId`, `requestId`, `provider`, `model`,
- * `sessionId`, and `session`. They made a telemetry-identity branch here
- * unreachable against a real host. Identity is read from the runtime instead —
- * see the `telemetry:` block handed to `runPipeline` below, which already
- * sources `model`/`sessionId`/`provider` from `RuntimeCoordinator`.
- *
- * Do not re-add a field here without a pi source line that assigns it.
- */
 interface ToolResultEvent {
   toolName: string;
   toolCallId?: string | number;
-  /** Host tool_result status; distinct from choco-pi-lsp PipelineResult.isError. */
   isError?: boolean;
   input: unknown;
   details?: unknown;
@@ -95,7 +73,6 @@ interface ToolResultEvent {
 interface ToolResultDeps {
   event: ToolResultEvent;
   getFlag: (name: string, filePath?: string) => boolean | string | undefined;
-  /** Optional: provenance for dbg/skip logs — see `PipelineContext["getFlagSource"]` (#792). */
   getFlagSource?: (name: string, filePath?: string) => PiLensFlagSource;
   dbg: (msg: string) => void;
   runtime: RuntimeCoordinator;
@@ -107,23 +84,10 @@ interface ToolResultDeps {
   agentBehaviorRecord: (toolName: string, filePath?: string) => unknown[];
   formatBehaviorWarnings: (warnings: unknown[]) => string;
   readGuard?: ReadGuard;
-  /**
-   * The STABLE pi session id for the ctx this tool_result fired on
-   * (`ctx.sessionManager.getSessionId()`), when the host supplies one.
-   * Threaded onto the resulting `DeferredFormatRecord` as `ownerSessionId`
-   * (#791) so a later `agent_end` can tell "did THIS session queue this
-   * file" apart from a concurrent in-process secondary session's firing.
-   */
   sessionId?: string;
-  /**
-   * Internal: set when the debounce timer fires to skip re-scheduling.
-   * Do not pass from external callers.
-   */
   _bypassDebounce?: boolean;
-  /** Internal bounded provenance carried through debounce/coalescing. */
   _telemetryParticipantIds?: string[];
   _telemetryParticipantTotal?: number;
-  /** Receipt-time decision preserved across debounce replacement. */
   _autofixMode?: "immediate" | "deferred";
 }
 
@@ -157,38 +121,21 @@ function parseDiffRanges(diff: string): { start: number; end: number }[] {
   return ranges;
 }
 
-// Deduplicates tool_result calls for the same post-write file state.
-// The pi framework can emit one tool_result per edit hunk; those events often
-// observe the same final file content. Deduping by file alone is unsafe because
-// a later same-turn edit to the same file must still run the pipeline.
 interface InFlightPipeline {
   promise: Promise<unknown>;
   participantIds: string[];
   participantTotal: number;
 }
 
-// Keyed by (normalized) filePath, then by the raw stateHash — the path portion
-// needs normalizing (divergent Windows spellings must collapse to one entry),
-// the stateHash suffix must NOT be folded into the path key (a real content
-// change for the same file has to stay a distinct entry). A flat
-// `PathKeyedMap<InFlightPipeline>` keyed by a composite `${filePath}:${hash}`
-// string can't express that split cleanly (the normalizer only sees the whole
-// composite string, so it can't fold the path half without also mangling the
-// hash half); nesting keeps each axis normalized/compared with its own rules.
 const inFlightPipelines = new PathKeyedMap<Map<string, InFlightPipeline>>(normalizeEphemeralMapKey);
 const lastAnalyzedStateByFile = new PathKeyedMap<{
   turnIndex: number;
   stateHash: string;
 }>(normalizeEphemeralMapKey);
 
-// Called at turn_start — entries from the previous turn can never match the new
-// turnIndex so they're dead weight. Clearing here keeps the map bounded to the
-// files touched in the current turn only (typically < 20).
 export function clearLastAnalyzedStateCache(): void {
   lastAnalyzedStateByFile.clear();
 }
-
-// ── Coalesce sequential edits via debounce window (#115) ────────────────────
 
 type ToolResultReturn = {
   content: Array<{ type: string; text?: string }>;
@@ -214,19 +161,9 @@ const MAX_DEBOUNCE_MS = 1000;
 function getDebounceMs(): number {
   const raw = Number(process.env.CHOCO_PI_LSP_TOOL_RESULT_DEBOUNCE_MS);
   if (!Number.isFinite(raw) || raw < 0) return DEFAULT_DEBOUNCE_MS;
-  // Cap at 1s so turn_end and agent_end don't block on the timer for
-  // pathologically long windows. flushDebouncedToolResults below also
-  // short-circuits at boundary events.
   return Math.min(raw, MAX_DEBOUNCE_MS);
 }
 
-/**
- * Drain any pending debounced tool_result pipelines immediately, awaiting their
- * completion. Call from turn_end / agent_end before reading anything that depends
- * on the pipeline's bookkeeping (project change log, modified ranges, etc.).
- *
- * Passing a filePath flushes only that entry; omitting it flushes all.
- */
 export async function flushDebouncedToolResults(filePath?: string): Promise<void> {
   const entries = filePath
     ? debouncedPipelines.has(filePath)
@@ -237,15 +174,12 @@ export async function flushDebouncedToolResults(filePath?: string): Promise<void
   for (const [key, entry] of entries) {
     clearTimeout(entry.timer);
     debouncedPipelines.delete(key);
-    // Re-enter the pipeline synchronously via the bypass flag so the
-    // timer body's resolve/reject still fires through the shared promise.
     handleToolResult({ ...entry.latestDeps, _bypassDebounce: true }).then(
       entry.resolve,
       entry.reject,
     );
   }
   if (entries.length > 0) {
-    // Allow microtasks to settle so awaiting callers see the latest state.
     await Promise.all(entries.map(([, entry]) => entry.promise.catch(() => undefined)));
   }
 }
@@ -406,24 +340,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
   const rawFilePath = (event.input as { path?: string }).path;
   const workspaceRoot = runtime.projectRoot || process.cwd();
 
-  // #1642: a gitignored worktree edit got re-attributed onto a
-  // same-relative-path file in the parent checkout because this handler
-  // used to always resolve a relative path against `workspaceRoot`
-  // (`runtime.projectRoot`), with no idea the call actually ran under a
-  // different cwd/worktree.
-  //
-  // Source-level correction (pi host audit, earendil-works/pi): tool_call's
-  // own resolved path is NOT authoritative for what executed —
-  // `agent-session.ts:914-919`'s extension-handler contract lets a LATER
-  // `tool_call` handler mutate `event.input` in place with no
-  // re-validation, and edit's `prepareArguments` rewrites args before the
-  // event fires at all. `tool_result.input`, by contrast, is populated
-  // from the EXECUTED args (`agent-session.ts:502-516`) — it is the
-  // authoritative path source. So the correlation record's job is narrower
-  // than "the path": it is the RESOLUTION BASIS (the cwd/worktree the call
-  // actually ran under). Every tool_result resolves ITS OWN authoritative
-  // `rawFilePath` against that basis, rather than trusting a call-time path
-  // that a later handler may have superseded.
   const toolCallId = resolveToolCallCorrelationId(event);
   const attribution =
     toolCallId !== undefined ? runtime.takeToolCallAttribution(toolCallId) : undefined;
@@ -432,14 +348,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
   if (attribution) {
     resolutionBasis = attribution.originCwd;
   } else if (toolCallId !== undefined && rawFilePath && !path.isAbsolute(rawFilePath)) {
-    // A real correlation id existed (the host DOES support one) but no
-    // attribution was recorded under it — evicted, cleared because the
-    // call was blocked before it could execute, or simply never seen by
-    // `handleToolCall`. A RELATIVE path here is ambiguous: we have no
-    // idea which cwd it is relative to, and guessing `workspaceRoot` is
-    // exactly the #1642 collapse. Fail CLOSED instead of guessing — no
-    // turn state, no deferred work — and log it so a real incident is
-    // countable rather than silently mis-attributed.
     const guessedPath = path.resolve(workspaceRoot, rawFilePath);
     dbg(
       `path_attribution_missing: no recorded resolution basis for toolCallId=${toolCallId}, refusing relative path ${rawFilePath} (would have guessed ${guessedPath})`,
@@ -454,12 +362,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
     });
     return;
   } else {
-    // Either an ABSOLUTE path (bash-synthetic writes always pass one —
-    // unambiguous regardless of any basis, see the bash-write dispatch
-    // below) or a host that supplies NO correlation id at all under any
-    // known field name. The latter cannot be correlated by identity full
-    // stop; this is the SAME exposure every host had before this fix,
-    // not a regression introduced by it.
     resolutionBasis = workspaceRoot;
   }
   const filePath = rawFilePath
@@ -468,12 +370,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
       : path.resolve(resolutionBasis, rawFilePath)
     : rawFilePath;
 
-  // Purely diagnostic: tool_call's call-time verdict (computed on ITS OWN
-  // resolved path, which may since have been superseded) disagreed with
-  // what actually executed. This does NOT gate anything by itself — the
-  // ignore re-check below, running on the freshly & correctly resolved
-  // `filePath`, is the real decision — but a divergence is exactly the
-  // shape of the reported incident, so it is named legibly.
   if (
     attribution?.skipped &&
     filePath &&
@@ -499,14 +395,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
   const syntheticWriteContent: Array<{ type: string; text?: string }> = [];
   let syntheticAttachmentBytes = 0;
 
-  // Bash writes (redirects, tee, sed -i, cp/mv, touch, git checkout/restore) —
-  // these change file content but never go through the edit tool, so bash
-  // early-returns before the dispatch pipeline below. For each in-project file
-  // the command wrote/restored we therefore: (1) mark it authored-by-agent for
-  // the read-guard (like the Write tool), and (2) re-run the pipeline via a
-  // synthetic `write` event so its diagnostics, fileSeq, and change-log refresh.
-  // Without (2) a `git checkout -- f` restore keeps serving the pre-restore
-  // (e.g. broken-state) warnings on every later diagnostics_report call.
   const shellCommand = event.toolName === "bash" ? shellCommandFromInput(event.input) : undefined;
   if (shellCommand !== undefined) {
     const command = shellCommand;
@@ -529,11 +417,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
         _autofixMode: autofixMode,
       });
       if (syntheticResult) {
-        // The per-attachment cap bounds each file, but a multi-file bash
-        // write (`sed -i` over globs, `;`-chained rewrites) appends one
-        // attachment per path — share ONE authoritative-content budget
-        // across the whole command so the aggregate tool result stays
-        // bounded too. Past the budget, degrade to the re-read warning.
         for (const block of syntheticResult.content.slice(event.content.length)) {
           const blockBytes = isString(block.text) ? Buffer.byteLength(block.text, "utf-8") : 0;
           const isAuthoritativeAttachment =
@@ -542,15 +425,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
             isAuthoritativeAttachment &&
             syntheticAttachmentBytes + blockBytes > AUTHORITATIVE_CONTENT_MAX_BYTES
           ) {
-            // S3e (#1432 review): this is the SECOND
-            // `authoritative_content_attachment_decision` row for `wp` —
-            // the synthetic `handleToolResult` call above already logged
-            // an "attached" row for the same path under its per-file
-            // cap. This outer, aggregate-budget row is logged later and
-            // is the one that matches what the caller actually sees
-            // (the re-read warning below, not the attachment), so it
-            // wins for `wp`; the inner "attached" row is a stale
-            // per-file view superseded by this shared-budget decision.
             logLatency({
               type: "phase",
               phase: "authoritative_content_attachment_decision",
@@ -558,10 +432,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
               durationMs: 0,
               metadata: { path: wp, bytes: blockBytes, decision: "aggregate-budget-degraded" },
             });
-            // #1464: re-arm the nudge the inner per-file "attached"
-            // suppressed — this path's bytes are NOT in the result the
-            // caller sees, only the re-read warning below. Same
-            // last-row-wins ordering as the telemetry above.
             noteAuthoritativeContentAttachment(path.resolve(wp), false);
             syntheticWriteContent.push({
               type: "text",
@@ -594,30 +464,12 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
       }
     }
 
-    // #1668: bash-deleted files never go through the edit tool, so nothing
-    // else tells an LSP server one of its watched files is gone — the ONLY
-    // existing enqueue site fires on first open and can only emit type 1/2.
-    // Extract the command's likely delete targets, confirm each by existence
-    // (never scan the workspace — only the paths the command named), and only
-    // act on paths choco-pi-lsp already knows about (a read or a write this
-    // session) so an `rm` on something choco-pi-lsp never touched is not treated
-    // as a signal. Each match is routed to already-active LSP clients as a
-    // type-3 watched-files event through the same #271 coalescing queue a
-    // burst of deletes still flushes as one notification per server.
     if (event.isError !== true && !getFlag("no-lsp") && !getFlag("no-read-guard")) {
       for (const dp of extractDeletedPathsFromCommand(command, workspaceRoot)) {
         if (isExternalOrVendorFile(dp, workspaceRoot)) continue;
         if (isPathIgnoredByProject(dp, workspaceRoot, false)) continue;
         if (!deps.readGuard || !deps.readGuard.hasKnownPath(dp)) continue;
-        // #1668 review F4: this is the ONLY gate standing between a merely
-        // NAMED path and an actual confirmed delete — extractDeletedPathsFromCommand
-        // only proposes candidates from parsing the command text, so it can't
-        // tell `git rm --cached f` (index-only, file still on disk) from a
-        // real delete, can't see a short-circuited `rm f && false` that never
-        // ran, and can't resolve a relative path run from a `cd`-ed subdirectory
-        // against the wrong cwd. Every one of those is caught here, and only
-        // here — do not remove or reorder this check relative to the loop body.
-        if (nodeFs.existsSync(dp)) continue; // still there — not a real delete
+        if (nodeFs.existsSync(dp)) continue;
         deps.readGuard.forgetPath(dp);
         void notifyExternalFileChange(dp, 3).catch((err) => {
           dbg(`tool_result: external-delete notify failed for ${dp}: ${err}`);
@@ -626,10 +478,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
     }
   }
 
-  // Search tools reveal specific lines (file:line) the agent then edits — register
-  // those shown lines (± context) as reads so the follow-up edit isn't blocked (#169).
-  // Our tools attach locations as `details.searchReads`; bash grep is parsed from
-  // `grep -n` output. Only shown lines are registered, never the whole file.
   if (deps.readGuard && event.isError !== true && !getFlag("no-read-guard")) {
     const searchReads: SearchReadLocation[] = [];
 
@@ -713,9 +561,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
     return { content: event.content, isError: true };
   }
 
-  // Must happen before debounce admission: latestDeps intentionally retains only
-  // the latest event, but write -> edit is a sticky turn transition.
-
   // SAFETY: The runtime dependency is the concrete RuntimeCoordinator; the optional member check immediately after this access preserves compatibility.
   const receipt = (runtime as Partial<RuntimeCoordinator>).recordMutationToolReceipt;
   const autofixMode = deps._bypassDebounce
@@ -726,9 +571,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
         ? "deferred"
         : "immediate";
 
-  // Coalesce sequential edits to the same file into one pipeline run against
-  // the final state. Only the debounce-fired call (with _bypassDebounce=true)
-  // proceeds to the pipeline body; in-window callers share its promise.
   if (!deps._bypassDebounce) {
     const debounceMs = getDebounceMs();
     if (debounceMs > 0) {
@@ -741,12 +583,8 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
     }
   }
 
-  // Refresh the read-guard's FileTime stamp so that the model's own write
-  // doesn't trigger a spurious "file_modified" block on the next edit.
   deps.readGuard?.recordWritten(filePath);
 
-  // Keep cachedExports in sync after each write/edit so the pre-write STOP
-  // check doesn't fire on names that were removed from this file this session.
   if (runtime.cachedExports.size > 0 && nodeFs.existsSync(filePath)) {
     const exportRe = /export\s+(?:async\s+)?(?:function|class|const|let|type|interface)\s+(\w+)/g;
     for (const [name, file] of runtime.cachedExports) {
@@ -762,16 +600,11 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
           runtime.cachedExports.set(name, filePath);
         }
       }
-    } catch {
-      // Non-fatal — stale entry is worse than a missing one
-    }
+    } catch {}
   }
 
   const initialStateHash = getFileStateHash(filePath);
 
-  // Deduplicate concurrent calls for the same final file state (pi can fire one
-  // tool_result per edit hunk). Do not dedupe by file alone: a distinct later
-  // same-turn edit to this file must still be analyzed.
   const inFlight = inFlightPipelines.get(filePath)?.get(initialStateHash);
   if (inFlight) {
     dbg(`tool_result: skipping duplicate concurrent state for ${filePath}`);
@@ -784,8 +617,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
     return;
   }
 
-  // Deduplicate sequential duplicate events for the same post-write state in the
-  // same turn while allowing later same-file edits whose content changed.
   const lastAnalyzed = lastAnalyzedStateByFile.get(filePath);
   if (
     lastAnalyzed?.turnIndex === runtime.turnIndex &&
@@ -796,8 +627,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
   }
 
   const sessionFileTime = createFileTime("default");
-  // tool_result is emitted after write/edit has already been applied.
-  // Asserting pre-write stamps here produces false positives on rapid edits.
   sessionFileTime.read(filePath);
   if (!getFlag("no-read-guard")) {
     // SAFETY: This package creates runtime and attaches an optional readGuard with this method signature.
@@ -822,26 +651,9 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
   dbg(
     `tool_result: resolved dispatch cwd ${dispatchCwd} for ${filePath} (turnState cwd ${turnStateCwd})`,
   );
-  // #1655 item 2: a `setTelemetryIdentity` call used to sit here, gated on
-  // `event.model`/`provider`/`sessionId`/`session.id`. pi sets none of those on
-  // a `tool_result` — `afterToolCall` builds the event with exactly
-  // `type`/`toolName`/`toolCallId`/`input`/`content`/`details`/`isError`/`usage`
-  // (`@earendil-works/pi-coding-agent/dist/core/agent-session.js:243-256`,
-  // source `src/core/agent-session.ts:502-516`), so the gate was always false
-  // against a real host and the branch never ran. Identity for this dispatch
-  // comes from the runtime, which `message_start`/`session_start` populate —
-  // see the `telemetry:` block handed to `runPipeline` below.
   const writeIndex = runtime.nextWriteIndex();
   let modifiedRanges: Array<{ start: number; end: number }> | undefined;
   try {
-    // #1334 S6: the host DECLARES this payload (`EditToolDetails`, a
-    // type-only export), so use it instead of re-declaring `{ diff?: string }`
-    // here — the ad-hoc shape hid the sibling `patch`/`firstChangedLine`
-    // fields. `Partial<>` keeps the defensive posture: the host types mark
-    // `diff` required, but this runs against whatever a live host actually
-    // sent, and the `details?.diff` truthiness check below is what the code
-    // has always relied on.
-
     // SAFETY: The source key list is checked against the named owner type, so the constructed keys and values exhaust that representation.
     const details = event.details as Partial<EditToolDetails> | undefined;
     dbg(
@@ -925,24 +737,11 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
       getFlag,
       getFlagSource,
       dbg,
-      // #451: hand the deferred cascade live sequence accessors so the
-      // review-graph builder can skip its per-build O(project) sweep when
-      // only pi-observed edits happened. projectSeq is a function because the
-      // cascade runs after this returns (#450) — read current, not captured.
       seqState: {
         projectSeq: () => runtime.projectSeq,
         getFilesChangedSince: (seq: number) => runtime.getFilesChangedSince(seq),
       },
-      // The settle clock is live because the deferred cascade may reach its
-      // budget derivation before or after turn_end starts waiting.
       turnEndCascadeSettleStart: () => runtime.getTurnEndCascadeSettleStart(),
-      // #348 phase 2: live reference so the deferred cascade can update the
-      // warm word index in place at the same seam as the graph rebuild.
-      // `runtime.wordIndex` is read fresh (not captured) via this closure-free
-      // property access being re-evaluated at object-literal construction
-      // time here — that's fine because runPipeline reads `ctx.wordIndex`
-      // synchronously into computeCascadeForFile's options before returning
-      // (the deferred part is the cascade's OWN execution, not this handoff).
       wordIndex: runtime.wordIndex,
       onWordIndexUpdated: (index) => {
         scheduleWordIndexPersist(dispatchCwd, index, dbg);
@@ -1026,8 +825,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
       isError: true,
     };
   } finally {
-    // Prune the per-file inner map once it's empty so a file touched once
-    // this session doesn't leave a permanent empty entry in the outer map.
     filePipelines.delete(initialStateHash);
     if (filePipelines.size === 0) {
       inFlightPipelines.delete(filePath);
@@ -1077,9 +874,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
     stateHash: getFileStateHash(filePath),
   });
 
-  // The model's write/edit and choco-pi-lsp' own immediate format/autofix are now
-  // reflected on disk. Refresh read-guard staleness stamps so a follow-up edit
-  // is judged by read-range coverage, not by our own previous write.
   if (!getFlag("no-read-guard")) {
     const changedForReadGuard = new Set([
       path.resolve(filePath),
@@ -1134,8 +928,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
       durationMs: 0,
       metadata: { cwd: dispatchCwd },
     });
-    // Publish a file's first queue entry and each newly added kind. A same-kind
-    // re-touch before agent_end carries no new information and stays silent.
     if (isNewlyQueued || autofixNewlyQueued) {
       publishFormatQueued({
         filePath,
@@ -1194,10 +986,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
     runtime.recordCodeQualityWarnings(result.codeQualityWarnings);
   }
 
-  // #484: opt-in per-turn summary collection. Same signals the pipeline
-  // already computed above (diagnostics, autofix count/tools, formatters
-  // used) — no new collection plumbing, just fed into the collector when
-  // the feature is on.
   if (getFlag("lens-turn-summary")) {
     if (result.diagnostics?.length) {
       for (const d of result.diagnostics) {
@@ -1228,9 +1016,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
   }
 
   if (result.inlineBlockerSummary) {
-    // #1561: stamp the verdict with THIS dispatch's write token — the same
-    // counter `lsp_diagnostics`' reconciliation seam draws from — so a later
-    // confirmed-clean result can be ordered against it instead of racing it.
     runtime.recordInlineBlockers(
       filePath,
       result.inlineBlockerSummary,
@@ -1279,15 +1064,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
     Buffer.byteLength(postMutation.content, "utf-8") <= AUTHORITATIVE_CONTENT_MAX_BYTES;
   if (postMutation) {
     const bytes = Buffer.byteLength(postMutation.content, "utf-8");
-    // S3e (#1432 review): when this call is the synthetic per-file
-    // `handleToolResult` recursion a multi-file bash write drives (see the
-    // bash branch above), the OUTER aggregate-budget loop may log a SECOND
-    // `authoritative_content_attachment_decision` row for this same
-    // `filePath` right after this one, downgrading an "attached" here to
-    // "aggregate-budget-degraded" once the shared budget is exhausted.
-    // Both rows are intentional (this one reflects the per-file cap
-    // decision; the outer one reflects the aggregate-budget decision that
-    // can override it) — the outer row, logged later, wins for that path.
     logLatency({
       type: "phase",
       phase: "authoritative_content_attachment_decision",
@@ -1299,9 +1075,6 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
         decision: attachAuthoritativeContent ? "attached" : "size-capped",
       },
     });
-    // #1464: the nudge suppresses exactly the paths this decision
-    // delivered. Same boolean the attachment below reads — the nudge layer
-    // never re-derives the cap or the budget for itself.
     noteAuthoritativeContentAttachment(postMutation.filePath, attachAuthoritativeContent);
   }
   const returnedContent = attachAuthoritativeContent

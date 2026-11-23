@@ -26,40 +26,24 @@ export const RESUME_MESSAGE = "Usage window reset; continue the previous task.";
 export const SECOND_MS = 1_000;
 export const MINUTE_MS = 60 * SECOND_MS;
 export const HOUR_MS = 60 * MINUTE_MS;
-/** Closure applied when the provider gives no reset estimate. */
 export const DEFAULT_CLOSE_MS = 30 * MINUTE_MS;
-/** Margin after a reported reset, which providers round down. */
 export const RESET_MARGIN_MS = 30 * SECOND_MS;
-/** Longest single wait; a wake-up re-checks readiness and re-arms. */
 export const MAX_WAIT_MS = 24 * HOUR_MS;
-/** Poll interval when no reset time is known. */
 export const POLL_INTERVAL_MS = 5 * MINUTE_MS;
-/** Longest polling phase without a known reset time. */
 export const POLL_LIMIT_MS = 6 * HOUR_MS;
-/** Delay before a replayed wait whose reset already passed re-checks readiness. */
 export const REPLAY_GRACE_MS = 5 * SECOND_MS;
-/** Fallback switches per interrupted task. */
 export const MAX_FALLBACK_SWITCHES = 2;
-/** Auto-resume continuations per interrupted task. */
 export const MAX_RESUME_ATTEMPTS = 3;
-/** Re-applications of a user's model choice after an overwriting automatic switch. */
 export const MAX_SELECTION_RESTORES = 3;
-/** Account key used until a provider's account id is known. */
 export const DEFAULT_ACCOUNT_ID = "default";
-/**
- * Providers whose account id derives from the stored credential alone. Anthropic
- * needs a profile request, so it is resolved only once a limit makes it matter.
- */
 export const LOCAL_ACCOUNT_PROVIDERS: ReadonlySet<string> = new Set(["openai-codex", "synthetic"]);
 
 export type TimerHandle = { cancel(): void };
 
 export type ThinkingLevel = ReturnType<ExtensionAPI["getThinkingLevel"]>;
 
-/** A model the controller reads and switches to. */
 export type UsageLimitModel = { readonly provider: string; readonly id: string };
 
-/** The `ExtensionContext` members the controller reads; `ExtensionContext` satisfies it. */
 export type UsageLimitHostContext<M extends UsageLimitModel> = {
   readonly hasUI: boolean;
   readonly ui: { notify(message: string, type?: "info" | "warning" | "error"): void };
@@ -71,7 +55,6 @@ export type UsageLimitHostContext<M extends UsageLimitModel> = {
   hasPendingMessages(): boolean;
 };
 
-/** The event fields the controller reads, by event name. */
 export type UsageLimitHostEvents<M extends UsageLimitModel> = {
   session_start: { readonly type: "session_start"; readonly reason: SessionStartEvent["reason"] };
   session_shutdown: {
@@ -99,7 +82,6 @@ type HostEvent<
   Name extends keyof UsageLimitHostEvents<M>,
 > = UsageLimitHostEvents<M>[Name];
 
-/** The `ExtensionAPI` members the controller uses; `ExtensionAPI` satisfies it. */
 export interface UsageLimitHost<M extends UsageLimitModel, C extends UsageLimitHostContext<M>> {
   on(event: "session_start", handler: HostHandler<HostEvent<M, "session_start">, C>): () => void;
   on(
@@ -129,7 +111,6 @@ export interface UsageLimitHost<M extends UsageLimitModel, C extends UsageLimitH
   setThinkingLevel(level: ThinkingLevel): void;
 }
 
-/** A preference write: the key written and the value stored. */
 export type UsageLimitPreferenceChange = { readonly key: string; readonly value?: unknown };
 
 export type UsageLimitControllerPolicyOptions<C> = Omit<UsageLimitPolicyOptions, "ctx"> & {

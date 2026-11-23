@@ -68,11 +68,9 @@ export function formatNumber(value: number, precision: number): string {
   return fixed.includes(".") ? fixed.replace(/0+$/, "").replace(/\.$/, "") : fixed;
 }
 
-/** Credit balances arrive as decimal strings or floats; show them rounded to an integer. */
 export function formatCredits(value: RuntimeValue): string | undefined {
   const text = stringValue(value);
   const parsed = text !== undefined ? Number(text) : numberValue(value);
-  // String(-0) is "0", so small negative balances never render as "-0".
   if (parsed !== undefined && Number.isFinite(parsed)) return String(Math.round(parsed));
   return text;
 }
@@ -95,7 +93,6 @@ export function relativeTime(date: Date | undefined, at = Date.now()): string | 
   return `in ${value || "<1m"}`;
 }
 
-/** Age of a stored snapshot, rounded down so it never overstates freshness. */
 export function elapsedTime(date: Date, at = Date.now()): string {
   const totalMinutes = Math.floor(Math.max(0, at - date.getTime()) / 60_000);
   if (totalMinutes < 1) return "just now";
@@ -120,11 +117,6 @@ export async function providerToken(
   return ctx.modelRegistry.getApiKeyForProvider(provider);
 }
 
-/**
- * Whether `provider` authenticates with a stored OAuth sign-in. The host reads
- * only the credential type from its auth snapshot, so no token is resolved,
- * refreshed, or exposed. Resolves `undefined` when the host cannot say.
- */
 export function providerUsesOAuth(ctx: ExtensionContext, provider: string): boolean | undefined {
   try {
     const registry = ctx.modelRegistry;
@@ -138,7 +130,6 @@ export function providerUsesOAuth(ctx: ExtensionContext, provider: string): bool
   }
 }
 
-/** Whether `provider` has a stored credential; reads auth status only, never a token. */
 export function providerConfigured(ctx: ExtensionContext, provider: string): boolean {
   try {
     return ctx.modelRegistry.getProviderAuthStatus(provider).configured;
@@ -147,10 +138,6 @@ export function providerConfigured(ctx: ExtensionContext, provider: string): boo
   }
 }
 
-/**
- * Marks a report that was rebuilt from the store, so the tab never presents an
- * old snapshot as a live reading.
- */
 export function withCacheNote(usage: ProviderUsage, result: UsageRequestResult): ProviderUsage {
   if (result.cachedAt === undefined) return usage;
   return {

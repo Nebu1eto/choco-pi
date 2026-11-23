@@ -68,7 +68,6 @@ function adapterWith<Response, Availability>(
     availability: () => ({ status: "available" }),
     execute: () => Promise.resolve({ answer: "a", results: [] }),
   };
-  // Deliberately malformed output: Object.assign intersects the member types instead of casting.
   return Object.assign(valid, {
     availability: () => Promise.resolve(availability),
     execute: () => Promise.resolve(response),
@@ -173,7 +172,6 @@ test("isSearchError requires the realm brand and a well-formed shape", () => {
     false,
   );
   assert.equal(isSearchError([]), false);
-  // Optional fields tolerate undefined, extra keys stay allowed, and a bad field fails the shape.
   Object.assign(error, { extra: 1, family: undefined });
   assert.equal(isSearchError(error), true);
   Object.assign(error, { status: 1.5 });

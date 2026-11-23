@@ -29,11 +29,6 @@ function isString(value: JsonValue): value is string {
   return Object.prototype.toString.call(value) === "[object String]";
 }
 
-/**
- * Resolves an authFetch profile from the current on-disk `web-search.json`, never from the
- * process cache, so a profile removed on disk is revoked immediately. Read or parse failures
- * fail closed; a missing file means no profiles are configured.
- */
 export async function resolveAuthFetchProfile(
   request: AuthFetchRequest,
 ): Promise<AuthFetchProfile> {

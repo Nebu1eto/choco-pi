@@ -1,6 +1,3 @@
-// A loaded diff body must match the comparison of the snapshot it is reported under: when HEAD,
-// a range head, or another base moves while a file's summary stays the same, the body is reread;
-// when the comparison itself did not move (a session's baseline while HEAD moves), it is kept.
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { DiffSource, FileBody } from "../profile/extensions/lib/changes/git/model.ts";
@@ -27,17 +24,14 @@ function subcommandOf(args: readonly string[]): string {
   return "";
 }
 
-/** The revisions a diff command compares: the non-option arguments after the subcommand, before "--". */
 function revisionsOf(args: readonly string[], subcommand: string): string[] {
   const start = args.indexOf(subcommand) + 1;
   const end = args.indexOf("--");
   return args.slice(start, end < 0 ? undefined : end).filter((arg) => !arg.startsWith("-"));
 }
 
-/** The fake's runner and the number of patch reads it answered. */
 type FakeGit = { exec: ExecRunner; patches: () => number };
 
-/** A fake git whose patch text names what it was computed against. */
 function fakeGit(world: World): FakeGit {
   let patches = 0;
   const ok = (stdout: string) => ({ stdout, stderr: "", code: 0 });
@@ -157,7 +151,6 @@ test("a range whose head ref moves gets a new revision and a body read against t
   assert.equal(revision(), first.revision + 1);
   const second = await store.loadFile("a.txt");
   assert.deepEqual(linesOf(second.body), [`base ${id("b")}`, `head ${id("f")}`]);
-  // The snapshot still names the range as it was asked for.
   const state = store.getState();
   assert.ok(state.kind === "ready");
   assert.deepEqual([state.snapshot.base, state.snapshot.head], ["main", "feature"]);

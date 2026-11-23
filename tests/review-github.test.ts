@@ -32,7 +32,6 @@ import type {
 const NOW = "2026-03-01T12:00:00.000Z";
 const PR: PullRequestRef = { owner: "octo", repo: "widget", number: 42 };
 
-/** Deliberately hostile text: it must never reach a command line. */
 const BODY_ADDED = 'Rename this; $(whoami) && rm -rf / "quoted" `tick`';
 const BODY_RANGE = "These two lines\nshould move together.";
 const BODY_REMOVED = "Why was this deleted?";
@@ -65,7 +64,6 @@ function utilPatch(body: readonly string[]): string {
   ].join("\n");
 }
 
-/** Head the review was written against. */
 function originalModel(): DiffModel {
   const raw = [
     appPatch("@@ -10,4 +10,5 @@ export function app() {"),
@@ -75,10 +73,6 @@ function originalModel(): DiffModel {
   return parseGitDiff(raw, "base-1", "head-1");
 }
 
-/**
- * Head after a force push: `src/app.ts` is unchanged but shifted, and
- * `src/util.ts` no longer contains the commented code at all.
- */
 function movedModel(): DiffModel {
   const raw = [
     appPatch("@@ -20,4 +30,5 @@ export function app() {"),
@@ -216,8 +210,6 @@ test("a single-line comment omits start_line entirely rather than repeating line
   const single = comments.filter((entry) => entry.body !== BODY_RANGE);
   assert.equal(single.length, 2);
   for (const entry of single) {
-    // `start_line` equal to `line` is not the same comment to GitHub: it renders
-    // as a range in the pull request and needs `start_side` to be accepted.
     assert.equal(Object.hasOwn(entry, "start_line"), false);
     assert.equal(Object.hasOwn(entry, "start_side"), false);
     assert.deepEqual(Object.keys(entry).toSorted(), ["body", "line", "path", "side"]);
@@ -301,8 +293,6 @@ test("a moved head relocates comments and demotes the unmappable ones into the b
   assert.equal(moved.relocatedCount, 3);
   assert.equal(moved.demotedCount, 1);
 
-  // src/app.ts is unchanged but shifted (new side by 20, old side by 10), so
-  // its comments follow by their text and keep their width.
   const relocated = moved.placedComments.map((placed) => ({
     id: placed.commentId,
     line: placed.line,
@@ -324,7 +314,6 @@ test("a moved head relocates comments and demotes the unmappable ones into the b
   assert.equal((moved.payload.comments ?? [])[1]?.start_side, "RIGHT");
   assert.equal((moved.payload.comments ?? [])[2]?.side, "LEFT");
 
-  // The unmappable comment survives as a file-level note instead of vanishing.
   assert.deepEqual(
     moved.demotedComments.map((entry) => ({
       id: entry.commentId,
@@ -462,9 +451,6 @@ test("an unauthenticated gh reports gh auth login without echoing provider outpu
 });
 
 test("a validation failure names the refused field, code, and reason", async () => {
-  // Shape produced by `gh api`: the JSON error body on stdout, a one-line
-  // summary on stderr. Body fields beyond the documented ones are present on
-  // purpose and must not be forwarded.
   const body = JSON.stringify({
     message: "Validation Failed",
     errors: [
@@ -494,7 +480,6 @@ test("a validation failure names the refused field, code, and reason", async () 
       assert.equal(error.kind, "gh-failed");
       assert.equal(error.status, 422);
 
-      // The reviewer learns what GitHub refused and why.
       assert.match(error.message, /HTTP 422/);
       assert.match(error.message, /Validation Failed/);
       assert.match(
@@ -505,7 +490,6 @@ test("a validation failure names the refused field, code, and reason", async () 
       assert.match(error.message, /no longer part of the pull request diff/);
       assert.match(error.message, /Nothing was submitted/);
 
-      // The structure reaches the caller for its own rendering.
       assert.deepEqual(error.apiErrors, [
         {
           resource: "PullRequestReviewComment",
@@ -516,7 +500,6 @@ test("a validation failure names the refused field, code, and reason", async () 
         { resource: "PullRequestReview", field: "body", code: "missing_field" },
       ]);
 
-      // The raw body, its undocumented fields, and any credential stay out.
       assert.ok(!error.message.includes(body), "must not echo the raw response body");
       assert.ok(!error.message.includes("documentation_url"), "must not forward unknown fields");
       assert.ok(!error.message.includes("request_id"), "must not forward unknown fields");
@@ -597,9 +580,6 @@ test("a failure with no status at all still reports the exit code", async () => 
 });
 
 test("an unrecognized event is refused at planning time and names the rejected value", () => {
-  // The reported defect: an untyped caller passing `undefined` produced a plan
-  // with requiresConfirmation=false, putting an unknown event on the
-  // pre-approved path.
   const rejected: readonly [unknown, RegExp][] = [
     [undefined, /undefined/],
     [null, /null/],
@@ -611,7 +591,6 @@ test("an unrecognized event is refused at planning time and names the rejected v
 
   for (const [event, named] of rejected) {
     assert.throws(
-      // The whole point is the call TypeScript cannot see.
       // SAFETY: The fixture supplies every host member exercised by this test.
       () => plan(event as SubmissionEvent),
       (error: RuntimeValue) => {
@@ -676,7 +655,6 @@ test("submitting refuses an unrecognized event and issues no request", async () 
 
 test("submitting re-derives confirmation instead of trusting the plan's flag", async () => {
   const { runner, calls } = stubRunner(() => ({ stdout: "{}" }));
-  // A plan assembled outside TypeScript can claim an approval is pre-approved.
   const forged: ReviewSubmissionPlan = {
     ...plan("APPROVE"),
     requiresConfirmation: false,
@@ -694,7 +672,6 @@ test("submitting re-derives confirmation instead of trusting the plan's flag", a
   );
   assert.equal(calls.length, 0);
 
-  // The pre-approved path still works without a confirmation.
   await submitReviewPlan(plan("COMMENT"), { confirmed: false, runner });
   assert.equal(calls.length, 1);
 });
@@ -724,11 +701,8 @@ test("a COMMENT review without any body is rejected before a request is made", (
   );
 });
 
-/* ------------------------------ only lines inside the diff go inline */
-
 const BODY_CONTEXT = "About an unchanged line above the hunk.";
 
-/** src/app.ts with a second hunk lower down, so a range can cross hunks. */
 function twoHunkModel(): DiffModel {
   const raw = [
     appPatch("@@ -10,4 +10,5 @@ export function app() {"),
@@ -748,7 +722,6 @@ function twoHunkModel(): DiffModel {
   return parseGitDiff(raw, "base-1", "head-1");
 }
 
-/** A comment as the view writes it on lines it showed, anchored on `text`. */
 function looseComment(
   id: string,
   path: string,
@@ -790,7 +763,6 @@ function bodyIds(planned: ReviewSubmissionPlan): string[] {
   return planned.demotedComments.map((entry) => entry.commentId);
 }
 
-/** Lines 1..9 of src/app.ts, revealed above its first hunk the way `+` reveals them. */
 function revealedAbove(): Map<string, HunkExpansion> {
   const hunk = twoHunkModel().files[0]!.hunks[0]!;
   const above = Array.from({ length: 9 }, (_unused, index) => ({
@@ -802,7 +774,6 @@ function revealedAbove(): Map<string, HunkExpansion> {
   return new Map([[hunk.id, { above, below: [] }]]);
 }
 
-/** A comment written as the view writes it: anchored on hunk `hunkIndex` of src/app.ts as shown. */
 function shownComment(
   id: string,
   hunkIndex: number,
@@ -852,7 +823,6 @@ test("a comment on expanded context goes into the body with its file, line and s
   assert.match(body, /const n5 = 5;/, "the source the record holds is quoted");
   assert.ok(body.includes(`> ${BODY_CONTEXT}`));
   assert.doesNotMatch(body, /head moved/, "the head did not move");
-  // Without the context it was written on, its place cannot be checked: outdated, still in the body.
   const blind = planOn([shownComment("ctx", 0, "RIGHT", 5, BODY_CONTEXT)]);
   assert.deepEqual(bodyIds(blind), ["ctx"]);
   assert.match(
@@ -862,7 +832,6 @@ test("a comment on expanded context goes into the body with its file, line and s
 });
 
 test("a range across two hunks, or with one end outside the diff, goes into the body", () => {
-  // No view writes a range across hunks; a record that holds one cannot be located.
   const planned = planShown([
     looseComment("cross", "src/app.ts", "RIGHT", 32, "Across hunks.", "x", 12),
     shownComment("half", 0, "RIGHT", 11, "Half outside.", 8),
@@ -881,7 +850,6 @@ test("a comment on a deleted line (LEFT) inside its hunk stays inline", () => {
   const planned = planOn([shownComment("gone", 1, "LEFT", 31, "Why drop b?")]);
   assert.ok(inlineIds(planned).includes("gone"));
   assert.ok(inlineIds(planned).includes("c3"), "the record's LEFT comment too");
-  // The same number on the other side is not in that hunk's new lines.
   assert.deepEqual(bodyIds(planOn([looseComment("r", "src/app.ts", "RIGHT", 30, "b", "x")])), [
     "r",
   ]);

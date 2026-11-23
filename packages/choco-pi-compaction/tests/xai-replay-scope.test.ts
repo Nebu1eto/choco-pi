@@ -1,12 +1,3 @@
-/**
- * Replay scope (D11) and the request-boundary opaque guard (D2) of the xAI
- * replay, through a real session: a checkpoint replays only on the model
- * that made it; elsewhere an xAI call is refused locally (never disabling
- * server-side), a non-xAI request is refused at the provider boundary (zero
- * transmissions) through the pending opaque block, and authorized loss sends
- * the placeholder. A provider registered as a native `Provider` is overlaid
- * through the real model runtime too.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -38,7 +29,6 @@ import {
 
 const PLACEHOLDER = "xAI server-side compaction checkpoint";
 
-/** A model of a provider registered as a native `Provider` object. */
 const NATIVE_MODEL: Model<"openai-responses"> = {
   ...OTHER_MODEL,
   id: "native-test-1",
@@ -47,7 +37,6 @@ const NATIVE_MODEL: Model<"openai-responses"> = {
   baseUrl: "https://native.example/v1",
 };
 
-/** A native provider whose requests go to `transport`. */
 function nativeProvider(transport: ReturnType<typeof textForeground>): Provider {
   return {
     id: NATIVE_MODEL.provider,
@@ -128,7 +117,6 @@ test(
       assert.equal(refusals.length, 1);
       assert.equal(refusals[0]?.checkpointEntryId, checkpointId);
 
-      // Same provider, model and base URL again: rewritten.
       await rig.session.setModel(XAI_MODEL);
       await rig.session.prompt("XR-BACK");
       const sent = foreground.sent.at(-1);
@@ -213,7 +201,6 @@ test(
         "no unauthorized send happened",
       );
 
-      // Consent for exactly this checkpoint lifts the block; the placeholder is then sent.
       await rig.session.prompt("/compaction-allow-loss");
       assert.equal(pendingOpaqueBlock(sessionId), undefined);
       await rig.session.prompt("XR-ON-OTHER-CONSENTED");
@@ -224,7 +211,6 @@ test(
         .filter((record) => record.event === "loss" && record.reason === "loss");
       assert.equal(losses.length, 1, "the authorized loss is journaled");
 
-      // Back on the checkpoint's model, a replayable request clears it for good.
       await rig.session.setModel(XAI_MODEL);
       await rig.session.prompt("XR-BACK");
       assert.ok(carriesItem(foreground.sent.at(-1)));
@@ -244,7 +230,6 @@ test(
     const rig = await createXaiRig({ foreground, lane });
     const sessionId = rig.manager.getSessionId();
     try {
-      // The xAI capture is registered at session start; the overlay must sit on top of it.
       await rig.session.prompt("XR-CAPTURED");
       const before = foreground.sent.length;
       assert.ok(before > 0);
@@ -258,7 +243,6 @@ test(
         .filter((record) => record.event === "refuse" && record.provider === "codex");
       assert.equal(refusals.length, 1);
       assert.equal(refusals[0]?.from, "codex-native-v2");
-      // The xAI lane never clears another owner's block.
       assert.deepEqual(pendingOpaqueBlock(sessionId), {
         entryId: "codex-checkpoint-1",
         owner: "codex-native",

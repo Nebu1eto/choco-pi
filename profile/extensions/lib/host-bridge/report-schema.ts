@@ -11,19 +11,11 @@ import {
   type Static,
 } from "@earendil-works/pi-schema";
 
-/**
- * Structured `/status`, `/context`, and `/usage` reports for RPC hosts
- * (docs/rpc-host-bridge.md, "Structured reports"). Sent as the `statusText`
- * of a `setStatus` frame keyed by REPORT_STATUS_KEY. Rows stay generic so a
- * new status row needs no host change; `context` and `usage` are typed
- * blocks, because a host draws bars from them. Every object is closed.
- */
 export const REPORT_SCHEMA_VERSION = 1;
 
 export const ReportRowSchema = obj({
   label: str(),
   value: str(),
-  /** Secondary detail, such as the inventory behind a count; may span lines. */
   hint: opt(str()),
 });
 export type ReportRow = Static<typeof ReportRowSchema>;

@@ -39,7 +39,6 @@ function validUsageNumber(value: BoundaryValue, allowZero: boolean): number | nu
   return value > 0 ? value : null;
 }
 
-/** Defensively consume the optional focused-agent publisher at the host boundary. */
 export function readFocusedAgentRuntime(): FocusedAgentRuntime | undefined {
   try {
     // SAFETY: The optional symbol slot remains a BoundaryValue until every consumed member passes a boundary guard.
@@ -76,7 +75,6 @@ export function readFocusedAgentRuntime(): FocusedAgentRuntime | undefined {
   }
 }
 
-/** Select focused usage without ever falling back field-by-field to main usage. */
 export function selectFocusScopedUsage(
   main: FocusScopedUsage,
   focused: FocusedAgentRuntime | undefined,

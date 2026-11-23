@@ -2,28 +2,6 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { MODEL_GUIDANCE_START } from "./lib/model-guidance.ts";
 import { isJsonRecord, isString, type JsonRecord, type JsonValue } from "./lib/runtime-values.ts";
 
-/**
- * Keeps the provider-visible system prompt stable across host-triggered runs.
- *
- * Pi composes the augmented system prompt (model guidance, agent preferences,
- * writing policy, Code Mode tool list) only in `before_agent_start`, which the host
- * emits for user prompts but not for runs started by custom messages such as
- * subagent notifications or shell completions. The host also clears the
- * composed override when a run ends and resets the live prompt to the bare
- * base prompt whenever the tool set changes (every `setActiveTools` or
- * `registerTool`). A request sent during such a run therefore carries the bare
- * base prompt: the persona, preferences, and guidance vanish for that stretch and
- * the provider prompt cache restarts twice, once on the way out and once on
- * the next user turn.
- *
- * This extension records the composed prompt when a user turn starts and
- * substitutes it at the provider boundary whenever a request would otherwise
- * go out with the current, un-augmented live prompt. It touches only requests
- * whose system text equals the live agent prompt, so compaction, branch
- * summaries, and other side requests keep their own prompts.
- */
-
-/** A composed prompt always carries the model-guidance block appended by runtime-model-prompt. */
 export const COMPOSED_PROMPT_MARKER = MODEL_GUIDANCE_START;
 
 export function isComposedPrompt(systemPrompt: string): boolean {
@@ -64,13 +42,6 @@ function replaceSystemMessages(
   return changed ? next : messages;
 }
 
-/**
- * Returns the payload with every system-prompt slot that equals `livePrompt`
- * replaced by `composed`, or `undefined` when nothing matched. Covers the shapes
- * pi-ai emits: Anthropic `system` (string or text blocks), Google `systemInstruction`,
- * Responses `instructions` or a system/developer `input` item, and Chat Completions
- * `messages`.
- */
 export function restoreComposedPrompt(
   payload: JsonValue,
   livePrompt: string,

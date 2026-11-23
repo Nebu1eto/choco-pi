@@ -1,8 +1,3 @@
-/**
- * The pi-schema validators that replaced the TypeBox schemas: openness, finite
- * numbers, round-tripping of records the previous code wrote, the diagnostics
- * the settings loader and lane journal print, and the live-object guards.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -27,10 +22,6 @@ import { parseBackgroundSettings } from "../src/background/settings.ts";
 import { hasMethods, isOptional, isBoolean, isRecord, readProperty } from "../src/guards.ts";
 import { isXaiWireBody } from "../src/xai/capture.ts";
 
-/**
- * Written by the TypeBox-based code at the parent revision (each value was
- * accepted by that revision's validators before it was frozen here).
- */
 const OLD_CANDIDATE_RECORD = `{"customType":"choco-compaction-candidate","schemaVersion":1,"candidateId":"c1","backendId":"b","identity":{"cutEntryId":"c","prefixFingerprint":"f","priorCheckpointId":null,"priorCheckpointVersion":null,"ownerKey":"o","ownerGeneration":0,"providerScope":{"provider":"p","model":"m","baseUrl":"u","authMode":"oauth","accountScope":"a"}},"createdAt":5,"customInstructions":"x","admission":{"promptTokens":1,"budget":2,"source":"chars","ratio":0.25,"detail":"d"},"checkpoint":{"candidateId":"c1","backendId":"b","schemaVersion":1,"draft":{"type":"compaction","summary":"s","firstKeptEntryId":"e","details":{"strategy":"openai-responses-compaction-v2","extra":{"a":[1,"x",null,{"b":true}]},"n":3},"usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"details":{"strategy":"openai-responses-compaction-v2","extra":{"a":[1,"x",null,{"b":true}]},"n":3},"usage":{"input":1,"output":2,"iterations":[{"input":1,"output":1}]},"reasonCodes":["quota","prepared"]}}`;
 const OLD_LANE_RECORD = `{"customType":"choco-compaction-lane","schemaVersion":1,"at":1,"sessionId":"s","provider":"anthropic","route":"manual","event":"fallback","from":"anthropic-native","to":"text","reason":"no-legal-cut","detail":"d","candidateId":"c","checkpointEntryId":"e","cooldownUntil":3,"trigger":"idle","noticeAttempted":false}`;
 const OLD_SIDECAR = `{"enabled":true,"prepareAt":0.5,"hysteresis":0.2,"maxConcurrent":3}`;
@@ -144,7 +135,6 @@ test("a dropped lane record reports the first failing JSON pointer", () => {
     route: "manual",
     event: "fallback",
     from: "anthropic-native",
-    // A code outside the owned vocabulary: assembled so the type accepts it for this test only.
     reason: JSON.parse(`"not-an-owned-code"`),
     noticeAttempted: false,
   };

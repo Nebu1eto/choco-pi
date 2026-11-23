@@ -42,32 +42,25 @@ interface FailedRead {
 
 interface AgentsMdAutoloadDependencies {
   readFile?: (filePath: string) => Promise<string>;
-  /** Defaults to reading `agentsMd` from `<agentDir>/settings.json`. */
   loadSettings?: () => Promise<AgentsMdSettings>;
 }
 
-/** Real-path roots that bound which AGENTS.md files may be inlined. */
 interface SessionScope {
   sessionRoot: string;
   trustedRoots: string[];
-  /** Real path of the session cwd's own AGENTS.md (already in the base prompt). */
   cwdAgentsRealPath: string;
 }
 
 interface AllowedAgentsFile {
-  /** Lexical path where the file was found; used only for the displayed label. */
   displayPath: string;
   source: AgentsFileSource;
 }
 
 interface TargetAgents {
-  /** Allowed AGENTS.md files keyed by real path, root-first per target. */
   allowed: Map<string, AllowedAgentsFile>;
-  /** Real paths of AGENTS.md files outside every allowed root. */
   foreign: string[];
 }
 
-/** Per-session injection accounting emitted on `SESSION_STATS_EVENT`. */
 export interface AgentsMdSessionStats {
   cwd: string;
   injectedFiles: number;
@@ -105,16 +98,6 @@ async function isDirectory(targetPath: string): Promise<boolean> {
   }
 }
 
-/**
- * Register the `tool_result` autoload that injects a `<subdirectory_agents_context>`
- * block into tool results when the touched path(s) have applicable AGENTS.md
- * files that have not been injected yet this session.
- *
- * Session-scoped dedup only: unlike the reference implementation, this
- * package does not persist injected-file state into message details, so
- * forking/resuming a session does not restore prior dedup state across the
- * fork boundary. See VENDORED.md for the full list of deliberate deviations.
- */
 export function registerAgentsMdAutoload(
   pi: ExtensionAPI,
   dependencies: AgentsMdAutoloadDependencies = {},
@@ -222,14 +205,6 @@ export function registerAgentsMdAutoload(
     return undefined;
   }
 
-  /**
-   * Targets are already real paths (`resolvePath` resolves symlinks through
-   * the nearest existing ancestor). Each discovered AGENTS.md is resolved to
-   * its real path before classification, deduplication, and reading, so a
-   * symlinked AGENTS.md inside the session root that points elsewhere is
-   * classified by its destination. Returns `undefined` when the session
-   * changed while resolving.
-   */
   async function agentsForTargets(
     targets: string[],
     rootAgentsPath: string,
@@ -298,7 +273,6 @@ export function registerAgentsMdAutoload(
     return { appendixFiles, failedFiles };
   }
 
-  /** Size each unseen foreign file once per session; never reads content. */
   async function foreignPointers(
     foreignFiles: string[],
     generation: number,

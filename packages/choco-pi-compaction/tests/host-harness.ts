@@ -1,12 +1,3 @@
-/**
- * In-memory host harness for the real pi compaction path.
- *
- * `prepareCompaction` is not exported by `@earendil-works/pi-coding-agent`, so the
- * only way to exercise the production compaction flow is to drive
- * `AgentSession.compact()` on an in-memory session backed by a fake provider.
- * Every summarization request that the host issues is recorded here, which is
- * what lets tests assert exactly which conversation text the summarizer saw.
- */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,13 +32,6 @@ import registerCompaction from "../src/index.ts";
 export const FIXTURE_PROVIDER_ID = "fixture";
 export const FIXTURE_MODEL_ID = "fixture-summarizer";
 
-/**
- * Retry policy every test registration uses unless it asks for another.
- *
- * Injecting a policy keeps the extension off `SettingsManager.create`, so no
- * test depends on (or reads) the developer's real `~/.pi/agent` settings. The
- * delays are 1ms so a retry costs no measurable test time.
- */
 export const TEST_RETRY_POLICY: RetryPolicy = {
   enabled: true,
   maxRetries: 1,
@@ -55,15 +39,10 @@ export const TEST_RETRY_POLICY: RetryPolicy = {
   maxAgentDelayMs: 1,
 };
 
-/**
- * Background-compaction sidecar paths that switch the feature off, for tests
- * of the foreground path: background compaction is on by default.
- */
 export const BACKGROUND_OFF_SETTINGS_PATHS: readonly string[] = [
   fileURLToPath(new URL("./background-off.json", import.meta.url)),
 ];
 
-/** Register the compaction extension with a test-owned retry policy and background off. */
 export function compactionExtension(retryPolicy: RetryPolicy = TEST_RETRY_POLICY): InlineExtension {
   return (pi: ExtensionAPI): void => {
     registerCompaction(pi, {
@@ -73,44 +52,27 @@ export function compactionExtension(retryPolicy: RetryPolicy = TEST_RETRY_POLICY
   };
 }
 
-/** One summarization request observed by the fake provider. */
 export interface RecordedSummarizationCall {
-  /** System prompt the host attached to the summarization request. */
   readonly systemPrompt: string;
-  /** Text of the last user message, i.e. the conversation the summarizer sees. */
   readonly promptText: string;
-  /** Provider options, including the caller's abort signal and token cap. */
   readonly options: SimpleStreamOptions | undefined;
 }
 
-/** Scripted provider reply for one summarization request. */
 export interface ScriptedReply {
-  /** Assistant text. Defaults to a deterministic summary; may be empty. */
   readonly text?: string;
-  /** Stop reason to report. Defaults to "stop". */
   readonly stopReason?: StopReason;
-  /** Error message reported alongside a "error" stop reason. */
   readonly errorMessage?: string;
-  /** Emit a tool call instead of text, which the host rejects. */
   readonly toolCall?: {
     readonly id: string;
     readonly name: string;
     readonly arguments: Record<string, string>;
   };
-  /**
-   * Do not answer until the caller's abort signal fires, then finish as
-   * aborted. When no signal is supplied the reply aborts immediately.
-   */
   readonly awaitAbort?: boolean;
 }
 
 export type CompactionScript = (call: RecordedSummarizationCall, index: number) => ScriptedReply;
 
 export interface CompactionHostOptions {
-  /**
-   * Provider id for the fixture model. Defaults to {@link FIXTURE_PROVIDER_ID};
-   * override it to exercise ownership rules that key off the provider.
-   */
   readonly provider?: string;
   readonly keepRecentTokens: number;
   readonly reserveTokens: number;
@@ -123,7 +85,6 @@ export interface CompactionHostOptions {
 export interface CompactionHost {
   readonly session: AgentSession;
   readonly sessionManager: SessionManager;
-  /** Summarization requests in call order. */
   readonly calls: RecordedSummarizationCall[];
   dispose(): Promise<void>;
 }
@@ -217,12 +178,6 @@ function abortedReply(reply: ScriptedReply): ScriptedReply {
   return { ...reply, stopReason: "aborted", errorMessage: reply.errorMessage ?? "Aborted" };
 }
 
-/**
- * Create an isolated agent session whose summarization calls are recorded.
- *
- * The agent directory is a fresh temporary directory, so no test can read or
- * write the developer's real `~/.pi/agent` tree even if a host default changes.
- */
 export async function createCompactionHost(
   options: CompactionHostOptions,
 ): Promise<CompactionHost> {

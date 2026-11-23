@@ -1,11 +1,3 @@
-/**
- * Static guard against fixture mirroring: no package test of the compaction or
- * Codex package may import the live harness's response fixtures
- * (`tests/live/background-compaction/native-factory.ts`) or repeat the
- * literals of its scripted native block. A test that compares against the
- * same synthetic answer the live harness serves proves only plumbing; its
- * expectations must be written independently.
- */
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -19,7 +11,6 @@ const SCANNED = [
 ];
 const SELF = fileURLToPath(import.meta.url);
 
-/** What the live factory's source exposes: its exported names and its scripted block's values. */
 interface LiveNativeFixture {
   readonly exports: readonly string[];
   readonly literals: readonly string[];
@@ -34,7 +25,6 @@ function fixtureOf(source: string): LiveNativeFixture {
   const fields = new Map(
     Array.from(block.matchAll(/(\w+):\s*"([^"]*)"/gu), (match) => [match[1] ?? "", match[2] ?? ""]),
   );
-  // `type: "compaction"` is the protocol's own word, not a fixture value.
   const literals = ["content", "signature"].flatMap((key) => {
     const value = fields.get(key);
     return value === undefined ? [] : [value];
@@ -45,7 +35,6 @@ function fixtureOf(source: string): LiveNativeFixture {
 const LIVE_IMPORT =
   /from\s+["'][^"']*tests\/live\/[^"']*["']|from\s+["'][^"']*native-factory(?:\.ts)?["']/u;
 
-/** Why `text` mirrors the live fixture, or undefined. */
 function mirroring(text: string, literals: readonly string[]): string | undefined {
   if (LIVE_IMPORT.test(text)) return "imports the live harness";
   const literal = literals.find((value) => text.includes(value));
@@ -74,7 +63,6 @@ test("the live native fixture is recognized (the scan cannot pass vacuously)", a
     fixture.literals.every((value) => value.length >= 16),
     "distinctive literals only",
   );
-  // The detector flags a planted import and a planted literal, and passes clean text.
   const [content, signature] = fixture.literals;
   assert.ok(content && signature);
   assert.ok(

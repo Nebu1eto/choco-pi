@@ -33,15 +33,15 @@ const BUFFER_CELL = "⛝";
 const ANSI_STYLE = new RegExp(String.raw`\u001b\[[0-9;]*m`, "g");
 const RESET = "\u001b[0m";
 const SEGMENT_COLORS = recordOf<string, string>()({
-  S: "\u001b[38;5;109m", // system prompt: blue
-  T: "\u001b[38;5;116m", // system tools: cyan
-  M: "\u001b[38;5;139m", // mcp tools: purple
-  A: "\u001b[38;5;179m", // custom agents: yellow
-  C: "\u001b[38;5;108m", // context files: green
-  K: "\u001b[38;5;173m", // skills: orange
-  G: "\u001b[38;5;110m", // messages: light blue
-  "·": "\u001b[38;5;240m", // free space: dim gray
-  B: "\u001b[38;5;131m", // autocompact buffer: red
+  S: "\u001b[38;5;109m",
+  T: "\u001b[38;5;116m",
+  M: "\u001b[38;5;139m",
+  A: "\u001b[38;5;179m",
+  C: "\u001b[38;5;108m",
+  K: "\u001b[38;5;173m",
+  G: "\u001b[38;5;110m",
+  "·": "\u001b[38;5;240m",
+  B: "\u001b[38;5;131m",
 });
 
 function paint(marker: string, text: string, colorize: boolean): string {
@@ -79,7 +79,6 @@ type Category = {
   marker: string;
 };
 
-/** A report category and whether its figure is an estimate rather than a measurement. */
 type MeasuredCategory = Category & { estimated: boolean };
 
 type McpCatalog = {
@@ -101,11 +100,6 @@ function percent(tokens: number, window: number): string {
   return `${((tokens / Math.max(1, window)) * 100).toFixed(1)}%`;
 }
 
-/**
- * The compaction reserve the host applies to this model: the effective
- * settings (global and project merged) resolved by Pi's own per-model rule.
- * Pi rejects an invalid value when it compacts; the report shows the default.
- */
 function reserveTokens(pi: ContextInventory, model: ExtensionContext["model"]): number {
   if (pi.getSettings === undefined) return DEFAULT_RESERVE_TOKENS;
   const settings = SettingsManager.inMemory(pi.getSettings());
@@ -163,9 +157,6 @@ function messageTokens(entries: SessionEntry[]): number {
 }
 
 function measuredUsagePredatesCompaction(entries: SessionEntry[]): boolean {
-  // buildContextEntries puts the latest compaction first, followed by retained
-  // ancestors and then its descendants. Parent links distinguish retained
-  // pre-compaction assistant samples from genuinely fresh responses.
   const compaction = entries.find((entry) => entry.type === "compaction");
   if (!compaction) return false;
   const descendants = new Set([compaction.id]);
@@ -235,14 +226,11 @@ function categoryData(
     measuredTotal === undefined ? messagesEstimate : Math.max(0, measuredTotal - known);
   const normalized = measuredTotal !== undefined && known + messagesEstimate > measuredTotal;
   if (normalized) {
-    // Normalize all estimates together: overhead must not erase real messages.
     [prompt, systemTools, mcp, agents, contextFiles, skills, messages] = allocateTokens(
       [prompt, systemTools, mcp, agents, contextFiles, skills, messagesEstimate],
       measuredTotal,
     );
   }
-  // Provider metrics measure the tool and system blocks; messages are measured
-  // as the remainder of a measured total. Normalizing rescales every estimate.
   const toolsEstimated = normalized || !providerMetrics;
   return [
     { label: "System prompt", tokens: prompt, marker: "S", estimated: true },
@@ -293,7 +281,6 @@ function gridCells(segments: Category[], window: number, colorize: boolean): str
   });
 }
 
-/** Render a 10×10 context grid where each cell represents one percent. */
 export function usageBar(
   categories: Category[],
   free: number,
@@ -350,7 +337,6 @@ function sourceLabel(tool: ToolInfo): string {
   return tool.sourceInfo.source === "builtin" ? "Pi" : tool.sourceInfo.source.replace(/^npm:/, "");
 }
 
-/** The context a report reads; event handlers lack the command-only prompt options. */
 export type ContextReportContext = Pick<
   ExtensionContext,
   "cwd" | "model" | "getContextUsage" | "getSystemPrompt" | "sessionManager"
@@ -359,7 +345,6 @@ export type ContextReportContext = Pick<
 type ContextInventory = Pick<ExtensionAPI, "getAllTools" | "getActiveTools"> &
   Partial<Pick<ExtensionAPI, "getMcpServers" | "getSettings">>;
 
-/** Everything the Context tab and the structured context report are drawn from. */
 type ContextData = {
   window: number;
   tools: ToolInfo[];
@@ -428,11 +413,6 @@ function collectContextData(
   };
 }
 
-/**
- * The Context tab body. Concise mode reports the bar, the per-category split,
- * and the counts; expanded mode appends the tool, context-file, and skill
- * inventories those counts summarize.
- */
 export function renderContext(
   pi: Pick<ExtensionAPI, "getAllTools" | "getActiveTools">,
   ctx: ExtensionCommandContext,
@@ -480,16 +460,12 @@ export function renderContext(
     "MCP tools · /mcp",
     `└ ${countLabel(catalog.servers.length, "server")} · ${countLabel(catalog.total, "tool")} · ${formatTokens(categoryTokens(categories, "MCP tools"))} tokens`,
     "",
-    // The figure is the delegation tools' schema cost, not a count of the agent
-    // definitions under profile/agents/, so the source names what was measured.
     "Custom agents · choco-pi-subagents",
     `└ ${countLabel(activeAgents.length, "tool")} · ${formatTokens(categoryTokens(categories, "Custom agents"))} tokens`,
     "",
     "Context files",
     `└ ${countLabel(contextFiles.length, "file")} · ${formatTokens(categoryTokens(categories, "Context files"))} tokens`,
     "",
-    // Pi ships no /skills command, and a skill's directory is not on the
-    // loaded record, so this line claims no source it cannot show.
     "Skills",
     `└ ${countLabel(skills.length, "skill")} · ${formatTokens(categoryTokens(categories, "Skills"))} tokens`,
   ];
@@ -534,7 +510,6 @@ function modelLabel(model: ExtensionContext["model"]): string {
   return model ? `${model.provider}/${model.id}` : "";
 }
 
-/** MCP servers from the tool catalog, with each registered server's state when known. */
 function reportMcpServers(
   catalog: McpCatalog,
   registered: ReturnType<ExtensionAPI["getMcpServers"]>,
@@ -543,7 +518,6 @@ function reportMcpServers(
   for (const server of catalog.servers)
     servers.set(server.name, { name: server.name, tools: server.count, tokens: server.tokens });
   for (const server of registered) {
-    // Only the enable flag is read: a server config can carry credentials.
     const state = server.config.enabled === false ? "disabled" : "registered";
     const known = servers.get(server.name);
     servers.set(server.name, { ...(known ?? { name: server.name, tools: 0, tokens: 0 }), state });
@@ -553,12 +527,6 @@ function reportMcpServers(
 
 type ContextReportServer = { name: string; tools: number; tokens: number; state?: string };
 
-/**
- * The structured `/context` report for RPC hosts: the same figures the Context
- * tab draws, as typed data plus generic rows for hosts that render only rows.
- * `options` comes from a command context or the latest `before_agent_start`,
- * because event contexts carry no system-prompt options.
- */
 export function buildContextReport(
   pi: ContextInventory,
   ctx: ExtensionContext,
@@ -642,7 +610,6 @@ export function buildContextReport(
         estimated: category.estimated,
       })),
       tools: { active: data.activeNames.size, deferred: data.deferred.length },
-      // Per-server figures are raw schema estimates; the MCP category may be rescaled.
       mcp: { servers: reportMcpServers(catalog, pi.getMcpServers?.() ?? []) },
       skills: { count: data.skills.length, tokens: skillTokens },
       contextFiles: { count: data.contextFiles.length, tokens: contextFileTokens },

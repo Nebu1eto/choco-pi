@@ -138,9 +138,7 @@ export async function managedBrowserExecutable(browser: "helium" | "chrome"): Pr
     try {
       await access(candidate, fsConstants.X_OK);
       return candidate;
-    } catch {
-      // Try the next platform-appropriate installation location.
-    }
+    } catch {}
   }
   const overrideName =
     browser === "helium"
@@ -177,9 +175,7 @@ export async function waitForCdpPort(port: number, signal?: AbortSignal): Promis
         signal: AbortSignal.timeout(500),
       });
       if (response.ok) return;
-    } catch {
-      // Browser is still starting.
-    }
+    } catch {}
     await sleep(200, signal);
   }
   throw new Error(
@@ -187,8 +183,6 @@ export async function waitForCdpPort(port: number, signal?: AbortSignal): Promis
   );
 }
 
-// Side effects: starts a Pi-managed browser process, replaces any previous managed browser,
-// and sets PI_COMPUTER_USE_CDP_PORT for subsequent CDP context discovery.
 export async function performLaunchBrowser(
   params: LaunchBrowserParams,
   signal?: AbortSignal,

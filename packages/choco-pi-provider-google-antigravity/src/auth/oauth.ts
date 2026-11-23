@@ -32,10 +32,6 @@ import { discoverAntigravityProject, type AntigravityProjectInfo } from "./proje
 
 export type AntigravityOAuthConfig = NonNullable<ProviderConfig["oauth"]>;
 
-/**
- * Shown with the sign-in URL, ahead of the sign-in instructions; login asks no question, as agy
- * does. One line with no hard breaks, so the host wraps it to the terminal width.
- */
 export const ANTIGRAVITY_TERMS_WARNING = [
   "Warning: Google's Antigravity terms restrict third-party clients on consumer (personal Google account) OAuth access, and Google has suspended accounts used this way.",
   "choco-pi is a third-party client.",
@@ -67,10 +63,8 @@ const isTokenError = compile(
 ).check;
 
 const EMAIL = { minLength: 3, maxLength: 320, pattern: "^[^\\s@]+@[^\\s@]+$" };
-/** The one userinfo field this provider keeps: the account email, the stable account identity. */
 const isUserInfo = compile(obj({ email: opt(str(EMAIL)) }, { open: true })).check;
 
-/** The provider-owned fields persisted in Pi's credential store next to refresh/access/expires. */
 const StoredCredentialSchema = obj(
   {
     refresh: str({ minLength: 1 }),
@@ -84,7 +78,6 @@ const StoredCredentialSchema = obj(
     client_source: opt(oneOf(["env", "config", "agy"])),
     client_id: opt(str({ minLength: 1 })),
     client_secret: opt(str({ minLength: 1 })),
-    /** The account email from userinfo at login; absent on credentials from older logins. */
     email: opt(str(EMAIL)),
   },
   { open: true },
@@ -103,25 +96,14 @@ const isApiKey = compile(ApiKeySchema).check;
 export interface AntigravityApiKey {
   token: string;
   projectId: string;
-  /**
-   * A non-reversible key for the signed-in account, stable across access-token refreshes, for
-   * keying per-account caches. Absent from keys this provider did not pack.
-   */
   accountKey?: string | undefined;
 }
 
-/** What identifies the signed-in account: its email when login learned it, else its refresh token. */
 export interface AntigravityAccountIdentity {
   refresh: string;
   email?: string | undefined;
 }
 
-/**
- * The account key packed into the API key: a truncated SHA-256 of the account email (case-folded)
- * or, for credentials without one, of the refresh token. Consumer accounts share one project id,
- * so the project cannot tell accounts apart; the email survives refresh-token rotation and the
- * refresh token survives access-token rotation. Never the email or token itself.
- */
 export function antigravityAccountKey(identity: AntigravityAccountIdentity): string {
   const email = identity.email?.trim().toLowerCase();
   const material = email
@@ -130,10 +112,6 @@ export function antigravityAccountKey(identity: AntigravityAccountIdentity): str
   return createHash("sha256").update(material).digest("hex").slice(0, 32);
 }
 
-/**
- * Reads the packed `{token, project_id, account_key?}` API key, or undefined for any other
- * string, such as a raw Gemini API key that Pi's inherited `google` API-key auth resolved.
- */
 export function readAntigravityApiKey(apiKey: string): AntigravityApiKey | undefined {
   let value: unknown;
   try {
@@ -145,10 +123,6 @@ export function readAntigravityApiKey(apiKey: string): AntigravityApiKey | undef
   return { token: value.token, projectId: value.project_id, accountKey: value.account_key };
 }
 
-/**
- * Parses the packed API key. Anything else (a Gemini API key from GEMINI_API_KEY or a stored
- * API-key credential included) is a classified `auth` error that never echoes the input.
- */
 export function parseAntigravityApiKey(apiKey: string): AntigravityApiKey {
   const parsed = readAntigravityApiKey(apiKey);
   if (parsed === undefined) {
@@ -170,7 +144,6 @@ export interface AntigravityOAuthDeps {
   onboardPollIntervalMs?: number | undefined;
   findAgyBinary?: ResolveClientCredentialsOptions["findAgyBinary"];
   scanAgyBinary?: ((file: string, signal?: AbortSignal) => Promise<AgyScanResult>) | undefined;
-  /** The client login selects from the agy scan; defaults to agy's consumer client. */
   agyClient?: ResolveClientCredentialsOptions["agyClient"];
 }
 
@@ -180,7 +153,6 @@ interface AuthorizationInput {
   error?: string | undefined;
 }
 
-/** Settles with `promise`, or rejects with the abort reason first; settles exactly once. */
 function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
   if (!signal) return promise;
   return new Promise<T>((resolve, reject) => {
@@ -220,7 +192,6 @@ function fromParams(params: URLSearchParams): AuthorizationInput {
   };
 }
 
-/** A bare code copied in its percent-encoded form (`4%2F...`) is decoded once. */
 function bareCode(value: string): string {
   if (!/%[0-9A-Fa-f]{2}/u.test(value)) return value;
   try {
@@ -230,7 +201,6 @@ function bareCode(value: string): string {
   }
 }
 
-/** The pasted text: the code the Antigravity page shows, or the full redirect URL. */
 function parseAuthorizationInput(value: string): AuthorizationInput {
   if (/^https?:\/\//iu.test(value)) {
     try {
@@ -249,7 +219,6 @@ function loginError(detail: string): AntigravityError {
   return new AntigravityError({ kind: "auth", detail });
 }
 
-/** Never echoes the pasted text: it holds the authorization code. */
 function codeFromInput(input: string, state: string): string {
   const value = input.trim();
   if (!value) {
@@ -281,10 +250,6 @@ function createPkce(): PkcePair {
   return { verifier, challenge: createHash("sha256").update(verifier).digest("base64url") };
 }
 
-/**
- * The authorize URL with agy 1.5.14's parameters in the order it prints them (alphabetical) and
- * its encoding: form encoding, so spaces are `+` and `:`/`/` are percent-encoded.
- */
 export function buildAuthorizationUrl(clientId: string, challenge: string, state: string): string {
   const params = new URLSearchParams([
     ["access_type", "offline"],
@@ -300,10 +265,6 @@ export function buildAuthorizationUrl(clientId: string, challenge: string, state
   return `${GOOGLE_AUTHORIZE_URL}?${params.toString()}`;
 }
 
-/**
- * The signed-in account's email from userinfo, as agy reads it after the token exchange. Any
- * failure other than the login's own abort resolves undefined: the email only keys caches.
- */
 async function fetchAccountEmail(
   token: string,
   fetchImpl: FetchLike,
@@ -397,8 +358,6 @@ function credentialsFrom(
   if (project.paidTierId) credentials["paid_tier_id"] = project.paidTierId;
   if (project.paidTierName) credentials["paid_tier_name"] = project.paidTierName;
   if (email) credentials["email"] = email;
-  // Only a pair discovered in agy is stored, so refresh never rescans the binary. Env and config
-  // pairs are re-read at refresh and never persisted.
   if (client.source === "agy") credentials["client_secret"] = client.clientSecret;
   return credentials;
 }
@@ -443,11 +402,6 @@ export function createAntigravityOAuth(deps: AntigravityOAuthDeps = {}): Antigra
     return readAntigravityConfig(agentDir, deps.readFile);
   }
 
-  /**
-   * Shows the authorize URL, then asks exactly once for the code the Antigravity page displays:
-   * through the host's manual code input when it has one, else a text prompt. An abort settles
-   * the wait at once, even if the host prompt stays open.
-   */
   async function readAuthorizationCode(
     callbacks: OAuthLoginCallbacks,
     authorizeUrl: string,
@@ -483,7 +437,6 @@ export function createAntigravityOAuth(deps: AntigravityOAuthDeps = {}): Antigra
         scanAgyBinary: deps.scanAgyBinary,
       });
     } catch (error) {
-      // A missing agy, an unknown agy client or a half-set source: a login error the user can act on.
       if (error instanceof AntigravityConfigError) throw loginError(error.message);
       throw error;
     }

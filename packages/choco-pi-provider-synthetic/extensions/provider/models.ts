@@ -1,23 +1,9 @@
-// Hardcoded model fallback, synced from https://api.synthetic.new/openai/v1/models
-// maxTokens sourced from https://models.dev/api.json (synthetic provider).
-//
-// This list is used as the offline fallback and as the override catalog for
-// model-specific compatibility settings (thinkingLevelMap, compat). The live
-// API exposes per-model effort values via reasoning_parameters.efforts, which
-// the API/store model builders translate into thinkingLevelMap entries; the
-// static maps below apply when that field is absent (offline fallback), except
-// for explicit compatibility overrides applied after API/store translation.
-// cacheRead stores the price reported by the API's input_cache_reads field
-// directly.
-
 import type { OpenAICompletionsCompat } from "@earendil-works/pi-ai";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { arr, bool, compile, obj, oneOf, str, unknown } from "@earendil-works/pi-schema";
 import { isSyntheticApiModel, type SyntheticApiModel } from "../../src/client/types";
 import { finiteNum } from "../../src/schema.ts";
 
-// Pi 1.0 split ProviderModelConfig into chat/image/classifier members and does
-// not export the chat member by name; every Synthetic model is a chat model.
 type ProviderChatModelConfig = Extract<ProviderModelConfig, { type?: "chat" }>;
 
 export type SyntheticModel = Omit<ProviderChatModelConfig, "api" | "compat"> & {
@@ -26,9 +12,6 @@ export type SyntheticModel = Omit<ProviderChatModelConfig, "api" | "compat"> & {
 };
 
 export const SYNTHETIC_MODELS: SyntheticModel[] = [
-  // API: syn:large:text → ctx=524288, out=65536
-  // API efforts: ['none', 'low', 'high', 'xhigh', 'max'] ('minimal'/'medium' rejected upstream).
-  // Live API/store models get this map from reasoning_parameters.efforts.
   {
     id: "syn:large:text",
     name: "syn:large:text",
@@ -55,8 +38,6 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     contextWindow: 524288,
     maxTokens: 65536,
   },
-  // API: syn:small:text → ctx=196608, out=65536
-  // API efforts: ['none', 'low', 'medium', 'high'] ('minimal'/'xhigh'/'max' rejected upstream).
   {
     id: "syn:small:text",
     name: "syn:small:text",
@@ -83,10 +64,6 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     contextWindow: 196608,
     maxTokens: 65536,
   },
-  // API: syn:large:vision → ctx=524288, out=65536
-  // Routes to Kimi-K3. API efforts: ['low', 'high', 'max'] — reasoning is
-  // always on (upstream rejects 'none'), so off is hidden. Live API/store
-  // models get this map from reasoning_parameters.efforts instead.
   {
     id: "syn:large:vision",
     name: "syn:large:vision",
@@ -113,8 +90,6 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     contextWindow: 524288,
     maxTokens: 65536,
   },
-  // API: syn:small:vision → ctx=262144, out=65536
-  // API efforts: ['low', 'medium', 'xhigh'] — reasoning is always on, so off is hidden.
   {
     id: "syn:small:vision",
     name: "syn:small:vision",
@@ -141,10 +116,6 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     contextWindow: 262144,
     maxTokens: 65536,
   },
-  // API: hf:openai/gpt-oss-120b → ctx=131072, out=65536
-  // API efforts: ['none', 'low', 'medium', 'high'] ('minimal'/'xhigh'/'max'
-  // rejected upstream). The model reasons at every accepted effort including
-  // 'none', so off still reasons — it only lowers effort.
   {
     id: "hf:openai/gpt-oss-120b",
     name: "openai/gpt-oss-120b",
@@ -171,9 +142,6 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     contextWindow: 131072,
     maxTokens: 65536,
   },
-  // API: hf:zai-org/GLM-5.3-Flash → ctx=524288, out=65536
-  // API efforts: ['low', 'high', 'max'] — reasoning is always on; off and the
-  // unreliable low effort are intentionally hidden.
   {
     id: "hf:zai-org/GLM-5.3-Flash",
     name: "zai-org/GLM-5.3-Flash",
@@ -200,9 +168,6 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     contextWindow: 524288,
     maxTokens: 65536,
   },
-  // API: hf:zai-org/GLM-5.3 → ctx=524288, out=65536
-  // API efforts: ['low', 'high', 'max'] — reasoning is always on; off and the
-  // advertised but unreliable low effort are intentionally hidden.
   {
     id: "hf:zai-org/GLM-5.3",
     name: "zai-org/GLM-5.3",
@@ -229,8 +194,6 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     contextWindow: 524288,
     maxTokens: 65536,
   },
-  // API: hf:zai-org/GLM-4.7-Flash → ctx=196608, out=65536
-  // API efforts: ['none', 'low', 'medium', 'high'] ('minimal'/'xhigh'/'max' rejected upstream).
   {
     id: "hf:zai-org/GLM-4.7-Flash",
     name: "zai-org/GLM-4.7-Flash",
@@ -257,8 +220,6 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     contextWindow: 196608,
     maxTokens: 65536,
   },
-  // API: hf:deepseek-ai/DeepSeek-V4.1-Flash → ctx=524288, out=65536
-  // API efforts: ['none', 'low', 'high', 'xhigh', 'max'] ('minimal'/'medium' rejected upstream).
   {
     id: "hf:deepseek-ai/DeepSeek-V4.1-Flash",
     name: "deepseek-ai/DeepSeek-V4.1-Flash",
@@ -285,10 +246,6 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     contextWindow: 524288,
     maxTokens: 65536,
   },
-  // API: hf:moonshotai/Kimi-K3 → ctx=524288, out=65536
-  // API efforts: ['low', 'high', 'max'] — reasoning is always on (upstream
-  // rejects 'none'), so off is hidden. Live API/store models get this map
-  // from reasoning_parameters.efforts instead.
   {
     id: "hf:moonshotai/Kimi-K3",
     name: "moonshotai/Kimi-K3",
@@ -315,10 +272,6 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     contextWindow: 524288,
     maxTokens: 65536,
   },
-  // API: hf:moonshotai/Kimi-K3.1-Pro → ctx=524288, out=65536
-  // API efforts: ['low', 'high', 'max'] — reasoning is always on (no 'none'
-  // advertised), so off is hidden. Live API/store models get this map from
-  // reasoning_parameters.efforts instead.
   {
     id: "hf:moonshotai/Kimi-K3.1-Pro",
     name: "moonshotai/Kimi-K3.1-Pro",
@@ -345,8 +298,6 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     contextWindow: 524288,
     maxTokens: 65536,
   },
-  // API: hf:Qwen/Qwen3.8-27B → ctx=262144, out=65536
-  // API efforts: ['low', 'medium', 'xhigh'] — reasoning is always on, so off is hidden.
   {
     id: "hf:Qwen/Qwen3.8-27B",
     name: "Qwen/Qwen3.8-27B",
@@ -373,8 +324,6 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     contextWindow: 262144,
     maxTokens: 65536,
   },
-  // API: hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 → ctx=262144, out=65536
-  // API efforts: ['none', 'low', 'medium', 'high'] ('minimal'/'xhigh'/'max' rejected upstream).
   {
     id: "hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
     name: "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
@@ -450,11 +399,6 @@ function apiModelSupportsReasoning(model: SyntheticApiModel): boolean {
   return model.supported_features?.includes("reasoning") ?? false;
 }
 
-// Translate the API's reasoning_parameters.efforts into a thinkingLevelMap.
-// "none" maps to pi's "off" level. Levels the API does not list are marked null
-// (hidden) — model backends accept exactly the values they declare, so an
-// unlisted level must be hidden rather than sent upstream. Every level key is
-// written explicitly because pi gates "xhigh"/"max" on key presence, not value.
 const isApiEffort = compile(str({ minLength: 1 })).check;
 
 function buildThinkingLevelMapFromApiEfforts(
@@ -462,8 +406,6 @@ function buildThinkingLevelMapFromApiEfforts(
 ): NonNullable<SyntheticModel["thinkingLevelMap"]> {
   const available = new Set(efforts.filter((effort): effort is string => isApiEffort(effort)));
   return {
-    // No "none" entry means the upstream rejects it (e.g. Kimi-K3 always
-    // reasons), so hide "off" rather than trying to disable reasoning.
     off: available.has("none") ? "none" : null,
     minimal: available.has("minimal") ? "minimal" : null,
     low: available.has("low") ? "low" : null,
@@ -517,12 +459,7 @@ const THINKING_LEVEL_MAP_OVERRIDES = new Map<
   string,
   Partial<NonNullable<SyntheticModel["thinkingLevelMap"]>>
 >([
-  // Direct API probes on 2026-09-21 showed low can exhaust output on reasoning
-  // or stop with empty content, despite being advertised by the live catalog.
   ["hf:zai-org/GLM-5.3-Flash", { low: null }],
-  // Pi 1.0.4 session probes on 2026-10-07 showed low returning reasoning with
-  // no visible text or reasoning until aborted in five of five attempts, while
-  // high and max answered correctly.
   ["hf:zai-org/GLM-5.3", { low: null }],
 ]);
 
@@ -537,8 +474,6 @@ function mergeWithStaticOverride(
 
   return {
     ...apiModel,
-    // API-sourced efforts normally win. Explicit compatibility overrides are
-    // applied last so live refreshes and cached catalogs cannot restore them.
     thinkingLevelMap:
       translatedThinkingLevelMap && thinkingLevelMapOverride
         ? { ...translatedThinkingLevelMap, ...thinkingLevelMapOverride }

@@ -1,12 +1,3 @@
-/**
- * Bounded client for xAI `POST /v1/responses/compact`.
- *
- * One non-streaming JSON request with a deadline, caller abort, and a response
- * size cap. Credentials come from the caller (the model registry's resolved
- * key and headers), live only for the request, and never appear in results or
- * errors. Every failure is a typed result; the client never throws for
- * provider or transport failures.
- */
 import { arr, compile, lit, obj, opt, unknown } from "@earendil-works/pi-schema";
 import type { Static } from "@earendil-works/pi-schema";
 
@@ -29,7 +20,6 @@ export interface XaiCompactRequest {
   readonly headers?: Readonly<Record<string, string | null>>;
   readonly body: XaiCompactRequestBody;
   readonly signal: AbortSignal;
-  /** Absolute epoch milliseconds after which the request is aborted. */
   readonly deadlineMs: number;
   readonly maxResultBytes: number;
   readonly fetch?: typeof globalThis.fetch;
@@ -60,7 +50,6 @@ export interface XaiCompactFailure {
 
 export interface XaiCompactSuccess {
   readonly ok: true;
-  /** The single returned compaction item, verbatim. */
   readonly item: XaiCompactionItem;
   readonly id: string;
   readonly usage: BackgroundUsage;
@@ -140,7 +129,6 @@ type BoundedRead =
   | { readonly ok: true; readonly text: string }
   | { readonly ok: false; readonly oversized: true };
 
-/** Read at most `limit` bytes; a larger body is cancelled and reported oversized. */
 async function readBounded(response: Response, limit: number): Promise<BoundedRead> {
   if (response.body === null) return { ok: true, text: "" };
   const reader = response.body.getReader();
@@ -223,7 +211,6 @@ function deadlineSignal(request: XaiCompactRequest, now: number): Deadline {
   };
 }
 
-/** One bounded compaction request. */
 export async function runXaiCompactRequest(request: XaiCompactRequest): Promise<XaiCompactResult> {
   const now = request.now ?? Date.now;
   if (request.signal.aborted) return failure("canceled", "canceled", false);

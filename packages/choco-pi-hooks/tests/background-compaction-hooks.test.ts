@@ -1,15 +1,3 @@
-/**
- * Background adoption runs no external PreCompact/PostCompact hook. The idle
- * route emits a real session_before_compact/session_compact pair, which the
- * hooks extension must recognize as an adoption and skip; a later plain host
- * compaction keeps running each hook exactly once. (The boundary route emits
- * no host compaction event, so the hooks extension never sees it.)
- *
- * The real hooks extension and the real compaction extension run in a real
- * SDK session. HOME and the agent directory point at a temporary directory so
- * no user hook configuration is read; the only hooks are the test's own
- * command hooks, which append their event name to a log file.
- */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -89,7 +77,6 @@ interface Setup {
   hookLog(): Promise<string[]>;
 }
 
-/** Real compaction extension with background text compaction gated on `wait`. */
 function backgroundCompaction(settingsFile: string, wait: Promise<void>): ExtensionFactory {
   return (pi) => {
     registerCompaction(pi, backgroundCompactionOptions(settingsFile, wait));
@@ -110,7 +97,6 @@ function backgroundCompactionOptions(
   };
 }
 
-/** The hook log's lines; an absent log means no hook ran yet. */
 async function readHookLog(log: string): Promise<string[]> {
   try {
     return (await readFile(log, "utf8")).split("\n").filter((line) => line.length > 0);
@@ -120,7 +106,6 @@ async function readHookLog(log: string): Promise<string[]> {
   }
 }
 
-/** Isolate hook configuration discovery from the developer's real files. */
 async function isolatedHome(root: string, log: string): Promise<() => void> {
   const home = join(root, "home");
   const agentDir = join(root, "agent");
@@ -203,15 +188,10 @@ test(
         assert.equal(context.state(), "installed", "adopted through the idle route");
         assert.ok(context.host.events.includes("compaction_end"), "the host emitted its events");
         assert.deepEqual(await context.hookLog(), [], "PreCompact and PostCompact skipped");
-        // A later plain compact on the idle session is taken over by the
-        // background feature before any host compaction starts; no hook runs for
-        // it nor for the adoption that follows.
         assert.equal(await context.host.session.compact(), undefined);
         await waitFor(() => context.state() === "installed", "manual candidate adopted");
         assert.deepEqual(await context.hookLog(), [], "deferred manual compaction skips hooks");
         await context.host.session.prompt("MORE");
-        // Instructions also go to the background text lane now; the foreground
-        // path (and its hooks) only runs when the feature declines, e.g. no lane.
         assert.equal(await context.host.session.compact("Focus on the audit"), undefined);
         await waitFor(() => context.state() === "installed", "focused candidate adopted");
         assert.deepEqual(

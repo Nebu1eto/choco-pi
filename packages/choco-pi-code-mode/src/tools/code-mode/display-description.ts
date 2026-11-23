@@ -1,12 +1,9 @@
 import { type Component, sliceByColumn, Text, visibleWidth } from "@earendil-works/pi-tui";
 
-/** A terminal too narrow for this many characters still shows them, wrapped. */
 const MIN_DISPLAY_DESCRIPTION_LENGTH = 60;
 const ELLIPSIS = "…";
-/** Columns left free at the right edge, so a cut line does not touch it. */
 const RIGHT_MARGIN = 2;
 
-/** `value` as one line of printable text; undefined when nothing is left. */
 export function displayDescription(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const normalized = [...value]
@@ -20,10 +17,6 @@ export function displayDescription(value: string | undefined): string | undefine
   return normalized || undefined;
 }
 
-/**
- * `description` cut with an ellipsis to the `columns` left on its line, and
- * never to fewer than {@link MIN_DISPLAY_DESCRIPTION_LENGTH} characters.
- */
 export function fitDisplayDescription(description: string, columns: number): string {
   const characters = [...description];
   if (characters.length <= MIN_DISPLAY_DESCRIPTION_LENGTH) return description;
@@ -36,11 +29,6 @@ export function fitDisplayDescription(description: string, columns: number): str
   return `${kept.trimEnd()}${ELLIPSIS}`;
 }
 
-/**
- * A title followed by ` · description`, with the description cut where the
- * line ends at the width being drawn, {@link RIGHT_MARGIN} columns short of
- * its edge. `rest` is appended unchanged.
- */
 export function describedTitle(
   title: string,
   description: string,

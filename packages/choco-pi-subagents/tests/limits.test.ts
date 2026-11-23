@@ -111,7 +111,6 @@ function assertCacheStablePrefix<T>(requestNWithAssistant: T[], requestNPlusOne:
   );
 }
 
-/** Minimal Pi host: hook messages enter through the same persisted channel as agent events. */
 class PersistingSessionHost {
   private readonly sessionManager = SessionManager.inMemory("/tmp/subagent-status-prefix");
   private readonly handler: BeforeAgentStartHandler;

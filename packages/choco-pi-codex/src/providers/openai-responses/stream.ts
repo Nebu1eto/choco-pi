@@ -22,8 +22,6 @@ type InternalAssistantContent =
   | ImageGenerationCallBlock
   | WebSearchCallBlock;
 
-// Any JSON value passes, as the former union of JSON kinds accepted; the caller treats it as a
-// partial-JSON record.
 const streamingJsonValidator = compile({
   anyOf: [
     { type: "object" },
@@ -54,7 +52,6 @@ const customToolCallValidator = compile({
 function isCustomToolCall<Value>(value: Value): value is Value & CustomToolCallItem {
   return customToolCallValidator.check(value);
 }
-// Live SDK items: members are read through property access, so these stay shallow object guards.
 function hasFunctionCallNamespace<Value>(
   value: Value,
 ): value is Value & { namespace?: string | undefined } {
@@ -512,7 +509,6 @@ export async function processResponsesStream<TApi extends Api>(
         const imageGenerationCall = sanitizeImageGenerationCallItem(item);
         if (imageGenerationCall) {
           // SAFETY: InternalAssistantContent explicitly owns the parsed native image-generation
-          // block variant retained for same-provider history replay.
           (output.content as InternalAssistantContent[]).push({
             type: "image_generation_call",
             item: imageGenerationCall,
@@ -523,7 +519,6 @@ export async function processResponsesStream<TApi extends Api>(
         const webSearchCall = sanitizeWebSearchCallItem(item);
         if (webSearchCall) {
           // SAFETY: InternalAssistantContent explicitly owns the parsed native web-search block
-          // variant retained for same-provider history replay.
           (output.content as InternalAssistantContent[]).push({
             type: "web_search_call",
             item: webSearchCall,

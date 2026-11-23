@@ -22,7 +22,6 @@ import { getBundledToolBinaryPath } from "../native/binary.ts";
 
 const execFileAsync = promisify(execFile);
 
-// Decoded from the bridge's stdout (JSON): open objects, as the former TypeBox objects were.
 const isBridgeResponseIdentity = compile(obj({ request_id: finiteNum() }, { open: true })).check;
 const isBridgeResponse = compile(
   obj(
@@ -45,7 +44,6 @@ interface BridgeResponse {
 
 const BridgeReadResponseSchema = obj(
   {
-    // Optional: the former reader treated a missing list as empty.
     chunks: opt(
       arr(
         obj(
@@ -66,9 +64,7 @@ const isBridgeReadResponse = compile(BridgeReadResponseSchema).check;
 export type BridgeReadResponse = Static<typeof BridgeReadResponseSchema>;
 
 export interface ExecBridgeClient {
-  /** Sends a command whose result the caller does not use. */
   request(request: BoundaryRecord): Promise<void>;
-  /** Sends a `read` and validates its result. */
   read(request: BoundaryRecord): Promise<BridgeReadResponse>;
   shutdown(): Promise<void>;
 }
@@ -112,18 +108,12 @@ interface PendingRequest {
   reject(error: Error): void;
 }
 
-/**
- * Reads one bridge process's newline-delimited JSON stdout and settles the matching pending
- * request. A line that is not JSON, names no pending request, or arrives after its request
- * settled is ignored: the bridge may log, and a write failure can settle a request first.
- */
 export class BridgeResponseRouter {
   readonly #pending = new Map<number, PendingRequest>();
   readonly #decoder = new StringDecoder("utf8");
   #lineBuffer = "";
   #responded = false;
 
-  /** Whether the bridge has answered any request yet (a write failure before that is a startup failure). */
   get responded(): boolean {
     return this.#responded;
   }
@@ -152,7 +142,6 @@ export class BridgeResponseRouter {
     }
   }
 
-  /** The process closed; a trailing unterminated line is never a complete response. */
   close(): void {
     this.#decoder.end();
     this.#lineBuffer = "";
@@ -163,7 +152,7 @@ export class BridgeResponseRouter {
     try {
       parsed = JSON.parse(line);
     } catch {
-      return; // not a response line
+      return;
     }
     if (!isBridgeResponseIdentity(parsed)) return;
     const pending = this.#pending.get(parsed.request_id);
@@ -175,10 +164,8 @@ export class BridgeResponseRouter {
   }
 }
 
-/** One spawned bridge process: its pipes, its bounded stderr, and the requests written to it. */
 class BridgeConnection {
   readonly child: ChildProcessWithoutNullStreams;
-  /** Set once shutdown asked the bridge to exit, so its close is not reported as a crash. */
   closing = false;
   readonly #router = new BridgeResponseRouter();
   readonly #stderrDecoder = new StringDecoder("utf8");
@@ -212,7 +199,6 @@ class BridgeConnection {
     return this.child.exitCode !== null || this.child.signalCode !== null;
   }
 
-  /** Writes one request line and resolves with the bridge's response envelope. */
   send(requestId: number, value: BoundaryRecord): Promise<BridgeResponse> {
     return new Promise((resolve, reject) => {
       this.#router.register(requestId, { resolve, reject });
@@ -227,17 +213,12 @@ class BridgeConnection {
     });
   }
 
-  /** Sends a request and fails unless the bridge reports success. */
   async request(requestId: number, value: BoundaryRecord): Promise<BridgeResponse> {
     const response = await this.send(requestId, value);
     if (!response.ok) throw new Error(response.error ?? "exec_bridge request failed");
     return response;
   }
 
-  /**
-   * Asks the bridge to exit and waits for it; on failure or timeout kills its process tree.
-   * Kill failures other than "already gone" join the original error in an AggregateError.
-   */
   async shutdown(requestId: number): Promise<void> {
     const deadline = performance.now() + BRIDGE_SHUTDOWN_TIMEOUT_MS;
     const shutdownRequest = this.request(requestId, { op: "shutdown" });
@@ -275,7 +256,6 @@ export function createExecBridgeClient(
     const binary = binaryPath();
     if (!binary)
       throw new Error(`exec_bridge binary is not bundled for ${process.platform}-${process.arch}`);
-    // A close only clears the connection it belongs to, never a newer one.
     const started = new BridgeConnection(binary, (ended) => {
       if (connection === ended) connection = undefined;
     });
@@ -291,7 +271,6 @@ export function createExecBridgeClient(
 
   return {
     async request(value) {
-      // The id is taken before the connection, which throws once shut down.
       const requestId = nextRequestId++;
       await currentConnection().request(requestId, value);
     },
@@ -306,7 +285,6 @@ export function createExecBridgeClient(
   };
 }
 
-/** Kills the bridge and its descendants; returns every kill that failed for a reason other than "already gone". */
 async function killBridgeProcessTree(child: ChildProcessWithoutNullStreams): Promise<Error[]> {
   const pid = child.pid;
   const failures: Error[] = [];
@@ -320,7 +298,6 @@ async function killBridgeProcessTree(child: ChildProcessWithoutNullStreams): Pro
   return failures;
 }
 
-/** taskkill exits 128 when the process is already gone, the Windows form of ESRCH. */
 const TASKKILL_NOT_FOUND = 128;
 
 async function killWindowsTree(pid: number): Promise<Error | undefined> {
@@ -338,11 +315,6 @@ async function killWindowsTree(pid: number): Promise<Error | undefined> {
   }
 }
 
-/**
- * SIGKILLs a process (positive id) or process group (negative id). ESRCH means the target already
- * exited, which is the expected race here; any other failure (EPERM, ...) is returned, not thrown,
- * so the remaining kills still run.
- */
 export function killProcessTarget(target: number): Error | undefined {
   try {
     process.kill(target, "SIGKILL");
@@ -359,7 +331,6 @@ export interface ProcessEntry {
   processGroupId: number;
 }
 
-/** Parses `ps -axo pid=,ppid=,pgid=` output; malformed lines are skipped. */
 export function parseProcessTable(stdout: string): ProcessEntry[] {
   return stdout.split("\n").flatMap((line) => {
     const [pid, parentPid, processGroupId] = line.trim().split(/\s+/).map(Number);
@@ -369,7 +340,6 @@ export function parseProcessTable(stdout: string): ProcessEntry[] {
   });
 }
 
-/** Every process below `rootPid` (transitively), plus `rootPid` itself. */
 export function descendantPids(processes: readonly ProcessEntry[], rootPid: number): Set<number> {
   const descendants = new Set([rootPid]);
   let changed = true;
@@ -385,7 +355,6 @@ export function descendantPids(processes: readonly ProcessEntry[], rootPid: numb
   return descendants;
 }
 
-/** Process groups of the descendants, except the root's own process and the caller's group. */
 export function descendantGroups(
   processes: readonly ProcessEntry[],
   descendants: ReadonlySet<number>,
@@ -409,7 +378,6 @@ export async function killUnixDescendants(rootPid: number): Promise<Error[]> {
       timeout: 2_000,
     }));
   } catch (error) {
-    // Without the process table the descendants cannot be found, so none of them is killed.
     return [error instanceof Error ? error : new Error(String(error))];
   }
   const processes = parseProcessTable(stdout);

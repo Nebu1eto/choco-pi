@@ -1,9 +1,3 @@
-/**
- * Verdict recording through the manager's settle paths: spawn success and
- * rejection (background and foreground), foreground and background resume,
- * stops and failures. The runner is the deferred fake from the usage-limit
- * fixture, so every run settles exactly when the test says.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -205,7 +199,6 @@ test("a verifier is recorded once per settle path (spawn bg/fg, resume fg/bg)", 
   const s = await setup(t);
   const session = await s.env.childSession();
   const verdict = claimsVerdictText();
-  // Background spawn.
   const id = s.manager.spawn(s.env.pi, s.env.context(), "verifier", "p", {
     ...background,
     reviewTicket: await admitted(s.store, "verifier"),
@@ -215,7 +208,6 @@ test("a verifier is recorded once per settle path (spawn bg/fg, resume fg/bg)", 
   await done;
   assert.equal(countLines(s.manager.getRecord(id)), 1);
 
-  // Foreground spawn.
   const waiting = s.manager.spawnAndWait(s.env.pi, s.env.context(), "verifier", "p", {
     description: "verify",
     isolated: true,
@@ -226,7 +218,6 @@ test("a verifier is recorded once per settle path (spawn bg/fg, resume fg/bg)", 
   assert.equal(countLines(foreground), 1);
   assert.match(foreground.result ?? "", /Verdict record: parsed \(claims, 2 claims/);
 
-  // Foreground resume of the first verifier.
   const resumed = s.manager.resume(id, "again", undefined, {
     reviewTicket: await admitted(s.store, "verifier"),
   });
@@ -235,7 +226,6 @@ test("a verifier is recorded once per settle path (spawn bg/fg, resume fg/bg)", 
   const afterForeground = await resumed;
   assert.equal(countLines(afterForeground), 1);
 
-  // Background resume.
   await s.manager.resume(id, "and again", undefined, {
     isBackground: true,
     reviewTicket: await admitted(s.store, "verifier"),
@@ -309,7 +299,6 @@ test("an unwritable scratch root leaves the delivered result intact apart from t
   );
   assert.match(result, /this review is unrecorded and must not be reported as clean$/);
 
-  // A throwing resolver is contained the same way.
   s.manager.setVerdictScratchResolver(() => {
     throw new Error("resolver broke");
   });

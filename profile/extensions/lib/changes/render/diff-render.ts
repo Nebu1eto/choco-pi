@@ -2,49 +2,19 @@ import { sliceByColumn, truncateToWidth, visibleWidth } from "@earendil-works/pi
 import type { DiffFile, DiffLine, DiffRenderOptions } from "../types.ts";
 import { splitRowPairs } from "./split-rows.ts";
 
-/**
- * Split view needs two 40-column code areas plus ordinary line-number gutters
- * and the center divider. Below 96 columns, unified mode is more readable.
- */
 export const MIN_SPLIT_WIDTH = 96;
 
 export type DiffFileRenderOptions = DiffRenderOptions & {
-  /** Human-readable reason shown in place of a folded hunk. */
   foldReason?: (hunkId: string) => string | undefined;
-  /**
-   * Work allowed for this render. When absent, the budget of the enclosing
-   * {@link withRenderBudget} frame, or else a fresh one for this call alone.
-   */
   intraline?: IntralineBudget;
 };
 
-/**
- * Bounds on work set by repository content (review P1). A line is cut to the
- * columns the render can show before anything else reads it (by grapheme
- * cluster and display width, examining at most {@link DISPLAY_SCAN_UNITS} code
- * units), so a line's cost follows the pane, not the file. Intraline matching
- * compares only the tokens that differ after the common prefix and suffix, at
- * most {@link INTRALINE_MAX_TOKENS} a side (a 128 x 128 table, 64 KiB). A
- * budget bounds the total: {@link INTRALINE_RENDER_CELLS} table cells and
- * {@link HIGHLIGHT_FRAME_CHARS} characters of syntax highlighting. Its unit is
- * one frame: the changes view opens one with {@link withRenderBudget} for each
- * body render, which covers every expanded file it draws. Past it, a pair keeps
- * whole-line highlighting and a hunk is drawn without syntax colours. A hunk
- * holding a line longer than {@link HIGHLIGHT_MAX_LINE_CHARS} is not
- * syntax-highlighted.
- */
 export const INTRALINE_MAX_TOKENS = 128;
 export const INTRALINE_RENDER_CELLS = 1_048_576;
 export const HIGHLIGHT_FRAME_CHARS = 1_048_576;
 export const HIGHLIGHT_MAX_LINE_CHARS = 4_096;
-/** Code units of one line examined to find what fits; a longer line ends in an ellipsis. */
 export const DISPLAY_SCAN_UNITS = 16_384;
 
-/**
- * Work of one frame: intraline table cells left and spent, pairs examined and
- * left to whole-line highlighting, highlighting characters left and hunks
- * drawn without highlighting because the frame ran out.
- */
 export type IntralineBudget = {
   remaining: number;
   spent: number;
@@ -68,14 +38,8 @@ export function createIntralineBudget(
   };
 }
 
-/** The budget of the frame being rendered; rendering is synchronous, so one slot suffices. */
 let frameBudget: IntralineBudget | undefined;
 
-/**
- * Run `render` as one frame: every {@link renderDiffFile} call inside it that
- * passes no budget of its own draws on `budget`. A nested frame joins the
- * outer one, so the outermost caller owns the unit.
- */
 export function withRenderBudget<T>(budget: IntralineBudget, render: () => T): T {
   const outer = frameBudget;
   frameBudget = outer ?? budget;
@@ -97,7 +61,6 @@ export type DiffStyleColor =
 
 export type DiffStyleBackground = "toolSuccessBg" | "toolErrorBg";
 
-/** Minimal theme seam used by the standalone diff renderer. */
 export type DiffStyler = {
   fg(color: DiffStyleColor, text: string): string;
   inverse(text: string): string;
@@ -121,14 +84,6 @@ function normalized(text: string): string {
 
 const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
-/**
- * The start of a line as the render can show it at `columns`: whole grapheme
- * clusters, measured with the width function the renderer clips with, up to
- * and including the first cluster past `columns` (so the clip adds its
- * ellipsis). At most {@link DISPLAY_SCAN_UNITS} code units are examined; when
- * that cap rather than the width ends a line, its last (possibly cut) cluster
- * is dropped and an ellipsis shows that text is missing.
- */
 function displayed(text: string, columns: number): string {
   const capped = text.length > DISPLAY_SCAN_UNITS;
   const scanned = capped ? text.slice(0, DISPLAY_SCAN_UNITS) : text;
@@ -145,7 +100,6 @@ function displayed(text: string, columns: number): string {
   return capped ? `${shown.slice(0, shown.length - lastLength)}…` : shown;
 }
 
-/** Plain text of each line as the render can show it at `columns`. */
 function displayedLines(lines: readonly DiffLine[], columns: number): string[] {
   return lines.map((line) => displayed(line.text, columns));
 }
@@ -157,8 +111,6 @@ function highlightedLines(
   budget: IntralineBudget,
 ): string[] {
   if (lines.length === 0) return [];
-  // A very long line (minified or generated text) makes the hunk plain: highlighting
-  // reads whole lines, and a cut line would mislead the highlighter about what follows.
   if (lines.some((line) => line.text.length > HIGHLIGHT_MAX_LINE_CHARS)) return [...plain];
   const source = lines.map((line) => normalized(line.text));
   const characters = source.reduce((total, line) => total + line.length + 1, 0);
@@ -175,11 +127,6 @@ function highlightedLines(
   }
 }
 
-/**
- * Tokens for intraline matching: runs of word clusters, runs of white-space
- * clusters, or one other grapheme cluster. Built from clusters, so a changed
- * span never starts or ends inside one (an accent, a flag, a ZWJ sequence).
- */
 function tokenRanges(text: string): Array<{ value: string; start: number; end: number }> {
   const tokens: Array<{ value: string; start: number; end: number }> = [];
   let kind: "word" | "space" | "other" | undefined;
@@ -201,7 +148,6 @@ function tokenRanges(text: string): Array<{ value: string; start: number; end: n
   return tokens;
 }
 
-/** Changed spans of a pair, or undefined when matching it would exceed the budget. */
 function changedTokenSpans(
   oldText: string,
   newText: string,
@@ -209,7 +155,6 @@ function changedTokenSpans(
 ): [Span[], Span[]] | undefined {
   const oldTokens = tokenRanges(oldText);
   const newTokens = tokenRanges(newText);
-  // The common prefix and suffix are unchanged in some longest common subsequence.
   let prefix = 0;
   while (
     prefix < oldTokens.length &&
@@ -242,7 +187,6 @@ function changedTokenSpans(
 
 type Token = { value: string; start: number; end: number };
 
-/** Changed spans between two token lists through a longest common subsequence table. */
 function middleChanges(oldTokens: readonly Token[], newTokens: readonly Token[]): [Span[], Span[]] {
   const common = Array.from(
     { length: oldTokens.length + 1 },
@@ -373,7 +317,6 @@ function emphasize(
   const strongerBackground = changedSpanBackground(kind, styler);
   let result = "";
   let column = 0;
-  // Columns are measured once per span, from the previous span's end.
   let measuredAt = 0;
   let measuredWidth = 0;
   const columnOf = (offset: number) => {
@@ -404,7 +347,6 @@ function injectBackgroundAfterResets(text: string, backgroundAnsi: string): stri
     (sequence, parameters: string, offset: number, source: string) => {
       const values = parameters === "" ? ["0"] : parameters.split(/[;:]/);
       const resetsBackground = values.includes("0") || values.includes("49");
-      // A sticky match at the next position: no copy of the rest of the line per sequence.
       ANSI_BACKGROUND_START.lastIndex = offset + sequence.length;
       const nextSequenceSetsBackground = ANSI_BACKGROUND_START.test(source);
       return resetsBackground && !nextSequenceSetsBackground
@@ -450,7 +392,6 @@ function gutter(value: number | undefined, width: number): string {
   return value === undefined ? " ".repeat(width) : String(value).padStart(width);
 }
 
-/** Columns of `text`'s leading spaces and tabs, a tab taking `tabColumns`. */
 export function leadingColumns(text: string, tabColumns: number): number {
   let columns = 0;
   for (const character of text) {
@@ -461,25 +402,16 @@ export function leadingColumns(text: string, tabColumns: number): number {
   return columns;
 }
 
-/**
- * The column a line's text starts at in its rendered row (as
- * {@link renderDiffFile} lays it out at `width` in `mode`), past the line
- * numbers, the marker and the line's own indentation. A line that is not
- * given (a hunk's header) answers the column the hunk's code starts at.
- */
 export function lineTextColumn(
   file: DiffFile,
   line: DiffLine | undefined,
   mode: "unified" | "split",
   width: number,
 ): number {
-  // Tabs are drawn as three spaces (`normalized`).
   const indentation = line ? leadingColumns(line.text, 3) : 0;
   if (mode === "unified") {
-    // `old new │ + `
     return numberWidth(file, "old") + 1 + numberWidth(file, "new") + 5 + indentation;
   }
-  // `number + ` on the side the line is drawn: deletions left, the rest right.
   if (line?.kind === "del") return numberWidth(file, "old") + 3 + indentation;
   const leftWidth = Math.floor((width - 3) / 2);
   return leftWidth + 3 + numberWidth(file, "new") + 3 + indentation;
@@ -576,7 +508,6 @@ export function effectiveDiffMode(options: DiffRenderOptions): DiffRenderOptions
   return options.mode === "split" && options.width >= MIN_SPLIT_WIDTH ? "split" : "unified";
 }
 
-/** One-line file header: accented path with diff-colored addition and deletion counts. */
 export function renderDiffFileHeader(file: DiffFile, styler: DiffStyler = plainStyler): string {
   const path =
     file.oldPath && file.oldPath !== file.path ? `${file.oldPath} → ${file.path}` : file.path;
@@ -587,7 +518,6 @@ export function renderDiffFileHeader(file: DiffFile, styler: DiffStyler = plainS
   ].join("");
 }
 
-/** Render one file header followed by each expanded hunk or folded placeholder. */
 export function renderDiffFile(
   file: DiffFile,
   options: DiffFileRenderOptions,

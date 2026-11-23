@@ -261,7 +261,6 @@ test("a review notification shows the summary inside its band, raw when expanded
   const expanded = lines(renderVerdictNotification(details, true, hostTheme())).join("\n");
   assert.match(expanded, /"verdict": "FINDINGS"/);
   assert.doesNotMatch(expanded, /Review FINDINGS:/);
-  // A reply that is only the block: the one-line preview is the record line, not the block's first line.
   const bare = lines(
     renderVerdictNotification(notification(BLOCK + "\n\n" + PARSED_LINE), false, hostTheme()),
   );

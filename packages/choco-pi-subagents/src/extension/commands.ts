@@ -1,6 +1,3 @@
-/**
- * Slash command registrations.
- */
 import type {
   ExtensionCommandContext,
   ExtensionContext,
@@ -10,7 +7,6 @@ import { resolveBtwType } from "../ui/side-conversation.ts";
 import { type RoundClass, stateUnavailableMessage, continueUsage } from "../review-rounds.ts";
 import type { SubagentsRuntime } from "./runtime.ts";
 
-/** Registers /btw, /review-continue, /verify-continue, and /agents. */
 export function installCommands(pi: ExtensionAPI, rt: SubagentsRuntime) {
   async function handleBtwCommand(args: string, ctx: ExtensionCommandContext): Promise<void> {
     const question = args.trim();
@@ -88,7 +84,6 @@ export function installCommands(pi: ExtensionAPI, rt: SubagentsRuntime) {
     },
   });
 
-  // User-typed only: no tool can call a command, and no tool parameter approves a round.
   const continueRounds = async (
     roundClass: RoundClass,
     args: string,

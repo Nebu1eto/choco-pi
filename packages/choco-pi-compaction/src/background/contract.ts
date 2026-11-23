@@ -16,7 +16,6 @@ export type CandidateState =
   | "canceled"
   | "failed"
   | "discarded-stale";
-/** Terminal candidates never restart; retries stay preparing or create a new candidate. */
 export interface CandidateTransitionTable {
   readonly idle: readonly CandidateState[];
   readonly queued: readonly CandidateState[];
@@ -42,7 +41,6 @@ export const CANDIDATE_TRANSITIONS: CandidateTransitionTable = {
 const NonEmptyString = nonEmptyStr();
 const NonNegative = nonNegative();
 const PositiveInteger = finiteInt(1);
-/** Wraps a pi-schema root so the shared recursive `JsonValue` definition resolves inside it. */
 export function withJsonValueDefs<T>(schema: Schema<T>): Schema<T> {
   return { ...schema, $defs: JSON_VALUE_DEFS };
 }
@@ -53,7 +51,6 @@ export const ProviderScopeSchema = obj({
   authMode: opt(NonEmptyString),
   accountScope: opt(NonEmptyString),
 });
-/** Non-secret compatibility identity only; never tokens, headers, or credentials. */
 export type ProviderScope = Static<typeof ProviderScopeSchema>;
 export const isProviderScope = compile(ProviderScopeSchema).check;
 export const SnapshotIdentitySchema = obj({
@@ -67,25 +64,16 @@ export const SnapshotIdentitySchema = obj({
 });
 export type SnapshotIdentity = Static<typeof SnapshotIdentitySchema>;
 export const isSnapshotIdentity = compile(SnapshotIdentitySchema).check;
-/** Captured entries must be detached immutable copies; no live host objects. */
 export interface FrozenSnapshot extends SnapshotIdentity {
   readonly entries: readonly SessionEntry[];
   readonly splitTurn: boolean;
   readonly governingUserRequest: { readonly entryId: string; readonly content: string } | null;
   readonly fileOps: CompactionFileOperations;
-  /** Raw chars/4 estimate of every summarized message, untruncated; reported as `tokensBefore`. */
   readonly tokenEstimate: number;
-  /**
-   * Estimate of the summarization prompt actually sent (tool results truncated
-   * as the serializer renders them), calibrated by provider usage when the
-   * prefix carries it. Admission gates on this; absent means `tokenEstimate`.
-   */
   readonly promptTokenEstimate?: number;
   readonly estimateSource?: EstimateSource;
-  /** Tokens per character applied to the rendered prompt. */
   readonly estimateRatio?: number;
   readonly capturedAt: number;
-  /** Backend-specific, immutable request evidence (full canonical prefix for Codex). */
   readonly backendCapture?: unknown;
 }
 export type FailureReason =
@@ -102,7 +90,6 @@ export type FailureReason =
   | "incompatible";
 export type ReasonCode =
   | FailureReason
-  /** The provider scope is cooling down after an earlier failure; no request was sent. */
   | "cooling"
   | "stale-prefix"
   | "owner-changed"
@@ -118,7 +105,6 @@ export interface PrepareFailure {
   readonly reason: FailureReason;
   readonly retryable: boolean;
   readonly retryAfterMs?: number;
-  /** Backend-specific detail code behind `reason`, for diagnosis only. */
   readonly detail?: string;
 }
 export type CapabilityVerdict =
@@ -140,7 +126,6 @@ export type CheckpointStrategy =
   | "openai-responses-compaction-v2"
   | "anthropic-compaction-on-demand-v1"
   | "xai-responses-compaction-v1";
-/** Backend validates its own payload; coordinator never interprets native contents. */
 export interface PreparedCheckpoint<Details = unknown> {
   readonly candidateId: string;
   readonly backendId: string;
@@ -157,28 +142,20 @@ export interface PreparationBudget {
   readonly deadlineMs: number;
   readonly maxAttempts: number;
 }
-/** Where an admission token figure came from. */
 export type EstimateSource = "usage-calibrated" | "chars" | "counted";
-/** The model a token counter counts for; the owner's own session model. */
 export type ModelRef = Model<Api>;
-/**
- * Provider-side prompt token counter. Returns undefined when it cannot count
- * (unsupported provider, transport failure, timeout); it must never throw.
- */
 export interface TokenCounter {
   countTokens(input: {
     readonly system: string;
     readonly promptText: string;
     readonly model: ModelRef;
     readonly signal: AbortSignal;
-    /** Receives a short `count-tokens: <code>` note when the count falls back. */
     readonly onDiagnostic?: (detail: string) => void;
   }): Promise<number | undefined>;
 }
 export interface Backend<Details = unknown> {
   readonly id: string;
   capability(scope: ProviderScope): Promise<CapabilityVerdict>;
-  /** Never edits captured messages to manufacture a legal cut. */
   isLegalCut(snapshot: FrozenSnapshot): LegalityVerdict;
   prepare(
     snapshot: FrozenSnapshot,
@@ -186,7 +163,6 @@ export interface Backend<Details = unknown> {
       readonly signal: AbortSignal;
       readonly budget: PreparationBudget;
       readonly candidateId: string;
-      /** User focus from `/compact <instructions>`; a backend that cannot honor it declines. */
       readonly customInstructions?: string;
     },
   ): Promise<PreparedCheckpoint<Details> | PrepareFailure>;
@@ -209,7 +185,6 @@ export interface Adoption {
   readonly backendId: string;
   readonly fingerprint: string;
 }
-/** Called only after commit, at most once per adoptionId; never a forged host event. */
 export interface AdoptionConsumer {
   readonly id: string;
   onAdopted(adoption: Adoption): void | Promise<void>;
@@ -218,7 +193,6 @@ export interface PreparationRequest {
   readonly trigger: "threshold" | "context-cap" | "manual" | "idle";
   readonly backendId?: string;
   readonly customInstructions?: string;
-  /** Context tokens when the trigger fired; journaled as `tokensAtTrigger`. */
   readonly tokensAtTrigger?: number;
 }
 export interface CoordinatorStatus {
@@ -228,11 +202,8 @@ export interface CoordinatorStatus {
   readonly candidateId?: string;
   readonly backendId?: string;
   readonly reason?: ReasonCode;
-  /** Backend detail code behind a failure `reason`. */
   readonly detail?: string;
-  /** Instructions the candidate was requested with (`/compact <instructions>`). */
   readonly customInstructions?: string;
-  /** Most recent failed candidates of this owner, newest last, for diagnosis after a fallback. */
   readonly recentFailures?: readonly CandidateFailure[];
 }
 export interface CandidateFailure {
@@ -245,7 +216,6 @@ export interface CandidateFailure {
 export type PreparationRequestResult =
   | { readonly accepted: true; readonly candidateId: string }
   | { readonly accepted: false; readonly reason: ReasonCode | "busy" };
-/** proceed preserves existing host/manual semantics; adopt is a proposal, not commit. */
 export type ArbitrationResult =
   | { readonly action: "proceed" }
   | {
@@ -288,7 +258,6 @@ const settingsFields = {
 export const BackgroundCompactionSettingsSchema = obj(settingsFields);
 export type BackgroundCompactionSettings = Static<typeof BackgroundCompactionSettingsSchema>;
 export const isBackgroundCompactionSettings = compile(BackgroundCompactionSettingsSchema).check;
-/** Sidecar may override individual defaults, but unknown keys are rejected. */
 export const BackgroundCompactionSidecarSchema = obj({
   enabled: opt(settingsFields.enabled),
   text: opt(settingsFields.text),
@@ -309,7 +278,6 @@ export const BackgroundCompactionSidecarSchema = obj({
   timeoutMs: opt(settingsFields.timeoutMs),
   countTokens: opt(settingsFields.countTokens),
 });
-/** Compiled once; settings use its `errors()` for the first-violation diagnostic. */
 export const backgroundCompactionSidecarValidator = compile(BackgroundCompactionSidecarSchema);
 export const isBackgroundCompactionSidecar = backgroundCompactionSidecarValidator.check;
 export const DEFAULT_BACKGROUND_COMPACTION_SETTINGS: Readonly<BackgroundCompactionSettings> = {
@@ -332,7 +300,6 @@ export const DEFAULT_BACKGROUND_COMPACTION_SETTINGS: Readonly<BackgroundCompacti
   timeoutMs: 120000,
   countTokens: true,
 };
-/** Any JSON value (recursive); declared explicitly because `Static` cannot follow `$ref`. */
 export type JsonValue =
   | null
   | boolean
@@ -340,17 +307,11 @@ export type JsonValue =
   | string
   | JsonValue[]
   | { [key: string]: JsonValue };
-/**
- * The shared recursive definition. A schema that embeds {@link jsonValueRef}
- * must be wrapped with {@link withJsonValueDefs}: pi-schema resolves `$ref`
- * against the compiled root, so the definitions live on each root.
- */
 const JSON_VALUE_DEFS = {
   JsonValue: {
     anyOf: [
       { type: "null" },
       { type: "boolean" },
-      // Bounded: pi-schema numbers accept NaN and Infinity, TypeBox `Number` did not.
       { type: "number", minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE },
       { type: "string" },
       { type: "array", items: { $ref: "#/$defs/JsonValue" } },
@@ -358,14 +319,10 @@ const JSON_VALUE_DEFS = {
     ],
   },
 };
-/** Embed inside a schema wrapped by {@link withJsonValueDefs}. */
 export const jsonValueRef: Schema<JsonValue> = { $ref: "#/$defs/JsonValue" };
-/** Standalone root; it carries its own definitions, so do not embed it inside another schema. */
 export const JsonValueSchema: Schema<JsonValue> = withJsonValueDefs(jsonValueRef);
 export const isJsonValue = compile(JsonValueSchema).check;
-/** A string-keyed record of JSON values (TypeBox `Record(String, JsonValue)`), as a standalone root. */
 export type JsonRecord = { [key: string]: JsonValue };
-/** The un-wrapped record schema, for embedding inside a root wrapped by {@link withJsonValueDefs}. */
 export const jsonRecordMember: Schema<JsonRecord> = {
   type: "object",
   additionalProperties: { $ref: "#/$defs/JsonValue" },
@@ -379,21 +336,14 @@ const CHECKPOINT_STRATEGIES = [
   "anthropic-compaction-on-demand-v1",
   "xai-responses-compaction-v1",
 ] as const;
-/**
- * An object whose listed `properties` are validated and whose every other key
- * must hold a JSON value (TypeBox `additionalProperties: JsonValueSchema`).
- * Embed it only inside a root wrapped by {@link withJsonValueDefs}.
- */
 export function jsonRest<const P extends Properties>(
   properties: P,
 ): Schema<StaticObject<P> & JsonRecord> {
   return {
-    // Keywords only: the builder's type-level brand is replaced by this function's return type.
     ...Object.fromEntries(Object.entries(obj(properties, { open: true }))),
     additionalProperties: { $ref: "#/$defs/JsonValue" },
   };
 }
-/** `{ strategy }` plus any other JSON-valued keys: the backend owns the rest. */
 const checkpointDetails = jsonRest({ strategy: oneOf(CHECKPOINT_STRATEGIES) });
 export type CheckpointDetails = Static<typeof checkpointDetails>;
 export const CheckpointDetailsSchema = withJsonValueDefs(checkpointDetails);
@@ -435,7 +385,6 @@ const ReasonCodeSchema = oneOf([
   "prepared",
   "recovered",
 ]);
-/** Persist only validated ready payloads in protected session storage, never logs. */
 export const CandidateRecordSchema = withJsonValueDefs(
   obj({
     customType: lit("choco-compaction-candidate"),
@@ -445,14 +394,12 @@ export const CandidateRecordSchema = withJsonValueDefs(
     identity: SnapshotIdentitySchema,
     createdAt: NonNegative,
     customInstructions: opt(str()),
-    /** How admission sized the prompt, for diagnosis only. */
     admission: opt(
       obj({
         promptTokens: NonNegative,
         budget: NonNegative,
         source: oneOf(["usage-calibrated", "chars", "counted"]),
         ratio: opt(NonNegative),
-        /** Why a provider count fell back to the estimate, e.g. `count-tokens: http 500`. */
         detail: opt(NonEmptyString),
       }),
     ),
@@ -475,7 +422,6 @@ export const CandidateRecordSchema = withJsonValueDefs(
 );
 export type CandidateRecord = Static<typeof CandidateRecordSchema>;
 const candidateRecordValidator = compile(CandidateRecordSchema);
-/** Admission sizing persisted with a candidate record and shown in status. */
 export type AdmissionRecord = NonNullable<CandidateRecord["admission"]>;
 export function isCandidateRecord<T>(value: T): value is T & CandidateRecord {
   return (
@@ -486,7 +432,6 @@ export function isCandidateRecord<T>(value: T): value is T & CandidateRecord {
     (value.identity.priorCheckpointId === null) === (value.identity.priorCheckpointVersion === null)
   );
 }
-/** Main adapter uses pi.appendEntry(record.customType, record); owner uses appendCustomEntry. */
 export type AppendRecord = (record: CandidateRecord) => void | Promise<void>;
 export interface BackendFactoryContext {
   readonly ownerKey: string;

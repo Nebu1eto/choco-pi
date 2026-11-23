@@ -1,13 +1,3 @@
-/**
- * Shared, header-aware credential classification input (D10). The host
- * resolves a request's auth as an API key and/or provider headers; a provider
- * configured with only an `Authorization: Bearer <token>` header carries its
- * credential there. Every auth-mode classifier (Anthropic, xAI, Codex) looks
- * in the same places, in the same order, so the foreground, the background and
- * the client agree about one session's auth mode.
- */
-
-/** Structurally compatible with `ModelRegistry.getApiKeyAndHeaders` results. */
 export interface BearerAuth {
   readonly apiKey?: string;
   readonly headers?: Readonly<Record<string, string | null | undefined>>;
@@ -15,12 +5,6 @@ export interface BearerAuth {
 
 const BEARER_HEADER = /^Bearer\s+(\S+)$/iu;
 
-/**
- * The bearer credential of a resolved auth: a non-empty (trimmed) `apiKey`
- * first; else the token of an `Authorization: Bearer <token>` header (name
- * case-insensitive, value trimmed). A null, undefined or empty value, or any
- * other scheme, carries none. Pure.
- */
 export function bearerCredentialOf(auth: BearerAuth | undefined): string | undefined {
   if (auth === undefined) return undefined;
   const apiKey = auth.apiKey?.trim();

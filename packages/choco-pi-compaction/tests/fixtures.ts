@@ -1,39 +1,19 @@
-/**
- * Deterministic conversation fixtures for compaction tests.
- *
- * Every message is padded to an exact character count so the host's
- * `estimateTokens` (ceil(chars / 4)) yields the intended cut point for the
- * fixture's `keepRecentTokens`. Completion sentinels appear only in the
- * retained tail; stale in-progress markers appear only in the summarized
- * history (or in a previous summary).
- */
 import type { AssistantMessage, Message, ToolResultMessage, Usage } from "@earendil-works/pi-ai";
 import { findCutPoint, type SessionManager } from "@earendil-works/pi-coding-agent";
 
-/** Tokens per fixture message; every padded message is exactly this size. */
 export const MESSAGE_TOKENS = 100;
-/** The host estimates tokens as ceil(chars / 4). */
 const CHARS_PER_TOKEN = 4;
 
 export interface CompactionFixture {
   readonly name: string;
-  /** Compaction setting the host must run with for this fixture. */
   readonly keepRecentTokens: number;
-  /** Entry index where `prepareCompaction` starts, i.e. after a prior compaction. */
   readonly boundaryStart: number;
   readonly expectedFirstKeptEntryIndex: number;
   readonly expectedSplitTurn: boolean;
-  /** Strings that exist only in the retained tail. */
   readonly completionSentinels: readonly string[];
-  /** Strings that exist only in the summarized history or previous summary. */
   readonly staleMarkers: readonly string[];
 }
 
-/**
- * A live session already carries non-message entries (model and thinking-level
- * changes) before any fixture message, so every fixture index is expressed
- * relative to the entry count observed at build time.
- */
 function entryBase(sessionManager: SessionManager): number {
   return sessionManager.getBranch().length;
 }
@@ -114,10 +94,6 @@ function toolResult(
   };
 }
 
-/**
- * Cut exactly at a user message: the whole last turn is retained and no turn
- * prefix summary is produced.
- */
 export function ordinaryCut(sessionManager: SessionManager): CompactionFixture {
   const stale = "[STALE-ORDINARY] the retry backoff rewrite is still in progress";
   const done = "[DONE-ORDINARY] the retry backoff rewrite is finished and tests pass";
@@ -137,7 +113,6 @@ export function ordinaryCut(sessionManager: SessionManager): CompactionFixture {
   };
 }
 
-/** Cut inside a turn: the host emits a history summary plus a turn prefix summary. */
 export function splitTurn(sessionManager: SessionManager): CompactionFixture {
   const stale = "[STALE-SPLIT] the schema migration has not been applied yet";
   const done = "[DONE-SPLIT] the schema migration applied cleanly on every shard";
@@ -158,7 +133,6 @@ export function splitTurn(sessionManager: SessionManager): CompactionFixture {
   };
 }
 
-/** Second compaction over a session whose previous summary already claims work is pending. */
 export function repeatedWithStaleSummary(sessionManager: SessionManager): CompactionFixture {
   const summaryStale = "[STALE-SUMMARY] the release checklist is still blocked on signing";
   const historyStale = "[STALE-REPEAT] signing keys have not been rotated yet";
@@ -186,7 +160,6 @@ export function repeatedWithStaleSummary(sessionManager: SessionManager): Compac
   };
 }
 
-/** Completion evidence lives in a retained tool result rather than assistant prose. */
 export function completionInToolResult(sessionManager: SessionManager): CompactionFixture {
   const stale = "[STALE-TOOLRESULT] the production build is currently failing";
   const done = "[DONE-TOOLRESULT] build succeeded with 0 errors";
@@ -207,7 +180,6 @@ export function completionInToolResult(sessionManager: SessionManager): Compacti
   };
 }
 
-/** One item completed in the tail while a second item fails there. */
 export function partialThenFailure(sessionManager: SessionManager): CompactionFixture {
   const stale = "[STALE-PARTIAL] both the parser fix and the formatter fix are pending";
   const done = "[DONE-PARTIAL] the parser fix is complete and merged";
@@ -230,7 +202,6 @@ export function partialThenFailure(sessionManager: SessionManager): CompactionFi
   };
 }
 
-/** Retained tool output that imitates instructions; it is data, never authority. */
 export function adversarialToolOutput(sessionManager: SessionManager): CompactionFixture {
   const stale = "[STALE-ADVERSARIAL] the cache purge job has not run";
   const done = "[DONE-ADVERSARIAL] the cache purge job finished for every region";
@@ -252,10 +223,6 @@ export function adversarialToolOutput(sessionManager: SessionManager): Compactio
   };
 }
 
-/**
- * A trailing tool result larger than the whole recent budget, which forces the
- * host's fallback to the preceding assistant tool call and a split turn.
- */
 export function oversized(sessionManager: SessionManager): CompactionFixture {
   const stale = "[STALE-OVERSIZED] the dependency audit has not been run";
   const done = "[DONE-OVERSIZED] dependency audit clean: 0 advisories";
@@ -276,11 +243,6 @@ export function oversized(sessionManager: SessionManager): CompactionFixture {
   };
 }
 
-/**
- * Self-check: assert the host's own `findCutPoint` lands where the fixture
- * claims, so a host change in cut-point behavior fails loudly here instead of
- * silently invalidating the tests built on the fixture.
- */
 export function assertFixtureCutPoint(
   sessionManager: SessionManager,
   fixture: CompactionFixture,

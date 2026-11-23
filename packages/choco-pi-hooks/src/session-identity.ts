@@ -2,29 +2,17 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { JsonObject } from "./types.ts";
 import { isStringValue, parseRuntimeRecord } from "./validation.ts";
 
-/**
- * Subagents run in the parent's process, each in its own Pi session with its
- * own copy of this extension. Claude Code runs a subagent's hooks in the
- * parent session: they carry the parent's `session_id` and transcript plus
- * `agent_id` and `agent_type`, and session-level events (SessionStart, Stop,
- * SessionEnd, prompt events) never fire for the subagent itself.
- *
- * The subagents registry is the identity source; it drops a child id before
- * the child's shutdown, so the identity is resolved once at session_start.
- */
 const SUBAGENTS_MANAGER_KEY = Symbol.for("pi-subagents:manager");
 const SUBAGENT_SESSION_MARKER = "choco-pi:subagent";
 const SESSION_ROOTS_KEY = Symbol.for("choco-pi-hooks:subagent-session-roots");
 const ROOT_SESSIONS_KEY = Symbol.for("choco-pi-hooks:root-sessions");
 
 export interface SubagentIdentity {
-  /** The top-level session the subagent belongs to, through any nesting. */
   rootSessionId: string;
   agentId?: string;
   agentType?: string;
 }
 
-/** What a top-level session shares with the hooks of its subagents. */
 export interface RootSession {
   transcriptPath: string;
   projectDir: string;
@@ -59,7 +47,6 @@ function rootSessions(): Map<string, RootSession> {
   return slot[ROOT_SESSIONS_KEY];
 }
 
-/** Resolve a subagent session's identity; top-level sessions resolve to `undefined`. */
 export function resolveSubagentIdentity(
   sessionId: string,
   ctx: ExtensionContext,
@@ -79,7 +66,6 @@ export function resolveSubagentIdentity(
   const agentId = record?.agentId;
   const agentType = record?.agentType;
   return {
-    // A nested subagent's parent is itself a subagent; resolve to the top level.
     rootSessionId: subagentSessionRoots().get(parent) ?? parent,
     agentId: isStringValue(agentId) && agentId ? agentId : undefined,
     agentType: isStringValue(agentType) && agentType ? agentType : undefined,

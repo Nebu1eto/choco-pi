@@ -95,11 +95,9 @@ test("records one timing entry per assistant response from its first content eve
     },
   ]);
 
-  // A second end for the same request writes nothing more.
   emit("message_end", { type: "message_end", message });
   assert.equal(written(), 1);
 
-  // A run that was aborted mid-stream leaves nothing behind for the next run.
   const aborted = assistant(2_000);
   emit("message_start", { type: "message_start", message: aborted });
   emit("message_update", {

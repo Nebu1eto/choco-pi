@@ -1,7 +1,3 @@
-/**
- * Shared file path utilities for choco-pi-lsp
- */
-
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -17,21 +13,6 @@ import {
 } from "./project-lsp-config.ts";
 import { safeSpawnAsync } from "./safe-spawn.ts";
 
-/**
- * Return the directory where choco-pi-lsp stores project-specific data
- * (caches, indexes, worklogs, etc.).
- *
- * Default: reuse <project>/.choco-pi-lsp if it already exists, otherwise use
- * ~/.choco-pi-lsp/projects/<project-slug>
- *
- * Override: set PILENS_DATA_DIR=/some/path — each project gets its own
- * subdirectory named after a sanitized form of its absolute path, e.g.
- *   PILENS_DATA_DIR=~/.choco-pi-lsp/projects
- *   → ~/.choco-pi-lsp/projects/home-user-myapp/
- *
- * This keeps project folders clean and avoids creating .choco-pi-lsp folders
- * inside user projects.
- */
 export function getProjectDataDir(cwd: string): string {
   const localProjectDir = path.join(cwd, ".choco-pi-lsp");
   const configuredBase = process.env.PILENS_DATA_DIR?.trim();
@@ -41,46 +22,20 @@ export function getProjectDataDir(cwd: string): string {
   const base = configuredBase || path.join(getGlobalPiLensDir(), "projects");
   const normalized = normalizeFilePath(path.resolve(cwd));
   const slug = normalized
-    .replace(/^[a-z]:/i, "") // strip Windows drive letter
-    .replace(/\/+/g, "-") // separators → dashes
-    .replace(/[^A-Za-z0-9-]/g, "") // strip anything else
-    .replace(/^-+/, "") // trim leading dashes
-    .replace(/-+$/, ""); // trim trailing dashes
+    .replace(/^[a-z]:/i, "")
+    .replace(/\/+/g, "-")
+    .replace(/[^A-Za-z0-9-]/g, "")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "");
   return path.join(base.trim(), slug || "default");
 }
 
-/**
- * Machine-global choco-pi-lsp directory: `~/.choco-pi-lsp/` by default.
- *
- * Used for logs (latency, cascade, read-guard, tree-sitter, actionable-warnings,
- * sessionstart), tool binaries (`~/.choco-pi-lsp/tools/`, `~/.choco-pi-lsp/bin/`), the
- * cross-process instance registry (`instances.json`, #449/#525), the
- * auto-install probe cache, and other state that is intentionally NOT
- * project-scoped — it spans every project choco-pi-lsp has touched.
- *
- * Override: set `CHOCO_PI_LSP_HOME=/some/path` to relocate this ENTIRE root (every
- * caller below routes through this one function, so one env var covers all of
- * them — see #525). Tests MUST set this to a per-worker temp dir in
- * `tests/support/vitest-setup.ts` rather than mocking each caller separately;
- * otherwise a test that exercises `registerInstance`/`sweepOrphans` or any
- * logger writes into the developer's REAL `~/.choco-pi-lsp` (dogfooded live: a
- * test-fixture instance survived in the real `instances.json` for 17h).
- *
- * Distinct from `getProjectDataDir(cwd)`, which respects `PILENS_DATA_DIR`
- * (project-scoped) and produces per-project subdirectories. Callers writing
- * project caches, snapshots, or worklogs should use `getProjectDataDir(cwd)`
- * instead — `CHOCO_PI_LSP_HOME` is the MACHINE-scoped sibling of that override.
- */
 export function getGlobalPiLensDir(): string {
   const override = process.env.CHOCO_PI_LSP_HOME?.trim();
   if (override) return path.resolve(override);
   return path.join(os.homedir(), ".choco-pi-lsp");
 }
 
-/**
- * Directories to exclude from all scans (build outputs, dependencies, caches).
- * Used consistently across all scanners to avoid noise from generated files.
- */
 export const EXCLUDED_DIRS = [
   "node_modules",
   ".git",
@@ -98,8 +53,8 @@ export const EXCLUDED_DIRS = [
   ".gradle",
   ".next",
   ".choco-pi-lsp",
-  ".pi", // pi agent directory
-  ".ruff_cache", // Python linter cache
+  ".pi",
+  ".ruff_cache",
   ".worktrees",
   ".claude",
   ".codex",
@@ -118,31 +73,12 @@ export const EXCLUDED_DIRS = [
   ".tox",
   ".pytest_cache",
   "*.dSYM",
-  // Vendored upstream source conventions — universally too large to scan
-  "vendor", // Go modules, PHP Composer, Ruby Bundler
-  "third_party", // Chromium/Google convention (llama.cpp, sherpa-onnx, gRPC, TF)
+  "vendor",
+  "third_party",
   "third-party",
   "vendors",
 ];
 
-/**
- * Which layer produced a pattern, per #703's layer-semantics fix. Precedence
- * (lowest → highest) is `global` → `gitignore` → `pilens` — see
- * `createProjectIgnoreMatcher`'s ordering comment. The layer determines
- * whether a winning positive match is subject to git's "a tracked file is
- * never ignored" rule:
- *   - `global` / `gitignore` emulate git itself, so they inherit that rule —
- *     a winning match from either NEVER excludes a file git tracks.
- *   - `pilens` (`.choco-pi-lsp.json`'s `ignore` field) is choco-pi-lsp-native user
- *     intent ("don't analyze this"), not a git emulation, so it excludes
- *     regardless of tracked status.
- *
- * `pilens` patterns can come from the root `.choco-pi-lsp.json` (loaded once at
- * matcher-construction time in `createProjectIgnoreMatcher`) OR from a
- * package-local `.choco-pi-lsp.json` layered in per ancestor directory by
- * `buildProjectIgnoreMatcher`'s `patternsForDir` (#783) — both are tagged
- * `"pilens"` and share the same tracked-file-rescue exemption.
- */
 export type GitignorePatternLayer = "global" | "gitignore" | "pilens";
 
 export interface GitignorePattern {
@@ -158,17 +94,6 @@ export interface ProjectIgnoreMatcher {
   rootDir: string;
   patterns: GitignorePattern[];
   isIgnored(filePath: string, isDirectory?: boolean): boolean;
-  /**
-   * Primes the tracked-files set for `rootDir` (async `git ls-files`,
-   * memoized — see `git-tracked-ignore.ts`) so subsequent synchronous
-   * `isIgnored` calls in the SAME walk can honor #703's tracked-aware
-   * layer semantics. Callers with an async walk loop should await this
-   * ONCE before the loop starts, not per file. Fail-open: resolves even
-   * when git is absent/fails/times out (tracked-check then silently stays
-   * unavailable and `isIgnored` degrades to today's pattern-only
-   * behavior). Sync callers that never call this simply never prime — that
-   * degrade-to-pattern-only is intended, not a bug.
-   */
   ensureTrackedIndex(): Promise<void>;
 }
 
@@ -219,7 +144,6 @@ function normalizeIgnorePath(value: string): string {
 }
 
 function stripTrailingSpaces(value: string): string {
-  // Good-enough gitignore whitespace handling: unescaped trailing spaces are ignored.
   let end = value.length;
   while (end > 0 && value[end - 1] === " " && value[end - 2] !== "\\") end -= 1;
   return value.slice(0, end).replace(/\\ /g, " ");
@@ -323,23 +247,9 @@ function buildProjectIgnoreMatcher(
       patterns: GitignorePattern[];
     }
   >();
-  // #783: layer a NESTED `.choco-pi-lsp.json`'s `ignore` field the same way a
-  // nested `.gitignore` is already layered — each ancestor directory between
-  // `resolvedRoot` and the target is checked for its OWN config file (no
-  // upward walk; `findPiLensConfigInDir`/`loadPiLensConfigInDir` look only
-  // directly in `dir`), and its `ignore` patterns are anchored to `dir` (same
-  // anchoring semantics as a `.gitignore` living in that directory) and
-  // tagged `"pilens"` so #703's tracked-file-rescue rule still skips them.
-  // `loadPiLensConfigInDir` reuses `project-lsp-config.ts`'s own
-  // path+mtime cache, so this never re-reads/re-parses JSON that some other
-  // caller (or the root-config lookup above) already loaded.
   const patternsForDir = (dir: string): GitignorePattern[] => {
     if (dir === resolvedRoot) return patterns;
     const gitignoreSig = gitignoreSignature(dir);
-    // #1105: gate on size too. `findPiLensConfigInDir` returns `size` alongside
-    // `mtimeMs` (both from one stat), and `gitignoreSignature` reads both for
-    // the nested `.gitignore`, so an mtime-preserving, length-changing edit to
-    // EITHER nested source can no longer replay stale patterns for this subtree.
     const pilensInfo = findPiLensConfigInDir(dir);
     const pilensMtime = pilensInfo?.mtimeMs ?? -1;
     const pilensSize = pilensInfo?.size ?? -1;
@@ -367,52 +277,14 @@ function buildProjectIgnoreMatcher(
     return nextPatterns;
   };
 
-  // Per-matcher path → pattern-verdict memo. The matcher itself is cached by
-  // `getProjectIgnoreMatcher` keyed on `.gitignore` size+mtime (#1105), so this
-  // Map's lifetime is bounded to a single set of ignore rules — when any
-  // `.gitignore` changes, the matcher is rebuilt and the memo is dropped
-  // with it. Without this memo, every background scan (comment scan, knip,
-  // jscpd, call-graph, source-filter, pipeline) recomputes O(ancestorDirs ×
-  // patterns) per file, multiplying into 2-3s of pure CPU on a 2k-file
-  // project. With it, the second visitor of the same path is O(1).
-  //
-  // #703: this memoizes only the PATTERN verdict (which is deterministic —
-  // it never changes for a given matcher instance), NOT the tracked-aware
-  // final verdict. The tracked-files set can transition from "not yet
-  // primed" to "primed" mid-process (a walker calls `ensureTrackedIndex()`
-  // partway through the matcher's lifetime), so baking the tracked check
-  // into this memo would let an early, pre-priming call poison every later
-  // lookup of the same path for this matcher's entire cache lifetime. The
-  // tracked-set lookup itself is a cheap Set#has over syntactically-folded
-  // keys (see `isTrackedAndRescued` — no `realpathSync` anywhere in this
-  // function), and — critically — it's only ever paid for paths a pattern
-  // already flagged as ignored, so it doesn't reintroduce the per-file cost
-  // this memo exists to avoid for the common (not-ignored) case.
   const patternMemo = new Map<
     string,
     { ignored: boolean; layer: GitignorePatternLayer | undefined }
   >();
 
-  // #703 perf follow-up: `normalizeEphemeralMapKey` (cheap slash-fold +
-  // Windows-lowercase, zero fs I/O), NOT `normalizeMapKey` (realpath-backed).
-  // This runs on every `isIgnored` call that reaches this branch — walks
-  // over this repo alone visit thousands of pattern-ignored compiled
-  // `*.js`/`*.d.ts` files, and `dispatch/integration.ts`'s per-edit cascade
-  // check hits it too — so a `realpathSync` here would violate the
-  // event-loop/slow-FS discipline `isIgnored` is required to keep (#462: 75x
-  // slower on 9p/drvfs). Both `resolved` (this matcher's own `path.resolve`,
-  // never realpath'd) and the tracked-set's keys (`git-tracked-ignore.ts`,
-  // realpath'd ONCE per fetch on the shared root, not per file) are
-  // self-consistent within one process/session, which is exactly
-  // `normalizeEphemeralMapKey`'s contract — see that function's doc and
-  // `git-tracked-ignore.ts`'s module doc for the full reasoning. Accepted
-  // edge case: a symlinked or 8.3-short-name project root can make the cheap
-  // fold miss even after the fetch side's one realpath — the file then stays
-  // pattern-ignored, i.e. degrades to today's (pre-#703) behavior, which is
-  // consistent with this whole feature's fail-open contract.
   function isTrackedAndRescued(resolved: string): boolean {
     const snapshot = getTrackedFilesSnapshot(resolvedRoot);
-    if (!snapshot) return false; // never primed / git unavailable: fail-open to pattern-only
+    if (!snapshot) return false;
     return snapshot.has(normalizeEphemeralMapKey(resolved));
   }
 
@@ -424,8 +296,6 @@ function buildProjectIgnoreMatcher(
     },
     isIgnored(filePath: string, isDirectory = false): boolean {
       const resolved = path.resolve(filePath);
-      // Two namespaces (D: for directory queries, F: for file queries)
-      // because gitignore semantics differ for trailing-slash patterns.
       const memoKey = (isDirectory ? "D:" : "F:") + resolved;
       let verdict = patternMemo.get(memoKey);
       if (verdict === undefined) {
@@ -453,12 +323,6 @@ function buildProjectIgnoreMatcher(
       }
 
       if (!verdict.ignored) return false;
-      // #703 layer semantics: a winning positive match from `global` or
-      // `gitignore` emulates git, so it inherits git's "a tracked file is
-      // never ignored" rule. A winning match from `pilens` is choco-pi-lsp-native
-      // intent and stays excluded regardless of tracked status. Directory
-      // queries are never tracked-rescued — the tracked set is a file-id
-      // set, not a directory set.
       if (!isDirectory && verdict.layer !== "pilens" && isTrackedAndRescued(resolved)) {
         return false;
       }
@@ -473,12 +337,6 @@ export function createProjectIgnoreMatcher(
   globalPatterns: string[] = [],
 ): ProjectIgnoreMatcher {
   const resolvedRoot = resolveGitIgnoreRoot(rootDir);
-  // Precedence is gitignore order: LATER patterns override earlier ones. So
-  // global (lowest) → project .gitignore → project .choco-pi-lsp.json (highest),
-  // which lets a project `!negation` re-include a globally-ignored path (#252).
-  // Each layer is tagged (#703) so `isIgnored` can tell a git-emulating match
-  // (`global`/`gitignore` — subject to "a tracked file is never ignored")
-  // apart from choco-pi-lsp-native intent (`pilens` — excludes regardless).
   const patterns = [
     ...parseGitignoreContent(globalPatterns.join("\n"), "global"),
     ...readGitignorePatterns(resolvedRoot, "gitignore"),
@@ -491,31 +349,16 @@ const projectIgnoreMatcherCache = new Map<
   string,
   {
     gitignoreMtimeMs: number;
-    /** #1105 second axis for the root `.gitignore` (see FreshnessSignature). */
     gitignoreSize: number;
     lensConfigPath: string | undefined;
     lensConfigMtimeMs: number;
-    /** #1105 second axis: an mtime-preserving, length-changing config edit
-     * (git checkout, same-second rewrite) must invalidate the ignore matcher
-     * too, not just `loadPiLensProjectConfig`'s own cache. Size is free from the
-     * stat that already produced `lensConfigMtimeMs`. */
     lensConfigSize: number;
     globalConfigMtimeMs: number;
-    /** #1105 second axis for the global `~/.choco-pi-lsp/config.json`. */
     globalConfigSize: number;
     matcher: ProjectIgnoreMatcher;
   }
 >();
 
-/**
- * `size:mtimeMs` freshness signature for a single file (#1105). mtime alone
- * misses an in-place edit that preserves the timestamp (git checkout, a
- * same-second rewrite) but changes length; size is the free second axis (the
- * same stat already reads it) that catches it. Every ignore-matcher freshness
- * gate below (root + nested `.gitignore` and `.choco-pi-lsp.json`) compares BOTH
- * axes so a preserved-mtime, length-changing edit can no longer replay a stale
- * matcher. `{ mtimeMs: -1, size: -1 }` when the file is absent.
- */
 interface FreshnessSignature {
   mtimeMs: number;
   size: number;
@@ -538,12 +381,6 @@ function gitignoreSignature(rootDir: string): FreshnessSignature {
   return fileFreshnessSignature(path.join(rootDir, ".gitignore"));
 }
 
-/**
- * The project config file found by the same upward walk as the loader. Cache
- * invalidation must track the actual file found, not only a file directly under
- * the git root: nested worktrees/submodules can legitimately inherit a
- * `.choco-pi-lsp.json` from a parent directory.
- */
 function lensConfigInfo(rootDir: string): {
   info: ReturnType<typeof findPiLensProjectConfig>;
   path: string | undefined;
@@ -574,11 +411,6 @@ export function getProjectIgnoreMatcher(rootDir: string): ProjectIgnoreMatcher {
     return cached.matcher;
   }
 
-  // Load both configs fresh on cache miss. On a cache HIT (the common case)
-  // none of this runs — the only per-call cost is the size:mtimeMs stats above
-  // (size is free from the same stat). The project loader is itself
-  // size:mtimeMs-cached; the global loader re-parses, but only here on miss
-  // (when some tracked signature changed).
   const projectConfig = loadPiLensProjectConfig(resolvedRoot, lensConfig.info);
   const matcher = createProjectIgnoreMatcher(
     resolvedRoot,
@@ -625,12 +457,6 @@ export function getProjectIgnoreGlobs(rootDir: string): string[] {
   return globs;
 }
 
-/**
- * Read simple directory-name entries from a root .gitignore.
- *
- * Prefer createProjectIgnoreMatcher() for path-aware gitignore matching. This
- * helper is kept for callers/tests that only need simple directory names.
- */
 export function readGitignoreDirs(rootDir: string): string[] {
   return readGitignorePatterns(rootDir)
     .filter(
@@ -652,10 +478,6 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${escaped}$`, "i");
 }
 
-/**
- * Match directory name against exclusion patterns.
- * Supports exact names and lightweight glob patterns (for example `*.dSYM`).
- */
 export function isExcludedDirName(dirName: string, extraPatterns: string[] = []): boolean {
   const candidate = dirName.trim();
   if (!candidate) return false;
@@ -677,16 +499,10 @@ export function isExcludedDirName(dirName: string, extraPatterns: string[] = [])
   return false;
 }
 
-/**
- * Convert excluded directory names into glob patterns used by scanners.
- */
 export function getExcludedDirGlobs(): string[] {
   return EXCLUDED_DIRS.map((dir) => `**/${dir}/**`);
 }
 
-/**
- * Shared Knip ignore patterns derived from central exclusions.
- */
 export function getKnipIgnorePatterns(): string[] {
   return [
     ...getExcludedDirGlobs(),
@@ -705,11 +521,6 @@ export function getKnipIgnorePatterns(): string[] {
   ];
 }
 
-/**
- * Spawn a command and detect whether it modified a file on disk.
- * Returns 1 if the file content changed after the command ran, 0 otherwise.
- * Useful for auto-fix tools (ESLint, Stylelint, RuboCop, etc.).
- */
 export async function detectFileChangedAfterCommand(
   filePath: string,
   command: string,
@@ -741,11 +552,6 @@ export async function detectFileChangedAfterCommand(
   }
 }
 
-/**
- * Check if file path is a test/fixture/mock file.
- * Used by secrets scanner, rate command, and dispatch runners
- * to skip these files (false positives on fake credentials, etc).
- */
 export function isTestFile(filePath: string): boolean {
   const normalized = filePath.replace(/\\/g, "/");
   return (

@@ -56,7 +56,6 @@ const PREFERRED_SUMMARY_MODELS = [
   { provider: "anthropic", id: "claude-haiku-4-5" },
   { provider: "openai", id: "gpt-5.6-luna" },
   { provider: "openai", id: "gpt-6.1-terra" },
-  // Legacy ChatGPT-backend subscription provider.
   { provider: "openai-codex", id: "gpt-5.6-luna" },
   { provider: "openai-codex", id: "gpt-6.1-terra" },
   { provider: "google", id: "gemini-3.6-flash" },
@@ -382,8 +381,6 @@ export async function generateSummaryDraft(
     : deadlineController.signal;
 
   async function raceSummaryOperation<T>(operation: Promise<T>): Promise<T> {
-    // A provider may ignore AbortSignal and never settle; observe it before racing so
-    // its eventual rejection cannot become an unhandled promise rejection.
     void operation.then(
       () => undefined,
       () => undefined,

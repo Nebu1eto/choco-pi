@@ -56,7 +56,6 @@ export type SyntheticExtensionsRegisterPayload = Static<
   typeof SyntheticExtensionsRegisterPayloadSchema
 >;
 
-/** Config schema version. Stamped on disk when config is seeded or migrated. */
 export const SYNTHETIC_CONFIG_VERSION: string = pkg.version;
 
 export interface SyntheticConfig {
@@ -108,12 +107,6 @@ export const configLoader = new ConfigLoader<SyntheticConfig, ResolvedSyntheticC
   { migrations },
 );
 
-/**
- * Seed the global config file on first use. When no config file exists in
- * any scope, this writes the current defaults with configVersion.
- *
- * Must be called after `configLoader.load()`.
- */
 export async function seedSyntheticConfigIfMissing(): Promise<void> {
   if (configLoader.hasConfig("global") || configLoader.hasConfig("local")) {
     return;
@@ -121,7 +114,6 @@ export async function seedSyntheticConfigIfMissing(): Promise<void> {
   try {
     await configLoader.save("global", DEFAULT_CONFIG);
   } catch {
-    // Ignore seed failures. Defaults still resolve in memory.
     return;
   }
 }
@@ -236,8 +228,6 @@ export function registerSyntheticSettings(
                       getValue: () => nextProxyUrl,
                       setValue: (value) => {
                         nextProxyUrl = value;
-                        // Requires auth only makes sense with a proxy.
-                        // Enforce enabled state when the URL is empty.
                         if (!value.trim()) nextProxyRequiresAuth = true;
                         syncDraft();
                       },

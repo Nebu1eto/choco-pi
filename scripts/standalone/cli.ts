@@ -1,20 +1,3 @@
-/**
- * The standalone `choco-pi` management commands, run through manage.ts once
- * the app's dependencies exist: Optique parses the command line and LogTape
- * carries progress and warnings (data such as `self env` goes to stdout as is).
- *
- * - `install`: stage 1 of install.sh, after it moved the checkout to the
- *   revision it installs and bootstrap.ts installed the dependencies.
- * - `self setup|update|uninstall|env|runtime|help`: reached through
- *   bin/choco-pi, so the launcher's environment contract is already in place.
- *   `self update` hands the update to the target revision's own install.sh.
- *
- * Local development: populate `<home>/app` with any app tree (for example a
- * tar copy of a working checkout), then run
- * `node <home>/app/scripts/standalone/bootstrap.ts` and
- * `node <home>/app/scripts/standalone/manage.ts install --home <home> --bin-dir <dir> --local-app`.
- * A local-app install records no source and cannot `self update`.
- */
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readlink, realpath, rename, rm, symlink } from "node:fs/promises";
@@ -77,19 +60,12 @@ import { isOurLink, uninstall } from "./uninstall.ts";
 
 const runFile = promisify(execFile);
 
-/** Progress and warnings of the management commands. */
 const log = getLogger(["choco-pi", "standalone"]);
 
-/** A record's text: the message template with each property rendered as text. */
 function recordText(record: LogRecord): string {
   return record.message.map((part) => String(part)).join("");
 }
 
-/**
- * The terminal sink: info lines on stdout, warnings and errors on stderr,
- * written synchronously in call order like console.log, so they interleave
- * correctly with the output of the commands run with inherited stdio.
- */
 function writeRecord(record: LogRecord): void {
   const text = recordText(record);
   if (record.level === "warning") process.stderr.write(`warning: ${text}\n`);
@@ -98,7 +74,6 @@ function writeRecord(record: LogRecord): void {
   else if (record.level === "info") process.stdout.write(`${text}\n`);
 }
 
-/** Routes the standalone loggers, and LogTape's own warnings, to the terminal. */
 export function configureLogging(): void {
   configureSync({
     reset: true,
@@ -112,7 +87,6 @@ export function configureLogging(): void {
 
 const runtimeValue = choice(RUNTIMES, { metavar: "RUNTIME" });
 
-/** A valued option's argument; an empty one (`--ref=` or `--ref ""`) is a usage error. */
 function nonEmpty(metavar: NonEmptyString) {
   return string({ metavar, pattern: /^.+$/su });
 }
@@ -167,7 +141,6 @@ const runtimeParser = command(
 
 const helpParser = command("help", object({ verb: constant("help") }));
 
-/** `install` (stage 1, hidden) or `self <command>`, as manage.ts receives them. */
 export const commandLine = or(
   installParser,
   command(
@@ -188,11 +161,6 @@ function launcherOf(app: string): string {
   return path.join(app, "bin", "choco-pi");
 }
 
-/**
- * Environment for a nested launcher run. The launcher exports the resolved
- * runtime to management verbs; that must not turn into a per-invocation
- * override for the child unless the user set it. `runtime` forces one.
- */
 export function launcherEnvironment(
   home: string,
   runtime: Runtime | null,
@@ -230,18 +198,11 @@ async function launcherVersionMatches(
   }
 }
 
-/** `created` lists what provisioning wrote; it is empty unless `source` is "provisioned". */
 export type BunChoice = BunCommand & {
   source: "recorded" | "private" | "system" | "provisioned";
   created: readonly string[];
 };
 
-/**
- * A Bun for runtime bun: the recorded `bun_path`, the private
- * `runtime/bun`, a PATH bun at least the pinned minimum, else the pinned
- * release downloaded into `runtime/bun` (sha256-verified before unzip).
- * `onCreated` hears of a downloaded `runtime/bun` as soon as it is in place.
- */
 export async function ensureBun(
   home: string,
   app: string,
@@ -290,11 +251,6 @@ export async function ensureBun(
 
 export type LinkResult = { link: string; action: "created" | "replaced" | "unchanged" };
 
-/**
- * Links `<binDir>/choco-pi` to `launcher`. Replaces only a symlink that
- * already points at `launcher` or that an earlier install recorded; any other
- * file is foreign and is never touched.
- */
 export async function linkLauncher(
   binDir: string,
   launcher: string,
@@ -326,10 +282,6 @@ export async function linkLauncher(
   return { link, action };
 }
 
-/**
- * Journals each path this run creates the moment it exists (provenance.ts)
- * and collects it in `createdNow`.
- */
 function recorder(home: string, createdNow: string[]): OnCreated {
   return async (created) => {
     await recordCreated(home, created);
@@ -337,12 +289,6 @@ function recorder(home: string, createdNow: string[]): OnCreated {
   };
 }
 
-/**
- * The paths an install owns: those an earlier manifest recorded, the valid
- * entries of the creation journal, those this run created, and install.json.
- * A path that merely exists is never owned: uninstall deletes every owned
- * path recursively. `binLink` is the link the manifest being written records.
- */
 async function ownedPaths(
   home: string,
   previous: InstallManifest | null,
@@ -367,7 +313,6 @@ function defaultHome(): string {
   return path.join(homedir(), ".choco-pi");
 }
 
-/** Creates `directory` when needed and returns its real path. */
 async function canonicalDirectory(directory: string): Promise<string> {
   const absolute = path.resolve(directory);
   await mkdir(absolute, { recursive: true });
@@ -411,8 +356,6 @@ export async function installCommand(options: InstallArguments): Promise<void> {
         throw new UsageError("cannot tell which ref to install; pass --ref");
       }
     }
-    // install.sh moved the checkout to the revision it installs before this
-    // revision's code ran; stage 1 never moves it.
     rev = await git(app, ["rev-parse", "--verify", "HEAD"]);
   }
   const createdNow: string[] = [];
@@ -480,8 +423,6 @@ export async function setupCommand(options: SetupArguments): Promise<void> {
     throw new UsageError("--from and --force apply only with --import-pi-settings");
   const { home, launcher } = requireContract();
   const agentDir = path.join(home, "agent");
-  // The only standalone step that reads ~/.pi, and only when asked for. A
-  // repeated import is refused before setup changes anything.
   const settingsImport = importing ? await import("./settings-import.ts") : null;
   const importSource = settingsImport?.importSourcePath(options.from) ?? null;
   if (settingsImport !== null) await settingsImport.assertImportAllowed(agentDir, options.force);
@@ -491,8 +432,6 @@ export async function setupCommand(options: SetupArguments): Promise<void> {
     root: APP_ROOT,
     agentDir,
     piLauncher: launcher,
-    // No model scope until the user logs in: each scoped pattern without
-    // credentials is a startup warning.
     defaultEnabledModels: [],
   });
   for (const link of result.links) log.info("{action}: {target}", link);
@@ -514,7 +453,6 @@ export async function setupCommand(options: SetupArguments): Promise<void> {
   if (seed.firstSeed) process.stdout.write(nextStepsHint(home));
 }
 
-/** Printed after the first standalone setup of an agent directory. */
 export function nextStepsHint(home: string): string {
   const step = (command: string, purpose: string) => `  ${command.padEnd(14)} ${purpose}`;
   return [
@@ -533,14 +471,8 @@ export function nextStepsHint(home: string): string {
   ].join("\n");
 }
 
-/** The oldest installer_protocol whose install.sh takes over an update (--rev). */
 const HANDOFF_PROTOCOL = 3;
 
-/**
- * Fetches `ref` into `app` and returns the commit to install, without moving
- * HEAD. Refuses a dirty tree and, unless allowed, a target that is not a
- * fast-forward of HEAD.
- */
 async function fetchTarget(
   app: string,
   ref: string,
@@ -562,11 +494,6 @@ async function fetchTarget(
   return target;
 }
 
-/**
- * The installer_protocol `rev` declares, read the way install.sh reads it,
- * so pins of any format work; null when `rev` has no runtime-pins.txt, 1 when
- * the pin is absent (the protocol before the key existed) or not a number.
- */
 async function protocolAt(app: string, rev: string): Promise<number | null> {
   const pins = path.relative(APP_ROOT, PINS_FILE).split(path.sep).join("/");
   const text = await git(app, ["show", `${rev}:${pins}`]).catch(() => null);
@@ -575,18 +502,12 @@ async function protocolAt(app: string, rev: string): Promise<number | null> {
   return value !== null && /^[1-9]\d{0,8}$/.test(value) ? Number.parseInt(value, 10) : 1;
 }
 
-/** The environment of a handed-off install.sh: the caller's, without the launcher contract. */
 function installerEnvironment(environment: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const child: NodeJS.ProcessEnv = { ...environment };
   for (const name of [...CONTRACT_VARIABLES, ...RUNTIME_REPORT_VARIABLES]) delete child[name];
   return child;
 }
 
-/**
- * Runs the install.sh of the revision checked out in the app, which installs
- * exactly `rev` with that revision's own code and pins. The arguments are
- * the installer_protocol 3 hand-off; every later install.sh accepts them.
- */
 async function runInstaller(manifest: InstallManifest, ref: string, rev: string): Promise<void> {
   if (manifest.source === null || manifest.bin_link === null)
     throw new Error(
@@ -609,13 +530,6 @@ async function runInstaller(manifest: InstallManifest, ref: string, rev: string)
   await run("/bin/sh", args, manifest.app, installerEnvironment());
 }
 
-/**
- * Fetches the target, checks that its install.sh takes over updates, then
- * runs it. The running code only moves the checkout: the target's own
- * install.sh and stage 1 read its pins and install it, so an update can
- * cross any change of the toolchain or the pins format. On failure the
- * current revision is checked out again and reinstalled by its own install.sh.
- */
 export async function updateCommand(options: { ref?: string | undefined }): Promise<void> {
   const { home } = requireContract();
   const app = path.join(home, "app");
@@ -650,9 +564,6 @@ export async function updateCommand(options: { ref?: string | undefined }): Prom
     });
     log.warn("returning to {revision}", { revision: oldRev.slice(0, 12) });
     await git(app, ["checkout", "--quiet", "--force", "--detach", oldRev]);
-    // The failed stage 1 may have rewritten install.json in a format this
-    // revision does not read; what that run created is still in the journal,
-    // which the reinstall merges.
     try {
       await writeInstallManifest(manifest);
       await runInstaller(manifest, manifest.ref ?? ref, oldRev);
@@ -688,7 +599,6 @@ export async function uninstallCommand(options: { purge: boolean }): Promise<voi
   });
 }
 
-/** The launcher's runtime resolution, as exported to management verbs. */
 export type RuntimeReport = { name: string; source: string; binary: string | null };
 
 export function runtimeReport(environment: NodeJS.ProcessEnv = process.env): RuntimeReport {
@@ -756,7 +666,6 @@ export async function runtimeCommand(options: { runtime?: Runtime | undefined })
   try {
     await launcherVersionMatches(home, manifest.app, runtime);
   } catch (error) {
-    // Keep the old runtime but still own what provisioning just downloaded.
     await writeInstallManifest({ ...manifest, created });
     throw new Error(
       `Pi does not start on ${runtime}; kept runtime ${manifest.runtime ?? DEFAULT_RUNTIME}`,
@@ -823,11 +732,6 @@ Everything else is passed to Pi unchanged, e.g. choco-pi --version, choco-pi --m
 CHOCO_PI_RUNTIME=node|bun overrides the persisted runtime for one invocation.
 `;
 
-/**
- * Ends parsing after Optique printed help (exit 0) or a usage error (exit 2).
- * Its callbacks throw this because runParserSync returns their result typed
- * as a parsed value.
- */
 class ParseExit extends Error {
   readonly exitCode: number;
 
@@ -838,7 +742,6 @@ class ParseExit extends Error {
   }
 }
 
-/** The parsed command line, or the exit status when Optique already answered it. */
 function parseCommandLine(argv: readonly string[]): InferValue<typeof commandLine> | ParseExit {
   try {
     return runParserSync(commandLine, "choco-pi", argv, {

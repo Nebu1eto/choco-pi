@@ -1,25 +1,3 @@
-/**
- * Shellcheck runner for dispatch system
- *
- * Industry-standard linter for shell scripts (bash, sh, zsh).
- * Detects syntax errors, undefined variables, quoting issues, and best practices.
- *
- * Why shellcheck?
- * - Industry standard (used in CI/CD everywhere)
- * - Comprehensive checks (syntax, variables, quotes, best practices)
- * - JSON output for easy parsing
- * - Available on all platforms (apt, brew, cargo, etc.)
- *
- * Alternative considered: bash-language-server
- * - LSP approach like OpenCode uses
- * - Richer features but heavier
- * - shellcheck is simpler and faster for basic linting
- *
- * Install: apt install shellcheck, brew install shellcheck, or cargo install shellcheck
- *
- * Config: .shellcheckrc (optional, zero-config works)
- */
-
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { arr, compile, obj, opt, str, unknown } from "@earendil-works/pi-schema";
@@ -69,24 +47,6 @@ const ShellcheckJsonSchema = arr(
 );
 const isShellcheckJson = compile(ShellcheckJsonSchema).check;
 
-/**
- * Parse shellcheck JSON output
- *
- * Format: Array of check objects
- * [{
- *   "file": "script.sh",
- *   "line": 10,
- *   "endLine": 10,
- *   "column": 5,
- *   "endColumn": 10,
- *   "level": "warning",
- *   "code": 2154,
- *   "message": "var is referenced but not assigned.",
- *   "fix": null
- * }]
- *
- * Levels: "error", "warning", "info", "style"
- */
 interface SeverityMap {
   [severity: string]: "error" | "warning" | "info";
 }
@@ -107,7 +67,6 @@ function parseShellcheckOutput(raw: string, filePath: string): Diagnostic[] {
     for (const item of parsed) {
       if (!item.message || !item.line) continue;
 
-      // Map shellcheck levels to our severity
       const severityMap: SeverityMap = {
         error: "error",
         warning: "warning",
@@ -134,7 +93,6 @@ function parseShellcheckOutput(raw: string, filePath: string): Diagnostic[] {
       });
     }
   } catch {
-    // JSON parse failed, return empty
     return diagnostics;
   }
 
@@ -146,16 +104,11 @@ const shellcheckRunner: RunnerDefinition = {
   appliesTo: ["shell"],
   priority: PRIORITY.GENERAL_ANALYSIS,
   enabledByDefault: true,
-  skipTestFiles: false, // Shell scripts in test directories should still be checked
+  skipTestFiles: false,
 
   async run(ctx: DispatchContext): Promise<RunnerResult> {
     const cwd = ctx.cwd || process.cwd();
 
-    // #233: bash-language-server runs shellcheck internally. When the `bash` LSP
-    // covers this file AND shellcheck is on PATH (so the LSP actually emits its
-    // findings), the warm server already produces these diagnostics — skip the
-    // redundant CLI scan. Stays active when the LSP or shellcheck is absent so
-    // shell coverage never regresses.
     if (
       lspPrimaryCoversFile(ctx, "bash") &&
       (await ctx.hasTool("bash-language-server")) &&
@@ -173,22 +126,12 @@ const shellcheckRunner: RunnerDefinition = {
     }
     if (!cmd) return { status: "skipped", diagnostics: [], semantic: "none" };
 
-    // Determine shell dialect from file extension (all map to bash for shellcheck)
     const shellDialect = "bash";
 
-    // Build args
-    // --format json: JSON output
-    // --shell: Specify shell dialect (bash, sh, zsh, ksh, busybox)
-    // --severity: Minimum severity (we'll filter ourselves)
     const args: string[] = ["--format", "json", "--shell", shellDialect];
 
-    // Check for config file
     const configPath = findShellcheckConfig(ctx.cwd);
     if (!configPath) {
-      // No config file: surface `info`-level findings (e.g. SC2086
-      // double-quote-to-prevent-globbing — a high-value, commonly-relevant
-      // check that was previously dropped, #213) while still excluding pure
-      // `style` rules to limit noise. Projects opt into style via .shellcheckrc.
       args.push("--severity", "info");
     }
 
@@ -196,12 +139,10 @@ const shellcheckRunner: RunnerDefinition = {
 
     const result = await safeSpawnAsync(cmd, args, { timeout: 15000 });
 
-    // shellcheck exits with code 1 if issues found, 0 if clean
     if (result.status === 0 && !result.stdout?.trim()) {
       return { status: "succeeded", diagnostics: [], semantic: "none" };
     }
 
-    // Parse diagnostics
     const raw = result.stdout + result.stderr;
     const diagnostics = parseShellcheckOutput(raw, ctx.filePath);
 

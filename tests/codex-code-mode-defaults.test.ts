@@ -382,7 +382,6 @@ async function createFixtureHost(
   } satisfies ExtensionContextActions;
   const runner = new ExtensionRunner(loaded.extensions, loaded.runtime, root, manager, registry);
   runner.bindCore(actions, contextActions);
-  // Tools receive a tool context; this fixture binds no nested-call backend.
   return {
     activationApi,
     context: runner.createToolContext("fixture-call", undefined),

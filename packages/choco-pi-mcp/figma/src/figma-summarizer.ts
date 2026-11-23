@@ -361,7 +361,6 @@ function collectVisibleText(node: FigmaValue, state: SummaryState): void {
   }
   if (VECTOR_TYPES.has(type) && !state.options.includeVectors) return;
   if (type === "INSTANCE" && !state.options.includeComponentInternals) {
-    // Text labels inside component instances are useful, but the structural internals are not.
     for (const child of getChildren(record)) collectVisibleText(child, state);
     return;
   }

@@ -16,13 +16,6 @@ import {
 export const CHECKPOINT_ENTRY = "choco-pi:file-checkpoint";
 export const RESTORE_ENTRY = "choco-pi:file-checkpoint-restored";
 
-/**
- * A checkpoint as persisted in the session.
- *
- * Version 1 stored `indexTree` plus `worktreeTree` and kept one ref per turn.
- * Version 2 adds the raw index blob and the anchoring commit. Both remain
- * readable so sessions recorded before the upgrade stay rewindable.
- */
 export type FileCheckpoint = GitSnapshot & {
   version: 1 | 2;
   timestamp: string;
@@ -30,11 +23,8 @@ export type FileCheckpoint = GitSnapshot & {
   label: string;
 };
 
-/** One user prompt on the active branch, with the file state captured before it. */
 export type SessionTurn = {
-  /** Entry id of the user message; the navigation and fork target. */
   entryId: string;
-  /** 1-based position among the user turns of this branch. */
   index: number;
   label: string;
   timestamp: string;
@@ -44,7 +34,6 @@ export type SessionTurn = {
 
 export type TurnTimelineItem = {
   turn: SessionTurn;
-  /** Code changes this turn produced. Absent without a usable checkpoint pair. */
   changes?: ChangeSummary;
 };
 
@@ -54,7 +43,6 @@ function textParts(part: RuntimeValue): string[] {
   return "text" in part && isString(part.text) ? [part.text] : [];
 }
 
-/** A one-line prompt summary for the picker, from either message content shape. */
 export function messageContentLabel(content: RuntimeValue): string {
   const text = isString(content)
     ? content
@@ -74,22 +62,12 @@ function parseCheckpoint(data: RuntimeValue): FileCheckpoint | undefined {
   if (!isString(value.timestamp) || !isNumber(value.turnIndex) || !isString(value.label)) {
     return undefined;
   }
-  // Version 1 recorded a safety snapshot under this label; it is not a turn start.
   if (value.label === "Before rewind") return undefined;
   if (value.version === 1 && !isString(value.indexTree)) return undefined;
   // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   return value as FileCheckpoint;
 }
 
-/**
- * Lists the user turns on a branch, newest last.
- *
- * Pi appends the pre-turn checkpoint before persisting the user message, so the
- * last checkpoint seen before a user entry is the state that entry started from.
- * Turns without a checkpoint still appear: conversation rewind and fork do not
- * need Git, and hiding those turns would make the picker useless in a working
- * tree where snapshots are unavailable.
- */
 export function sessionTurnsFromEntries(entries: readonly SessionEntry[]): SessionTurn[] {
   let pendingCheckpoint: FileCheckpoint | undefined;
   let pendingEntryId: string | undefined;
@@ -120,7 +98,6 @@ export function sessionTurnsFromEntries(entries: readonly SessionEntry[]): Sessi
   return turns;
 }
 
-/** The shape the review extension consumes; only turns backed by a checkpoint. */
 export type TurnCheckpoint = {
   checkpoint: FileCheckpoint;
   checkpointEntryId: string;
@@ -145,18 +122,6 @@ export function turnCheckpointsFromEntries(entries: readonly SessionEntry[]): Tu
   );
 }
 
-/**
- * The Git objects this branch's checkpoints depend on.
- *
- * A forked session inherits entries whose objects only the parent session's ref
- * keeps alive, so the caller anchors these under the new session's own ref.
- * Chained checkpoints contribute their commit, which carries earlier ones with
- * it; checkpoints written before chaining existed contribute their trees.
- *
- * Pass every entry in the session file rather than the active branch: a fork
- * keeps the abandoned branches too, and navigating back to one must not find
- * checkpoints whose objects were collected in the meantime.
- */
 export function checkpointAnchorsFromEntries(entries: readonly SessionEntry[]): CheckpointAnchors {
   const commits = new Set<string>();
   const trees = new Set<string>();
@@ -174,12 +139,6 @@ export function checkpointAnchorsFromEntries(entries: readonly SessionEntry[]): 
   return { commits: [...commits], trees: [...trees] };
 }
 
-/**
- * Attaches the code changes each turn produced.
- *
- * A turn's changes span its own checkpoint and the next captured state, which is
- * the next checkpointed turn or, for the newest one, the live working tree.
- */
 export async function buildTurnTimeline(
   cwd: string,
   turns: readonly SessionTurn[],

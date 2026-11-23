@@ -41,7 +41,6 @@ type OwnerSource = "flag" | "session-env" | "session-bridge" | "pid";
 
 type Liveness = "live" | "dead" | "unknown";
 
-/** A session-bridge record is treated as abandoned once its heartbeat stops well past the 2s write interval. */
 const HEARTBEAT_STALE_MS = 60_000;
 const MAX_ANCESTOR_DEPTH = 16;
 
@@ -80,7 +79,6 @@ function liveSessionDir(): string {
   return path.join(path.resolve(agentDir), "choco-pi", "session-bridge", "live");
 }
 
-/** Read the session-bridge live registry. A missing or unreadable entry is simply not reported. */
 async function readLiveSessions(): Promise<LiveSession[]> {
   const directory = liveSessionDir();
   let entries: string[];
@@ -131,7 +129,6 @@ function isSessionLive(session: LiveSession): boolean {
   return isProcessAlive(session.pid) && isHeartbeatFresh(session.updatedAt);
 }
 
-/** Walk the parent chain so a command spawned by any tool can find the Pi process that owns it. */
 async function ancestorPids(): Promise<number[]> {
   const pids: number[] = [];
   let current = process.pid;
@@ -151,11 +148,6 @@ async function ancestorPids(): Promise<number[]> {
   return pids;
 }
 
-/**
- * Resolve a caller identity that stays stable across separate script invocations.
- * `PI_SESSION_ID` is only exported by Pi's bash tool, so tools such as the Codex
- * adapter's exec_command need the session-bridge registry to identify the session.
- */
 async function resolveOwner(
   sessions: LiveSession[],
 ): Promise<{ owner: string; source: OwnerSource }> {
@@ -171,10 +163,6 @@ async function resolveOwner(
   return { owner: `pid:${process.pid}`, source: "pid" };
 }
 
-/**
- * Report `dead` only when the holder is provably gone, so a lease is never
- * reclaimed from a session whose state cannot be observed.
- */
 function ownerLiveness(leaseOwner: string, sessions: LiveSession[]): Liveness {
   if (leaseOwner.startsWith("pid:")) {
     return isProcessAlive(Number.parseInt(leaseOwner.slice(4), 10)) ? "live" : "dead";
@@ -265,7 +253,6 @@ if (action === "acquire") {
       );
       process.exit(0);
     }
-    // Unreadable metadata can mean a lease is mid-creation, so it is never treated as abandoned.
     const liveness: Liveness = metadata ? ownerLiveness(metadata.owner, liveSessions) : "unknown";
     if (liveness !== "dead") {
       fail("checkout mutation lease is already held", {
@@ -277,7 +264,6 @@ if (action === "acquire") {
         caller: owner,
       });
     }
-    // The holder is provably gone, so the abandoned lease is reclaimed instead of blocking every later session.
     reclaimedFrom = metadata?.owner || "unknown";
     await unlink(metadataPath).catch(() => undefined);
     await rmdir(leaseDir).catch(() => undefined);

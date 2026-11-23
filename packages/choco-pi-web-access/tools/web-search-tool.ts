@@ -694,8 +694,6 @@ export function registerWebSearchTool(
       }
 
       if (details?.error) {
-        // Expandable Ctrl+O diagnostics: which queries completed, per-query errors,
-        // browser connection state, cancel reason. See render-search-error.ts.
         // SAFETY: The error branch established the required error field; remaining fields are optional diagnostics.
         const plan = buildSearchErrorPlan(details as SearchErrorDetails);
         if (plan) return renderSearchErrorPlan(plan, expanded, theme);
@@ -720,7 +718,6 @@ export function registerWebSearchTool(
         statusLine += theme.fg("muted", " (content ready)");
       }
 
-      // Build expanded lines first so collapsed view can reference total count
       const lines = [statusLine];
       if (details?.summary?.text) {
         lines.push("");
@@ -814,7 +811,7 @@ export function registerWebSearchTool(
         const box = new Box(1, 0);
         box.addChild(new Text(statusLine, 0, 0));
 
-        let collapsedLines = 1; // statusLine
+        let collapsedLines = 1;
         const summaryPreview = details?.summary?.text?.trim() || "";
         if (summaryPreview) {
           const preview =

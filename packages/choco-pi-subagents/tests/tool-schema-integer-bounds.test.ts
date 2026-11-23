@@ -16,14 +16,9 @@ type RuntimeValue = {} | null | undefined;
 type LifecycleResult = RuntimeValue | Promise<RuntimeValue>;
 type LifecycleHandler = (...args: RuntimeValue[]) => LifecycleResult;
 
-// xAI rejects a whole request with 400 "Invalid arguments passed to the model."
-// when any tool parameter of type integer carries a bound outside int64; a
-// `Number.MAX_VALUE` cap on an Agent field made every Grok turn fail.
 const INTEGER_BOUND_KEYS = ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"];
-// pi-schema `num()` also accepts NaN and ±Infinity, so a non-finite bound is reported too.
 const isNumber = compile(num()).check;
 
-/** Integer fields reached by a schema walk and the bounds among them that are not safe integers. */
 interface IntegerBoundScan {
   unsafe: string[];
   integers: number;
@@ -33,7 +28,6 @@ function isIntegerSchema(type: RuntimeValue): boolean {
   return type === "integer" || (Array.isArray(type) && type.includes("integer"));
 }
 
-/** Paths of integer bounds a provider cannot hold as a safe integer, plus the integer field count. */
 function integerBounds(schema: RuntimeValue, path: string): IntegerBoundScan {
   const unsafe: string[] = [];
   const found: IntegerBoundScan = { unsafe, integers: 0 };

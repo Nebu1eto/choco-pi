@@ -1,20 +1,9 @@
-/**
- * Go Client for choco-pi-lsp
- *
- * Provides Go type checking and linting via gopls and go vet.
- *
- * Requires: gopls (go install golang.org/x/tools/gopls@latest)
- * Docs: https://pkg.go.dev/golang.org/x/tools/gopls
- */
-
 import { createSubsystemLogger } from "./extension-log.ts";
 import * as path from "node:path";
 import {
   type ToolchainAvailability,
   createToolchainAvailability,
 } from "./dispatch/runners/utils/toolchain-availability.ts";
-
-// --- Types ---
 
 export interface GoDiagnostic {
   line: number;
@@ -27,32 +16,13 @@ export interface GoDiagnostic {
   file: string;
 }
 
-// --- Common install paths ---
+const GO_WINDOWS_PATHS = ["C:\\Program Files\\Go\\bin\\go.exe", "C:\\Go\\bin\\go.exe", "go.exe"];
 
-const GO_WINDOWS_PATHS = [
-  "C:\\Program Files\\Go\\bin\\go.exe",
-  "C:\\Go\\bin\\go.exe",
-  "go.exe", // PATH
-];
-
-/** Budget for the PATH candidate's `go version` probe, ms. */
 const PROBE_TIMEOUT_MS = 3_000;
 
-const GO_UNIX_PATHS = [
-  "/usr/local/go/bin/go",
-  "/usr/bin/go",
-  "go", // PATH
-];
-
-// --- Client ---
+const GO_UNIX_PATHS = ["/usr/local/go/bin/go", "/usr/bin/go", "go"];
 
 export class GoClient {
-  /**
-   * Availability lifecycle, behind the shared transient-aware latch (#1476).
-   * The PATH candidate is resolved by spawning `go version` with a 3 s budget,
-   * so a host stall could latch "no Go toolchain" for the whole session and
-   * silently disable every Go diagnostic until restart.
-   */
   private readonly availability: ToolchainAvailability;
   private log: (msg: string) => void;
 
@@ -69,23 +39,14 @@ export class GoClient {
     });
   }
 
-  /**
-   * Find go executable path (async — probes PATH candidates off the event loop).
-   */
   async findGoPathAsync(): Promise<string | null> {
     return this.availability.findPath();
   }
 
-  /**
-   * Check if Go is installed (cached)
-   */
   async isGoAvailableAsync(): Promise<boolean> {
     return this.availability.isAvailable();
   }
 
-  /**
-   * Check if a file is a Go file
-   */
   isGoFile(filePath: string): boolean {
     return path.extname(filePath).toLowerCase() === ".go";
   }

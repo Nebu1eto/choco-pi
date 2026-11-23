@@ -1,14 +1,3 @@
-/**
- * A changes store over a model that was read whole (the interactive review
- * reads every body up front to order files by risk). It serves the changes
- * view like the pane's live store: a snapshot listing, bodies per file, and
- * a new revision when a refresh finds different content.
- *
- * Targets that cannot change (a pull request, a commit range) pass no
- * `reload`; the store is then static. Sensitive files listed in
- * `model.hidden` have no contents in the model: their body is read through
- * `reveal` when the view asks for it, never before.
- */
 import type {
   DiffSnapshot,
   DiffSource,
@@ -20,37 +9,23 @@ import type {
 } from "./git/model.ts";
 import type { DiffFile, DiffModel } from "./types.ts";
 
-/** A hidden file's contents, read on request; `file` is absent when it is no longer a change. */
 export type RevealedFile = { file?: DiffFile; notice?: string };
 
 export type ModelStoreOptions = {
   model: DiffModel;
-  /** Names the change set in the view's header. */
   source: DiffSource;
   repoRoot: string;
   branch?: string | null;
-  /** Where a session's changes start, named in the header as the pane names it. */
   baseline?: SnapshotBaseline;
-  /** Reads a hidden file's contents; without it hidden files stay hidden. */
   reveal?: (path: string) => Promise<RevealedFile>;
-  /** Re-reads the whole change set; absent for targets that cannot change. */
   reload?: () => Promise<DiffModel>;
-  /** Epoch ms for snapshots; defaults to `Date.now`. */
   now?: () => number;
 };
 
 export type ModelStore = Pick<DiffStore, "getState" | "subscribe" | "loadFile" | "dispose"> & {
-  /** A body held in memory for the current revision; undefined for a hidden file not yet read. */
   peekFile(path: string): { revision: number; body: FileBody } | undefined;
-  /** The current model, with any revealed file's hunks in place of its empty entry. */
   model(): DiffModel;
-  /** False for a static store (no `reload`). */
   readonly canRefresh: boolean;
-  /**
-   * Re-read the change set. Resolves "changed" when a new revision was
-   * applied, "unchanged" when the content is the same, "stale" when a later
-   * refresh or `dispose` overtook it; rejects with the reload's error.
-   */
   refresh(): Promise<"changed" | "unchanged" | "stale">;
 };
 
@@ -58,7 +33,6 @@ function fileSummaryOf(file: DiffFile, untracked: boolean): FileSummary {
   const binary = file.kind === "binary";
   const summary: FileSummary = {
     path: file.path,
-    // An untracked file shows the pane's `?`, not `A`.
     status: untracked ? "untracked" : file.kind === "binary" ? "modified" : file.kind,
     additions: binary ? null : file.additions,
     deletions: binary ? null : file.deletions,
@@ -70,14 +44,6 @@ function fileSummaryOf(file: DiffFile, untracked: boolean): FileSummary {
   return summary;
 }
 
-/**
- * What makes two models show the same thing: the comparison (base and head
- * ids, which every target kind fills), then paths, kinds, content-hash hunk
- * ids and each hunk's coordinates. Hunk ids name neither the comparison nor
- * where a hunk is (they hash content, so annotations survive a move); without
- * the ids a moved base would keep the old model, and without the coordinates
- * a hunk that moved would keep its old line numbers.
- */
 function fingerprint(model: DiffModel): string {
   return JSON.stringify([
     model.baseSha,
@@ -109,7 +75,6 @@ export function createModelStore(options: ModelStoreOptions): ModelStore {
   let revision = 1;
   let generation = 0;
   let disposed = false;
-  /** Revealed bodies for the current revision. */
   const revealed = new Map<string, DiffFile>();
 
   const snapshotOf = (current: DiffModel): DiffSnapshot => {
@@ -141,7 +106,6 @@ export function createModelStore(options: ModelStoreOptions): ModelStore {
     for (const listener of listeners) listener(next);
   };
 
-  /** A body that needs no read; undefined for a hidden file whose contents are not read yet. */
   const heldBody = (path: string): FileBody | undefined => {
     const file = model.files.find((entry) => entry.path === path);
     if (!file) return { kind: "gone" };
@@ -160,7 +124,6 @@ export function createModelStore(options: ModelStoreOptions): ModelStore {
   const bodyOf = async (path: string): Promise<FileBody> => {
     const held = heldBody(path);
     if (held) return held;
-    // A hidden file: its contents are read only now, because the user asked.
     if (!options.reveal) {
       return { kind: "unreadable", reason: "this review cannot read the file's contents" };
     }

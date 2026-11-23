@@ -16,7 +16,6 @@ interface CodexTransportCleanupRegistry {
   [CODEX_TRANSPORT_CLEANUP_SYMBOL]?: CodexTransportCleanupCandidate | null;
 }
 
-/** Publish a stateless process-global bridge for owners that dispose sessions directly. */
 export function registerCodexTransportCleanup(): CodexTransportCleanupCandidate {
   // SAFETY: This extension owns the symbol-keyed slot and publishes only its stateless candidate.
   const registry = globalThis as typeof globalThis & CodexTransportCleanupRegistry;

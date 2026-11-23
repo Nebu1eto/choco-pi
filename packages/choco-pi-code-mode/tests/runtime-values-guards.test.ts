@@ -29,8 +29,6 @@ const throwingGetter = {
   },
 };
 
-// [label, value, bigint, boolean, function, finite number, string, symbol, undefined,
-//  object(non-array, non-function), jsonValueType]
 type Row = readonly [
   string,
   unknown,
@@ -50,7 +48,6 @@ const rows: readonly Row[] = [
   ["empty string", "", false, false, false, false, true, false, false, false, "string"],
   ["zero", 0, false, false, false, true, false, false, false, false, "number"],
   ["negative zero", -0, false, false, false, true, false, false, false, false, "number"],
-  // Finite-only: the old TypeBox Number check rejected these and jsonValueType fell through to "object".
   ["NaN", Number.NaN, false, false, false, false, false, false, false, false, "object"],
   ["Infinity", Infinity, false, false, false, false, false, false, false, false, "object"],
   ["-Infinity", -Infinity, false, false, false, false, false, false, false, false, "object"],

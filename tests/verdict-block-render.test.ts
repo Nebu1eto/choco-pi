@@ -64,7 +64,6 @@ function context(overrides: Partial<MarkdownTransformContext> = {}): MarkdownTra
 const VALID =
   "## Findings\n\nOne finding, one candidate.\n\n" +
   fenced("choco-pi-review", JSON.stringify(FINDINGS, null, 2));
-/** The same block on one line, so the message is short enough to keep the raw fence. */
 const SHORT =
   "One finding, one candidate.\n\n" + fenced("choco-pi-review", JSON.stringify(FINDINGS));
 

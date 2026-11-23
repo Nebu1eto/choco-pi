@@ -11,11 +11,9 @@ import { evidence, type Host, type Scenario } from "./types.ts";
 export const RESTART_SETTINGS = { enabled: true, text: true, minReductionTokens: 0 };
 export const RESTART_PHASES = ["persist", "recover", "reload"] as const;
 export type RestartPhase = (typeof RESTART_PHASES)[number];
-/** Transport checks each reopened worker evaluates on its own wire. */
 export const WORKER_CHECKS = ["post-adoption-transport", "kept-suffix-exact"] as const;
 export const PHASE_RECORD = "restart-phase";
 
-/** Real provider usage of one live worker phase (null in fake mode). */
 export const PhaseUsageSchema = nullable(
   obj(
     {
@@ -107,7 +105,6 @@ async function runPhase(
     host.recorder.record("restart-phase-failed", { phase, ...exit });
     throw new Error(`Restart phase ${phase} wrote no result (exit ${String(exit.code)})`);
   }
-  // Written by our own worker: no conversion, defaults or stripping were needed, so assert only.
   const decoded: unknown = JSON.parse(text);
   if (!matches(PhaseResultSchema, decoded))
     throw new Error(`Restart phase ${phase} wrote an invalid result`);

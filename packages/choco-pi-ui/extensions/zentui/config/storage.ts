@@ -72,15 +72,12 @@ function writeConfigAtomically(path: string, record: ConfigRecord, mode?: number
     if (file !== undefined) {
       try {
         closeSync(file);
-      } catch {
-        // Best-effort descriptor close after persistence error.
-      }
+      } catch {}
     }
     try {
       unlinkSync(tempPath);
     } catch (cleanupError) {
       if (errorCode(parseBoundaryValue(cleanupError)) !== "ENOENT") {
-        // Preserve the persistence failure; the best-effort cleanup error is secondary.
       }
     }
     throw error;
@@ -107,12 +104,7 @@ export function mutateConfig(
   return mergeConfig(state.record);
 }
 
-export function ensureConfigExists(_path = configPath): void {
-  // Intentionally left as a no-op. Zentui config is user-owned and
-  // compatibility-sensitive: runtime defaults come from `mergeConfig({})`, and
-  // the extension should not persist opinionated defaults unless the user
-  // explicitly changes a setting.
-}
+export function ensureConfigExists(_path = configPath): void {}
 
 export function loadConfig(): PolishedTuiConfig {
   try {

@@ -68,7 +68,7 @@ test("returns the rebuild sentinel for stale and corrupt snapshots", () => {
 test("hydrates a realistic snapshot well under 30ms", (context) => {
   const serialized: SerializedWordIndex = serializeWordIndex(realisticIndex());
   const size = Buffer.byteLength(JSON.stringify(serialized));
-  deserializeWordIndex(serialized); // Warm module/JIT effects out of the measured call.
+  deserializeWordIndex(serialized);
   const started = performance.now();
   const hydrated = deserializeWordIndex(serialized);
   const elapsed = performance.now() - started;

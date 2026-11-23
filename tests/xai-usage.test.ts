@@ -26,7 +26,6 @@ const BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const USER_URL = "https://cli-chat-proxy.grok.com/v1/user?include=subscription";
 const XAI_TOKEN = "fake-xai-oauth-token";
 
-/** Fields of the Grok billing `config` object a test may replace. */
 type BillingOverrides = {
   currentPeriod?: { type?: string; start?: string; end?: string };
   creditUsagePercent?: number;
@@ -43,7 +42,6 @@ function billing(overrides: BillingOverrides = {}) {
         end: "2026-10-23T05:44:20.695+00:00",
       },
       creditUsagePercent: 2,
-      // Product keys and order as the billing endpoint reports them.
       productUsage: [
         { product: "GrokBot", usagePercent: 23 },
         { product: "Api", usagePercent: 5 },
@@ -60,7 +58,6 @@ function billing(overrides: BillingOverrides = {}) {
 type Credential = "oauth" | "api_key";
 type Fixture = { ctx: ExtensionContext; tokenRequests: string[] };
 
-/** Registry fake: each configured provider maps to its credential type. */
 function registry(credentials: Partial<Record<string, Credential>>): Fixture {
   const tokenRequests: string[] = [];
   const models = [
@@ -158,7 +155,6 @@ test("normalizes a monthly period and reports a positive prepaid balance in doll
   assert.equal(window.percent, 37.5);
   assert.equal(window.windowSeconds, 30 * 86_400);
   assert.equal(window.detail, undefined);
-  // proto int64 values may be serialized as strings.
   assert.equal(
     normalizeGrokUsage(billing({ prepaidBalance: { val: "250" } })).status,
     "$2.50 prepaid balance",
@@ -189,7 +185,6 @@ test("maps Grok billing products to fixed labels and passes unknown keys through
   assert.equal(grokProductLabel("Api"), "API");
   assert.equal(grokProductLabel("GrokBuild"), "Build");
   assert.equal(grokProductLabel(" Api "), "API");
-  // Matching is exact-case; anything else is shown as the server sent it.
   assert.equal(grokProductLabel("api"), "api");
   assert.equal(grokProductLabel("grokbot"), "grokbot");
   assert.equal(grokProductLabel("GrokImagine"), "GrokImagine");
@@ -217,8 +212,6 @@ test("the Grok product breakdown keeps server order and shows unknown products v
 });
 
 test("a fresh Grok period without a usage percentage reads as 0% used", () => {
-  // Shape of a live response minutes after a weekly period started: the
-  // endpoint omits `creditUsagePercent` and `productUsage` before any use.
   const usage = normalizeGrokUsage({
     config: {
       currentPeriod: {
@@ -254,7 +247,6 @@ test("a Grok response without a usage percentage or a valid period draws no wind
     {},
     { type: "USAGE_PERIOD_TYPE_WEEKLY", start: "2026-11-06T05:44:20Z" },
     { type: "USAGE_PERIOD_TYPE_WEEKLY", start: "not a date", end: "2026-11-13T05:44:20Z" },
-    // An end that does not follow the start is not a period either.
     {
       type: "USAGE_PERIOD_TYPE_WEEKLY",
       start: "2026-11-13T05:44:20Z",
@@ -291,7 +283,6 @@ test("a Grok OAuth sign-in reads the billing endpoint with its bearer token", as
   const grok = report.providers[0];
   assert.ok(grok?.ok);
   assert.equal(grok.usage.name, "Grok");
-  // The user endpoint failed here, so the plan is simply omitted.
   assert.equal(grok.usage.plan, undefined);
   assert.equal(grok.usage.windows[0]?.label, "Weekly");
   assert.equal(grok.usage.windows[0]?.percent, 2);
@@ -302,7 +293,6 @@ test("a Grok OAuth sign-in reads the billing endpoint with its bearer token", as
   assert.match(text, /2% used/);
   assert.match(text, /\n {2}(?:.* · )?Bot 23% · API 5% · Build 1%$/);
   assert.doesNotMatch(text, /GrokBot|GrokBuild|Api /);
-  // The structured host report carries the same labels as the text.
   const frame = usageReportFrame("session-xai", report);
   assert.equal(frame.usage?.providers[0]?.windows[0]?.detail, "Bot 23% · API 5% · Build 1%");
   assert.match(frame.sections[0]?.rows[0]?.hint ?? "", /(?:^|· )Bot 23% · API 5% · Build 1%$/);
@@ -310,7 +300,6 @@ test("a Grok OAuth sign-in reads the billing endpoint with its bearer token", as
   assert.doesNotMatch(text, new RegExp(XAI_TOKEN));
 });
 
-/** A `/v1/user` response carrying personal fields next to the subscription tier. */
 function user(tier?: string): RuntimeValue {
   const personal = {
     email: "person@example.invalid",
@@ -340,7 +329,6 @@ test("maps Grok subscription tiers to plan labels and passes unknown tiers throu
   assert.equal(grokPlanLabel("toString"), "toString");
   assert.equal(grokPlanLabel(""), undefined);
   assert.equal(grokPlanLabel(undefined), undefined);
-  // Only the tier survives parsing; a non-string tier or a non-object is dropped.
   assert.deepEqual(grokSubscription(user("SuperGrokPlus")), {
     subscriptionTier: "SuperGrokPlus",
   });
@@ -463,7 +451,6 @@ test("a Grok API key reports its state without resolving the key or fetching", a
 test("an xai credential of unknown type fails closed: no token, no fetch", async (t) => {
   const calls = mockFetch(t, () => Promise.reject(new Error("no network in tests")));
   const tokenRequests: string[] = [];
-  // Configured, but the host cannot report the credential type (no xai model, no isUsingOAuth).
   const ctx = reinterpretHostValue<ExtensionContext>({
     modelRegistry: {
       getProviderAuthStatus: (provider: string) => ({
@@ -497,11 +484,9 @@ test("an absent xai credential is neither fetched nor shown as a row", async (t)
   assert.equal(formatUsageReport(report), "");
   assert.deepEqual(calls, []);
   assert.deepEqual(tokenRequests, []);
-  // Usage-limit corroboration is unchanged: xai has no snapshot reader.
   assert.equal(await providerUsageWindows(ctx, "xai"), undefined);
 });
 
-/** Every provider endpoint answers, so only the credential set decides the rows. */
 function allEndpoints(url: string): Promise<Response> {
   if (url === BILLING_URL) return json(billing());
   if (url === USER_URL) return json(user("SuperGrokPlus"));
@@ -586,7 +571,6 @@ test("the host frame omits absent providers", () => {
   assert.deepEqual(absentFrame.sections, []);
 });
 
-/** Whether `value` matches `schema`, narrowing like the compiled validator's check. */
 function checkSchema<S extends JsonSchema>(schema: S, value: RuntimeValue): value is Static<S> {
   return compile(schema).check(value);
 }

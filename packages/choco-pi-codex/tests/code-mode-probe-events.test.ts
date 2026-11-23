@@ -9,15 +9,6 @@ import {
   toolCallsOf,
 } from "./code-mode-probe-events.ts";
 
-/**
- * Regression for a real live-probe false negative: a terminal `agent_end` envelope mixes
- * extension-injected `custom` messages whose `content` is a plain string with assistant and
- * toolResult messages whose `content` is a block array. An array-only content contract rejected the
- * whole envelope, so the probe reported "root did not settle" for a run that had settled normally.
- *
- * The literals below reproduce only the structural fields of an observed envelope; no reasoning,
- * signatures, or credentials are embedded.
- */
 const MIXED_AGENT_END = JSON.stringify({
   type: "agent_end",
   willRetry: false,

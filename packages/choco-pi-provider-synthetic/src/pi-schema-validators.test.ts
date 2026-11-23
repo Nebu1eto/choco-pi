@@ -348,7 +348,6 @@ describe("model catalog validators", () => {
 });
 
 describe("models store entry", () => {
-  // Object.assign widens the typed base context with deliberately off-contract members.
   function contextWith<Extra extends object>(extra: Extra): RefreshModelsContext & Extra {
     const base: RefreshModelsContext = {
       allowNetwork: true,

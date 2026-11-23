@@ -18,8 +18,6 @@ import {
 } from "@earendil-works/pi-schema";
 import type { JsonValue as RuntimeJsonValue } from "../../profile/extensions/lib/runtime-values.ts";
 
-// Use pi-schema's recursive() builder for nested JSON values.
-// Numbers are bounded to reject NaN/Infinity as the previous schema library's number check did.
 export const JsonSchema: Schema<RuntimeJsonValue> = recursive<RuntimeJsonValue>(
   "JsonValue",
   (self) =>

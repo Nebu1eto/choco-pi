@@ -1,11 +1,3 @@
-/**
- * Entry point of the standalone management commands: bin/choco-pi runs it for
- * `self setup|update|uninstall|env|runtime|help`, and install.sh runs it as
- * stage 1 (`install`). The commands (cli.ts) parse with Optique and log with
- * LogTape, so they need the app's dependencies. Without them only
- * `self uninstall [--purge]` still works, from the creation journal alone: an
- * install that failed before its dependencies existed stays removable.
- */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,7 +5,6 @@ import { requireContract, UsageError } from "./contract.ts";
 import { exists, samePath } from "./provision.ts";
 import { uninstall } from "./uninstall.ts";
 
-/** True when Node could not resolve a package import, as when node_modules is missing. */
 function isMissingPackage(error: Error): boolean {
   return (
     "code" in error &&

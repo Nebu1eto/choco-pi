@@ -30,28 +30,17 @@ export type FastModeDecision = FastModeState &
     supported: boolean;
     active: boolean;
     serviceTier: "priority" | "standard" | undefined;
-    /** Why a selectable Fast mode is not applied for this model and authentication. */
     reason?: string;
-    /** Request model id that carries Fast for providers that expose it as a model variant (xAI). */
     fastModelId?: string;
   }>;
 
-/** The synchronous auth-type query of Pi's `ModelRegistry` (`ctx.modelRegistry`). */
 export type FastModeAuthRegistry = Readonly<{ isUsingOAuth(model: Model<Api>): boolean }>;
 
 export const OPENAI_PLATFORM_BASE_URL = "https://api.openai.com/v1";
-/**
- * Live probes against Pi 1.0.4 "Sign in with ChatGPT" on provider `openai` showed
- * `service_tier: "priority"` accepted but echoed as `default`.
- */
 export const OPENAI_SIGN_IN_FAST_REASON =
   "accepted but not honored by api.openai.com subscription sign-in";
 
 export const XAI_FAST_HOST = "api.x.ai";
-/**
- * Grok Build "Fast" variants: same context windows and reasoning efforts as the base
- * model at twice the price. api.x.ai serves them by id but does not list them.
- */
 export const XAI_FAST_MODEL_IDS: ReadonlyMap<string, string> = new Map([
   ["grok-4.7", "grok-4.7-build-fast"],
 ]);
@@ -67,7 +56,6 @@ function baseUrlHostname(model: Model<Api>): string | undefined {
   }
 }
 
-/** The Fast variant id for an allowlisted xAI model on api.x.ai, otherwise undefined. */
 export function xaiFastModelId(model: Model<Api> | undefined): string | undefined {
   if (model?.provider !== "xai" || baseUrlHostname(model) !== XAI_FAST_HOST) return undefined;
   return XAI_FAST_MODEL_IDS.get(model.id);
@@ -78,11 +66,6 @@ function xaiFastUnsupportedReason(model: Model<Api> | undefined): string | undef
   return baseUrlHostname(model) === XAI_FAST_HOST ? XAI_FAST_MODEL_REASON : XAI_FAST_HOST_REASON;
 }
 
-/**
- * Stock `openai` provider on api.openai.com authenticated with the ChatGPT
- * subscription OAuth credential rather than an `sk-` API key. Local copy of the
- * Codex package predicate; root code must not import that vendored package.
- */
 export function isOpenAISubscriptionSignIn(
   model: Model<Api> | undefined,
   registry: FastModeAuthRegistry | undefined,
@@ -108,7 +91,6 @@ export type FastModeRegistration = Readonly<{
   initial: FastModeInitialization;
   entries?: readonly SessionEntry[];
   persist?: (state: FastModeState) => void;
-  /** Default auth source for `decide` when a caller passes no registry. */
   modelRegistry?: FastModeAuthRegistry | undefined;
 }>;
 
@@ -227,18 +209,12 @@ export function decideFastMode(
   };
 }
 
-/**
- * Applies one Fast decision to a provider payload; undefined leaves it unchanged.
- * OpenAI carries Fast as `service_tier`; xAI swaps the request model id instead and
- * never receives a tier.
- */
 export function applyFastModeRequest(
   payload: RuntimeValue,
   decision: FastModeDecision | undefined,
   model: Model<Api> | undefined,
 ): RuntimeValue {
   if (!decision || !isJsonRecord(payload)) return undefined;
-  // Sign-in accepts but ignores the tier: send none rather than claim it.
   if (decision.reason === OPENAI_SIGN_IN_FAST_REASON) {
     if (!("service_tier" in payload)) return undefined;
     const { service_tier: _ignored, ...rest } = payload;
@@ -250,25 +226,17 @@ export function applyFastModeRequest(
     return { ...payload, model: decision.fastModelId };
   }
   if (decision.active) return { ...payload, service_tier: "priority" };
-  // Codex omits the tier for standard requests instead of sending "default".
   const { service_tier: _standard, ...standard } = payload;
   return standard;
 }
 
 export type XaiFastPricing = Readonly<{
-  /** Records a server-confirmed Fast response from a raw provider stream event. */
   observe(provider: string, data: RuntimeValue): void;
-  /** Reprices a confirmed Fast assistant message; undefined leaves it unchanged. */
   apply(message: AgentMessage): AssistantMessage | undefined;
 }>;
 
 const XAI_FAST_PRICING_CAPACITY = 64;
 
-/**
- * Pi prices an xAI turn from the selected base model. A Fast turn is priced at the
- * variant's multiplier only once api.x.ai echoes the Fast model id for that response;
- * `responseModel` records the variant and makes repricing idempotent across hooks.
- */
 export function createXaiFastPricing(): XaiFastPricing {
   const fastIds = new Set(XAI_FAST_MODEL_IDS.values());
   const confirmed = new Map<string, string>();

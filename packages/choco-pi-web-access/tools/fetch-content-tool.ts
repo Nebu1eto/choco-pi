@@ -183,7 +183,6 @@ export function registerFetchContentTool(
       } satisfies StoredSearchData & { type: "fetch"; urls: ExtractedContent[] };
       const storedContent = storeFetchResult(pi, responseId, data, authFetchProfile);
 
-      // Single URL: return content directly (possibly truncated) with responseId
       if (urlList.length === 1) {
         const result = presentedResults[0];
         if (result.error) {
@@ -248,8 +247,6 @@ export function registerFetchContentTool(
         return { content, details: successDetails };
       }
 
-      // Multi-URL: summary with per-URL stored length and exact continuation calls.
-      // Offsets index the stored content (data.urls), which answer mode does not replace.
       let retrieval: FetchSummaryRetrieval = { kind: "cache-off" };
       if (storedContent && getSearchContentEnabled) {
         retrieval = {

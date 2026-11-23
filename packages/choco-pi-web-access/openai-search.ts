@@ -17,17 +17,11 @@ const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 const CONFIG_PATH = getWebSearchConfigPath();
 const SEARCH_TIMEOUT_MS = 60_000;
 
-// The selected model runs the server-side web_search call and writes the cited summary.
-// Prefer the newest mid-tier ("terra") model, then the newest bare mainline id; price
-// tiers ("pro"/"ultra" id segments) are excluded, and the numeric-aware sort keeps
-// e.g. gpt-5.10 ahead of gpt-5.9.
 const EXCLUDED_MODEL_SEGMENTS = new Set(["pro", "ultra"]);
 const MODEL_PREFERENCE = [
   (id: string) => id.includes("terra"),
   (id: string) => /^gpt-\d+(\.\d+)?$/.test(id),
 ];
-// Pi's stock `openai` provider carries both API keys and "Sign in with ChatGPT" tokens;
-// `openai-codex` is the legacy ChatGPT-backend subscription provider.
 const DEFAULT_SEARCH_PROVIDERS: readonly string[] = ["openai", "openai-codex"];
 
 function pickSearchModel<T extends { id: string }>(models: readonly T[]): T | undefined {
@@ -60,7 +54,6 @@ export type OpenAITransport = "codex-subscription" | "responses-api";
 export type OpenAIBilling = "subscription" | "api";
 
 export interface OpenAIResolvedAuth {
-  /** @deprecated Use providerId. Retained for standalone callers. */
   provider: string;
   providerId: string;
   transport: OpenAITransport;
@@ -167,16 +160,6 @@ function isCodexJwt(token: string): boolean {
   return !!payload?.["https://api.openai.com/auth"];
 }
 
-/**
- * Detects a Pi "Sign in with ChatGPT" credential on the stock `openai` provider. It is billed
- * against the ChatGPT subscription but must be sent to api.openai.com, never chatgpt.com.
- * Pi's own `isChatGPTSignIn` (pi-ai openai-responses) uses provider, base URL, and a
- * non-`sk-` key. The registry's auth type is authoritative when available so an environment
- * or config API key is never misreported as subscription billing; registries without
- * `isUsingOAuth` fall back to the sign-in token shape (a JWT with the OpenAI auth claim).
- * Because that JWT carries the same claim as Codex tokens, this check must precede
- * `isCodexJwt`.
- */
 function isChatGPTSignInCredential(
   model: { provider: string; baseUrl?: string },
   apiKey: string,
@@ -248,7 +231,6 @@ async function resolvePiAuth(
   const { responsesUrl, providers, request, modelOverride } = options;
   let getAll: typeof ctx.modelRegistry.getAll;
   let getApiKeyAndHeaders: typeof ctx.modelRegistry.getApiKeyAndHeaders;
-  // Optional on minimal registries; when present it reports the credential's auth type.
   let isUsingOAuth: typeof ctx.modelRegistry.isUsingOAuth | undefined;
   let models: ReturnType<typeof ctx.modelRegistry.getAll>;
   try {

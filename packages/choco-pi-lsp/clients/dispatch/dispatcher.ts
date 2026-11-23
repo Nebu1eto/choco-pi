@@ -1,19 +1,3 @@
-/**
- * Declarative Tool Dispatcher for choco-pi-lsp
- *
- * Redesigned to handle the full complexity of choco-pi-lsp's tool_result handler:
- * - Multiple tools with different semantics (blocking, warning, silent)
- * - Delta mode (baseline tracking)
- * - Autofix handling
- * - Output aggregation and formatting
- *
- * Key abstractions:
- * - RunnerDefinition: A tool that can be run
- * - Diagnostic: Structured issue representation
- * - OutputSemantic: How to display (blocking, warning, silent, etc.)
- * - BaselineStore: Track pre-existing issues for delta mode
- */
-
 import { logExtension } from "../extension-log.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -57,8 +41,6 @@ import type {
 } from "./types.ts";
 import { formatDiagnostics } from "./utils/format-utils.ts";
 
-// --- Runner Registry ---
-
 export class RunnerRegistry implements RunnerRegistryContract {
   private readonly runners = new Map<string, RunnerDefinition>();
 
@@ -94,55 +76,21 @@ export class RunnerRegistry implements RunnerRegistryContract {
   }
 }
 
-// --- Tool Availability Cache ---
-
-/**
- * Normalize a command name to a FactStore session key.
- * Strips .cmd/.exe suffixes (case-insensitive) and lowercases,
- * then prefixes with "session.toolCache.".
- */
 export function normalizeCacheKey(cmd: string): string {
   const normalized = cmd.replace(/\.(cmd|exe)$/i, "").toLowerCase();
   return `session.toolCache.${normalized}`;
 }
 
-/** Probe budget for the generic `hasTool` availability check, ms. */
 const TOOL_PROBE_TIMEOUT_MS = 5000;
 
-/**
- * Session fact holding the epoch ms after which a TRANSIENT verdict for a
- * command may be re-probed. Kept beside the boolean fact so both share the
- * session's lifetime — no second global to reset (#1476).
- */
 function transientRetryKey(command: string): string {
   return `${normalizeCacheKey(command)}.retryAt`;
 }
 
-/**
- * Consecutive transient verdicts for a command, so the cooldown ESCALATES the
- * way the policy documents (30 s, 60 s, 120 s … capped at 5 min) instead of
- * sitting flat at 30 s.
- *
- * This is the highest-traffic availability consumer in the product. A flat
- * cooldown here means a permanently sick host is re-probed every 30 s per
- * command for the whole session — ten times the storm the policy claims to
- * bound, and the one place the bound matters most. `createAvailabilityChecker`
- * tracks the same counter; this keeps the two seams telling one story.
- */
 function transientAttemptsKey(command: string): string {
   return `${normalizeCacheKey(command)}.transientAttempts`;
 }
 
-/**
- * Is `command` usable right now? Cached per session.
- *
- * Latch policy (#1467/#1476): a `false` from a genuine absence is durable and
- * is remembered for the session. A `false` from a TIMED-OUT probe is not — this
- * is the highest-traffic availability consumer in the codebase, and caching a
- * host stall here silently disabled a healthy tool for every later dispatch in
- * the session. A transient verdict instead holds only for a bounded cooldown,
- * which also stops a sick host from being re-probed on every dispatch.
- */
 export async function checkToolAvailability(command: string, facts: FactStore): Promise<boolean> {
   const key = normalizeCacheKey(command);
   const cached = facts.getSessionFact<boolean>(key);
@@ -151,15 +99,11 @@ export async function checkToolAvailability(command: string, facts: FactStore): 
   }
   const retryAt = facts.getSessionFact<number>(transientRetryKey(command));
   if (retryAt !== undefined && Date.now() < retryAt) return false;
-  // A command that isn't even on disk can't pass a --version probe; the ~μs
-  // stat/PATH walk saves a guaranteed-to-fail spawn round-trip per cold tool.
   if (!(await isSpawnableCommand(command))) {
     facts.setSessionFact(key, false);
     return false;
   }
   try {
-    // The budget is enforced by a HOST-side timer, so measure the loop stall
-    // that overlapped the window and let the shared classifier read it.
     const sampler = startHostStallSampler();
     const startedAt = Date.now();
     let result: Awaited<ReturnType<typeof safeSpawnAsync>>;
@@ -174,8 +118,6 @@ export async function checkToolAvailability(command: string, facts: FactStore): 
     const elapsedMs = Date.now() - startedAt;
     if (result.status === 0) {
       facts.setSessionFact(key, true);
-      // The tool answered: retire the cooldown facts rather than leaving a
-      // stale retry deadline behind a `true`.
       facts.setSessionFact(transientRetryKey(command), 0);
       facts.setSessionFact(transientAttemptsKey(command), 0);
       logAvailabilityDecision({
@@ -190,8 +132,6 @@ export async function checkToolAvailability(command: string, facts: FactStore): 
       });
       return true;
     }
-    // `missing` for anything unclassified preserves the pre-#1476 meaning of
-    // a non-zero exit: durable, cached for the session.
     const { outcome, cause, evidence } = classifyProbeFailure(result, {
       hostStallMs,
       unclassifiedFailureOutcome: "missing",
@@ -226,8 +166,6 @@ export async function checkToolAvailability(command: string, facts: FactStore): 
   }
 }
 
-// --- Dispatch Context Factory ---
-
 function readFilePrefix(filePath: string, maxBytes = 4096): string | undefined {
   let fd: number | undefined;
   try {
@@ -241,9 +179,7 @@ function readFilePrefix(filePath: string, maxBytes = 4096): string | undefined {
     if (fd !== undefined) {
       try {
         fs.closeSync(fd);
-      } catch {
-        // ignore close errors
-      }
+      } catch {}
     }
   }
 }
@@ -255,12 +191,8 @@ export function createDispatchContext(
   facts: FactStore,
   blockingOnly?: boolean,
   modifiedRanges?: import("./types.ts").ModifiedRange[],
-  /** Authoritative workspace root; `cwd` may be a nested language root. */
   projectRoot?: string,
-  /** Ordered per-file pipeline token, when this is a post-write dispatch. */
   writeIndex?: number,
-  /** Runtime telemetry identity, when known (#1448) — threaded to the
-   * worklog append; see DispatchContext.telemetryModel's doc. */
   telemetryModel?: string,
   telemetryProvider?: string,
 ): DispatchContext {
@@ -294,8 +226,6 @@ export function createDispatchContext(
     },
 
     log(message: string): void {
-      // #1333: pi owns the terminal — a runner advisory must never be a raw
-      // write. Every DispatchContext.log line lands in extension.log instead.
       logExtension({
         subsystem: "dispatch",
         message,
@@ -305,11 +235,6 @@ export function createDispatchContext(
   };
 }
 
-// --- Delta Mode Logic ---
-
-/**
- * Filter diagnostics to only show NEW issues (delta mode)
- */
 function filterDelta<T extends { id: string }>(
   after: T[],
   before: T[] | undefined,
@@ -389,7 +314,6 @@ function suppressLintOverlapsWithLsp(diagnostics: Diagnostic[]): Diagnostic[] {
     const key = `${d.filePath}:${line}:${defectClass}`;
     if (lspBySpanClass.has(key)) return false;
 
-    // Conservative fallback for unclassified overlap at same line.
     if (defectClass === "unknown") {
       return !lspByLine.has(`${d.filePath}:${line}`);
     }
@@ -398,15 +322,6 @@ function suppressLintOverlapsWithLsp(diagnostics: Diagnostic[]): Diagnostic[] {
   });
 }
 
-/**
- * Dockerfile overlap dedup (#131 Mode 2): hadolint and `trivy config` both flag
- * a few of the same Dockerfile issues (e.g. `:latest`, running as root) with
- * different rule ids, which the rule-keyed `dedupeOverlappingDiagnostics` can't
- * collapse. Keep hadolint authoritative on the lines it covers and drop the
- * trivy-config finding there — trivy still contributes the security checks
- * hadolint lacks (on other lines), and all Kubernetes findings (no hadolint
- * diagnostics exist for YAML, so none are suppressed). Exported for unit tests.
- */
 export function suppressTrivyConfigDockerOverlap(diagnostics: Diagnostic[]): Diagnostic[] {
   const hadolintLines = new Set<string>();
   for (const d of diagnostics) {
@@ -452,17 +367,6 @@ function promoteDeltaUnusedToBlockers(diagnostics: Diagnostic[]): Diagnostic[] {
   });
 }
 
-// --- Latency Logger ---
-
-/**
- * Optional per-runner result sink. Fires once for each runner that actually
- * executes (immediately after its `run()` returns), with the exact
- * `RunnerResult` — including `failureKind`/`failureMessage` that the merged
- * `DispatchResult` discards. Runners that are filtered out, `when`-skipped, or
- * not registered do not fire it. Lets the live tool-smoke harness (#209) assert
- * each tool spawned and exited cleanly without duplicating dispatch's
- * selection/gating logic.
- */
 export type RunnerResultSink = (runnerId: string, result: RunnerResult) => void;
 
 export interface RunnerLatency {
@@ -500,7 +404,6 @@ function buildCoverageNotice(
   const relevant = runnerLatencies.filter((r) => primary.runnerIds.includes(r.runnerId));
   if (relevant.length === 0) return undefined;
 
-  // Check primary runners first
   const primaryHasCoverage = relevant.some(
     (r) => r.status === "succeeded" || r.status === "failed",
   );
@@ -519,8 +422,6 @@ function buildCoverageNotice(
       .filter((runnerId) => !primary.runnerIds.includes(runnerId)),
   );
 
-  // Structural-only runners (tree-sitter, ast-grep) are not substitutes
-  // for real linters — don't suppress the notice if only they ran.
   const STRUCTURAL_RUNNERS = new Set([
     "tree-sitter",
     "ast-grep-napi",
@@ -590,7 +491,6 @@ export function formatLatencyReport(report: DispatchLatencyReport): string {
     `Diagnostics: ${report.totalDiagnostics} (${report.blockers} blockers, ${report.warnings} warnings)`,
   );
 
-  // Show top 3 slowest
   const sorted = [...report.runners].sort((a, b) => b.durationMs - a.durationMs);
   if (sorted.length > 0 && sorted[0].durationMs > 100) {
     lines.push(`\n🐌 Slowest runners:`);
@@ -605,25 +505,12 @@ export function formatLatencyReport(report: DispatchLatencyReport): string {
   return lines.join("\n");
 }
 
-// --- Group runner (used by dispatchForFile for parallel execution) ---
-
 interface GroupResult {
   diagnostics: Diagnostic[];
   latencies: RunnerLatency[];
   hadBlocker: boolean;
 }
 
-/**
- * Execute all runners in a single group.
- *
- * - mode "fallback": run runners sequentially and stop at the first
- *   one that succeeds (returns status !== "skipped").
- * - mode "all" (default): run all runners in the group sequentially
- *   and collect every diagnostic.
- *
- * Groups themselves are run in parallel by dispatchForFile, so this
- * function must NOT mutate shared state.
- */
 async function runGroup(
   ctx: DispatchContext,
   group: RunnerGroup,
@@ -634,7 +521,6 @@ async function runGroup(
   const latencies: RunnerLatency[] = [];
   let hadBlocker = false;
 
-  // Filter runners by kind if specified
   const runnerIds = group.filterKinds
     ? group.runnerIds.filter((id) => {
         const runner = registry.get(id);
@@ -670,7 +556,6 @@ async function runGroup(
       continue;
     }
 
-    // Check preconditions
     let shouldRun = true;
     if (runner.when) {
       try {
@@ -761,7 +646,6 @@ async function runGroup(
       hadBlocker = true;
     }
 
-    // mode:"fallback" — stop at first successful runner
     if (group.mode === "fallback" && result.status === "succeeded") {
       break;
     }
@@ -769,8 +653,6 @@ async function runGroup(
 
   return { diagnostics, latencies, hadBlocker };
 }
-
-// --- Main Dispatch Function ---
 
 export async function dispatchForFile(
   ctx: DispatchContext,
@@ -796,7 +678,6 @@ export async function dispatchForFile(
   let stopped = false;
   const runnerLatencies: RunnerLatency[] = [];
 
-  // Debug logging goes to latency log only (not console - avoid noise)
   const allRunnerIds = groups.flatMap((g) => g.runnerIds);
   logLatency({
     type: "phase",
@@ -810,15 +691,10 @@ export async function dispatchForFile(
     },
   });
 
-  // Run all groups in parallel — they are independent and don't depend on
-  // each other's results. Within each group, mode:"fallback" semantics are
-  // preserved (sequential first-success). Results are merged in original
-  // group order so output is deterministic.
   const groupResults = await Promise.all(
     groups.map((group) => runGroup(ctx, group, registry, onRunnerResult)),
   );
 
-  // Count baseline warnings before filtering (for delta count display)
   const relativeKey = path.relative(ctx.cwd, ctx.filePath).replace(/\\/g, "/");
   const baselineAbsKey = `session.baseline.${normalizeMapKey(ctx.filePath)}`;
   const baselineRelKey = `session.baseline.${normalizeMapKey(relativeKey)}`;
@@ -838,44 +714,11 @@ export async function dispatchForFile(
     if (hadBlocker) stopped = true;
   }
 
-  // Apply delta mode ONCE across the full diagnostic set.
-  // This avoids partial-baseline corruption when processing multiple groups.
   const dedupedDiagnostics = dedupeOverlappingDiagnostics(allDiagnostics);
   const fileContent = ctx.facts.getFileFact<string>(ctx.filePath, "file.content") ?? "";
-  // Project rule policy (`.choco-pi-lsp.json` `rules.<id>.disable`/`select`).
-  //
-  // Resolved from `ctx.projectRoot` (falling back to `ctx.cwd`), NOT
-  // `ctx.projectConfig` — `ctx.projectConfig` is loaded from the nested
-  // LANGUAGE root (`resolveLanguageRootForFile`), so in a monorepo where a
-  // package directory has its own `.choco-pi-lsp.json`, `discoverPiLensProjectConfig`'s
-  // upward walk stops there and never sees a repo-root policy.
-  // `diagnostics_report` loads its policy map from `runtime.projectRoot`; using
-  // the same root here keeps the two surfaces in agreement. `ctx.projectConfig`
-  // itself is untouched — thresholds and mutation flags keep their existing
-  // language-root resolution.
   const rulePolicy = rulePolicyMapFromConfig(
     loadPiLensProjectConfig(ctx.projectRoot ?? ctx.cwd).rules,
   );
-  // The output-only filter pipeline: LSP/docker overlap suppression + inline
-  // `choco-pi-lsp-ignore` + agent/user dispositions + project rule policy. Applied
-  // AFTER dedupe so the pi renderer, widget, and delta all see one filtered
-  // set. #690: dispositions drop false-positive/suppress marks and anything
-  // deferred this session (flagged marks stay; diagnostics_report tags them at
-  // render time). #1030: the disposition anchor + store MUST key off the
-  // PROJECT ROOT, not ctx.cwd — the mark tool writes dispositions under
-  // runtime.projectRoot, so reading from ctx.cwd (the nested language root in
-  // a monorepo) opened a different diagnostic-dispositions.json and silently
-  // no-op'd every mark under a nested marker.
-  //
-  // #1087: "silencing is not fixing" applies to the WHOLE class, not just the
-  // policy member. This single pipeline is applied identically to the live set
-  // AND (below) to the delta baseline, so a finding persistently dropped by
-  // ANY layer — overlap, inline suppression, disposition, or policy — is
-  // absent from both sides of the delta and never oscillates into `fixed`
-  // (which `trackAgentFixed` would otherwise inflate forever). The stored
-  // baseline remains the unfiltered `dedupedDiagnostics`, so editing a
-  // project's policy/suppressions never resets or corrupts the user-authored
-  // delta baseline — the filtering is re-derived on read for both sides.
   const applyOutputFilters = (diags: Diagnostic[]): Diagnostic[] => {
     const dockerOverlap = suppressTrivyConfigDockerOverlap(diags);
     const overlap = suppressLintOverlapsWithLsp(dockerOverlap);
@@ -891,12 +734,6 @@ export async function dispatchForFile(
   let visibleDiagnostics = applyOutputFilters(dedupedDiagnostics);
   let resolvedCount = 0;
   if (ctx.deltaMode && previousBaseline) {
-    // Silencing a rule is not fixing it. The stored baseline is deliberately
-    // unfiltered (below), so compare against a fully-filtered view of it
-    // through the SAME pipeline — otherwise every persistently-suppressed
-    // finding sits in `fixed` on every dispatch and inflates the agent's
-    // resolved tally (trackAgentFixed) forever. Only `fixed` changes:
-    // filtered-out ids are absent from `after` either way.
     const filtered = filterDelta(
       visibleDiagnostics,
       applyOutputFilters(previousBaseline),
@@ -906,21 +743,17 @@ export async function dispatchForFile(
     resolvedCount = filtered.fixed.length;
   }
 
-  // Persist full current snapshot for next run (not delta-filtered subset).
   if (ctx.deltaMode) {
     ctx.facts.setSessionFact(baselineAbsKey, [...dedupedDiagnostics]);
     ctx.facts.setSessionFact(baselineRelKey, [...dedupedDiagnostics]);
   }
 
-  // Categorize results
   const blockers = visibleDiagnostics.filter((d) => d.semantic === "blocking");
   const warnings = visibleDiagnostics.filter(
     (d) => d.semantic === "warning" || d.semantic === "none",
   );
   const fixedItems = visibleDiagnostics.filter((d) => d.semantic === "fixed");
 
-  // Append fixed and fixable diagnostics to the persistent worklog, attributed
-  // to the runtime's active model/provider when known (#1448).
   const worklogIdentity = {
     model: ctx.telemetryModel,
     provider: ctx.telemetryProvider,
@@ -945,8 +778,6 @@ export async function dispatchForFile(
   const inlineFixed = fixedItems;
   const coverageNotice = buildCoverageNotice(ctx, runnerLatencies);
 
-  // Format output — only blocking issues shown inline
-  // Warnings tracked but not shown (noise) — surfaced via diagnostics_report
   const blockerOutput = formatDiagnostics(inlineBlockers, "blocking");
   let output = blockerOutput;
   output += formatDiagnostics(inlineFixed, "fixed");
@@ -955,7 +786,6 @@ export async function dispatchForFile(
     warnings.push(coverageNotice);
   }
 
-  // Generate and store latency report
   const overallEnd = Date.now();
   const latencyReport: DispatchLatencyReport = {
     filePath: ctx.filePath,
@@ -970,19 +800,12 @@ export async function dispatchForFile(
     warnings: warnings.length,
   };
 
-  // Store for later analysis
   latencyReports.push(latencyReport);
 
-  // Keep only last 100 reports to prevent memory bloat
   if (latencyReports.length > 100) {
     latencyReports.shift();
   }
 
-  // Runner latencies already logged immediately after execution (line ~329)
-  // The runnerLatencies array is stored in latencyReport for aggregate analysis
-  // No need to log again here - would create duplicates in the log
-
-  // Log summary to latency log only (not console - avoid noise)
   const sumMs = runnerLatencies.reduce((s, r) => s + r.durationMs, 0);
   const wallClockMs = latencyReport.totalDurationMs;
   logLatency({
@@ -1018,9 +841,6 @@ export async function dispatchForFile(
   };
 }
 
-// --- Run Single Runner ---
-
-/** Maximum wall-clock time a single runner may take before we abort it. */
 const RUNNER_TIMEOUT_MS = RUNTIME_CONFIG.dispatch.runnerTimeoutMs;
 
 function looksLikeDiagnosticCodePath(value: string): boolean {
@@ -1093,14 +913,6 @@ async function runRunner(
   }
 }
 
-// --- Simple Integration Helper ---
-
-/**
- * @internal
- * Low-level dispatch entry point. Use `dispatchLint` from `./integration.js` instead —
- * that version provides session-persistent baselines and FactStore.
- * This function creates an ephemeral FactStore per call; facts do not persist across calls.
- */
 export async function dispatchLint(
   filePath: string,
   cwd: string,
@@ -1108,17 +920,14 @@ export async function dispatchLint(
   facts: FactStore,
   registry: RunnerRegistryContract,
 ): Promise<string> {
-  // By default, only run BLOCKING rules for fast feedback on file write
   const ctx = createDispatchContext(filePath, cwd, pi, facts, true);
 
-  // Get runners for this file kind
   if (!ctx.kind) return "";
   const runners = registry.getForKind(ctx.kind, ctx.filePath);
   if (runners.length === 0) {
     return "";
   }
 
-  // Create groups from registered runners (all in fallback mode)
   const groups: RunnerGroup[] = [
     {
       mode: "fallback",

@@ -1,6 +1,5 @@
 import { compile, str } from "@earendil-works/pi-schema";
 
-// The repo lint rule forbids `typeof`; primitive strings are checked through pi-schema.
 const stringCheck = compile(str()).check;
 
 export type RuntimeValue = string | number | boolean | bigint | symbol | object | null | undefined;
@@ -54,7 +53,6 @@ export function isFunctionValue<Value>(value: Value): value is Value & CallableF
 }
 
 export function parseRuntimeRecord<Value>(value: Value): RuntimeRecord | undefined {
-  // Non-null, non-function objects other than arrays form a string-keyed property bag.
   if (Object(value) !== value || value instanceof Function || Array.isArray(value)) {
     return undefined;
   }

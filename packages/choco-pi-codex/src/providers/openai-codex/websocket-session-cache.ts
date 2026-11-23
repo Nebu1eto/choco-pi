@@ -14,9 +14,7 @@ function closeWebSocketSilently(
 ): void {
   try {
     socket.close(code, reason);
-  } catch {
-    // Ignore close errors during session cleanup.
-  }
+  } catch {}
 }
 
 const websocketSessionCache = new Map<string, Map<string, SessionWebSocketCacheEntry>>();
@@ -27,11 +25,8 @@ const CONTINUATION_HEADERS = new Set([
   "thread-id",
   "x-client-request-id",
   "x-codex-beta-features",
-  // Per-request Codex metadata; the socket keeps whichever values opened it, as Codex does.
   "x-codex-turn-metadata",
   "x-codex-window-id",
-  // Descriptive client identity; its macOS version is refined asynchronously after startup.
-  // originator and version stay keyed as their own headers.
   "user-agent",
 ]);
 
@@ -51,7 +46,6 @@ async function websocketRouteKey(
   const proxy = await resolveWebSocketProxyForTarget(url, env);
   const handshakeIdentity = JSON.stringify([
     accountId,
-    // Normalize when parseable; an unparseable URL still keys its own route verbatim.
     URL.parse(url)?.href ?? url,
     proxy ?? null,
     routeIdentityHeaders(headers),

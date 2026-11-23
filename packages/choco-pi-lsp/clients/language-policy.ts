@@ -130,8 +130,6 @@ const PRIMARY_DISPATCH_GROUPS: PRIMARYDISPATCHGROUPSValues = {
   },
   json: { mode: "fallback", runnerIds: ["lsp"], filterKinds: ["json"] },
   markdown: {
-    // marksman (primary LSP) adds cross-file checks the cold spellcheck/vale
-    // runners can't see; all three run so prose + structural coverage coexist.
     mode: "all",
     runnerIds: ["lsp", "spellcheck", "vale"],
     filterKinds: ["markdown"],
@@ -207,8 +205,6 @@ const PRIMARY_DISPATCH_GROUPS: PRIMARYDISPATCHGROUPSValues = {
   haskell: { mode: "fallback", runnerIds: ["lsp"], filterKinds: ["haskell"] },
   "helm-template": {
     mode: "all",
-    // helm-render is opt-in (`helm.renderValidation.enabled`) and skips itself
-    // when the switch is absent, so it costs nothing when unconfigured (#1283).
     runnerIds: ["helm-lint", "helm-render"],
     filterKinds: ["helm-template"],
   },
@@ -224,8 +220,6 @@ const PRIMARY_DISPATCH_GROUPS: PRIMARYDISPATCHGROUPSValues = {
   },
   ocaml: { mode: "fallback", runnerIds: ["lsp"], filterKinds: ["ocaml"] },
   clojure: { mode: "fallback", runnerIds: ["lsp"], filterKinds: ["clojure"] },
-  // #1522: cuelsp reports syntax/parse errors only; cue-vet covers the
-  // evaluation-error class the language server deliberately doesn't publish.
   cue: { mode: "all", runnerIds: ["lsp", "cue-vet"], filterKinds: ["cue"] },
   terraform: {
     mode: "all",
@@ -269,9 +263,6 @@ export function getPrimaryDispatchGroup(
     semantic: base.semantic,
   };
 }
-
-// Note: getStartupDefaultsForProfile has been moved to language-profile.ts as getDefaultStartupTools
-// Import from there if needed: import { getDefaultStartupTools } from "./language-profile.ts"
 
 export function canRunStartupHeavyScans(profile: ProjectLanguageProfile, kind: FileKind): boolean {
   if (!profile.present[kind]) return false;

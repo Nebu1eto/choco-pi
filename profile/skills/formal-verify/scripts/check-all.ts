@@ -1,28 +1,4 @@
 #!/usr/bin/env node
-// Runs every TLA+ model declared by a formal/tla/*/check.json manifest: the
-// base model and each mutation, through tlc.ts as a child process (tlc.ts runs
-// on import and exports nothing). Prints one JSON summary.
-//
-//   node check-all.ts [--root <dir>] [--tools-dir <dir>] [--jar <path>]
-//     [--jobs <n>] [--workers <n>] [--heap-mb <n>] [--only <name>]
-//
-// --jobs runs that many tlc.ts processes at once and --workers gives each that
-// many TLC worker threads. Both default to 2, or 1 on a small machine (fewer
-// than 8 cores or 8 GiB for --jobs, fewer than 4 cores for --workers), so a
-// full run keeps about four cores and two capped heaps busy. Verdicts do not
-// depend on either: every rule is decided by a complete run.
-//
-// Without --root it searches the current directory and its parents, up to the
-// git repository root, for the nearest one containing formal/.
-//
-// Exit codes: 0 every expectation met, or no manifest under an existing formal/
-// (the summary then has "manifests": 0 and a message saying nothing was
-// checked); 3 an expectation failed (a base model
-// that does not give its `expect` result, a mutation whose violated set is not
-// exactly its `expectViolated`, or any run that was inconclusive or errored);
-// 2 usage error, no formal/ directory, unreadable or malformed manifest, or
-// --only naming no model.
-// It fails closed: a rule TLC did not check never counts as holding.
 
 import type { Stats } from "node:fs";
 import { lstat, readFile, readdir, stat } from "node:fs/promises";
@@ -47,11 +23,9 @@ import { killActive, runProcess } from "./tlc-tools.ts";
 
 const TLC_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "tlc.ts");
 const MAX_OUTPUT_BYTES = 256 << 20;
-/** Extra time past a run's own timeout before the runner kills tlc.ts itself. */
 const KILL_MARGIN_MS = 60_000;
 const GIB = 1024 ** 3;
 
-/** Default concurrency for this machine; see the header comment. */
 function defaultParallelism() {
   const cores = availableParallelism();
   return {
@@ -93,7 +67,6 @@ type Options = {
   only: string | undefined;
 };
 
-/** One TLC run the runner checks against an expectation. */
 type Job = {
   model: string;
   kind: "base" | "mutation";
@@ -102,7 +75,6 @@ type Job = {
   config: string;
   maxStates: number;
   timeoutMs: number;
-  /** "pass", or the exact set of rules (and "deadlock") expected violated. */
   expected: "pass" | string[];
 };
 
@@ -121,7 +93,6 @@ type JobResult = {
   problem?: string;
 };
 
-/** Parsed arguments; --root is resolved separately by findFormalRoot. */
 type Arguments = Omit<Options, "root"> & { root: string | undefined };
 
 function parseOptions(argv: string[]): Arguments {
@@ -163,18 +134,10 @@ function parseOptions(argv: string[]): Arguments {
   };
 }
 
-/** True when a filesystem error says the path does not exist. */
 function isMissing(error: Error): boolean {
   return "code" in error && error.code === "ENOENT";
 }
 
-/**
- * Every formal/tla/<dir>/check.json under root, sorted. Only a formal/tla that
- * does not exist means "no models"; a plain file in formal/tla, or a directory
- * with no check.json entry, is not a model. Every other failure to look (an
- * unreadable directory, a dangling symlink, a check.json that is not a file)
- * is an error naming the path, so a model is never silently skipped.
- */
 async function findManifests(root: string): Promise<string[]> {
   const base = path.join(root, "formal", "tla");
   try {
@@ -218,7 +181,6 @@ async function findManifests(root: string): Promise<string[]> {
   return found;
 }
 
-/** Resolve a manifest-relative path that must stay inside the model directory. */
 function inside(dir: string, relative: string, field: string): string {
   if (path.isAbsolute(relative)) throw new UsageError(`${field} must be relative: ${relative}`);
   const resolved = path.resolve(dir, relative);
@@ -308,10 +270,8 @@ function sameSet(a: readonly string[], b: readonly string[]): boolean {
   return left.size === right.size && [...left].every((item) => right.has(item));
 }
 
-/** Whether a run met its expectation, and why not. */
 type Verdict = { ok: boolean; problem?: string };
 
-/** Compare one tlc.ts result with its expectation, failing closed. */
 function judge(job: Job, result: CheckResult): Verdict {
   const rules = [...result.invariants, ...result.properties];
   const violated = rules.filter((rule) => rule.status === "violated").map((rule) => rule.name);
@@ -405,7 +365,6 @@ async function runJob(job: Job, options: Options): Promise<JobResult> {
   };
 }
 
-/** Run jobs with at most `options.jobs` in flight; results keep job order. */
 async function runAll(jobs: Job[], options: Options): Promise<JobResult[]> {
   const results: JobResult[] = [];
   let next = 0;
@@ -451,7 +410,6 @@ async function main(argv: string[]): Promise<number> {
       if (jobs.length === 0) throw new UsageError(`no model named ${only}`);
     }
     if (manifests.length === 0) {
-      // Nothing to check is not a failure, but it must not read as "models passed".
       const message = `no TLA+ model manifest found: searched ${path.join(root, "formal", "tla", "*", "check.json")}; nothing was checked`;
       process.stdout.write(
         `${JSON.stringify({ schema: 1, ok: true, manifests: 0, message, results: [] }, null, 2)}\n`,

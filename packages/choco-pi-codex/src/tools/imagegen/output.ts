@@ -3,8 +3,6 @@ import { isJsonObject } from "@choco-pi/code-mode/runtime-values";
 import { isString } from "@choco-pi/code-mode/value-guards";
 import type { ViewImageContent } from "@choco-pi/code-mode/tools/view-image/output";
 
-// The binary protocol requires only `path`; optional fields are consumed defensively below.
-
 export interface ImagegenOutput {
   path: string;
   latest_path?: string | undefined;

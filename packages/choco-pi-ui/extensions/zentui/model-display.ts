@@ -1,11 +1,3 @@
-/**
- * Dependency-free model display helpers shared by every user-facing surface.
- *
- * Keep this module free of imports: other packages (choco-pi-subagents and
- * root extensions) import it by relative path.
- */
-
-/** Display names keyed by Pi provider id. */
 interface ProviderLabels {
   readonly [provider: string]: string;
 }
@@ -19,7 +11,6 @@ const KNOWN_PROVIDER_LABELS: ProviderLabels = {
   "openai-codex": "OpenAI",
 };
 
-/** Human-readable provider name for prose, e.g. `openai` or legacy `openai-codex` → `OpenAI`. */
 export function formatProviderLabel(provider: string | undefined): string {
   if (!provider) return "Unknown";
   return (
@@ -28,7 +19,6 @@ export function formatProviderLabel(provider: string | undefined): string {
   );
 }
 
-/** Identifier form of a model reference, e.g. `anthropic/claude-opus`. */
 export function formatModelRef(provider: string, id: string): string {
   return `${provider}/${id}`;
 }

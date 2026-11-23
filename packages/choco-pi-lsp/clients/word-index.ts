@@ -1,19 +1,3 @@
-/**
- * Identifier-aware inverted word index + BM25 ranking.
- *
- * The lexical half of the "codebase mental model + hybrid ranking" ask (#162):
- * a deterministic, zero-dep index over source identifiers that answers
- * "which files are most relevant to <query>" with BM25 relevance plus a small
- * set of priors (demote tests/vendor and doc files) and an optional graph
- * centrality boost (importedBy count from the reverse-dependency index). It
- * complements LSP/symbol navigation rather than duplicating the host's grep:
- * grep finds raw substrings; this ranks files by identifier relevance.
- *
- * Built from file contents during the session scan, persisted in the project
- * snapshot (serialize/deserialize below), and queried via an MCP tool. No
- * embeddings, no native deps, no daemon — pure in-process TypeScript.
- */
-
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createDeadline, forEachCooperatively, yieldIfOverBudget } from "./cooperative-budget.ts";
@@ -29,97 +13,34 @@ export interface WordHit {
   line: number;
 }
 
-/**
- * The single normalizer every word-index path key folds through (#1025). The
- * CHEAP form — slash-fold + win32-lowercase, NO filesystem I/O — because the
- * index is a hot, single-process, in-memory structure whose keys this process
- * produces itself (`collectSourceFilesAsync`'s walk, `path.resolve` at the
- * per-edit seams). `normalizeMapKey`'s `realpathSync` per call would be wrong on
- * the BM25 path. Applied at BOTH the build seam and the per-edit update seam so
- * a file's on-disk casing (walk) and its tool-input casing (edit) can no longer
- * diverge into a duplicate doc entry with stale postings (the #1025 item #2
- * bug). Kept as a named alias so every seam is grep-visible and provably shares
- * ONE normalizer with the {@link PathKeyedMap}s below.
- */
 export const wordIndexKey = normalizeEphemeralMapKey;
 
 export interface WordIndex {
-  /** token → postings (one entry per (file,line) the token appears on). */
   postings: Map<string, WordHit[]>;
-  /**
-   * file → number of indexed tokens (document length, for BM25 normalization).
-   * Path-keyed via {@link wordIndexKey} ({@link PathKeyedMap}) so build-form and
-   * edit-form keys for the same file collapse to one entry (#1025).
-   */
   docLengths: PathKeyedMap<number>;
   totalTokens: number;
   docCount: number;
-  /** True when source collection hit its file cap, so searches may be incomplete. */
   truncated?: boolean;
-  /**
-   * Forward index (#348 phase 2): file → (token → distinct-line count for that
-   * token in that file). Mirrors exactly what the postings list holds for this
-   * file, so a single-document replace is mechanical — subtract this file's own
-   * contribution from `postings`/`docLengths`/`totalTokens`/`docCount` via the
-   * forward entry, then add the new one, instead of re-walking every other
-   * file's postings to find what to remove. Absent (`undefined`) on indexes
-   * built by phase 1 or deserialized from a pre-phase-2 snapshot — callers that
-   * need incremental updates must treat a missing forward index as "no
-   * incremental primitive available" and fall back to a full rebuild.
-   */
   forward?: PathKeyedMap<Map<string, number>>;
-  /** File mtimes captured when each document was tokenized (#958). */
   fileMtimes: PathKeyedMap<number>;
-  /**
-   * File byte sizes captured when each document was tokenized (#1105). The
-   * incremental refresh gate is mtime-first (cheap, from the stat it already
-   * runs) but mtime alone is a stale signal: a content change that PRESERVES
-   * mtime (git checkout timestamp restoration, a formatter that preserves
-   * mtime, a same-second/same-clock write) would leave the old postings serving
-   * stale identifiers to symbol_search. Size is the free second axis of the
-   * review-graph gold-standard `size:mtimeMs` signature (builder.ts's
-   * `sourceSignatureEntry`) — the walk already reads `stat.size` to enforce the
-   * byte cap, so comparing it costs nothing yet catches every content change
-   * that alters length. The residual (same mtime AND same byte length, changed
-   * content) matches review-graph's own accepted residual; closing it would
-   * require reading+hashing every REUSED file on every refresh (the blind skip
-   * path), which is exactly the unconditional hot-path hashing the event-loop
-   * discipline forbids.
-   */
   fileSizes: PathKeyedMap<number>;
 }
 
 export interface RankedFile {
   file: string;
   score: number;
-  /** Number of query-token occurrences in the file (summed term frequency). */
   hits: number;
-  /** Distinct lines where a query token occurred, ascending. */
   lines: number[];
 }
 
 export interface RankOptions {
-  /** Demote files under test/vendor/example paths (default true). */
   demoteTestVendor?: boolean;
-  /** Demote documentation/data files so they can't starve a real source match (default true). */
   demoteDocs?: boolean;
-  /** file → graph centrality (e.g. importedBy count); boosts well-connected files. */
   centrality?: Map<string, number>;
-  /** Max results to return (default 20). */
   limit?: number;
-  /**
-   * Optional pre-ranking scope predicate (#771, e.g. symbol_search's `paths`/
-   * `lang` params) — a file failing this check is dropped BEFORE its score
-   * entry is created, so a surviving file's score/priors/centrality boost are
-   * computed identically to an unfiltered run; only which files make it into
-   * the results list changes. Omitted (default) behaves exactly as before.
-   */
   fileFilter?: (file: string) => boolean;
 }
 
-// Common language keywords / boilerplate — indexing them adds noise and bloats
-// postings without improving relevance. Kept deliberately small and
-// language-agnostic.
 const STOPWORDS = new Set([
   "the",
   "and",
@@ -185,12 +106,6 @@ function isDocFile(file: string): boolean {
   return DOC_FILE_RE.test(file);
 }
 
-/**
- * Split an identifier into lowercased sub-tokens across camelCase, PascalCase,
- * snake_case, kebab-case, dotted, and digit boundaries — and keep the whole
- * lowercased identifier too. `getUserByID` → [getuserbyid, get, user, by, id];
- * `MAX_RETRY_2` → [max_retry_2, max, retry, 2] (whole kept, plus parts).
- */
 export function splitIdentifier(identifier: string): string[] {
   const parts = new Set<string>();
   const whole = identifier.toLowerCase();
@@ -198,10 +113,10 @@ export function splitIdentifier(identifier: string): string[] {
   for (const chunk of identifier.split(/[^A-Za-z0-9]+/)) {
     if (!chunk) continue;
     const spaced = chunk
-      .replace(/([a-z0-9])([A-Z])/g, "$1 $2") // camelCase → camel Case
-      .replace(/[A-Z](?=[A-Z][a-z])/g, "$& ") // HTTPServer → HTTP Server (linear; lookahead avoids super-linear backtracking, S5852)
-      .replace(/([A-Za-z])([0-9])/g, "$1 $2") // retry2 → retry 2
-      .replace(/([0-9])([A-Za-z])/g, "$1 $2"); // 2fa → 2 fa
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .replace(/[A-Z](?=[A-Z][a-z])/g, "$& ")
+      .replace(/([A-Za-z])([0-9])/g, "$1 $2")
+      .replace(/([0-9])([A-Za-z])/g, "$1 $2");
     for (const sub of spaced.split(/\s+/)) {
       const token = sub.toLowerCase();
       if (token.length >= 2 && !STOPWORDS.has(token)) parts.add(token);
@@ -210,7 +125,6 @@ export function splitIdentifier(identifier: string): string[] {
   return [...parts];
 }
 
-/** Extract identifier-like tokens from a line and split each into sub-tokens. */
 export function tokenizeLine(line: string): string[] {
   const tokens: string[] = [];
   const matches = line.match(/[A-Za-z_$][A-Za-z0-9_$]*/g);
@@ -221,12 +135,6 @@ export function tokenizeLine(line: string): string[] {
   return tokens;
 }
 
-/**
- * Build the inverted index from file contents. One posting per (token, file,
- * line) — a token repeated on the same line counts once — so term frequency is
- * "lines mentioning the token", a stable signal that doesn't over-weight a line
- * that repeats an identifier. Document length is the total indexed token count.
- */
 type WordIndexInputDocument = {
   path: string;
   content: string;
@@ -239,28 +147,8 @@ type WordIndexInputDocuments = WordIndexInputDocument[] & {
 };
 
 const WORD_INDEX_BUILD_YIELD_BUDGET_MS = 8;
-/**
- * A line at or above this length is treated as a yield checkpoint on its own.
- * The per-50-lines cadence is a proxy for work that only holds on hand-written
- * source: a minified/bundled single-line file up to {@link WORD_INDEX_MAX_BYTES}
- * that the source filter did not exclude would otherwise get ZERO in-document
- * yields — one unbroken tokenize+push burst far above the budget (#1197 review
- * finding 4). Checking the clock after any long line makes the cooperativeness
- * claim true per BYTE, not just per line count.
- */
 const WORD_INDEX_LONG_LINE_YIELD_CHARS = 4096;
 
-/**
- * Shared cooperative time-slicer for every bulk word-index path (#1197).
- *
- * Time-based, not count-based: "yield every N items" is only a bound when the
- * per-item cost is bounded too, and the incremental refresh's per-document cost
- * grows with the corpus (each replacement filters shared posting arrays). The
- * #1197 outage was exactly that shape — 239 stale documents held pi's event loop
- * for seconds between two "every 100 files" checkpoints. Callers combine this
- * The shared deadline is checked at every bounded work unit so abort latency
- * and occupancy are governed by the same monotonic budget.
- */
 function createEmptyWordIndex(truncated: boolean): WordIndex {
   return {
     postings: new Map<string, WordHit[]>(),
@@ -324,13 +212,6 @@ export function buildWordIndex(files: WordIndexInputDocuments): WordIndex {
   return index;
 }
 
-/**
- * Cooperative production builder for bulk/cold paths. It produces the exact
- * same index as {@link buildWordIndex}, but time-slices both between documents
- * and within a large document so startup warmup cannot monopolize pi's TUI
- * event loop (#1197). The index is private until this resolves, so a superseded
- * build never publishes a partial replacement.
- */
 export async function buildWordIndexAsync(
   files: WordIndexInputDocuments,
   shouldContinue: () => boolean = () => true,
@@ -358,24 +239,11 @@ export async function buildWordIndexAsync(
   return index;
 }
 
-/**
- * Remove `filePath`'s postings/docLength/forward entry from `index` in place,
- * using the forward index to know exactly which tokens to touch (no scan of
- * unrelated postings). No-op (returns false) if the index has no forward
- * index yet (pre-phase-2 / deserialized-old-shape) or the file isn't present —
- * callers must treat `false` as "fall back to a full rebuild", never as
- * silent success.
- */
 export function removeWordIndexDocument(index: WordIndex, filePath: string): boolean {
   if (!index.forward) return false;
   const tokenLineCounts = index.forward.get(filePath);
   if (!tokenLineCounts) return false;
 
-  // `postings` is token-keyed (not a PathKeyedMap), so its `WordHit.file`
-  // display strings must be compared through the SAME normalizer the path maps
-  // use — otherwise a build-form hit (`SUB/a.ts`) survives an edit-form removal
-  // (`sub/a.ts`) on a case-insensitive FS and lingers as a stale posting
-  // (the #1025 item #2 bug this fix closes).
   const removedKey = wordIndexKey(filePath);
   for (const token of tokenLineCounts.keys()) {
     const arr = index.postings.get(token);
@@ -395,33 +263,16 @@ export function removeWordIndexDocument(index: WordIndex, filePath: string): boo
   return true;
 }
 
-/**
- * Add or replace `filePath`'s document in `index` in place: removes the prior
- * postings for this file (if any, via {@link removeWordIndexDocument}'s
- * forward-index lookup) then re-tokenizes `content` and adds the new
- * postings/docLength/forward entry. df/N/totalTokens (avgdl) are updated as
- * running stats — no full recompute over other documents.
- *
- * Returns `false` (no-op on `index`) when the index has no forward index —
- * the caller must fall back to a full {@link buildWordIndex} rebuild in that
- * case (documented at the `forward` field and enforced by callers, not
- * silently patched here: a partially-forward-consistent index would corrupt
- * future incremental updates).
- */
 export function updateWordIndexDocument(
   index: WordIndex,
   doc: { path: string; content: string },
 ): boolean {
   if (!index.forward) return false;
 
-  // Remove the old contribution first (no-op if this is a brand new doc).
   if (index.forward.has(doc.path)) {
     removeWordIndexDocument(index, doc.path);
   }
 
-  // Tokenize with line numbers attached (needed for WordHit.line) — this also
-  // yields the forward-index entry (distinct-line count per token) so the
-  // tokenization work happens exactly once for this document.
   const lines = doc.content.split(/\r?\n/);
   const perTokenHits = new Map<string, number[]>();
   let docLength = 0;
@@ -449,17 +300,7 @@ export function updateWordIndexDocument(
 
   index.docLengths.set(doc.path, docLength);
   index.forward.set(doc.path, tokenLineCounts);
-  // Per-edit callers generally already have content but not a stat. -1 is an
-  // impossible real mtime, so it deliberately makes the document stale at the
-  // next startup refresh (`-1 !== realMtime` always) — unlike 0, which is a
-  // legal on-disk mtime (SOURCE_DATE_EPOCH=0, archive extraction) and would
-  // collide, leaving such a file never re-tokenized (#958 review F2).
   index.fileMtimes.set(doc.path, -1);
-  // Size is likewise recorded for the #1105 mtime+size refresh gate. The -1
-  // mtime already forces a re-read next session, so this value only keeps the
-  // map dense (parallel to fileMtimes); store the real byte length so a
-  // deserialize→reserialize round-trip before any refresh carries a truthful
-  // size rather than a placeholder.
   index.fileSizes.set(doc.path, Buffer.byteLength(doc.content, "utf-8"));
   index.totalTokens += docLength;
   index.docCount += 1;
@@ -515,7 +356,6 @@ function commitWordIndexDocumentRemoval(
   index.docCount = Math.max(0, index.docCount - 1);
 }
 
-/** Cooperative, atomically-published removal used only by bulk refresh. */
 export async function removeWordIndexDocumentAsync(
   index: WordIndex,
   filePath: string,
@@ -528,7 +368,6 @@ export async function removeWordIndexDocumentAsync(
   return true;
 }
 
-/** Cooperative replacement whose old/new state is committed without an await. */
 export async function updateWordIndexDocumentAsync(
   index: WordIndex,
   doc: { path: string; content: string },
@@ -581,16 +420,6 @@ export async function updateWordIndexDocumentAsync(
   return true;
 }
 
-/** Bounds shared by every word-index build path — keep the walk off the
- * critical path on large repos: cap the file count, and skip files too large
- * to be hand-written source (generated/bundled output the source filter
- * didn't already exclude).
- *
- * Deprecated (#776): `collectWordIndexDocs` below no longer reads this
- * constant directly — it derives its cap from `getWordIndexMaxFilesDerived`
- * (project-scale.ts's `maxProjectFiles` knob), which reproduces this same
- * 6,000 default at the default base. Kept exported for tests/callers that
- * still reference the literal. */
 export const WORD_INDEX_MAX_FILES = 6000;
 export const WORD_INDEX_MAX_BYTES = 512 * 1024;
 
@@ -600,14 +429,6 @@ export type WordIndexPreflightFiles = Array<{
   size: number;
 }> & { truncated: boolean };
 
-/**
- * Collect the bounded `{path, content}` doc set `buildWordIndex` consumes —
- * the ONE file-walk-and-read implementation shared by every build path
- * (session-start task, quick-mode warmup, cold-query background trigger),
- * so a bound/skip-rule change lands in one place instead of three copies.
- * `shouldContinue` lets a session-scoped caller abort early (session
- * superseded) without this module knowing about RuntimeCoordinator.
- */
 export async function collectWordIndexDocs(
   root: string,
   shouldContinue: () => boolean = () => true,
@@ -615,31 +436,11 @@ export async function collectWordIndexDocs(
 ): Promise<
   Array<{ path: string; content: string; mtimeMs: number; size: number }> & {
     truncated: boolean;
-    /**
-     * Files the walk enumerated but this pass could NOT index — unreadable
-     * (vanished / locked) or over `WORD_INDEX_MAX_BYTES`. Surfaced (L1, #958)
-     * so the full-build path can report coverage honestly (#533) instead of
-     * silently dropping them with no count, the way the incremental path
-     * already reports its own `skipped`.
-     */
     skipped: number;
   }
 > {
   const { collectSourceFilesAsync } = await import("./source-filter.ts");
-  // #747 hardening: pass the cap INTO the walk — without it,
-  // `collectSourceFilesAsync` defaults to an unbounded traversal and the
-  // `WORD_INDEX_MAX_FILES` slice below only trims the result AFTER the whole
-  // tree (all of $HOME, on a misrooted cwd) has already been enumerated.
-  // #760: the walk is additionally bounded by source-filter's default
-  // visited-entry budget (DEFAULT_MAX_SCAN_ENTRIES), so a mixed tree with few
-  // source files among a huge pile of non-source files can't force a
-  // full-tree walk either; an index over the truncated list is acceptable.
   const maxFiles = preflightFiles?.length ?? getWordIndexMaxFilesDerived(root);
-  // #894 review: prioritize code kinds within the cap — with broadened
-  // enumeration, thousands of data/doc files (locale JSON, fixtures, …)
-  // ahead of the code dirs in walk order could exhaust `maxFiles` and evict
-  // real source files from the index entirely (DOC_FILE_PENALTY can't
-  // rescue a file that never made the slice).
   const files = preflightFiles
     ? preflightFiles.map((file) => file.path)
     : await collectSourceFilesAsync(root, {
@@ -662,11 +463,6 @@ export async function collectWordIndexDocs(
   for (const file of files.slice(0, maxFiles)) {
     if (!shouldContinue()) return docs;
     try {
-      // A preflight list saves the second full WALK, but its metadata may be
-      // stale by the time this rebuild reads the file. Re-stat each document at
-      // content-read time so the stored freshness stamp describes the bytes we
-      // actually index and the next incremental refresh cannot miss a change in
-      // the walk-to-read window (#1302).
       const stat = fs.statSync(file);
       if (stat.size <= WORD_INDEX_MAX_BYTES) {
         docs.push({
@@ -676,13 +472,9 @@ export async function collectWordIndexDocs(
           size: stat.size,
         });
       } else {
-        // Over the byte cap — enumerated but deliberately not indexed. Count
-        // it (L1, #958) so callers can keep coverage honest instead of the
-        // old silent drop.
         docs.skipped += 1;
       }
     } catch {
-      // unreadable / vanished file — skip, but count it (see above).
       docs.skipped += 1;
     }
     if (deadline.expired() && (await yieldIfOverBudget(deadline))) {
@@ -696,7 +488,6 @@ export interface WordIndexRefreshResult {
   mode: "incremental";
   refreshed: number;
   dropped: number;
-  /** Files that were stale but unreadable this pass; posting left intact. */
   skipped: number;
   reused: number;
   timings: WordIndexRefreshTimings;
@@ -711,7 +502,6 @@ export interface WordIndexRefreshTimings {
 export interface WordIndexRebuildRequired {
   mode: "full-required";
   reason: "missing-incremental-metadata" | "file-set-churn" | "stale-document-churn";
-  /** Bounded walk+stat result for a rebuild without repeating the full walk. */
   preflightFiles?: WordIndexPreflightFiles;
   timings: WordIndexRefreshTimings;
 }
@@ -723,45 +513,13 @@ export interface WordIndexRefreshOptions {
   statConcurrency?: number;
 }
 
-// Node's fs.promises.stat runs on libuv's threadpool (default 4 slots), so
-// real parallelism tops out there; the surplus workers are queue depth that
-// keeps the pool saturated without starving other threadpool consumers.
 export const WORD_INDEX_STAT_CONCURRENCY = 8;
 
 const WORD_INDEX_INCREMENTAL_CHURN_THRESHOLD = 0.3;
-// A ratio alone misclassifies one stale file in a three-file project as dense.
-// Below this absolute floor, per-document replacement is bounded and cheaper
-// than a second full walk/read even when the percentage is high (#1197).
 const WORD_INDEX_DENSE_REFRESH_MIN_DOCUMENTS = 32;
-/**
- * Cost of one file's stat+read+decode expressed in tokenizer-token units, so
- * the work model below can compare a path that re-reads EVERY file (full
- * rebuild) against one that re-reads only the stale files (incremental) in a
- * single currency. One read ≈ 300 tokens at the ~1 µs/token measured below.
- * Order-of-magnitude by design — it only has to keep a tiny-vocabulary corpus
- * (where posting scans are nearly free) from being sent to a full rebuild that
- * re-reads everything to save a handful of array filters.
- */
 const WORD_INDEX_FILE_READ_TOKEN_COST = 300;
-/**
- * Cost of scanning ONE posting-array element (the `wordIndexKey` compare in
- * {@link removeWordIndexDocument}'s filter) relative to tokenizing one token,
- * so both sides of the model below are denominated in tokens. Measured on this
- * repository's own 2,062-document corpus: 213 ns per element scan against 979 ns
- * per token — and the resulting predicted crossover (23 stale documents) lands
- * on the directly measured one (~21, from 97.8 ms per document replacement
- * against a 1,436 ms rebuild + re-read). The synthetic high-df corpus in the
- * #1197 probe gives 0.09, so this is the conservative (incremental-favouring)
- * end of the observed range.
- */
 const WORD_INDEX_POSTING_SCAN_TOKEN_COST = 0.2;
 
-/**
- * Refresh a serializer-v2 index from the current bounded source-file set.
- * The walk/stat pass is cheap; only sparse stale/new documents are read and
- * tokenized. Expected dense/legacy states return `full-required` BEFORE any
- * mutation; unexpected corruption or supersession still throws.
- */
 export async function refreshWordIndexIncrementally(
   index: WordIndex,
   root: string,
@@ -785,18 +543,6 @@ export async function refreshWordIndexIncrementally(
   const sourceWalkMs = Date.now() - sourceWalkStartMs;
   if (!shouldContinue()) throw new Error("word index refresh superseded");
 
-  // This set-difference must run in the SAME normalized key space the path
-  // maps use (#1025 review). Otherwise a file whose stored displayPath became
-  // the edit form (last-writer-wins after a case/separator-divergent per-edit
-  // update) no longer string-matches its walk form here — even though
-  // `fileMtimes.get(walkForm)` folds and hits — which would (1) double-count
-  // churn (the same file scored as both "dropped" and "added"), possibly
-  // crossing the threshold and forcing a needless full rebuild, and (2) drop
-  // then re-add an unchanged file, opening a regression window because the drop
-  // loop runs BEFORE the re-read: a transient read failure (skipped++) would
-  // strand the file with no postings. Keying `current` and `oldSet` through
-  // `wordIndexKey` keeps build/edit/refresh convergent; `current`'s value
-  // retains the raw walk path for the stat/read and for the display key.
   const current = new Map<string, { path: string; mtimeMs: number; size: number }>();
   const statWalkStartMs = Date.now();
   const statFile = options.statFile ?? ((file: string) => fs.promises.stat(file));
@@ -829,9 +575,7 @@ export async function refreshWordIndexIncrementally(
             size: stat.size,
           };
         }
-      } catch {
-        // A rejection has statSync parity: the file is simply absent.
-      }
+      } catch {}
     }
   };
   await Promise.all(
@@ -863,47 +607,18 @@ export async function refreshWordIndexIncrementally(
     };
   }
 
-  // Replacing one document filters every shared posting array for that
-  // document's tokens. That is excellent for a sparse edit, but repeating it
-  // for most of the corpus becomes effectively quadratic. Decide the dense
-  // transition BEFORE dropping or editing anything so the old index remains a
-  // valid fallback until a separately-built full replacement is ready (#1197).
   let staleDocuments = 0;
   for (const { path: file, mtimeMs, size } of current.values()) {
     if (index.fileMtimes.get(file) !== mtimeMs || (index.fileSizes.get(file) ?? -1) !== size) {
       staleDocuments += 1;
     }
   }
-  // Density alone is NOT a bound (#1197 review finding 1): the per-document cost
-  // GROWS with the corpus, so a stale set comfortably under any fixed ratio (or
-  // any fixed absolute ceiling) still costs orders of magnitude more than a
-  // rebuild on a big enough repository. 800 documents with 239 stale — 29.875%,
-  // just under the ratio — measured 90.6 s with a 39.6 s synchronous block
-  // against 1.3 s / 10.6 ms for a full build, and at the 6,000-file cap up to
-  // 1,799 stale documents would have stayed on that path.
-  //
-  // So compare estimated WORK, both sides denominated in tokenizer tokens:
-  //   incremental ≈ stale x (docTokens x postingLength x scanCost + readCost)
-  //   full        ≈ totalTokens + corpusSize x readCost
-  // This is self-bounding in a way no constant is: the incremental path is taken
-  // only while its total estimated cost stays under ONE full rebuild, so the
-  // worst case is "about as expensive as rebuilding", whatever the corpus size.
-  //
-  // Both statistics come from cheap metadata passes — one over `postings`
-  // (distinct tokens, reading only `.length`) and one over `forward` (documents,
-  // reading only `.size`). Neither touches a posting ELEMENT, which is the work
-  // this decision exists to avoid.
   let postingEntries = 0;
   let weightedPostingEntries = 0;
   for (const hits of index.postings.values()) {
     postingEntries += hits.length;
     weightedPostingEntries += hits.length * hits.length;
   }
-  // The mean posting-array length weighted by OCCURRENCES, not the plain mean:
-  // a document's tokens are drawn from the frequency distribution, so the arrays
-  // a removal actually filters skew hard toward the high-document-frequency
-  // tokens. The unweighted mean (dominated by the long tail of df=1 tokens)
-  // underestimates the real cost by an order of magnitude.
   const expectedPostingLength = postingEntries > 0 ? weightedPostingEntries / postingEntries : 0;
   let distinctTokenEntries = 0;
   for (const tokenLineCounts of index.forward.values()) {
@@ -916,13 +631,6 @@ export async function refreshWordIndexIncrementally(
       WORD_INDEX_FILE_READ_TOKEN_COST);
   const estimatedFullRebuildWork =
     index.totalTokens + current.size * WORD_INDEX_FILE_READ_TOKEN_COST;
-  // The document-count floor guards the RATIO test only — its documented job is
-  // that "one stale file in a three-file project" is 33% but not dense. It must
-  // NOT gate the work test: a floor is another constant, and letting one
-  // suppress the work comparison would reintroduce exactly the unbounded-on-the
-  // -other-axis shape (31 documents at 98 ms each on this repository's own
-  // corpus, and worse as the corpus grows). The work test needs no floor — on a
-  // small project a full rebuild is cheap, so it never fires there.
   if (
     (staleDocuments >= WORD_INDEX_DENSE_REFRESH_MIN_DOCUMENTS &&
       staleDocuments / Math.max(current.size, 1) > WORD_INDEX_INCREMENTAL_CHURN_THRESHOLD) ||
@@ -940,8 +648,6 @@ export async function refreshWordIndexIncrementally(
   let dropped = 0;
   for (const key of oldSet) {
     if (!current.has(key)) {
-      // `key` is already folded; removeWordIndexDocument re-folds it
-      // idempotently via the PathKeyedMap, so the drop hits the right entry.
       if (!(await removeWordIndexDocumentAsync(index, key, shouldContinue))) {
         throw new Error(`failed to drop word-index document: ${key}`);
       }
@@ -953,20 +659,7 @@ export async function refreshWordIndexIncrementally(
   let skipped = 0;
   const refreshReadsStartMs = Date.now();
   for (const { path: file, mtimeMs, size } of current.values()) {
-    // #1105: mtime-first, size-second freshness — mtime alone is a stale
-    // signal (mtime-preserving content changes serve stale identifiers to
-    // symbol_search). Size is free (the stat above already read it) and
-    // catches every content change that alters byte length. Both come from the
-    // SAME stat, so a mismatch on EITHER axis re-reads. `?? -1` makes a file
-    // absent from the (possibly legacy, pre-#1105) size map always count as
-    // changed → one-time re-read that repopulates the size, the safe direction.
     if (index.fileMtimes.get(file) !== mtimeMs || (index.fileSizes.get(file) ?? -1) !== size) {
-      // A file the walk/stat pass saw can still fail to read here — a
-      // transient exclusive lock (antivirus, an editor, a build step) or a
-      // file that vanished in the interim. Match collectWordIndexDocs'
-      // tolerance: skip this one file and leave its existing posting (and
-      // its old mtime, so it is retried next session) rather than aborting
-      // the whole incremental pass into a full rebuild (#958 review F1).
       let content: string;
       try {
         content = fs.readFileSync(file, "utf-8");
@@ -977,18 +670,10 @@ export async function refreshWordIndexIncrementally(
       if (!(await updateWordIndexDocumentAsync(index, { path: file, content }, shouldContinue))) {
         throw new Error(`failed to refresh word-index document: ${file}`);
       }
-      // updateWordIndexDocument stamps mtime=-1 (per-edit convention); the
-      // refresh path KNOWS the real on-disk stat, so overwrite both axes with
-      // the true values so this document is not needlessly re-read next pass.
       index.fileMtimes.set(file, mtimeMs);
       index.fileSizes.set(file, size);
       refreshed++;
     }
-    // Same OR as the stat loop. This is the loop the #1197 outage actually
-    // blocked in: replacing one document costs more the larger the corpus is,
-    // so a count-only checkpoint let 100 replacements run back to back for
-    // seconds. The gate above keeps the stale set sparse; this keeps even a
-    // sparse-but-expensive set off the event loop.
     if (deadline.expired() && (await yieldIfOverBudget(deadline))) {
       if (!shouldContinue()) throw new Error("word index refresh superseded");
     }
@@ -1005,19 +690,6 @@ export async function refreshWordIndexIncrementally(
   };
 }
 
-// --- Query prefix filters (#1450) --------------------------------------------
-//
-// Composable `lang:`/`file:`/`ext:` filters mixed into the plain query string,
-// e.g. `lang:ts file:clients/ -file:test rank`. Hand-rolled tokenizer (a regex
-// split per whitespace token) rather than a grammar — the issue's explicit
-// direction, and the query language is small enough that a grammar would be
-// pure overhead. Landed HERE, in `searchWordIndex` (the word-index query entry
-// point), so both the pi `symbol_search` tool and the MCP
-// `pilens_symbol_search` mirror inherit the syntax for free: they already pass
-// their `query` argument straight through to `symbolSearch` → `searchWordIndex`
-// with no filter-specific plumbing of their own.
-
-/** The three supported inline query-filter prefixes (#1450). */
 export type WordIndexQueryFilterKey = "lang" | "file" | "ext";
 
 export const WORD_INDEX_QUERY_FILTER_KEYS: readonly WordIndexQueryFilterKey[] = [
@@ -1029,20 +701,14 @@ export const WORD_INDEX_QUERY_FILTER_KEYS: readonly WordIndexQueryFilterKey[] = 
 export interface WordIndexQueryFilter {
   key: WordIndexQueryFilterKey;
   value: string;
-  /** True when the token was `-key:value` — always subtracts, never OR's with a positive filter of the same key. */
   negated: boolean;
 }
 
 export interface ParsedWordIndexQuery {
-  /** The query with filter tokens stripped, ready for {@link tokenizeLine} — identical to the input when it contains no filters. */
   terms: string;
   filters: WordIndexQueryFilter[];
 }
 
-/** Thrown by {@link parseWordIndexQuery}/{@link buildWordIndexQueryFilter} for
- * an unrecognized `key:` prefix or an unrecognized `lang:` value — a query
- * typo fails loudly with the supported list instead of silently degrading
- * into a literal search term (#1450 acceptance criterion). */
 export class WordIndexQueryError extends Error {
   constructor(message: string) {
     super(message);
@@ -1052,21 +718,6 @@ export class WordIndexQueryError extends Error {
 
 const WORD_INDEX_FILTER_TOKEN_RE = /^(-)?([A-Za-z][A-Za-z0-9_-]*):(.+)$/;
 
-/**
- * Split a word-index query string into plain search terms and `key:value`
- * prefix filters (#1450). Whitespace-delimited, one regex per token — no
- * quoting scheme invented here, matching the pre-existing query path (which
- * never supported quoting either). A `-` immediately before a recognized
- * `key:` negates that filter; a bare `-term` (no colon) is left as an
- * ordinary token, unchanged from prior behavior — `tokenizeLine` already
- * strips the leading `-` when it extracts identifiers.
- *
- * An unrecognized `key:` (e.g. `type:foo`) throws {@link WordIndexQueryError}
- * naming the supported prefixes, rather than falling through as a literal
- * term — a typo must fail loudly, never silently rank as if the filter never
- * existed. An empty value (`lang:`) is not treated as a filter token at all
- * (kept as a term) since there is nothing to filter by.
- */
 export function parseWordIndexQuery(query: string): ParsedWordIndexQuery {
   const filters: WordIndexQueryFilter[] = [];
   const termParts: string[] = [];
@@ -1086,13 +737,6 @@ export function parseWordIndexQuery(query: string): ParsedWordIndexQuery {
 
     // SAFETY: The adjacent membership check or owner-key enumeration establishes this closed key union.
     if (!(WORD_INDEX_QUERY_FILTER_KEYS as readonly string[]).includes(key)) {
-      // Not a recognized filter key. Ordinary search terms legitimately
-      // contain colons (std::vector, error:foo, http://…, C:\ paths, a
-      // TODO:tag), and the old tokenizer searched them fine — a hard
-      // error here is a usability regression, not typo protection. The
-      // token passes through as a plain term; the loud-failure contract
-      // survives where it is unambiguous: a KNOWN key with a bad value
-      // (lang:notalang) still throws.
       termParts.push(raw);
       continue;
     }
@@ -1106,12 +750,6 @@ export function parseWordIndexQuery(query: string): ParsedWordIndexQuery {
   return { terms: termParts.join(" "), filters };
 }
 
-/** `lang:X` → the extension set for FileKind X (case-insensitive), drawn
- * exclusively from `KIND_EXTENSIONS` (clients/file-kinds.ts) — the single
- * source of truth (#894 invariant: no second, hand-maintained language list).
- * An unrecognized kind throws {@link WordIndexQueryError} listing the accepted
- * kinds (KIND_EXTENSIONS' own keys), the same loud-failure contract as an
- * unsupported `key:` prefix. */
 function resolveLangExtensions(value: string): readonly string[] {
   // SAFETY: The adjacent membership check or owner-key enumeration establishes this closed key union.
   const kind = value.toLowerCase() as FileKind;
@@ -1127,7 +765,6 @@ function resolveLangExtensions(value: string): readonly string[] {
   return extensions;
 }
 
-/** `ext:ts` / `ext:.ts` → normalized to a single leading-dot, lowercased form for extname comparison. */
 function normalizeExtFilterValue(value: string): string {
   return `.${value.replace(/^\.+/, "").toLowerCase()}`;
 }
@@ -1155,10 +792,6 @@ function resolveWordIndexFilter(filter: WordIndexQueryFilter): ResolvedWordIndex
       test: (file) => path.extname(file).toLowerCase() === normalized,
     };
   }
-  // "file": substring match against the index's own normalized display path
-  // (#1450 — see the doc comment on {@link buildWordIndexQueryFilter} for the
-  // case-behavior choice). Both sides fold through `wordIndexKey` so the
-  // comparison matches the SAME normalization the index's own path keys use.
   const needle = wordIndexKey(filter.value);
   return {
     key: filter.key,
@@ -1167,34 +800,6 @@ function resolveWordIndexFilter(filter: WordIndexQueryFilter): ResolvedWordIndex
   };
 }
 
-/**
- * Build a pre-ranking predicate from parsed query filters (#1450). Composes
- * (AND) with `searchWordIndex`'s pre-existing `fileFilter` option (#771) —
- * `symbol_search`'s structured `paths`/`lang` params and this query's inline
- * filters both apply when both are present.
- *
- * Semantics: multiple positive filters of the SAME key OR together
- * (`lang:ts lang:go` matches either); filters of DIFFERENT keys AND
- * (`lang:ts file:clients/` requires both); a negated filter always subtracts,
- * regardless of any positive filter sharing its key.
- *
- * All filters are RESOLVED EAGERLY (extension lookups, `WordIndexQueryError`
- * thrown) here at build time — before any candidate file is tested — so a bad
- * `lang:` value fails once, loudly, rather than per-file during the scoring
- * loop.
- *
- * `file:` case behavior: matched via `wordIndexKey` (this module's single
- * path-key normalizer, `normalizeEphemeralMapKey`) on BOTH the candidate path
- * and the filter value — slash-folded everywhere, and case-folded ONLY on
- * win32 (Windows' case-insensitive filesystem), preserved on POSIX. This
- * mirrors the SAME normalization the word index's own path-keyed maps already
- * apply (#1025), rather than inventing a second, divergent case rule for this
- * one filter. The candidate path matched is the RAW index-stored path (not
- * cwd-relativized) — the index already stores paths in the form the caller
- * built it with (relative in tests, absolute in the real project walk), and
- * an absolute path's tail always contains its project-relative suffix, so
- * `file:clients/word-index.ts` still matches naturally either way.
- */
 export function buildWordIndexQueryFilter(
   filters: readonly WordIndexQueryFilter[],
 ): ((file: string) => boolean) | undefined {
@@ -1232,30 +837,6 @@ function combineFileFilters(
   return (file: string) => a(file) && b(file);
 }
 
-/**
- * Rank files for a query by BM25 over the query's identifier tokens, then apply
- * priors: demote test/vendor and doc/data files, and boost by graph centrality
- * when supplied. Returns the top {@link RankOptions.limit} files, highest first.
- *
- * The query string may mix plain terms with `lang:`/`file:`/`ext:` prefix
- * filters (+ `-` negation, #1450) — parsed by {@link parseWordIndexQuery} and
- * applied as a `fileFilter` (composed, AND, with any caller-supplied one)
- * BEFORE scoring, same as the pre-existing `paths`/`lang` options (#771): a
- * surviving file's score is unaffected by filtering. A query with no filter
- * tokens reproduces prior output byte-for-byte.
- *
- * DF-normalization note: BM25's per-token `idf` is computed from `docFrequency`
- * over the FULL (unfiltered) postings for that token — `fileFilter` (whether
- * from `options.fileFilter` or from this query's inline filters) is applied
- * AFTER `idf` is computed, per file, inside the same loop. This means a
- * filtered query reuses the GLOBAL, corpus-wide document frequency rather than
- * recomputing it over just the filtered subset. That is the pre-existing #771
- * behavior this change does not alter; it is an acceptable approximation
- * (idf reflects true corpus rarity, not an artifact of the filter) and keeps
- * filtered/unfiltered scores for the SAME file directly comparable, which is
- * the property #1450 asks for ("BM25 and centrality stay comparable within
- * the filtered set").
- */
 export function searchWordIndex(
   index: WordIndex,
   query: string,
@@ -1336,15 +917,6 @@ export function searchWordIndex(
   return results.slice(0, Math.max(0, limit));
 }
 
-/**
- * Build a centrality map (file → importedBy count) keyed by THIS index's file
- * paths, from the project snapshot's `reverseDeps` (importedBy). The snapshot
- * keys are normalized (`normalizeMapKey(resolve(...))`) while the index keys are
- * the raw scanned paths, so the caller injects a `normalizeKey` bridge; it
- * defaults to identity for testing. Pass the result to {@link searchWordIndex}
- * as `centrality` to boost well-connected files. Kept here (not in the engine)
- * so it stays pure + unit-testable without the normalizer dependency.
- */
 export function centralityFromReverseDeps(
   index: WordIndex,
   reverseDeps: Record<string, string[]> | undefined,
@@ -1361,46 +933,19 @@ export function centralityFromReverseDeps(
   return centrality;
 }
 
-// --- Persistence (compact JSON for the project snapshot) ---------------------
-
 export interface SerializedWordIndex {
-  /** Serializer version; pre-v2 indexes lack per-file freshness metadata. */
   version: 2;
-  /** Distinct file paths; postings reference files by index to shrink the JSON. */
   files: string[];
-  /** token → flat [fileIdx, line, fileIdx, line, …] pairs. */
   postings: Array<[string, number[]]>;
-  /** Parallel to {@link files}: indexed token count per file. */
   docLengths: number[];
   totalTokens: number;
-  /** Number of files actually represented in this index. */
   indexedFileCount?: number;
-  /** True when source collection reached its configured file cap. */
   truncated?: boolean;
-  /** Parallel to {@link files}: mtime at which each document was tokenized. */
   fileMtimes: number[];
-  /**
-   * Parallel to {@link files}: byte size at which each document was tokenized
-   * (#1105, the second axis of the mtime+size refresh gate). Optional so a
-   * pre-#1105 snapshot still parses — a missing `fileSizes` deserializes to an
-   * empty size map, which makes every file count as size-changed on the next
-   * refresh (one-time full re-read that repopulates sizes, the SAFE direction),
-   * exactly how the review graph degrades to mtime-only against a pre-#202
-   * cache. Never version-bumped for the same reason: the absence is self-healing.
-   */
   fileSizes?: number[];
-  /**
-   * Forward index (#348 phase 2): `[fileIdx, [[token, lineCount], …]]` per
-   * file. Optional so pre-phase-2 snapshots parse unchanged. When ABSENT on
-   * load, {@link deserializeWordIndex} returns a `WordIndex` with `forward:
-   * undefined` — callers that want incremental per-edit updates must treat
-   * that as "no incremental primitive available" and trigger one full
-   * rebuild (never migrate an old snapshot's shape in place).
-   */
   forward?: Array<[number, Array<[string, number]>]>;
 }
 
-/** Persisted word-index serialization format version. Bump on breaking format changes. */
 export const WORD_INDEX_FORMAT_VERSION = 2;
 
 export function serializeWordIndex(index: WordIndex): SerializedWordIndex {
@@ -1472,9 +1017,6 @@ export function deserializeWordIndex(
     docLengths.set(file, docLength);
     fileMtimes.set(file, fileMtime);
   }
-  // #1105: `fileSizes` is optional on the wire (pre-#1105 snapshots omit it).
-  // An omitted array leaves the map empty so the refresh gate re-reads every
-  // file once. A present but malformed array is rejected above as corruption.
   if (Array.isArray(data.fileSizes)) {
     for (let i = 0; i < data.files.length; i += 1) {
       const fileSize = data.fileSizes[i];
@@ -1484,8 +1026,6 @@ export function deserializeWordIndex(
   }
 
   const postings = new Map<string, WordHit[]>();
-  // Validate while materializing the maps. These native primitive checks add
-  // no traversal beyond the work hydration already has to perform.
   for (const entry of data.postings) {
     if (!Array.isArray(entry) || entry.length !== 2) return null;
     const [token, flat] = entry;
@@ -1536,17 +1076,6 @@ export function deserializeWordIndex(
   };
 }
 
-// --- Cold-query background build trigger (#348) -------------------------------
-//
-// `symbol_search` (pi tool) / `pilens_symbol_search` (MCP) are stateless callers:
-// no RuntimeCoordinator, no session lifecycle — just a synchronous read of the
-// persisted snapshot via `symbolSearch()`. When the index is missing (e.g. the
-// session-start / warmup lifecycle in runtime-session.ts hasn't run yet, or this
-// is an MCP-only session that never ran pilens_session_start), the tool must
-// never block the query on a project walk (#348 decision 3): it triggers a
-// single background build, keyed by the resolved cwd so a burst of queries in
-// the same cold window only pays for one walk, and returns immediately.
-
 export type WordIndexBuildStatus =
   | { state: "building" }
   | { state: "refused"; reason: string }
@@ -1558,31 +1087,16 @@ export function getWordIndexBuildStatus(cwd: string): WordIndexBuildStatus | und
   return buildStatuses.get(path.resolve(cwd));
 }
 
-/** Test-only: reset the in-flight-build guard between test files/cases. */
 export function _resetWordIndexBuildGuardForTests(): void {
   buildStatuses.clear();
 }
 
-/**
- * Fire a one-time bounded background build for `cwd` if one isn't already
- * running. Persists into the existing project snapshot (preserving its other
- * fields) so the next query — or the next real session — picks it up. Errors
- * are swallowed (this is best-effort warmth, not a request the caller is
- * waiting on); the guard always clears in a `finally` so a failed build can be
- * retried by a later query.
- */
 export function triggerBackgroundWordIndexBuild(
   cwd: string,
   dbg?: (msg: string) => void,
   options: { homeDir?: string } = {},
 ): WordIndexBuildStatus {
   const key = path.resolve(cwd);
-  // #747 hardening: this trigger is the one word-index build path with NO
-  // session lifecycle in front of it (cold `symbol_search` queries, in-process
-  // and via MCP where cwd can be a raw tool argument) — the session-start and
-  // quick-mode-warmup builds sit behind `canWarmCaches`, which already refuses
-  // a home-rooted cwd. Apply the same `isAtOrAboveHomeDir` ceiling here so a
-  // cold query from $HOME never starts a whole-home walk-and-read.
   if (isAtOrAboveHomeDir(key, options.homeDir)) {
     const reason = `root at/above home directory (${key})`;
     dbg?.(`word-index cold-build: skipped — ${reason}`);
@@ -1624,8 +1138,6 @@ export function triggerBackgroundWordIndexBuild(
       dbg?.(
         `word-index cold-build: ${index.docCount} files, ${index.postings.size} tokens (${Date.now() - startMs}ms)`,
       );
-      // M2, #958: durable decision/coverage record for the MCP-critical cold
-      // path (this is where symbol_search reads the index and dbg is a no-op).
       logWordIndex({
         phase: "cold_build",
         cwd: key,
@@ -1652,21 +1164,6 @@ export function triggerBackgroundWordIndexBuild(
   })();
   return status;
 }
-
-// --- Debounced per-edit persist (#348 phase 2) --------------------------------
-//
-// The per-edit seam (dispatch/integration.ts) updates `runtime.wordIndex` in
-// memory on every write, same as the review graph's per-edit rebuild. Without
-// coalescing, persisting that in-memory index on every single edit would mean
-// one full-snapshot JSON.stringify+write per keystroke-adjacent edit — the
-// same OOM-risking spike the graph's #260 circuit-breaker exists to prevent.
-// This reuses `createDebounceScheduler` (persist-debounce.ts) rather than
-// growing a second copy of the graph's bespoke pending-map+timer bookkeeping;
-// only the "write" callback differs, because the target differs: the graph
-// owns its own cache file, but the word index must merge into the SHARED
-// project-snapshot file via `saveRuntimeProjectSnapshot`/`saveProjectSnapshot`
-// (preserving unrelated snapshot fields, and honoring the seq-laundering guard
-// in project-snapshot.ts — see saveRuntimeProjectSnapshot's comment).
 
 const WORD_INDEX_PERSIST_DEBOUNCE_MS_DEFAULT = 1500;
 
@@ -1717,10 +1214,6 @@ async function writeWordIndexSnapshot(
     snapshot.wordIndex = serializeWordIndex(index);
     saveProjectSnapshot(cwd, snapshot);
     dbg?.(`word-index persist: ${index.docCount} files, ${index.postings.size} tokens`);
-    // #958 review F1: durably record persist SUCCESS too, not just failures —
-    // in the MCP host (`dbg` is a no-op) this is the only signal that the index
-    // is actually being kept fresh across edits. Debounced (~1.5s), so not
-    // spammy. Mirrors the review graph's persist_succeeded.
     logWordIndex({
       phase: "persist_succeeded",
       cwd: path.resolve(cwd),
@@ -1730,9 +1223,6 @@ async function writeWordIndexSnapshot(
     });
   } catch (err) {
     dbg?.(`word-index persist: failed: ${err}`);
-    // M3, #958: a swallowed persist means every LATER symbol_search reads a
-    // stale index with no trace — the exact silent-failure this durable log
-    // exists to surface (dbg is a no-op in the MCP host).
     logWordIndex({
       phase: "persist_failed",
       cwd: path.resolve(cwd),
@@ -1743,15 +1233,6 @@ async function writeWordIndexSnapshot(
   }
 }
 
-/**
- * Schedule a debounced persist of `index` for `cwd`, coalescing a burst of
- * per-edit updates into one write after a quiet window (default 1500ms,
- * override via `CHOCO_PI_LSP_WORD_INDEX_PERSIST_DEBOUNCE_MS`, mirroring the review
- * graph's `CHOCO_PI_LSP_GRAPH_PERSIST_DEBOUNCE_MS`). Merges through the same
- * `saveProjectSnapshot` path phase 1 uses — preserves unrelated snapshot
- * fields and respects the seq-laundering guard (only ever writes wordIndex
- * for the CURRENT in-memory index, never re-stamps a stale one).
- */
 export function scheduleWordIndexPersist(
   cwd: string,
   index: WordIndex,
@@ -1761,7 +1242,6 @@ export function scheduleWordIndexPersist(
   getWordIndexPersistScheduler().schedule(key, { cwd: key, index, dbg });
 }
 
-/** Test hook: force any pending debounced word-index persist to write immediately. */
 export function flushWordIndexPersistsForTests(): void {
   getWordIndexPersistScheduler().flushAll();
 }

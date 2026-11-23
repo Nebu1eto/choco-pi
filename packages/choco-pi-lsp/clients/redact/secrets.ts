@@ -171,11 +171,6 @@ const PREFIXED_SECRETS: readonly PrefixedSecret[] = [
   },
 ];
 
-/**
- * Minimum suffix length for a legacy `sk-<base62>` OpenAI key. Legacy keys are
- * 48 base62 chars; require a high bar so ordinary kebab-case identifiers
- * (`sk-skeleton-loading-placeholder`, `sk-button-large`) never match.
- */
 const OPENAI_LEGACY_MIN_SUFFIX = 40;
 
 interface ConsumeOptions extends ScanPosition {
@@ -386,14 +381,6 @@ function scanJwt(position: ScanPosition): SecretScan | undefined {
   return nestedRange ? { ...nestedRange, replacement: "[REDACTED:jwt]" } : { end: cursor };
 }
 
-/**
- * Legacy OpenAI keys are `sk-` followed by base62 (ASCII alphanumeric only —
- * no `-`/`_`). Redact only on a strict shape: at least
- * OPENAI_LEGACY_MIN_SUFFIX alphanumeric chars AND at least one digit. Stopping
- * the suffix at the first non-alphanumeric char means a hyphenated identifier
- * such as `sk-skeleton-loading-placeholder` yields only `skeleton` (8 chars) —
- * far below the bar — so ordinary kebab-case slugs are never touched.
- */
 function scanOpenAiLegacyKey(position: ScanPosition): SecretScan | undefined {
   if (!position.text.startsWith("sk-", position.start)) return undefined;
   const suffixStart = position.start + 3;
@@ -413,8 +400,6 @@ function scanSecretAt(position: ScanPosition): SecretScan | undefined {
   const initial = position.text[position.start];
   if (initial === "S") return scanSendGridKey(position);
   if (initial === "x") return scanSlackToken(position);
-  // `s`: modern `sk-proj-`/`sk-svcacct-`/`sk_live_`/`sk_test_` via the prefix
-  // registry, else fall back to the strict legacy `sk-<base62>` scanner.
   if (initial === "s") {
     return scanPrefixedSecret(position) ?? scanOpenAiLegacyKey(position);
   }

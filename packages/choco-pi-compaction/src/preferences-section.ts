@@ -1,12 +1,3 @@
-/**
- * Preferences rows for the background-compaction master switch and the
- * Anthropic compaction mode.
- *
- * The running main session publishes a provider under a process-global symbol
- * so the profile's Preferences panel can show the rows without importing this
- * package. A change saves the setting and applies it to the running session;
- * changes of either row are applied one at a time, in order.
- */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import type { AnthropicCompactionMode } from "./anthropic/mode.ts";
@@ -22,7 +13,6 @@ const ANTHROPIC_VALUES: readonly AnthropicCompactionMode[] = ["server-side", "ch
 const XAI_ROW_ID = "compactionXai";
 const XAI_VALUES: readonly XaiCompactionMode[] = ["server-side", "choco-pi"];
 
-/** One Preferences row, shaped like the panel's setting item. */
 export interface BackgroundCompactionPreferenceItem {
   readonly id: string;
   readonly label: string;
@@ -43,27 +33,16 @@ export interface BackgroundCompactionPreferencesProvider {
   buildSections(ctx: ExtensionContext): BackgroundCompactionPreferencesSection[];
 }
 
-/**
- * The Anthropic compaction mode. `set` reports its own failures and never
- * rejects.
- */
 export interface AnthropicModeSwitch {
-  /** The mode cached at session start (or by the last applied change). */
   mode(): AnthropicCompactionMode;
   set(mode: AnthropicCompactionMode, ctx: ExtensionContext): Promise<void>;
 }
 
-/** The xAI compaction mode. `set` reports its own failures and never rejects. */
 export interface XaiModeSwitch {
   mode(): XaiCompactionMode;
   set(mode: XaiCompactionMode, ctx: ExtensionContext): Promise<void>;
 }
 
-/**
- * The running extension's settings. `setEnabled` reports its own failures and
- * never rejects. The Anthropic and xAI rows are offered only with
- * `anthropic` and `xai`.
- */
 export interface BackgroundCompactionSwitch {
   enabled(): boolean;
   setEnabled(enabled: boolean, ctx: ExtensionContext): Promise<void>;
@@ -73,7 +52,6 @@ export interface BackgroundCompactionSwitch {
 
 let changes: Promise<void> = Promise.resolve();
 
-/** Resolves once every change made so far to either row has been saved and applied. */
 export async function waitForBackgroundCompactionPreferenceChanges(): Promise<void> {
   await changes;
 }
@@ -142,7 +120,6 @@ function buildSection(
         const mode = xaiModeOf(newValue);
         if (mode === undefined || xai === undefined) return { kind: "rebuild" };
         shownXaiMode = mode;
-        // Once applied, the row shows the effective mode: a refused write keeps it unchanged.
         changes = changes
           .then(() => xai.set(mode, ctx))
           .then(() => {
@@ -155,7 +132,6 @@ function buildSection(
         const mode = anthropicModeOf(newValue);
         if (mode === undefined || anthropic === undefined) return { kind: "rebuild" };
         shownMode = mode;
-        // Once applied, the row shows the effective mode: a refused write keeps it unchanged.
         changes = changes
           .then(() => anthropic.set(mode, ctx))
           .then(() => {
@@ -167,8 +143,6 @@ function buildSection(
       if (id !== ROW_ID || (newValue !== "on" && newValue !== "off")) return { kind: "rebuild" };
       const enabled = newValue === "on";
       shown = enabled;
-      // Once applied, the row shows the effective switch: a refused write or a
-      // project sidecar keeps it unchanged.
       changes = changes
         .then(() => feature.setEnabled(enabled, ctx))
         .then(() => {
@@ -179,7 +153,6 @@ function buildSection(
   };
 }
 
-/** Publish the row for this main session; the returned function removes only this provider. */
 export function publishBackgroundCompactionPreferences(
   feature: BackgroundCompactionSwitch,
 ): () => void {

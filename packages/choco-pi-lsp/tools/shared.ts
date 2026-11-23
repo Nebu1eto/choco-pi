@@ -1,7 +1,3 @@
-/**
- * Shared constants for tool definitions
- */
-
 export const LANGUAGES = [
   "bash",
   "c",

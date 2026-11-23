@@ -133,7 +133,6 @@ function findNodes(
     }
     if (type === "INSTANCE" && !options.includeComponentInternals && level > 0) {
       skippedInstances += 1;
-      // Text labels inside instances remain useful search targets without exposing full structure.
       for (const child of getChildren(record)) {
         const childRecord = asFigmaRecord(child);
         if (childRecord.type === "TEXT")

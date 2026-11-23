@@ -39,14 +39,12 @@ function toDiagnosticOutcome(value: string): AgentBrowserDiagnostic["outcome"] |
   }
 }
 
-/** Single-line model-visible rendering of a failure diagnostic; contains only fixed text and a validated code. */
 export function formatAgentBrowserDiagnosticText(diagnostic: AgentBrowserDiagnostic): string {
   const retryAfter =
     diagnostic.retryAfterMs === undefined ? "" : ` retry_after_ms=${diagnostic.retryAfterMs}`;
   return `Diagnostic: code=${diagnostic.code} origin=${diagnostic.origin} outcome=${diagnostic.outcome} retryable=${diagnostic.retryable}${retryAfter}. ${diagnostic.hint}`;
 }
 
-/** Validates a diagnostic decoded from untrusted runtime data (for example a script IPC envelope). */
 export function parseAgentBrowserDiagnostic<Value>(
   value: Value,
 ): AgentBrowserDiagnostic | undefined {

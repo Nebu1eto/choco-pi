@@ -1,4 +1,3 @@
-/** Mounting the pane in a dock or overlay host, its width, and opening, closing and focusing it. */
 import { isKeyRelease, matchesKey } from "@earendil-works/pi-tui";
 import type { DiffStore } from "../../lib/changes/git/model.ts";
 import { sanitizeTerminalText } from "../../lib/changes/terminal-text.ts";
@@ -95,7 +94,6 @@ export function ensureView(pane: DiffPaneController, session: Session, store: Di
   return view;
 }
 
-/** zentui's header box, when installed; the view draws its own until it arrives. */
 export function loadHeaderBox(pane: DiffPaneController, session: Session, view: PaneView): void {
   const load = pane.deps.headerBox;
   if (!load) return;
@@ -104,12 +102,9 @@ export function loadHeaderBox(pane: DiffPaneController, session: Session, view: 
     if (!session.alive || session.view !== view || !box) return;
     view.headerBox = box;
     session.host?.requestRender();
-  })().catch(() => {
-    // zentui could not be loaded: the header keeps the theme's own box, which is complete.
-  });
+  })().catch(() => {});
 }
 
-/** Why the pane cannot dock now, or undefined when it can try. */
 export function dockBlocker(pane: DiffPaneController, session: Session): string | undefined {
   const ctx = session.ctx;
   if (ctx.mode !== "tui") return "it needs the terminal UI";
@@ -124,10 +119,6 @@ export function dockBlocker(pane: DiffPaneController, session: Session): string 
   return undefined;
 }
 
-/**
- * Mount the pane. `overlay` allows the overlay host when docking fails
- * (user and restored opens); automatic opening never uses it.
- */
 export function openPane(
   pane: DiffPaneController,
   session: Session,
@@ -165,7 +156,6 @@ export function openPane(
   try {
     docked = host.install();
   } catch (error) {
-    // Automatic opening reports the failure and stops; a user's open falls back to the overlay.
     if (!options.overlay) throw error;
     docked = false;
   }
@@ -197,8 +187,6 @@ export function openPane(
   store.setVisible(true);
   store.requestRefresh("open");
   if (overlayFallback && announce) {
-    // On the pane's own message line: the overlay covers the transcript column
-    // where a notification would be drawn, and clipped it.
     say(
       pane,
       session,
@@ -218,12 +206,9 @@ export function closePane(pane: DiffPaneController, session: Session): void {
   session.removeInputListener = undefined;
   host.uninstall();
   session.store?.setVisible(false);
-  // Every close is the user's (command, shortcut, double Esc): stop opening by itself.
   session.autoArmed = false;
-  // A message about the old source (or anything else) would be stale when the pane reopens.
   if (session.view) {
     session.view.message = undefined;
-    // A revealed sensitive file is shown for this opening only; reopening hides it again.
     session.view.hideRevealed();
   }
   resetToSessionSource(pane, session);
@@ -237,12 +222,10 @@ export async function showInline(
   const store = ensureStore(pane, session);
   await store.refreshNow();
   if (!session.alive) return;
-  // Native-diff seam (native-diff.ts): an ACP client that renders diffs gets them instead.
   const native = { env: pane.env, clock: pane.deps.clock, alive: () => session.alive };
   if (await presentNativeDiff(session.ctx, store.getState(), native)) return;
   if (!session.alive) return;
   if (editorRendersMarkdown(pane.env)) {
-    // Any other source in the editor: the same list as Markdown, sanitised once there.
     const list = inlineMarkdown(store.getState());
     session.ctx.ui.notify(reason ? `${markdownText(reason)}\n\n${list}` : list, "info");
     return;
@@ -251,7 +234,6 @@ export async function showInline(
   session.ctx.ui.notify(reason ? `${sanitizeTerminalText(reason)}\n${list}` : list, "info");
 }
 
-/** Open on the user's request; without `keepSource` the pane shows the session source. */
 export async function userOpen(
   pane: DiffPaneController,
   session: Session,

@@ -17,7 +17,6 @@ import { hostParams } from "../src/schema-bridge.ts";
 import { collectBridgedTools } from "../src/tools/code-mode/registered-tool-bridge.ts";
 import { createToolContextFixture } from "./tool-context-fixture.ts";
 
-// No callable session tools: bridged calls run their definitions directly.
 const extensionContext = createToolContextFixture();
 const context = { cwd: "/tmp", extensionContext };
 
@@ -105,7 +104,6 @@ test("a call without arguments, which the host sends as null, runs with {} on bo
   }
   assert.deepEqual(received, [{}, {}], "the direct path runs the definition with {}");
 
-  // A tool the session lists as callable goes through executeTool, as MCP tools do.
   const sessionArgs: unknown[] = [];
   const sessionContext = {
     cwd: "/tmp",
@@ -376,7 +374,6 @@ test("non-validation failures from the native validator propagate without execut
     description: "permissive",
     parameters: hostParams(obj({ handler: unknown() }, { open: true })),
     prepareArguments() {
-      // A schema-valid but structured-clone-hostile member: the native validator clones first.
       return { handler: () => undefined };
     },
     async execute() {
@@ -457,7 +454,6 @@ test("object-union failures name the discriminator and its accepted values once"
         error.message,
         /actions\.0: expected one of the 3 shapes selected by "action": "press", "click", "click"/,
       );
-      // No per-branch repetition and no echo of the rejected value.
       assert.equal(error.message.split("actions.0").length - 1, 1, error.message);
       assert.doesNotMatch(error.message, /target|e1/);
       return true;

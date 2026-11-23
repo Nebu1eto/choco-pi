@@ -3,23 +3,11 @@ import type { QuotaSource, QuotasResponse } from "../types/quotas";
 export interface QuotaSnapshot {
   quotas: QuotasResponse;
   source: QuotaSource;
-  updatedAt: number; // epoch ms
+  updatedAt: number;
 }
 
 type Listener = (snapshot: QuotaSnapshot) => void;
 
-/**
- * Pi-agnostic in-memory quota store.
- *
- * Ingests quota data from headers or API, handles throttling of
- * header-sourced updates, and notifies subscribers on change.
- *
- * Usage:
- *   const store = new QuotaStore();
- *   store.subscribe((snap) => { ... });
- *   store.ingest(quotas, "header");
- *   store.ingest(quotas, "api");
- */
 export class QuotaStore {
   private snapshot: QuotaSnapshot | undefined;
   private listeners = new Set<Listener>();
@@ -27,15 +15,12 @@ export class QuotaStore {
   private inFlightRefresh: Promise<QuotaSnapshot | undefined> | undefined;
   private inFlightId = 0;
 
-  /** Throttle header ingestion: skip if last header ingest was within this window. */
   headerThrottleMs = 5_000;
 
-  /** Current snapshot (may be undefined if no data has been ingested yet). */
   getSnapshot(): QuotaSnapshot | undefined {
     return this.snapshot;
   }
 
-  /** Subscribe to snapshot updates. Returns unsubscribe function. */
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
     return () => {
@@ -47,14 +32,6 @@ export class QuotaStore {
     for (const l of this.listeners) l(snapshot);
   }
 
-  /**
-   * Ingest quota data. Returns true if the snapshot was updated
-   * (i.e. not throttled).
-   *
-   * Header-sourced data is throttled: if the last header ingest was
-   * within `headerThrottleMs`, it is silently dropped.
-   * API-sourced data always goes through.
-   */
   ingest(quotas: QuotasResponse, source: QuotaSource): boolean {
     const now = Date.now();
 
@@ -68,10 +45,6 @@ export class QuotaStore {
     return true;
   }
 
-  /**
-   * Refresh quotas by calling the provided fetcher.
-   * Deduplicates concurrent calls — only one fetch runs at a time.
-   */
   async refreshFromApi(
     fetcher: () => Promise<QuotasResponse | undefined>,
   ): Promise<QuotaSnapshot | undefined> {
@@ -97,14 +70,12 @@ export class QuotaStore {
     return this.inFlightRefresh;
   }
 
-  /** Returns true if a refresh is currently in flight. */
   get isRefreshing(): boolean {
     return !!this.inFlightRefresh;
   }
 
-  /** Clear all state. Call on session shutdown or reset. */
   clear(): void {
-    this.inFlightId++; // Invalidates in-flight refresh
+    this.inFlightId++;
     this.snapshot = undefined;
     this.lastHeaderIngestAt = 0;
     this.inFlightRefresh = undefined;

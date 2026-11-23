@@ -178,8 +178,6 @@ requireEvidence(
   "child-to-root send did not use steer with triggerTurn",
 );
 
-// The user-visible route notice is rendered from this production event, so a
-// steered message reported as queued is exactly the defect it must reject.
 const messageEvent = one(
   (entry) => entry.event === "message_event" && entry.to === "/root",
   "production subagents:message event for the root route is not unique",

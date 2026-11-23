@@ -46,7 +46,6 @@ import {
   toWaitForParams,
 } from "../src/tool-params.ts";
 
-/** Closed objects: a former camelCase parameter name fails validation instead of being ignored. */
 const object = <const P extends Properties>(properties: P) => obj(properties);
 const toolParams = <const P extends Properties>(properties: P) => hostParams(object(properties));
 
@@ -359,10 +358,6 @@ function promptModeArgument(words: string[]): ForegroundPromptMode | undefined {
   return value === "ask" || value === "always" || value === "off" ? value : undefined;
 }
 
-/**
- * `/computer-use` shows the status; `/computer-use grant ask|always|off` sets
- * the foreground prompt mode for this session and saves it to the user config.
- */
 export async function runComputerUseCommand(
   args: string,
   cwd: string,
@@ -405,7 +400,6 @@ export default function computerUseExtension(pi: ExtensionAPI): void {
       const ui = ctx.ui;
       const generation = sessionGrantGeneration();
       const { message, level } = await runComputerUseCommand(args, cwd);
-      // The session may have ended while saving; its UI must not be touched then.
       if (sessionGrantGeneration() !== generation) return;
       notifyUnlessStale(ui, message, level);
     },

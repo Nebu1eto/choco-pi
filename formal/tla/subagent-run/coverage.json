@@ -23,7 +23,7 @@
     {
       "file": "packages/choco-pi-subagents/src/manager/usage-limit-park.ts",
       "symbol": "evaluateUsageLimit",
-      "hash": "sha256:7f417b43ef66a0f73939adb7d0502068b41f6ed1a60270b3f784baa73c1e5097"
+      "hash": "sha256:17cc2a612ecc5fc06d4f6751fac5f2971fc4285ca14aabf34f30c6ab8723bfc7"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/usage-limit-park.ts",
@@ -43,7 +43,7 @@
     {
       "file": "packages/choco-pi-subagents/src/manager/usage-limit-park.ts",
       "symbol": "parkForReset",
-      "hash": "sha256:88111b340f3b74130d7b7f4ab867b552742969a18f72c1321a6a6dbcc99046dc"
+      "hash": "sha256:d9d27f69c8534a92469bfc234b3af3cb94832fa8f6cbc64897a9df366c4266a9"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/usage-limit-park.ts",
@@ -63,17 +63,17 @@
     {
       "file": "packages/choco-pi-subagents/src/manager/usage-limit-park.ts",
       "symbol": "wakeUsageLimited",
-      "hash": "sha256:40b033faaaf3511e7682e4923dc4d988b3ff4aaa56d34fecaf3ac32cc47d40d4"
+      "hash": "sha256:7060f6271dc5f4ffaa624e07135527d30eac53fed2cc2e38f4aaff14a507d2db"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/usage-limit-park.ts",
       "symbol": "resumeAfterReset",
-      "hash": "sha256:bd980befff1598fa2d585dce382a7efc20357a499d1e79d44bf736f6484070e6"
+      "hash": "sha256:855055ed093c712f07e11bd5da0115798bd0eb72310a3175de4155fe2bd43317"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/usage-limit-park.ts",
       "symbol": "settleDroppedWake",
-      "hash": "sha256:27e9159a7a1de1d0b2d51148734d05bd06ef651d0174702bbe7abec01405de6d"
+      "hash": "sha256:5afa9282f48c4835aea4cacdcd80a28e55e8b78095a624fc6ff91de6560dd1bb"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/worktree-lifecycle.ts",
@@ -83,12 +83,12 @@
     {
       "file": "packages/choco-pi-subagents/src/manager/worktree-lifecycle.ts",
       "symbol": "finishDeferredWorktree",
-      "hash": "sha256:46d71e97fff71573d08e6bae9f225746e326863acd662d4acd06b04e3b03b8a5"
+      "hash": "sha256:cb94aedc56f598322282e409ca217140e9a50607dc6d1f3ffbb4fcb7b386c6a4"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/worktree-lifecycle.ts",
       "symbol": "finishDeferredWorktreeThen",
-      "hash": "sha256:adb833febe9fb6599a3f5f5d5fd69677297c8b0a1f64c499db023799024ae15d"
+      "hash": "sha256:0fe7d1859daa08efdb774163d39b199d4ccbd3724cb0d2c75a96f1aac7672f3f"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/worktree-lifecycle.ts",
@@ -103,7 +103,7 @@
     {
       "file": "packages/choco-pi-subagents/src/manager/usage-limit-park.ts",
       "symbol": "settleParked",
-      "hash": "sha256:6a8ce1731b820744d7c51748433f86f59d06791f3cad0cc39214100152c5924b"
+      "hash": "sha256:239dd735620bd23d465bd3de2a9a7f1945a3f93d7a05e7360dce7073f85233ba"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/admission-queue.ts",
@@ -113,7 +113,7 @@
     {
       "file": "packages/choco-pi-subagents/src/manager/admission-queue.ts",
       "symbol": "publishStoppedQueued",
-      "hash": "sha256:27ce90dca3c598dae8cbc16c0c32b969b649b0eacdf8db70f852400cec2eae17"
+      "hash": "sha256:40ef8dbd4d76af793ece3ee7477aa3421fd5314fd9d289abfad1601f43d3e339"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/admission-queue.ts",
@@ -123,7 +123,7 @@
     {
       "file": "packages/choco-pi-subagents/src/manager/admission-queue.ts",
       "symbol": "queueBackgroundResume",
-      "hash": "sha256:9bf9583ae3fb5ecd7af10d7f4832b32326418f11b950b6b06c146efa248a0098"
+      "hash": "sha256:812c92613c9beceef09b4cdd9a4f1dee34a11e459649086fe7a5438ee78e227a"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/state.ts",
@@ -138,7 +138,7 @@
     {
       "file": "packages/choco-pi-subagents/src/manager/verdict-recording.ts",
       "symbol": "recordRunVerdict",
-      "hash": "sha256:250217564c90775cfcdf91a149deb87f0898358912caac693e3b6053e6238515"
+      "hash": "sha256:ab2831ae7b37b4404f8a6038b65cec3bc893f88e99830eb5abf0093fb5801025"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/spawn-execution.ts",
@@ -148,32 +148,32 @@
     {
       "file": "packages/choco-pi-subagents/src/manager/spawn-execution.ts",
       "symbol": "spawnWith",
-      "hash": "sha256:ef4c90555236dce1b8ff4004da02bc410a14f0a42f65f23df7526a4550f003a4"
+      "hash": "sha256:d0c4592488b913f3e68ea4f27c1ed360df4391002981b5d977a981d6c202f2a0"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/spawn-execution.ts",
       "symbol": "startAgent",
-      "hash": "sha256:0b7bf292bd7502a026de2c8a08fe1bb54e101f9fda8166ec18cc7cf9640e0381"
+      "hash": "sha256:087e25bbbc068b5a4b16c4e621687f44aa2cc3a6d3a46d5f837f9aac0d537cc3"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/admission-queue.ts",
       "symbol": "drainQueue",
-      "hash": "sha256:f01604735004db3fbf51e6f75f7e38956285c0c83dd8a82fe7fabc65d32af7eb"
+      "hash": "sha256:297765e564c5e3c54462652e7ee69aca006854d0cf5bba54b1fc60d16d891ace"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/spawn-execution.ts",
       "symbol": "spawnAndWait",
-      "hash": "sha256:31af69af53a2833c292d275c34f5cd57569af4a10d7f5290e847d58f12146d3d"
+      "hash": "sha256:a99f7128d595ed52b59f62940f87bf28f8c0d347362a30f10ef0fb6f7538839a"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/resume-execution.ts",
       "symbol": "resume",
-      "hash": "sha256:c620303983b74bdece647be6ee1fe07fc2e76227b02395308d9842a70e809e60"
+      "hash": "sha256:b66144d1246077c58e15d04011b3fb41ebb7f7aca5bfff46fb1ad5e21a4d6773"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/resume-execution.ts",
       "symbol": "startResume",
-      "hash": "sha256:0d0807d01342295e5939b1b6fc05004e75a4314ff15670b0210078b9bd08ec2c"
+      "hash": "sha256:41ea0c43c8a8a7c9d0395932a7525f198d0bf8b59dcb875f9139d3307f9cb79e"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/stop-cancellation.ts",
@@ -183,7 +183,7 @@
     {
       "file": "packages/choco-pi-subagents/src/manager/stop-cancellation.ts",
       "symbol": "stopRecord",
-      "hash": "sha256:f3b2641eec9db47563bf9b3108b1866f9c640d6ce980adb17cf019039469080d"
+      "hash": "sha256:e71077e060cf5a3497fa013a67c02660bff8501333bf841afd1f90ecc57cc811"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/state.ts",
@@ -203,7 +203,7 @@
     {
       "file": "packages/choco-pi-subagents/src/manager/state.ts",
       "symbol": "canParkForReset",
-      "hash": "sha256:edd1ca479558e8c7224652bdc7f77525ca978138b245e5ddf32a3806b550bade"
+      "hash": "sha256:854f5285a45446911a4a7bc0bc93f6aaff4a125317abd43b1a3603e3a8e7b888"
     },
     {
       "file": "packages/choco-pi-subagents/src/manager/state.ts",
@@ -228,7 +228,7 @@
     {
       "file": "packages/choco-pi-subagents/src/result-read.ts",
       "symbol": "claimSubagentResultRead",
-      "hash": "sha256:f519846f65d00d0dcbab6ea57cbec5e2c9aa3d58f20118fdc08a715299a2aa78"
+      "hash": "sha256:2a18b1043a0cd3fa9f2fbb7587060e41120a21c07b675a267ab0cbce77501b37"
     }
   ],
   "assumes": [
@@ -272,6 +272,6 @@
     }
   ],
   "checkedAt": {
-    "commit": "1f505a2471762a2d7064d47492e6478755a057b0"
+    "commit": "652c9663a4e0604748c5e76a8c4c8d833ba28714"
   }
 }

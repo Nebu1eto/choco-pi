@@ -43,7 +43,6 @@ function candidateId(host: Host): string | undefined {
   return host.mainCoordinator()?.status().candidateId;
 }
 
-/** Threshold: the context cap's real routing function with a ready candidate. */
 async function thresholdAdoption(host: Host): Promise<Observation[]> {
   const ready = await prepare(host);
   const expected = candidateId(host);
@@ -80,11 +79,6 @@ function manualSummaryCarriesInstructions(host: Host, fromRequest: number): bool
   });
 }
 
-/**
- * /compact with custom instructions discards the ready plain candidate and
- * prepares a focused one on the background text lane (the host compaction is
- * cancelled); the focused summary request carries the instructions.
- */
 async function manualInstructions(host: Host): Promise<Observation[]> {
   await host.session.prompt("HARNESS-ARBITRATION-BEFORE-MANUAL");
   const ready = await prepare(host);
@@ -138,7 +132,6 @@ async function manualInstructions(host: Host): Promise<Observation[]> {
   ];
 }
 
-/** Host overflow with no ready candidate proceeds through Pi's own compaction. */
 async function overflowProceeds(host: Host): Promise<Observation[]> {
   const before = checkpoints(host).length;
   const state = host.mainCoordinator()?.status().state ?? "missing";
@@ -167,7 +160,6 @@ async function overflowProceeds(host: Host): Promise<Observation[]> {
   ];
 }
 
-/** Disable with a ready candidate, reload, prompt: no late install. */
 async function disableNoLateInstall(host: Host): Promise<Observation[]> {
   await host.session.prompt("HARNESS-ARBITRATION-BEFORE-DISABLE");
   const ready = await prepare(host);

@@ -50,7 +50,6 @@ async function agentDirWith(config?: string): Promise<string> {
   return dir;
 }
 
-/** What the user pastes, given the authorize URL the login showed. */
 type Paste = (authorizeUrl: URL) => string | Promise<string>;
 
 interface LoginHarness {
@@ -61,10 +60,6 @@ interface LoginHarness {
   manualInputs: number;
 }
 
-/**
- * Callbacks that record any select (login must ask none) and paste `paste`'s text: through
- * onManualCodeInput when `manual` is set (the host has one), else through onPrompt.
- */
 function harness(
   paste: Paste,
   options: { signal?: AbortSignal; manual?: boolean } = {},
@@ -344,7 +339,6 @@ test("login: without agy or a configured client it fails before any network or b
 test("login: abort during the code prompt rejects once and never requests a token", async () => {
   const dir = await agentDirWith();
   for (const manual of [true, false]) {
-    // Count raw attempts: fakeFetch drops an aborted call before recording it.
     let attempts = 0;
     const { fake } = deps(googleRoute("{}"), dir, ENV);
     const { deps: d } = deps(googleRoute("{}"), dir, ENV, {
@@ -372,7 +366,6 @@ test("login: abort during the code prompt rejects once and never requests a toke
         settlements++;
       });
     await assert.rejects(login, /user cancelled/u);
-    // The host prompt answering after the abort changes nothing.
     release(FAKE_CODE);
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(settlements, 1);
@@ -636,7 +629,6 @@ test("api key: malformed values are rejected without echoing them", () => {
   );
 });
 
-/** The formatted fields of the AntigravityError `pending` rejects with. */
 async function formattedRejection(pending: Promise<OAuthCredentials>) {
   try {
     await pending;
@@ -654,9 +646,7 @@ test("login and refresh errors are formatter lines that keep the actionable word
   const run = deps(googleRoute("{}"), dir, {});
 
   const loginFailures = [
-    // No agy on PATH.
     await formattedRejection(createAntigravityOAuth(run.deps).login(harness(bareCode).callbacks)),
-    // An agy whose clients do not match the consumer fingerprint.
     await formattedRejection(
       createAntigravityOAuth({
         ...run.deps,

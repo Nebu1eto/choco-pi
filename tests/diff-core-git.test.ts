@@ -28,7 +28,6 @@ import type { DiffFile } from "../profile/extensions/review/core/types.ts";
 const execFileAsync = promisify(execFile);
 const TEMP_ROOT = tmpdir();
 
-/** Fixture git never reads the owner's global or system configuration. */
 const FIXTURE_ENV = {
   ...process.env,
   GIT_CONFIG_GLOBAL: "/dev/null",
@@ -64,10 +63,6 @@ async function put(root: string, path: string, content: string | Uint8Array): Pr
 
 let touchSeconds = 0;
 
-/**
- * Give a file a new mtime without changing its content. Git may compare whole
- * seconds only, so each touch moves the mtime a further 10 s ahead.
- */
 async function touch(root: string, path: string): Promise<void> {
   const target = join(root, path);
   assertTemporary(target);
@@ -237,9 +232,6 @@ test("uncommitted snapshot lists every change kind with counts, flags, and exact
   assert.equal(pick(files, "untracked-binary.bin").additions, null);
   assert.equal(pick(files, "untracked-big.txt").additions, null, "too large to count");
 
-  // Bodies.
-  // /review's parser rejects the quoted newline name, so compare ids file by file
-  // using the same git invocations /review makes.
   const reviewFile = async (path: string) => {
     const tracked = await git(
       root,
@@ -320,7 +312,6 @@ test("uncommitted snapshot lists every change kind with counts, flags, and exact
   assert.equal((await store.loadFile("untracked-big.txt")).body.kind, "too-large");
 
   assert.deepEqual((await store.loadFile("not-listed.txt")).body, { kind: "gone" });
-  // Reverted after the snapshot: the file is no longer changed.
   await git(root, "checkout", "--", QUOTE_NAME);
   assert.deepEqual((await store.loadFile(QUOTE_NAME)).body.kind, "text", "cached before revert");
   await unlink(join(root, "untracked/deep/new.txt"));
@@ -425,7 +416,6 @@ test("detached HEAD, a subdirectory cwd, and a linked worktree keep repository-r
 test("a cwd outside any repository reports not-a-repository without throwing", async (t) => {
   const plain = join(await tempDirectory(t), "plain");
   await mkdir(plain);
-  // Guard against a temp directory that happens to sit inside a repository.
   const probe = await execFileAsync("git", ["rev-parse", "--show-toplevel"], { cwd: plain }).then(
     () => true,
     () => false,
@@ -475,7 +465,6 @@ test("branch-base and since-checkpoint sources compare the working tree with the
   await put(root, "feature.txt", "feature\n");
   await commitAll(root, "feature");
   await put(root, "shared.txt", "shared\nedited\n");
-  // Rewritten with identical content: stat-dirty, but not a change.
   await touch(root, "untouched.txt");
   await touch(root, "untouched.bin");
 
@@ -512,7 +501,6 @@ test("branch-base and since-checkpoint sources compare the working tree with the
   const failed = store.getState();
   assert.equal(failed.kind, "error");
   if (failed.kind !== "error") throw new Error("unreachable");
-  // The wording `resolveBase` has always produced: git's own first stderr line.
   assert.match(failed.message, /^No merge base with no-such-branch: fatal: .*no-such-branch/);
 });
 
@@ -526,13 +514,10 @@ test("refreshing never writes the index even when status would refresh stat data
   const index = join(root, ".git", "index");
 
   const touchFiles = async () => {
-    // Same content, new mtime: a plain `git status` re-hashes b.txt and rewrites the index.
     await touch(root, "b.txt");
     await touch(root, "c.bin");
   };
 
-  // The review runner adds no GIT_OPTIONAL_LOCKS environment, so only the
-  // pinned --no-optional-locks option keeps the index untouched here.
   const store = createDiffStore({ cwd: root, exec: defaultExecRunner });
   t.after(() => store.dispose());
   await touchFiles();
@@ -548,8 +533,6 @@ test("refreshing never writes the index even when status would refresh stat data
   assert.equal(after.mtimeMs, before.mtimeMs, "index not rewritten by the pane");
   assert.equal(after.ino, before.ino);
 
-  // Control: the same situation with a plain status does rewrite the index,
-  // so the assertion above can fail.
   await touchFiles();
   const controlBefore = await stat(index);
   await git(root, "status", "--porcelain");

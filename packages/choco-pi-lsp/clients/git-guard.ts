@@ -15,7 +15,6 @@ import {
   type AdvisoryProvenance,
 } from "./advisory-provenance.ts";
 
-/** The structured, single-source turn record used by context and git-guard. */
 const TurnEndFindingsCacheSchema = obj(
   {
     content: str(),
@@ -41,13 +40,9 @@ export interface TurnEndFindingsCache {
   projectSeqStart: number;
   projectSeqEnd: number;
   fileSeqByPath: Record<string, number>;
-  /** Content fingerprints catch edits made outside choco-pi-lsp between turns. */
   fileContentHashes: Record<string, string>;
-  /** A capped record is never treated as complete/allowable. */
   affectedFilesTruncated?: boolean;
-  /** Files represented by blockerContent, distinct from test failures. */
   blockingFiles?: string[];
-  /** Context has consumed the message, but the guard still owns the state. */
   consumed?: boolean;
   testFailures?: boolean;
   testFailureContent?: string;
@@ -92,7 +87,6 @@ function capAffectedFiles(files: string[], cwd: string) {
   };
 }
 
-/** Recovery is safe only when blocker content and its file provenance agree. */
 function hasCompleteBlockingProvenance(
   blockerContent: string | undefined,
   blockingFiles: string[] | undefined,
@@ -139,9 +133,6 @@ function getShellCommand<T>(input: T): string {
 function executableName(value: string): string {
   const normalized = value.replace(/\\/g, "/");
   let name = (normalized.slice(normalized.lastIndexOf("/") + 1) ?? "").toLowerCase();
-  // Shell launchers are commonly supplied as resolved Windows paths or as
-  // PATHEXT-qualified names. Guard classification must happen after the same
-  // basename/extension normalization for every wrapper family.
   return name.replace(/\.(?:exe|com|bat|cmd)$/i, "");
 }
 
@@ -161,11 +152,6 @@ function isCommandStringWrapper(value: string): boolean {
   return COMMAND_STRING_WRAPPERS.has(executableName(value));
 }
 
-/**
- * Canonicalize shell parameter separators before command classification. The
- * quote-aware pass deliberately leaves literal arguments alone; the lexer
- * then supplies the command-position boundaries used by the guard.
- */
 function canonicalizeGuardCommand(command: string): string {
   let result = "";
   let quote: "single" | "double" | undefined;
@@ -218,7 +204,6 @@ function canonicalizeGuardCommand(command: string): string {
   return collapsed.trim();
 }
 
-/** Normalize only a command-position token; never apply this to path args. */
 function normalizeGuardVerbToken(value: string): string {
   return value
     .replace(/\\(?=[A-Za-z0-9_])/g, "")
@@ -348,17 +333,11 @@ function containsCommitOrPush(tokens: string[], depth: number): boolean {
       );
     }
   }
-  // These commands consume their following words as text/patterns; a bare
-  // git token in their arguments is not an indirect executable invocation.
-  // `$(git push)` is execution and must block; `"git push"` as literal text
-  // is allowed. Substitutions are screened before this text-consumer escape.
   if (["echo", "printf", "grep"].includes(executableName(commandTokens[0] ?? ""))) {
     return false;
   }
   const gitIndex = commandTokens.findIndex((token) => isGitExecutable(token));
   if (gitIndex >= 0) {
-    // Any non-leading git invocation is indirect. Do not maintain a wrapper
-    // or flag allowlist: unknown launchers are the security boundary here.
     if (gitIndex > 0) return true;
     const gitTokens = commandTokens.slice(gitIndex);
     let i = 1;
@@ -398,9 +377,6 @@ function containsCommitOrPush(tokens: string[], depth: number): boolean {
   const knownCommandStringWrapper =
     isShellWrapper(leadingExecutable) || isCommandStringWrapper(leadingExecutable);
   if (!knownCommandStringWrapper) {
-    // Unknown launchers are a fail-closed boundary only when they explicitly
-    // accept a command string. Re-tokenizing the value keeps literal mentions
-    // such as `myprog -c "echo git push"` out of the guarded-command path.
     const unknownSwitchIndex = commandTokens
       .slice(1)
       .findIndex((token) => (token.startsWith("-") || token.startsWith("/")) && token.length > 1);
@@ -425,13 +401,7 @@ function containsCommitOrPush(tokens: string[], depth: number): boolean {
       token === "-encodedcommand",
   );
   if (switchIndex < 0 || switchIndex + 1 >= commandTokens.length) return false;
-  // Encoded PowerShell is intentionally unsupported: decoding it here would
-  // be a second shell/parser and could turn an ambiguous command into a false
-  // allow. Plain -Command/-c is safely handed back to the shared lexer.
   if (lower[switchIndex] === "-encodedcommand") return false;
-  // switchIndex is relative to commandTokens.slice(1), so +2 addresses the
-  // command token after the switch for both cmd and PowerShell. This also
-  // handles cmd options preceding /C (for example `/S /C`).
   let commandIndex = switchIndex + 2;
   if (commandTokens[commandIndex] === "--") commandIndex += 1;
   const nestedCommand = commandTokens.slice(commandIndex).join(" ");
@@ -440,7 +410,6 @@ function containsCommitOrPush(tokens: string[], depth: number): boolean {
   );
 }
 
-/** Analyze actual executable invocations, not substrings in shell text. */
 export function isGitCommitOrPushAttempt<T>(toolName: string, input: T): boolean {
   if (toolName !== "bash") return false;
   const command = getShellCommand(input);
@@ -463,7 +432,6 @@ function markCacheUnknown(runtime: RuntimeCoordinator, reason: string): void {
   runtime.markGitGuardCacheUnknown(reason);
 }
 
-/** Persist a complete, bounded, content-bound guard record. */
 export function writeGitGuardRecord(
   cacheManager: CacheManager,
   runtime: RuntimeCoordinator,
@@ -547,32 +515,6 @@ function unknown(cwd: string, reasonCategory: string, metadata = {}): GuardDecis
   };
 }
 
-/**
- * Reconcile the one persisted record after a per-file dispatch. This is called
- * on tool_result, never tool_call, and therefore does not add disk I/O to the
- * edit preflight path.
- */
-/**
- * Retire one file's inline blocker on a confirmed-clean verdict, then bring the
- * commit gate back in line with the map (#1561 F2).
- *
- * Retiring the map entry alone is not enough and claiming otherwise was wrong:
- * the gate reads a LATCH (`gitGuardHasBlockers`) and a PERSISTED record, and
- * `evaluateGitGuard` short-circuits on the latch before it ever looks at the
- * record. A retire that touched neither left the commit blocked and quoted the
- * retired blocker back as the reason.
- *
- * Both are recomputed exactly the way a clean dispatch recomputes them:
- * `updateGitGuardStatus(false, "")` re-derives the latch from the blocker map
- * — it cannot clear a latch another file's live blocker still justifies,
- * because that file's entry is still in the map — and `syncGitGuardRecord`
- * rewrites the persisted record from the same source of truth.
- *
- * Colocated with the gate rather than inlined at the wiring site so the claim
- * is testable without booting the extension.
- *
- * @returns true when an entry was retired (the caller logs it — #1432 Gap 1).
- */
 export function retireInlineBlockerAndResyncGuard(args: {
   runtime: RuntimeCoordinator;
   cacheManager: CacheManager;
@@ -639,11 +581,6 @@ export function syncGitGuardRecord(
       affectedFiles = affectedFiles.filter((file) => guardPathKey(file, cwd) !== editedKey);
     }
   }
-  // A clean per-file dispatch is authoritative for that file. When the
-  // persisted record has explicit blocking-file provenance and the last such
-  // file just reconciled clean, retaining blockerContent would resurrect a
-  // stale blocker on every later git-guard lookup. Records without that
-  // provenance remain fail-closed: they cannot be safely cleared here.
   const clearedLastKnownBlocker =
     !entries.length &&
     !!editedKey &&
@@ -683,7 +620,6 @@ export function syncGitGuardRecord(
   });
 }
 
-/** Add blocking test failures to the same turn-end record. */
 export function mergeGitGuardTestFailure(
   cacheManager: CacheManager,
   cwd: string,
@@ -721,7 +657,6 @@ export function mergeGitGuardTestFailure(
   });
 }
 
-/** A passing test run resolves only its own previous test failures. */
 export function clearGitGuardTestFailure(
   cacheManager: CacheManager,
   cwd: string,
@@ -847,8 +782,6 @@ export function evaluateGitGuard(
   if (record.hasBlockers && record.affectedFiles.length === 0) {
     return unknown(cwd, "blocker_without_affected_file");
   }
-  // A deleted/ignored affected file has been resolved; no stale blocker is
-  // allowed to survive solely because its old path remains in the record.
   if (record.hasBlockers && liveFiles.length === 0 && record.affectedFiles.length > 0) {
     logDecision(cwd, "allowed", "affected_files_resolved", {
       projectSeq: record.projectSeqEnd,

@@ -1,6 +1,3 @@
-/**
- * Revival of dormant agents from the journal.
- */
 import { ensureEnabledModels } from "../enabled-models.ts";
 import { type AgentActivity, getDisplayName } from "../ui/agent-widget.ts";
 import type { ExtensionContext, AgentSession, ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -28,31 +25,11 @@ import { getStatusNote } from "../status-note.ts";
 import { createActivityTracker, textResult, errorResult } from "./helpers.ts";
 import type { SubagentsRuntime } from "./runtime.ts";
 
-/** Revival journal: reviving dormant agents after restart and dormant-agent tool paths. */
 export function installRevival(pi: ExtensionAPI, rt: SubagentsRuntime) {
-  // ---- Durable revival: journal sink and startup revival ----
-  //
-  // Only the root activation that owns the manager registry journals, and only
-  // for a persisted root session outside print/json one-shot runs. Everything
-  // else keeps the old semantics (abortAll at shutdown). Child-session
-  // activations return before registering any handler (top of this factory).
-  //
-  // Revival starts on a timer after session_start returns: Pi awaits each
-  // extension's session_start in load order, so the handlers of extensions
-  // loaded after this one (usage-limit policy registration, provider setup)
-  // still run before the revived runs make their first provider call. A
-  // re-armed usage wait additionally retries policy lookup for ~30 s.
   const REVIVAL_START_DELAY_MS = 250;
 
-  /**
-   * Reload agent definitions for a caller bound to the current session.
-   * Returns false when the session started or shut down while the files were
-   * read; the caller must then leave its captured ctx and pi untouched.
-   */
   async function refreshAgentsForSession(): Promise<boolean> {
     const generation = rt.state.revivalGeneration;
-    // Alongside the reload (no extra latency): the first Model Scope check for
-    // this cwd must see the allowlist; a cached snapshot resolves without I/O.
     const cwd = rt.state.currentCtx?.cwd;
     await Promise.all([
       rt.reloadCustomAgents(),
@@ -60,7 +37,6 @@ export function installRevival(pi: ExtensionAPI, rt: SubagentsRuntime) {
     ]);
     return generation === rt.state.revivalGeneration;
   }
-  /** Activity trackers created for revivals, claimed by `onRevived`. */
   const revivalTrackers = new Map<string, AgentActivity>();
 
   function journalEligible(ctx: ExtensionContext): boolean {
@@ -75,7 +51,6 @@ export function installRevival(pi: ExtensionAPI, rt: SubagentsRuntime) {
     return file !== undefined && file.length > 0;
   }
 
-  /** Top-level dormant agent addressed by id, handle or alias. */
   function findTopLevelDormant(ref: string): JournalAgentSnapshot | undefined {
     const byId = rt.core.manager.getDormant(ref);
     if (byId !== undefined) return byId.parentAgentId === undefined ? byId : undefined;
@@ -87,7 +62,6 @@ export function installRevival(pi: ExtensionAPI, rt: SubagentsRuntime) {
     ctx: ExtensionContext,
   ): RevivalRunCallbacks {
     const { state, callbacks } = createActivityTracker(snapshot.options.maxTurns);
-    // A reopened file already holds every earlier turn; stream only new ones.
     const reopened = snapshot.sessionFile !== undefined;
     const onSessionCreated = (session: AgentSession): void => {
       callbacks.onSessionCreated(session);
@@ -113,12 +87,10 @@ export function installRevival(pi: ExtensionAPI, rt: SubagentsRuntime) {
     };
   }
 
-  /** Wire a revived or dormant-resumed record like a background spawn. */
   function onAgentRevived(record: AgentRecord): void {
     const state = revivalTrackers.get(record.id);
     revivalTrackers.delete(record.id);
     if (record.parentAgentId !== undefined) return;
-    // The tool call that created it was answered in an earlier process.
     record.toolCallId = undefined;
     const joinMode = resolveJoinMode(rt.state.defaultJoinMode, true);
     if (joinMode) record.joinMode = joinMode;
@@ -162,15 +134,10 @@ export function installRevival(pi: ExtensionAPI, rt: SubagentsRuntime) {
     return {
       pi,
       ctx,
-      // The manager rechecks its own revival generation after this settles.
-      // The enabled-models snapshot loads alongside: prepareRevival's Model
-      // Scope check runs synchronously right after.
       resolveType: async (type) => {
         await Promise.all([rt.reloadCustomAgents(), ensureEnabledModels(revivalCwd)]);
         const dispatch = resolveSpawnType(type);
         if (!dispatch.ok) return { ok: false, message: dispatch.message };
-        // Same rule as the tombstone resume: reopening a conversation under a
-        // substitute agent's prompt and tools is not continuing it.
         if (dispatch.fellBackFrom !== undefined) {
           return { ok: false, message: `The ${type} agent is no longer available.` };
         }
@@ -191,8 +158,6 @@ export function installRevival(pi: ExtensionAPI, rt: SubagentsRuntime) {
     rt.state.revivalTimer = setTimeout(() => {
       rt.state.revivalTimer = undefined;
       if (generation !== rt.state.revivalGeneration) return;
-      // Reduced now rather than at session_start, so a stop_subagent issued in
-      // between is honored.
       const snapshots = [...reduceJournal(ctx.sessionManager.getEntries(), rootSessionId).values()];
       rt.core.manager
         .reviveFromJournal(snapshots, revivalContext(ctx, generation))
@@ -203,12 +168,10 @@ export function installRevival(pi: ExtensionAPI, rt: SubagentsRuntime) {
     }, REVIVAL_START_DELAY_MS);
   }
 
-  /** Agent(resume) of a dormant top-level agent: reopen its saved session in the background. */
   async function resumeDormantFromTool(
     ctx: ExtensionContext,
     dormant: JournalAgentSnapshot,
     prompt: string,
-    /** `provider/id` chosen by the caller; validated like a live resume's. */
     model: string | undefined,
     toolCallId: string,
     workTask: string | undefined,
@@ -219,7 +182,6 @@ export function installRevival(pi: ExtensionAPI, rt: SubagentsRuntime) {
         `Agent "${id}" is being revived right now. ${TERMINAL_RESULT_RETRIEVAL_GUIDANCE}`,
       );
     }
-    // A stored usage-limit closure is re-checked before the synchronous gate reads it.
     await rt.core.manager.refreshResumeProvider(id, model, ctx);
     let resumable: boolean;
     try {
@@ -254,7 +216,6 @@ export function installRevival(pi: ExtensionAPI, rt: SubagentsRuntime) {
         },
       );
     } catch (error) {
-      // The dormant resume failed before a run started: refund the round.
       if (admission.kind === "admitted") await rt.registry.reviewRounds.release(admission.ticket);
       return textResult(
         `Failed to resume agent "${id}": ${error instanceof Error ? error.message : String(error)}`,
@@ -278,7 +239,6 @@ export function installRevival(pi: ExtensionAPI, rt: SubagentsRuntime) {
     );
   }
 
-  /** get_subagent_result of a dormant top-level agent, from its journaled snapshot. */
   function readDormantResult(dormant: JournalAgentSnapshot, verbose: boolean | undefined) {
     if (isDormantRunUnfinished(dormant.status)) {
       return textResult(formatDormantNotRunning(dormant));
@@ -300,7 +260,6 @@ export function installRevival(pi: ExtensionAPI, rt: SubagentsRuntime) {
     return textResult(output);
   }
 
-  /** stop_subagent of a dormant top-level agent: make sure it never revives. */
   function stopDormantAgent(ref: string, dormant: JournalAgentSnapshot) {
     if (!isDormantRunUnfinished(dormant.status)) {
       return textResult(

@@ -101,7 +101,6 @@ interface Notice {
 interface Activation {
   tools: Map<string, ToolDefinition>;
   events: Array<{ channel: string; payload: ShellLifecyclePayload }>;
-  /** When set, events.emit throws it instead of recording, simulating a stale runtime. */
   emitError?: Error;
   emitAttempts: number;
   messages: Array<{
@@ -857,8 +856,6 @@ test("tool and command handlers preserve ownership and defensively handle direct
     assert.equal(commandNotices[0]?.level, "info");
     assert.match(commandNotices[0]?.message ?? "", new RegExp(childStarted.shellId));
 
-    // Direct child session_shutdown coverage is defensive; the subagents cleanup bridge is the
-    // production path that disposes child-owned shells.
     assert.ok(child.shutdown);
     await child.shutdown({ reason: "quit" }, context("child-session"));
     const afterChildShutdown = details<{ shells: Array<{ shellId: string; state: string }> }>(
@@ -1008,8 +1005,6 @@ test("lifecycle events publish flat started/exited payloads with the tool call i
       { command: "exit 7", name: "seven" },
       "root-session",
     );
-    // started is emitted synchronously inside shell_start, so it always comes first; a fast
-    // `exit 7` may already have emitted exited by the time the awaited tool call returns.
     assert.equal(eventsFor(root, started.shellId)[0], "shells:started");
     await waitFor(() => eventsFor(root, started.shellId).length === 2, "exit event");
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -1155,7 +1150,6 @@ test("session replacement emits lost for running shells and reload emits nothing
     assert.equal(root.events.length, before, "detached activations stay silent");
     assert.deepEqual(eventsFor(reloaded, kept.shellId), ["shells:started"]);
   } finally {
-    // Read the slot directly so a failure before the stop above still kills the loop.
     await registry()[managerKey]?.dispose();
     delete registry()[managerKey];
   }
@@ -1253,7 +1247,6 @@ test("an unrelated event bus failure escapes the manager listener boundary", asy
       () => deferred[0]?.(),
       (error) => error === failure,
     );
-    // The shell itself is unaffected and the activation keeps emitting.
     root.emitError = undefined;
     await execute(root, "shell_stop", { shell_id: started.shellId }, "root-session");
     await waitFor(() => eventsFor(root, started.shellId).includes("shells:stopped"), "stop event");
@@ -1284,7 +1277,6 @@ test("a child identified only by the subagents registry never disposes the root 
       "root-session",
     );
 
-    // No async child-context marker: the activation loads like a root extension.
     const child = await activate(false);
     assert.ok(child.sessionStart && child.shutdown);
     assert.ok(child.toolExecutionStart, "marker-less child still registers root-only hooks");
@@ -1301,7 +1293,6 @@ test("a child identified only by the subagents registry never disposes the root 
     ).shells.map((shell) => shell.shellId);
     assert.deepEqual(childVisible, [childShell.shellId], "child is not admin");
 
-    // Subagents unregisters the id before emitting the child's quit shutdown.
     liveChildIds.delete("registry-child");
     await child.shutdown({ reason: "quit" }, context("registry-child"));
 

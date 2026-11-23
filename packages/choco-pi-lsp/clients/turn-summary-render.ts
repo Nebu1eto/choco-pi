@@ -1,15 +1,3 @@
-/**
- * Renderer for the #484 turn-summary custom message
- * (`pilens:turn-summary`). Collapsed = one tool-grouped line (choco-pi-lsp brand
- * accent). Expanded = file-major: each touched file lists its
- * formats/autofixes/diagnostics with tool + rule id + line.
- *
- * `Component` construction is verified practical from an extension: it is
- * just `@earendil-works/pi-tui`'s `Component` interface —
- * `{ render(width: number): string[] }` — no framework object graph needed.
- * `pi-tui` is already a devDependency (package.json `@earendil-works/pi-tui`).
- */
-
 import type { MessageRenderer, MessageRenderOptions } from "@earendil-works/pi-coding-agent";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Component } from "./deps/pi-tui.ts";
@@ -20,10 +8,6 @@ import {
   type TurnSummaryEvent,
 } from "./turn-summary.ts";
 
-// `CustomMessage<T>` itself is not re-exported from the package root (only
-// reachable via the internal extensions/types subpath, which package.json's
-// `exports` map does not expose) — derive the message param type from the
-// publicly exported `MessageRenderer<T>` function-type alias instead.
 type TurnSummaryMessage = Parameters<MessageRenderer<TurnSummaryDetails>>[0];
 
 function severityColor(
@@ -56,8 +40,6 @@ function buildExpandedLines(details: TurnSummaryDetails, theme: Theme): string[]
   const sortedFiles = [...details.files].sort((a, b) => a.displayPath.localeCompare(b.displayPath));
   for (const file of sortedFiles) {
     lines.push(`  ${theme.bold(file.displayPath)}`);
-    // File-major: formats, then autofixes, then diagnostics — matches the
-    // order things happen in the write pipeline (format → autofix → lint).
     const formats = file.events.filter((e) => e.kind === "format");
     const autofixes = file.events.filter((e) => e.kind === "autofix");
     const diagnostics = file.events.filter((e) => e.kind === "diagnostic");
@@ -76,9 +58,6 @@ export function renderTurnSummaryMessage(
   const details = message.details;
   if (!details) return undefined;
 
-  // pi-tui HARD-CRASHES the host on any rendered line wider than the
-  // terminal, so every line must be fitted to the width the TUI hands us
-  // (#513 — an untruncated collapsed one-liner took down a live session).
   if (!options.expanded) {
     const line = formatTurnSummaryLine(details);
     const text = theme.fg("accent", line);

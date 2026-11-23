@@ -14,14 +14,8 @@ const TOOL_DIRS: ToolDirectoryMap = {
   web_run: "web-run",
 };
 
-/** This package's `src/tools` directory, where apply_patch, exec_bridge and view_image ship. */
 export const CODE_MODE_TOOLS_ROOT_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
-/**
- * Resolve a bundled native tool binary. `toolsRootDir` names the `src/tools`
- * tree that ships it (default: this package's); a provider package passes its
- * own tree for the binaries it bundles (Codex: imagegen, web_run).
- */
 export function getBundledToolBinaryPath(
   toolName: string,
   target: { platform?: NodeJS.Platform; arch?: string } = {},
@@ -36,9 +30,6 @@ export function getBundledToolBinaryPath(
   if (custom) {
     const customBinary = join(custom, exe);
     if (existsSync(customBinary)) return customBinary;
-    // Fork addition: besides the flat layout, also accept a directory laid
-    // out like the upstream package's src/tools tree
-    // (<dir>/<tool>/bin/<platform>-<arch>/<exe>).
     const customTreeBinary = join(custom, toolDir, "bin", `${platform}-${arch}`, exe);
     if (existsSync(customTreeBinary)) return customTreeBinary;
   }

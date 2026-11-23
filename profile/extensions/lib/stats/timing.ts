@@ -2,17 +2,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readCallUsage, totalTokens } from "./records.ts";
 import { TIMING_ENTRY_TYPE } from "./scan.ts";
 
-/**
- * Time to first token, recorded per assistant message.
- *
- * Pi persists each response's request start (`message.timestamp`) and total
- * `durationMs`, but not when the first token arrived. This recorder watches
- * the stream, notes the first content event, and writes one custom entry
- * ahead of the assistant message; the Statistics scanner joins the two by
- * provider, model, and request start. Custom entries never reach the model.
- */
-
-/** The stream events that carry the first visible token of a response. */
 const FIRST_TOKEN_EVENTS: ReadonlySet<string> = new Set([
   "text_start",
   "text_delta",
@@ -33,12 +22,7 @@ export type TimingEntry = {
 
 type TimingApi = Pick<ExtensionAPI, "on" | "appendEntry">;
 
-/**
- * Registers the recorder. Returns the number of entries written so far, for
- * tests. `now` must share the clock of `message.timestamp` (Date.now).
- */
 export function registerStatsTiming(pi: TimingApi, now: () => number = Date.now): () => number {
-  /** Request start → first content event, for responses still streaming. */
   const pending = new Map<number, { firstAt: number; firstEvent: string } | undefined>();
   let written = 0;
 
@@ -57,7 +41,6 @@ export function registerStatsTiming(pi: TimingApi, now: () => number = Date.now)
     pending.set(message.timestamp, { firstAt: now(), firstEvent: type });
   });
 
-  // An aborted run never ends its message; drop whatever is still pending when the run ends.
   pi.on("agent_end", () => {
     pending.clear();
   });

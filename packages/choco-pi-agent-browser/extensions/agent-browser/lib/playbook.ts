@@ -87,7 +87,6 @@ export const WRAPPER_TAB_RECOVERY_BEHAVIOR = [
   "If upstream reports tab_gone, the pinned bound tab is gone; use details.nextActions (tab list / tab new) instead of assuming another tab is yours.",
 ] as const;
 
-/** Tier A: always-on tool promptGuidelines (keep small; Tier B lives in SHARED_BROWSER_PLAYBOOK_GUIDELINES and docs). */
 export const RUNTIME_PROMPT_GUIDELINES = [
   "Use agent_browser with one input mode: script, args, semantic_action, job, qa, source_lookup/network_source_lookup, or electron. stdin: batch/eval/auth/wrapper batch only; electron rejects it; never pass --json.",
   "Copy accessible names and placeholders exactly as the snapshot prints them (Unicode such as … ’ – is common); when a visible text target exists prefer `{ semantic_action: { action, locator: 'text'|'label'|'placeholder'|'role', value/name } }` or the current `@ref` over hand-written CSS; never use Playwright `text=`/`:has-text()` selectors — they fail as selector-not-found.",

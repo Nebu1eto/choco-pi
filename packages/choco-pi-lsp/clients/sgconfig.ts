@@ -7,9 +7,6 @@ import { load as loadYaml } from "./deps/js-yaml.ts";
 import { resolvePackagePath } from "./package-root.ts";
 import { findLocalToolConfig } from "./path-utils.ts";
 
-// ast-grep's root config marker. The `ast-grep lsp` server is workspace-gated:
-// it only operates in a project that has an `sgconfig.y[a]ml` at (or above) the
-// file. These are the names ast-grep itself looks for as root markers.
 export const SGCONFIG_NAMES = ["sgconfig.yml", "sgconfig.yaml"] as const;
 
 export interface AstGrepRuleSource {
@@ -40,7 +37,6 @@ interface CachedBaseline {
   mergedDir: string;
 }
 
-/** Nearest `sgconfig.y[a]ml` walking up from `startDir`, or undefined if none. */
 export function findLocalSgconfig(startDir: string): string | undefined {
   return findLocalToolConfig(startDir, SGCONFIG_NAMES);
 }
@@ -53,10 +49,6 @@ function canonicalDir(dir: string): string {
   }
 }
 
-/**
- * Rule sources in the precedence order shared by raw ast-grep/LSP and NAPI:
- * project primary, project secondary, bundled primary, bundled secondary.
- */
 export function getAstGrepRuleSources(projectRoot = process.cwd()): AstGrepRuleSource[] {
   const root = path.resolve(projectRoot || process.cwd());
   const packageRoot = resolvePackagePath(import.meta.url);
@@ -100,7 +92,6 @@ export function getAstGrepRuleSources(projectRoot = process.cwd()): AstGrepRuleS
   });
 }
 
-/** Compatibility export retained for callers that only need ordered dirs. */
 export function shippedRuleDirsInPrecedenceOrder(projectRoot = process.cwd()): string[] {
   return getAstGrepRuleSources(projectRoot).map((source) => source.dir);
 }
@@ -175,12 +166,6 @@ function snapshotRuleSource(source: AstGrepRuleSource): RuleSourceSnapshot {
     const relativePath = path.relative(source.dir, file);
     hash.update(relativePath);
     hash.update("\0");
-    // Guarded read (mirrors loadYamlRuleFiles in yaml-rule-parser.ts): a rule
-    // file deleted/renamed between the directory walk and this read (editor
-    // churn mid-session) must degrade to "skip this file", not throw —
-    // resolveBaselineSgconfig sits on the ast-grep LSP spawn path. The
-    // "missing" sentinel still perturbs the digest so the cache re-resolves
-    // once the file is readable again.
     let content: string;
     try {
       content = fs.readFileSync(file, "utf8");
@@ -229,8 +214,6 @@ function materializeMergedRuleDir(sources: RuleSourceSnapshot[], mergedDir: stri
       });
       if (survivingDocuments.length === 0) continue;
 
-      // Keep files flat for ast-grep's ruleDirs loader while retaining stable,
-      // collision-free names for nested catalogs and duplicate basenames.
       const destination = path.join(
         mergedDir,
         `source${sourceIndex}-${String(fileIndex).padStart(5, "0")}.yml`,
@@ -254,10 +237,6 @@ function rootArtifactKey(root: string): string {
   return createHash("sha256").update(root).digest("hex").slice(0, 12);
 }
 
-/**
- * Synthesize a per-workspace config whose merged rule directory applies the
- * same project-first, source-layer precedence as the NAPI fallback.
- */
 export function resolveBaselineSgconfig(projectRoot = process.cwd()): string | undefined {
   const root = canonicalDir(path.resolve(projectRoot || process.cwd()));
   const sources = getAstGrepRuleSources(root).map(snapshotRuleSource);
@@ -304,16 +283,11 @@ function cleanupStaleBaselines(dir: string, keep: Set<string>): void {
         if (fs.statSync(full).mtimeMs < cutoff) {
           fs.rmSync(full, { recursive: isMergedDir, force: true });
         }
-      } catch {
-        // Racing another session; leave its artifact alone.
-      }
+      } catch {}
     }
-  } catch {
-    // Missing/unreadable temp directory; nothing to clean.
-  }
+  } catch {}
 }
 
-/** Test-only: reset memoized generated configs and mutable snapshots. */
 export function _resetBaselineSgconfigForTests(): void {
   cachedBaselines.clear();
   bundledSnapshots.clear();

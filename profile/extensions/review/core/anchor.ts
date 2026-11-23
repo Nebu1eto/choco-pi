@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import type { CommentAnchor, DiffHunk, DiffLine, DiffSide } from "./types.ts";
 
-// Comment placement lives in lib/changes, shared with the changes pane.
 export {
   locateComment,
   type CommentLocation,
@@ -17,7 +16,6 @@ function lineNumber(hunk: DiffHunk, side: DiffSide, index: number): number | und
   return side === "LEFT" ? line?.oldLine : line?.newLine;
 }
 
-/** Build an anchor from a side-specific line or line range in one hunk. */
 export function buildCommentAnchor(
   hunk: DiffHunk,
   side: DiffSide,
@@ -65,13 +63,6 @@ export function buildCommentAnchor(
   };
 }
 
-/**
- * Whether context revealed around a hunk (read from the base revision) still
- * sits against it: the last line above ends just before the hunk and the
- * first line below starts just after it, on both sides. A hunk id names
- * content, not place, so context read for where a hunk was must not be shown
- * (or searched) where it is now.
- */
 export function revealedContextFits(
   hunk: DiffHunk,
   context: { above: readonly DiffLine[]; below: readonly DiffLine[] },

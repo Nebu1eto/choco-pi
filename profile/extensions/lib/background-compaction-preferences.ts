@@ -1,7 +1,6 @@
 import type { PreferencesExtraSection } from "./agent-preferences.ts";
 import { reinterpretHostValue, runtimeTypeOf, type RuntimeValue } from "./runtime-values.ts";
 
-/** Published by choco-pi-compaction while a main session runs. */
 export const BACKGROUND_COMPACTION_PREFERENCES_PROVIDER_SYMBOL = Symbol.for(
   "choco-pi.background-compaction-preferences-provider",
 );
@@ -18,7 +17,6 @@ function isBackgroundCompactionPreferencesProvider(
   return runtimeTypeOf(record.buildSections) === "function";
 }
 
-/** The background-compaction row, merged into the agent section; none when the extension is absent. */
 export function buildBackgroundCompactionPreferencesSections(
   ctx: RuntimeValue,
 ): PreferencesExtraSection[] {

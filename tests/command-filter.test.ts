@@ -10,7 +10,6 @@ import {
 type Handler = (event: RuntimeValue, ctx: RuntimeValue) => void;
 type AutocompleteFactory = (current: RuntimeValue) => RuntimeValue;
 
-/** Collects what the extension registers, standing in for the host. */
 function createPi(handlers: Handler[]) {
   return { on: (_event: string, handler: Handler) => handlers.push(handler) };
 }
@@ -85,7 +84,6 @@ test("hides built-in commands from the editor without blocking execution", async
     );
     assert.deepEqual(wrapped.applyCompletion().lines, ["done"], "completion still delegates");
 
-    // A path completion shares the item shape, so only command prefixes filter.
     const paths = {
       ...base,
       getSuggestions: async () => ({ items: [{ value: "scoped-models" }], prefix: "./scoped" }),

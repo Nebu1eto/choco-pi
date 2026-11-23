@@ -1,5 +1,3 @@
-// Untrusted strings (file names, diff text, notes, reviewer output) must not reach the terminal with raw control
-// characters, and sanitised lines must still fit the width they were given.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CURSOR_MARKER, visibleWidth } from "@earendil-works/pi-tui";
@@ -15,11 +13,9 @@ import type { PrefsIo } from "../profile/extensions/diff/ui/prefs.ts";
 import type { AgentParseRecord } from "../profile/extensions/lib/verdict-blocks.ts";
 import { file, flush, harness, hunk, snapshot, textBody, until } from "./diff-actions-fakes.ts";
 
-/** ESC colour, OSC 52 clipboard write ended by BEL, CR, LF, C1 CSI, right-to-left override, tab. */
 const NASTY = "a\u001b[31mred\u001b]52;c;SGVsbG8=\u0007b\rc\nd\u009be\u202ef\tg";
 const WIDTH = 60;
 
-/** Independent of the production predicate: C0, DEL, C1 and the bidirectional controls. */
 function isUnsafe(codePoint: number): boolean {
   return (
     codePoint < 0x20 ||
@@ -43,17 +39,11 @@ function unsafeCount(text: string, allowed: readonly string[] = []): number {
 
 type Rendered = { raw: number; overWidth: number; mentions: boolean };
 
-/**
- * pi-tui's truncation wraps its ellipsis in SGR resets (`\u001b[0m…\u001b[0m`); with the plain test styler
- * that is the only escape the pane itself emits. NASTY contains no reset, so discounting it hides nothing.
- */
 const PI_TUI_RESET = "\u001b[0m";
 
-/** pi-tui 1.6.0's fake-cursor APC markers (`dist/tui.js`, not exported at the package root). */
 const FAKE_CURSOR_START = "\u001b_pi:fc\u0007";
 const FAKE_CURSOR_END = "\u001b_pi:/fc\u0007";
 
-/** The pane's own escapes: pi-tui's truncation reset and the focused input's cursor markers. */
 function withoutOwnEscapes(line: string): string {
   return line
     .replaceAll(PI_TUI_RESET, "")
@@ -92,7 +82,6 @@ test("rename arrows are sanitised on both sides", async () => {
   const h = await opened();
   h.store().ready(1, [file(`n${NASTY}`, { status: "renamed", oldPath: `o${NASTY}` })]);
   assert.deepEqual(inspect(body(h), "R oa"), SAFE);
-  // Wide enough to show both sides and the arrow.
   const wide = h.view().renderBody(200, true);
   assert.equal(
     wide.reduce((sum, line) => sum + unsafeCount(withoutOwnEscapes(line)), 0),
@@ -135,10 +124,8 @@ test("the inline list fallback and notices are sanitised", async () => {
 
 test("pane messages that embed a file name are sanitised", async () => {
   const h = await opened();
-  // On the sensitive list by its last segment; the directory carries the payload.
   const path = `${NASTY}/.env`;
   h.store().ready(1, [file(path)]);
-  // v shows the file at once; the message that names it is checked.
   h.tui.input("v");
   assert.deepEqual(inspect(header(h), "Showing a"), SAFE);
   assert.deepEqual(inspect([...header(h), ...body(h)], "Showing a"), SAFE);
@@ -155,7 +142,6 @@ test("diff body lines and hunk headers are sanitised, through the production ren
     h.tui.input("\r");
     await flush();
     assert.deepEqual(inspect(body(h), "add"), SAFE);
-    // Selected hunks are drawn with a different prefix; check them too.
     h.tui.input("n");
     assert.deepEqual(inspect(body(h), "add"), SAFE);
   }
@@ -273,18 +259,15 @@ test("reviewer findings read from the review records are sanitised in place and 
     lines.some((line) => line.includes("candidate F2 gonea")),
     "unlisted finding drawn",
   );
-  // Wide enough to show the whole invariant text.
   const wide = h.view().renderBody(300, true);
   assert.equal(
     wide.reduce((sum, line) => sum + unsafeCount(withoutOwnEscapes(line)), 0),
     0,
   );
-  // Open by default: the finding's whole invariant is drawn under it.
   assert.ok(wide.some((line) => line.includes("▾ ⚑ high finding Fa")));
   assert.ok(wide.some((line) => line.includes("inv a")));
 });
 
-/** The `@"..."` mention in `text`, decoded as JSON, or the bare `@path` token. */
 function mentionedPath(text: string): string | undefined {
   const quoted = /@("(?:[^"\\]|\\.)*")/u.exec(text);
   if (quoted?.[1] !== undefined) {
@@ -308,7 +291,6 @@ test("ask references put in the editor carry no raw controls, yet still name the
   h.tui.input("n");
   await flush();
   h.tui.input("a");
-  // Tabs inside code stay; every other control is escaped.
   assert.equal(unsafeCount(h.editor.text, ["\n", "\t"]), 0, "hunk ask");
   assert.equal(mentionedPath(h.editor.text), path);
   assert.ok(h.editor.text.includes("\\u001b[31m"), "escaped, not dropped");
@@ -336,8 +318,6 @@ test("notes sent to the editor carry no raw controls", async () => {
   assert.equal(mentionedPath(h.editor.text), path);
 });
 
-/* ---------------------------------------------------------- the pure functions */
-
 test("sanitizeTerminalText: every control becomes one visible column; tabs by policy; clean text is unchanged", () => {
   const clean = "src/normal file ✓ 日本.ts";
   assert.equal(sanitizeTerminalText(clean), clean);
@@ -348,7 +328,6 @@ test("sanitizeTerminalText: every control becomes one visible column; tabs by po
     "a␛[31mred␛]52;c;SGVsbG8=␇b␍c␊d\uFFFDe\uFFFDf␉g",
     "C0 as Control Pictures, C1 and bidi as U+FFFD, tab as ␉",
   );
-  // One column per replaced code point: the width equals the code point count.
   assert.equal(visibleWidth(safeText), [...NASTY].length);
   assert.equal(sanitizeTerminalText("a\tb", "spaces"), "a   b");
   assert.equal(sanitizeTerminalText("\u007f\u0000\u2066\u200f"), "␡␀\uFFFD\uFFFD");

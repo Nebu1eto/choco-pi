@@ -7,13 +7,10 @@ import {
 } from "@earendil-works/pi-tui";
 import { isFunction, isString, reinterpretHostValue, type RuntimeValue } from "./runtime-values.ts";
 
-/** Registry key used to keep one set of prototype wrappers across `/reload`. */
 export const AUTOCOMPLETE_ANYWHERE_BRIDGE = Symbol.for("choco-pi.autocomplete-anywhere-bridge");
 
-/** Marker that distinguishes command items inserted by this bridge from path items. */
 export const SLASH_COMPLETION_ITEM = Symbol.for("choco-pi.slash-completion-item");
 
-/** The editor state needed to decide whether completion is safe at the cursor. */
 export interface AutocompleteCursorState {
   lines: string[];
   cursorLine: number;
@@ -82,18 +79,10 @@ function readBridge(): AutocompleteAnywhereBridge | undefined {
   return reinterpretHostValue<AutocompleteAnywhereBridge>(candidate);
 }
 
-/**
- * Returns the unfinished slash token at the cursor. A whitespace boundary is
- * required so ordinary paths such as `src/file` do not become commands.
- */
 export function slashTokenBeforeCursor(lineBeforeCursor: string): string | undefined {
   return /(?:^|[ \t])(\/[^ \t]*)$/.exec(lineBeforeCursor)?.[1];
 }
 
-/**
- * Detects Markdown contexts where prompt completion would be distracting or
- * destructive: fenced code, blockquotes, and an open inline-code span.
- */
 export function isAutocompleteSuppressedContext(state: AutocompleteCursorState): boolean {
   const fencePattern = /^\s{0,3}(`{3,}|~{3,})/;
   let insideFence = false;
@@ -200,10 +189,6 @@ function createBehavior(bridge: AutocompleteAnywhereBridge): AutocompleteAnywher
   };
 }
 
-/**
- * Installs reload-safe wrappers around Pi's private editor and autocomplete
- * seams. Later extension loads replace only behavior, keeping one wrapper set.
- */
 export function installAutocompleteAnywhere(): void {
   const existing = readBridge();
   if (existing) {

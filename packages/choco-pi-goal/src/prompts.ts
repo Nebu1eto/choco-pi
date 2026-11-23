@@ -168,15 +168,6 @@ export function budgetLimitPrompt(goal: ThreadGoal): string {
   ].join("\n");
 }
 
-/**
- * What `/goal <objective>` sends: turn a plain task into one strict
- * evidence-based goal and create it in the same turn.
- *
- * This text was the `create-goal` prompt template. Pi dispatches an extension
- * command before it expands a prompt template of the same name, so a template
- * called `goal` would never run while this package registers the `/goal`
- * command; the command sends the text itself instead.
- */
 export function goalObjectivePrompt(task: string): string {
   return [
     "User task:",

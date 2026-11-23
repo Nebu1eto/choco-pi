@@ -1,18 +1,4 @@
 import { propertiesWhen } from "../../lib/runtime-values.ts";
-/**
- * Local risk ordering and noise folding for review diffs.
- *
- * User `riskPatterns` and `collapsePatterns` use case-insensitive path
- * substrings. Paths are normalized to forward slashes before matching. This
- * intentionally avoids a glob or regular-expression dialect that is easy to
- * mistype in JSON. User patterns add to the built-in rules; they never replace
- * them. Empty patterns are ignored.
- *
- * Format-only hunks are folded only for file types whose grammar does not use
- * whitespace for block structure. Python, YAML, Makefiles, shell scripts, and
- * other unknown formats remain expanded. This is deliberately conservative:
- * showing formatting noise is safer than hiding a semantic indentation change.
- */
 import type {
   DiffFile,
   DiffHunk,
@@ -23,11 +9,8 @@ import type {
 } from "./types.ts";
 
 export type DiffAssessment = {
-  /** Assessments in the same order as `DiffModel.files`. */
   files: FileAssessment[];
-  /** Hunk assessments in file and hunk input order. */
   hunks: HunkAssessment[];
-  /** File paths sorted by descending risk, preserving input order for ties. */
   reviewOrder: string[];
 };
 
@@ -154,8 +137,6 @@ function isFormatOnlyHunk(path: string, hunk: DiffHunk): boolean {
   const ext = extension(path);
   if (!ext || !FORMAT_SAFE_EXTENSIONS.has(ext)) return false;
   const changedLines = hunk.lines.filter((line) => line.kind !== "context");
-  // Whitespace inside strings and template literals is data, even in a
-  // whitespace-insensitive language. Without a language parser, keep it open.
   if (changedLines.some((line) => /["'`]/.test(line.text))) return false;
   const removed = changedLines
     .filter((line) => line.kind === "del")
@@ -262,7 +243,6 @@ function riskSignals(file: DiffFile): RiskSignal[] {
   return signals;
 }
 
-/** Assess every file and hunk without performing I/O or mutating the model. */
 export function assessDiff(model: DiffModel, config: ResolvedReviewConfig): DiffAssessment {
   const hunks: HunkAssessment[] = [];
   const files = model.files.map((file) => {

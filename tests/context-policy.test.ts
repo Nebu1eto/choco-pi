@@ -35,7 +35,6 @@ const cases: PolicyCase[] = [
     native: 1_050_000,
     softCap: "standard",
     point: "standard",
-    // headroom = min(0.15 × 600_000 = 90_000, 100_000) = 90_000; 450_000 < 510_000.
     expected: { apply: true, cap: 600_000, compactAt: 450_000, headroom: 90_000 },
   },
   {
@@ -43,7 +42,6 @@ const cases: PolicyCase[] = [
     native: 500_000,
     softCap: "permissive",
     point: "permissive",
-    // cap = native; headroom = 0.15 × 500_000 = 75_000; 600_000 ≥ 425_000 → 425_000.
     expected: { apply: true, cap: 500_000, compactAt: 425_000, headroom: 75_000 },
   },
   {
@@ -51,7 +49,6 @@ const cases: PolicyCase[] = [
     native: 272_000,
     softCap: "standard",
     point: "standard",
-    // headroom = 0.15 × 272_000 = 40_800; 450_000 ≥ 231_200 → 231_200.
     expected: { apply: true, cap: 272_000, compactAt: 231_200, headroom: 40_800 },
   },
   {
@@ -59,7 +56,6 @@ const cases: PolicyCase[] = [
     native: 200_000,
     softCap: "standard",
     point: "standard",
-    // headroom = max(16_384 + 8_000 = 24_384, 0.15 × 200_000 = 30_000) = 30_000.
     expected: { apply: true, cap: 200_000, compactAt: 170_000, headroom: 30_000 },
   },
   {
@@ -68,7 +64,6 @@ const cases: PolicyCase[] = [
     softCap: "unlimited",
     point: "unlimited",
     budget: 872_000,
-    // headroom = min(157_500, 100_000) = 100_000; min(950_000, 872_000 − 100_000) = 772_000.
     expected: {
       apply: true,
       cap: 1_050_000,
@@ -125,7 +120,6 @@ test("headroom is fixed at min(100K, 15% of the cap) with a host-reserve floor",
   assert.equal(computeHeadroom(1_050_000, HOST_RESERVE), 100_000);
   assert.equal(computeHeadroom(100_000, HOST_RESERVE), 24_384);
   assert.equal(computeHeadroom(100_000, 32_000), 40_000);
-  // The floor wins over the maximum when the host reserve is very large.
   assert.equal(computeHeadroom(1_050_000, 120_000), 128_000);
   assert.equal(computeHeadroom(200_000), 30_000, "Pi's default reserve applies when omitted");
 });
@@ -142,13 +136,11 @@ test("a budget that leaves no room under the headroom is ignored", () => {
   );
 });
 
-/** What a test publishes on the budget slot; foreign shapes are deliberately allowed. */
 interface BudgetSlotValue {
   readonly version: number;
   readonly budgetFor: RuntimeValue;
 }
 
-/** Publish `value` on the budget slot for the duration of `run`, then remove it. */
 function withBudgetHook(value: BudgetSlotValue, run: () => void): void {
   const previous = Object.getOwnPropertyDescriptor(globalThis, NATIVE_COMPACTION_BUDGET_SYMBOL);
   Object.defineProperty(globalThis, NATIVE_COMPACTION_BUDGET_SYMBOL, {

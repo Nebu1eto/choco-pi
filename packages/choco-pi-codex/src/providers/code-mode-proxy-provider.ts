@@ -147,7 +147,6 @@ export function streamCodeModeResponsesProxy<TApi extends Api>(
       const rewritten = await options?.onPayload?.(body, model);
       if (rewritten !== undefined) {
         // SAFETY: The provider payload hook receives a ResponsesBody and a defined replacement must
-        // preserve that request representation for the host provider API.
         body = rewritten as ResponsesBody;
       }
       if (responsesLite) {
@@ -172,7 +171,6 @@ export function streamCodeModeResponsesProxy<TApi extends Api>(
         if (options?.signal) requestOptions.signal = options.signal;
         if (options?.timeoutMs !== undefined) requestOptions.timeout = options.timeoutMs;
         // SAFETY: buildRequestBody and the Responses Lite transforms construct the documented
-        // streaming Responses request fields before this SDK boundary.
         const requestBody = body as ResponseCreateParamsStreaming;
         response = await client.responses.create(requestBody, requestOptions).withResponse();
       } catch (error) {
@@ -190,7 +188,6 @@ export function streamCodeModeResponsesProxy<TApi extends Api>(
       stream.push({ type: "start", partial: output });
       const responseData: unknown = response.data;
       // SAFETY: OpenAI's streaming iterator emits Responses event objects; Codex processing uses
-      // the same discriminators and parses every dynamic field before use.
       const events = responseData as AsyncIterable<CodexStreamEvent>;
       await streamEvents.processCodexResponsesStream(
         events,
@@ -274,7 +271,6 @@ export function registerCodeModeProxyProvider(
     registration: NonNullable<ReturnType<typeof registeredProviders.get>>,
   ) => {
     // SAFETY: ModelRegistry.getRegisteredProviderConfig returns the same provider registration
-    // representation accepted by ExtensionAPI.registerProvider.
     const current = registration.modelRegistry.getRegisteredProviderConfig?.(provider) as
       | RegisteredProviderConfig
       | undefined;
@@ -300,7 +296,6 @@ export function registerCodeModeProxyProvider(
     for (const provider of desiredProviders) {
       if (registeredProviders.has(provider)) continue;
       // SAFETY: ModelRegistry.getRegisteredProviderConfig returns the same provider registration
-      // representation accepted by ExtensionAPI.registerProvider.
       const previous = modelRegistry.getRegisteredProviderConfig(provider) as
         | RegisteredProviderConfig
         | undefined;
@@ -315,7 +310,6 @@ export function registerCodeModeProxyProvider(
         isCodeModeRuntime(resolveCodexRuntimePlan({ model }, getConfig(), getExecutionMode()))
           ? streamCodeModeResponsesProxy(model, context, options)
           : // SAFETY: The fallback provider came from this model's registered provider id, so its
-            // stream accepts the model representation supplied by the registry callback.
             fallbackProvider.streamSimple(model as never, context, options);
       pi.registerProvider(provider, {
         api: "openai-responses",

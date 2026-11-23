@@ -38,7 +38,6 @@ export function formatDaybreakStatus(
   }
 }
 
-/** Disabled Fast note for status; empty unless Fast is requested but disabled with a reason. */
 export function formatFastModeUnavailableStatus(decision: {
   readonly requested: boolean;
   readonly active: boolean;
@@ -71,7 +70,6 @@ export function renderCodexStatus(
     : undefined;
   const fastActive = fast?.active ?? false;
   const fastNote = fast ? formatFastModeUnavailableStatus(fast) : "";
-  // Sign-in Daybreak is shown only while requested, so an unrequested toggle adds no noise.
   const daybreakNote = isCanonicalCodexSubscriptionModel(ctx.model)
     ? formatDaybreakStatus(daybreak)
     : daybreak.reason

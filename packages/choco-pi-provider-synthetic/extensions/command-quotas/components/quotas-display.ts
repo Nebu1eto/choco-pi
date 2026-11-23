@@ -16,13 +16,7 @@ type QuotasState =
   | { type: "error"; message: string }
   | { type: "loaded"; quotas: QuotasResponse };
 
-/**
- * Convert a foreground ANSI escape to its background equivalent.
- * Handles truecolor (38;2), 256-color (38;5), and basic (3X) escapes.
- */
 function fgAnsiToBg(fgAnsi: string): string {
-  // Convert fg escape sequences to bg equivalents by replacing the
-  // discriminating digit: 38 (truecolor/256) → 48, 3X (basic) → 4X.
   return fgAnsi
     .split("[38;")
     .join("[48;")
@@ -53,11 +47,7 @@ function renderProgressBar(
   const parts: string[] = [];
   for (let idx = 0; idx < width; idx++) {
     if (paceIndex !== null && idx === paceIndex) {
-      // Inside fill = ahead of pace: accent. Outside = behind pace: severity.
       const markerColor = idx < filled ? "accent" : fillColor;
-      // Inside fill: set bg to fill color so `|` doesn't expose the panel bg
-      // through the thin character. Outside fill: ░ uses terminal bg naturally,
-      // so leave bg unset to match.
       if (idx < filled) {
         const bgAnsi = fgAnsiToBg(theme.getFgAnsi(fillColor));
         const fgAnsi = theme.getFgAnsi(markerColor);
@@ -174,7 +164,6 @@ export class QuotasComponent implements Component {
       lines.push("");
     }
 
-    // Remove trailing empty line
     if (lines.length > 0 && lines[lines.length - 1] === "") {
       lines.pop();
     }
@@ -189,10 +178,8 @@ export class QuotasComponent implements Component {
     const assessment = assessWindow(window);
     const color = getSeverityColor(assessment.severity);
 
-    // Label
     lines.push(truncateToWidth(`  ${theme.fg("accent", window.label)}`, maxWidth));
 
-    // Bar + usage
     const bar = renderProgressBar(
       window.usedPercent,
       barWidth,
@@ -206,7 +193,6 @@ export class QuotasComponent implements Component {
     const limitedBadge = window.limited ? theme.fg("error", " LIMITED") : "";
     lines.push(truncateToWidth(`  ${bar} ${theme.fg(color, usedStr)}${limitedBadge}`, maxWidth));
 
-    // Subtitle: next event info
     if (window.nextLabel) {
       const timeStr = formatTimeRemaining(window.resetsAt);
       const subtitleStr = window.nextAmount
@@ -218,7 +204,5 @@ export class QuotasComponent implements Component {
     return lines;
   }
 
-  invalidate(): void {
-    // No internal cached state to invalidate
-  }
+  invalidate(): void {}
 }

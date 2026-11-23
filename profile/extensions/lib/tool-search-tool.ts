@@ -1,20 +1,3 @@
-/**
- * choco-pi's `tool_search`: finds every tool the model can call, not only the
- * `deferred`/`codemode` tools Pi's built-in searches.
- *
- * choco-pi keeps most of its own tools inactive (the lean surface) and reaches
- * them as `tools.<name>` inside the Code Mode `exec` tool, so Pi's built-in
- * search, which only looks at inactive `deferred`/`codemode` tools, never
- * returned them. This definition replaces the built-in under the same name.
- *
- * - Code Mode (`exec` active): a lookup. It lists the matching tools callable
- *   inside `exec` and how to call them, and changes no active tool, so the
- *   declared tool list and the cached request prefix stay as they are.
- * - Otherwise: the built-in's behavior. It activates matching inactive tools,
- *   including `direct` tools the lean surface withholds; activation only adds.
- *
- * The ranker is small and deterministic: Pi does not export its own.
- */
 import type { ExtensionAPI, ToolDefinition, ToolExposure } from "@earendil-works/pi-coding-agent";
 import { num, obj, opt, str } from "@earendil-works/pi-schema";
 import { hostParams } from "./schema-bridge.ts";
@@ -23,15 +6,8 @@ import { isBoundaryValue } from "@choco-pi/code-mode/runtime-values";
 
 export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 export const DEFAULT_TOOL_SEARCH_LIMIT = 8;
-/** The Code Mode entry point; its presence in the active set means Code Mode. */
 export const CODE_MODE_TOOL_NAME = "exec";
 
-/**
- * Registered tools the Code Mode bridge never exposes inside `exec` and that
- * code mode does not ship natively: they are called only as declared tools.
- * Mirrors the direct-only part of choco-pi-codex's `BRIDGE_EXCLUDED_TOOLS`;
- * tests/codex-code-mode-bridge.test.ts keeps the two in step.
- */
 export const EXEC_DIRECT_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
   "Agent",
   "get_subagent_result",
@@ -42,10 +18,8 @@ export const EXEC_DIRECT_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
   "agent_browser",
 ]);
 
-/** Tools a search never returns: the Code Mode entry points and the search itself. */
 const NEVER_RETURNED: ReadonlySet<string> = new Set(["exec", "wait", TOOL_SEARCH_TOOL_NAME]);
 
-/** Tools choco-pi disables everywhere; the default availability filter drops them. */
 export const DISABLED_TOOL_NAMES: ReadonlySet<string> = new Set(["grep"]);
 
 const STOP_WORDS: ReadonlySet<string> = new Set([
@@ -72,7 +46,6 @@ const STOP_WORDS: ReadonlySet<string> = new Set([
   "with",
 ]);
 
-/** Query words that ask for a file tool Code Mode does not have. */
 const FILE_TOOL_WORDS: ReadonlySet<string> = new Set([
   "read",
   "grep",
@@ -84,7 +57,6 @@ const FILE_TOOL_WORDS: ReadonlySet<string> = new Set([
   "sed",
 ]);
 
-/** Naive singular form, so `issues` matches `issue`. */
 function stem(word: string): string {
   if (word.length > 4 && word.endsWith("ies")) return word.slice(0, -3) + "y";
   if (word.length > 4 && /(?:ches|shes|sses|xes|zes)$/.test(word)) return word.slice(0, -2);
@@ -92,7 +64,6 @@ function stem(word: string): string {
   return word;
 }
 
-/** Lowercase words of a name or text: `mcp__a__b`, snake_case and camelCase split apart. */
 export function searchWords(text: string): string[] {
   return text
     .normalize("NFC")
@@ -104,7 +75,6 @@ export function searchWords(text: string): string[] {
     .map(stem);
 }
 
-/** One query token without search operators (`+`/`-`), a `tools.` prefix, or call syntax. */
 function normalizeToken(token: string): string {
   return token
     .replace(/^[+-]+/, "")
@@ -113,9 +83,7 @@ function normalizeToken(token: string): string {
 }
 
 export interface NormalizedToolQuery {
-  /** The whole query as a lowercase name, for exact-name matches. */
   exact: string;
-  /** Distinct search words. */
   terms: string[];
 }
 
@@ -136,17 +104,11 @@ export interface ToolSearchDocument {
   description: string;
 }
 
-/** Whether the query names the tool: its full name or the part after a `__` separator. */
 function isExactName(exact: string, name: string): boolean {
   const lower = name.toLowerCase();
   return exact.length > 0 && (lower === exact || lower.endsWith("__" + exact));
 }
 
-/**
- * Rank documents for a query. An exact name always ranks first; then more query
- * words in the name rank above any number in the description, then more words
- * in the description; ties are broken by name.
- */
 export function rankTools<T extends ToolSearchDocument>(
   query: string,
   documents: readonly T[],
@@ -185,7 +147,6 @@ function compareNames(left: string, right: string): number {
   return left > right ? 1 : 0;
 }
 
-/** Lowercase alphanumerics only, so `symbolSearch`, `Symbol-Search` and `symbol_search` compare equal. */
 export function compactName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
@@ -206,10 +167,6 @@ function editDistance(left: string, right: string): number {
   return previous[right.length] ?? 0;
 }
 
-/**
- * Names close to a requested one, nearest first: equal ignoring case and
- * separators, then within a small edit distance, then containing it.
- */
 export function closeToolNames(requested: string, names: readonly string[], limit = 3): string[] {
   const wanted = compactName(normalizeToken(requested.trim()));
   if (wanted.length === 0) return [];
@@ -232,7 +189,6 @@ export function closeToolNames(requested: string, names: readonly string[], limi
     .map(({ name }) => name);
 }
 
-/** The first sentence or line of a description, bounded. */
 export function firstSentence(description: string): string {
   const line = description.trim().split(/\r?\n/, 1)[0] ?? "";
   const sentence = line.split(/(?<=[.!?])\s/, 1)[0]?.trim() ?? "";
@@ -241,12 +197,6 @@ export function firstSentence(description: string): string {
 
 type ToolInfoEntry = ReturnType<ExtensionAPI["getAllTools"]>[number];
 
-/**
- * Whether exec cannot reach a tool through the Code Mode bridge, which collects
- * extension-registered tools only. Pi's base tools (read, edit, write, ...) carry the
- * synthetic path `builtin:<name>`; tools from built-in extensions such as MCP carry the
- * extension's path instead. SDK custom tools are not extension-registered either.
- */
 function outsideExecBridge(tool: ToolInfoEntry): boolean {
   const source = tool.sourceInfo;
   return (
@@ -255,7 +205,6 @@ function outsideExecBridge(tool: ToolInfoEntry): boolean {
   );
 }
 
-/** The host members a search reads and, outside Code Mode, writes. */
 export type ToolSearchHost = Pick<
   ExtensionAPI,
   "getAllTools" | "getActiveTools" | "setActiveTools"
@@ -263,16 +212,13 @@ export type ToolSearchHost = Pick<
 
 export interface ToolSearchOptions {
   host: ToolSearchHost;
-  /** Whether policy makes a registered tool available at all. Defaults to dropping disabled tools. */
   isAvailable?: (name: string) => boolean;
-  /** Called with the tools a search activated outside Code Mode. */
   onActivate?: (names: readonly string[]) => void;
 }
 
 export interface ToolSearchEntry {
   name: string;
   description: string;
-  /** How to call the tool. */
   call: string;
 }
 
@@ -294,17 +240,8 @@ const CODE_MODE_EMPTY_GUIDANCE =
 const NORMAL_EMPTY_GUIDANCE =
   'Search with capability words, such as "session transcript", or an exact tool name.';
 
-/**
- * Registered tools that code mode ships natively under another name; exec calls
- * the native name (choco-pi-codex's custom-tool-prompt.ts documents `tools.web__run`).
- */
 const EXEC_NATIVE_NAMES: ReadonlyMap<string, string> = new Map([["web_run", "web__run"]]);
 
-/**
- * `tools.<name>({a, b?}) inside exec`, with the signature the Code Mode prompt shows. A tool
- * code mode ships natively, or one with an opaque schema, keeps `(...)`: the registered schema
- * does not describe the native call.
- */
 function execCall(tool: ToolInfoEntry): string {
   const native = EXEC_NATIVE_NAMES.get(tool.name);
   const schema = isBoundaryValue(tool.parameters) ? tool.parameters : undefined;
@@ -325,7 +262,6 @@ function emptyResult(query: string, closeNames: readonly string[], guidance: str
     : head + " " + guidance;
 }
 
-/** Run one search against the host. Exported for tests and the definition below. */
 export function searchTools(
   options: ToolSearchOptions,
   query: string,
@@ -433,7 +369,6 @@ const toolSearchParameters = hostParams(
   }),
 );
 
-/** The `tool_search` definition; register it with `defaultActive: false` like Pi's built-in. */
 export function createToolSearchToolDefinition(
   options: ToolSearchOptions,
 ): ToolDefinition<typeof toolSearchParameters, ToolSearchOutcome> {
@@ -443,10 +378,8 @@ export function createToolSearchToolDefinition(
     description: TOOL_SEARCH_DESCRIPTION,
     promptSnippet: "Find tools by name or capability",
     parameters: toolSearchParameters,
-    // Callable from exec as tools.tool_search, where it is a pure lookup.
     exposure: "direct",
     defaultActive: false,
-    // A query can match any registered tool.
     reachesTools: () => "all",
     async execute(_toolCallId, { query, limit }) {
       if (query.trim() === "") throw new Error("query must not be empty");

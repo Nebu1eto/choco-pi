@@ -1,13 +1,4 @@
 import type { RuntimeValue } from "./runtime-values.ts";
-/**
- * project_report pi tool (#773) — the top of the discovery funnel:
- * project_report orients the agent in the project, module_report explains one
- * file, read_symbol reads the exact body. Thin wrapper over the existing
- * projectReport() engine seam (clients/lsp-engine.ts), mirroring the MCP
- * pilens_project_report tool. Follows symbol_search's cold-cache contract
- * (#348 decision 3): a cold graph kicks off a background build and returns
- * `available: false` with a retry hint, never blocking the call.
- */
 
 import { num, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import { hostParams } from "./schema-bridge.ts";

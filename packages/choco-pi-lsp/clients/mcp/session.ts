@@ -1,22 +1,4 @@
 import type { RuntimeValue } from "../../tools/runtime-values.ts";
-/**
- * Tier 2 of the MCP path: drive choco-pi-lsp's *real* lifecycle handlers
- * (`handleSessionStart`, `handleTurnEnd`) instead of re-implementing the runners
- * they orchestrate. This is what exposes the layers the per-edit dispatch slice
- * doesn't — session-start warms the dominant-language LSP (so warm `analyze` is
- * LSP-complete), establishes the error-debt baseline + complexity baselines, and
- * kicks off knip/jscpd/type-coverage/dep/secrets scans; turn-end runs
- * knip incrementally, dep-circular, tests, cascade, and the
- * actionable/code-quality aggregation.
- *
- * The handlers don't return findings — they emit them through the same
- * cache/context bridge pi consumes (`consume*` from runtime-context). We drive
- * the handler, then consume that bridge and hand the text back as the tool result.
- *
- * The host coupling stays thin: a `getFlag` shim, no-op notify/dbg/log, a
- * persistent RuntimeCoordinator + CacheManager (so baselines/turn-state survive
- * across calls, like a real session), and the bootstrap client bundle.
- */
 
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
@@ -51,12 +33,6 @@ interface McpSessionContext {
 let contextPromise: Promise<McpSessionContext> | undefined;
 let resolvedRuntime: RuntimeCoordinator | undefined;
 
-/**
- * Lazily build (once) the persistent session context shared across MCP
- * calls. A rejected build (e.g. `loadBootstrapClients` hitting a transient
- * fs error) must not poison every later MCP call for the rest of the
- * process — evict the memo on rejection so the next call retries (#1570).
- */
 export function getMcpSessionContext(): Promise<McpSessionContext> {
   contextPromise ??= (async () => {
     const context: McpSessionContext = {
@@ -74,15 +50,10 @@ export function getMcpSessionContext(): Promise<McpSessionContext> {
   return contextPromise;
 }
 
-/** Synchronous peek at the session runtime, for construction sites that cannot
- * await (e.g. the MCP server's tool wiring). Returns undefined until a session
- * context has actually been built — advisory validation then honestly skips
- * the session-identity check instead of comparing against a phantom session. */
 export function peekMcpSessionRuntime(): RuntimeCoordinator | undefined {
   return resolvedRuntime;
 }
 
-/** Test hook — drop the cached context so a fresh one is built next call. */
 export function _resetMcpSessionContext(): void {
   contextPromise = undefined;
   resolvedRuntime = undefined;
@@ -103,25 +74,12 @@ export interface SessionStartOutcome {
   aliveLspClients: number;
 }
 
-/**
- * Run choco-pi-lsp's real session_start. Much of the work (scans, baseline, LSP warm)
- * runs in the background, so the immediate return carries the synchronous
- * guidance + whatever baseline/LSP state is ready; query `diagnostics_report` /
- * `lsp_health` afterwards for the scan results as they land.
- */
 export async function runSessionStart(cwd: string): Promise<SessionStartOutcome> {
   const ctx = await getMcpSessionContext();
   const host = createMcpHost(undefined, cwd);
 
   await handleSessionStart({
     ctxCwd: cwd,
-    // The MCP server has no TUI keystroke latency to protect, so the
-    // first-call-quick heuristic must not apply. Force "full" mode so
-    // the dominant-language LSP pre-warm, scans, and error-debt baseline
-    // all run on the first (and only) session_start of the process.
-    // An explicit CHOCO_PI_LSP_STARTUP_MODE env var still wins (handled in
-    // handleSessionStart — the override is only checked when the env var
-    // is unset).
     startupModeOverride: "full",
     getFlag: host.getFlag,
     notify: noop,
@@ -162,7 +120,6 @@ export interface TurnEndOutcome {
 
 export interface TurnEndDelivery {
   outcome: TurnEndOutcome;
-  /** Capability required by a separate one-shot ack request. */
   deliveryId?: string;
 }
 
@@ -177,15 +134,6 @@ interface PendingTurnEndDelivery {
   createdAt: number;
 }
 
-/**
- * #1274: the delivery map used to be unbounded — every timed-out client and
- * every distinct raw-cwd alias left an entry for the life of the process.
- * Both bounds drop entries WITHOUT committing, which re-arms the findings in
- * the cache: the safe direction, since an un-consumed finding is re-reported on
- * a later Stop while a wrongly-consumed one is gone for good. The TTL is
- * generous next to Claude Code's 60 s hook budget — it exists to bound the map,
- * not to police clients.
- */
 const TURN_END_DELIVERY_TTL_MS = 10 * 60_000;
 const TURN_END_DELIVERY_MAX = 8;
 
@@ -198,11 +146,6 @@ interface QueueItem<T> {
   timer: ReturnType<typeof setTimeout>;
 }
 
-/**
- * A bounded, cancellable serial queue. A turn_end mutates shared runtime and
- * cache state, so concurrent passes are unsafe; a disconnected/hung pass must
- * nevertheless not accumulate an unbounded tail of Stop requests.
- */
 class TurnEndQueue {
   private running = false;
   private pending: QueueItem<unknown>[] = [];
@@ -257,14 +200,8 @@ class TurnEndQueue {
 
 const turnEndQueue = new TurnEndQueue();
 const pendingTurnEndDeliveries = new Map<string, PendingTurnEndDelivery>();
-/** In-flight Stop-hook passes, keyed by cwd — see `runTurnEndForIpc` (#1274). */
 const inFlightIpcTurnEnds = new Map<string, Promise<TurnEndDelivery>>();
 
-/**
- * Run choco-pi-lsp's real turn_end over the files edited this "turn". The handler
- * reads edited files from turn-state, so we register the caller-supplied files
- * first (a full-file range, importsChanged=true so dep/knip re-check broadly).
- */
 async function runTurnEndNow(
   cwd: string,
   files: string[] = [],
@@ -280,7 +217,7 @@ async function runTurnEndNow(
     try {
       lineCount = fs.readFileSync(abs, "utf8").split("\n").length;
     } catch {
-      continue; // unreadable / deleted — skip
+      continue;
     }
     ctx.cacheManager.addModifiedRange(
       abs,
@@ -334,27 +271,20 @@ async function runTurnEndNow(
   };
 }
 
-/**
- * Run a normal MCP turn_end. Its caller owns the tool response, so the
- * historical consume-on-return behavior remains unchanged.
- */
 export function runTurnEnd(cwd: string, files: string[] = []): Promise<TurnEndOutcome> {
   return turnEndQueue.enqueue(async () => (await runTurnEndNow(cwd, files)).outcome);
 }
 
-/** A result with no findings needs no durable delivery transaction. */
 function hasTurnEndFindings(outcome: TurnEndOutcome): boolean {
   return Boolean(outcome.turnEnd || outcome.tests);
 }
 
-/** Drop expired deliveries, then the oldest ones over the cap. Never commits. */
 function prunePendingTurnEndDeliveries(now = Date.now()): void {
   for (const [deliveryId, delivery] of pendingTurnEndDeliveries) {
     if (now - delivery.createdAt >= TURN_END_DELIVERY_TTL_MS) {
       pendingTurnEndDeliveries.delete(deliveryId);
     }
   }
-  // Map iteration is insertion-ordered, so the head is the oldest entry.
   while (pendingTurnEndDeliveries.size > TURN_END_DELIVERY_MAX) {
     const oldest = pendingTurnEndDeliveries.keys().next();
     if (oldest.done) break;
@@ -369,20 +299,7 @@ function pendingForCwd(cwd: string): [string, PendingTurnEndDelivery] | undefine
   return undefined;
 }
 
-/**
- * Run the Stop-hook pass as a durable delivery transaction. The result is
- * acknowledged through a separate one-shot IPC request. Until that request
- * arrives, the findings cache is deliberately left unconsumed; a client
- * timeout, socket close, or server restart therefore leaves the result for a
- * later Stop request instead of losing it between execution and reply.
- */
 export function runTurnEndForIpc(cwd: string): Promise<TurnEndDelivery> {
-  // #1274: the Stop-hook request carries no files and no sessionId, so two
-  // overlapping ones are byte-identical and a second pass would be pure waste
-  // — worse, the queue only holds ONE waiter, so a third Stop is rejected
-  // outright. Identical in-flight requests share the one pass and one
-  // deliveryId; the ack is idempotent-by-capability, so the loser of the race
-  // simply finds the delivery already committed.
   const inFlight = inFlightIpcTurnEnds.get(cwd);
   if (inFlight) return inFlight;
   const run = runTurnEndForIpcNow(cwd).finally(() => {
@@ -434,22 +351,15 @@ function runTurnEndForIpcNow(cwd: string): Promise<TurnEndDelivery> {
   });
 }
 
-/** Commit exactly one admitted delivery capability. */
 export function acknowledgeTurnEnd(cwd: string, deliveryId: string): boolean {
   prunePendingTurnEndDeliveries();
   const delivery = pendingTurnEndDeliveries.get(deliveryId);
   if (!delivery || delivery.cwd !== cwd) return false;
-  // #1274: commit BEFORE dropping the capability. Deleting first meant a
-  // throwing consume destroyed the only handle to the findings — precisely the
-  // loss this two-phase protocol exists to prevent, reintroduced on the error
-  // path. Leaving the entry in place on a throw keeps the delivery re-fetchable
-  // by a later Stop.
   delivery.transaction.commit();
   pendingTurnEndDeliveries.delete(deliveryId);
   return true;
 }
 
-/** Test hook — drop pending requests so one failed test cannot wedge the rest. */
 export function _resetTurnEndChain(): void {
   turnEndQueue.reset();
   pendingTurnEndDeliveries.clear();

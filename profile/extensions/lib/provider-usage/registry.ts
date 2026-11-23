@@ -46,11 +46,6 @@ function getRegistryMap(): Map<string, UsageProviderAdapter> {
   return reinterpretHostValue<Map<string, UsageProviderAdapter>>(existing);
 }
 
-/**
- * Registers a usage provider adapter by `adapter.id`. Re-registering the same
- * id replaces the adapter. Returns an unregister callback that only removes
- * this exact adapter registration.
- */
 export function registerUsageProvider(adapter: UsageProviderAdapter): () => void {
   const registry = getRegistryMap();
   registry.set(adapter.id, adapter);
@@ -61,14 +56,12 @@ export function registerUsageProvider(adapter: UsageProviderAdapter): () => void
   };
 }
 
-/** Returns all registered usage provider adapters ordered by `order` ascending. */
 export function getUsageProviders(): readonly UsageProviderAdapter[] {
   const indexed = [...getRegistryMap().values()].map((adapter, index) => ({ adapter, index }));
   indexed.sort((a, b) => a.adapter.order - b.adapter.order || a.index - b.index);
   return indexed.map((entry) => entry.adapter);
 }
 
-/** Finds the registered adapter whose `providerIds` or `id` matches `providerId`. */
 export function findUsageProviderAdapter(providerId: string): UsageProviderAdapter | undefined {
   for (const adapter of getUsageProviders()) {
     if (adapter.providerIds?.includes(providerId) || adapter.id === providerId) {

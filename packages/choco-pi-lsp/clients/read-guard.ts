@@ -1,15 +1,3 @@
-/**
- * Read-Before-Edit Guard for choco-pi-lsp
- *
- * Blocks edits that lack adequate prior reading:
- * 1. Zero-read edit: never read this file in this branch
- * 2. File modified since read: disk content changed (FileTime)
- * 3. Out-of-range edit: edit target not covered by any previous read
- * 4. LSP expansion exemption: single-line read expanded to full symbol counts
- *
- * Falls back safely when LSP is unavailable.
- */
-
 import { assignOptionalProperties } from "./optional-properties.ts";
 import { isString, type LspDictionaryValue } from "./runtime-guards.ts";
 import * as fs from "node:fs";
@@ -47,14 +35,10 @@ type ValidateRangeSnapshotResultContract = {
 };
 type CheckCoverageResultContract = { covered: boolean; viaSymbol: boolean };
 
-// --- Types ---
-
 export interface ReadRecord {
   filePath: string;
-  // What the agent *asked* for
   requestedOffset: number;
   requestedLimit: number;
-  // What choco-pi-lsp *delivered* (after LSP expansion, if any)
   effectiveOffset: number;
   effectiveLimit: number;
   expandedByLsp: boolean;
@@ -64,17 +48,11 @@ export interface ReadRecord {
     startLine: number;
     endLine: number;
   };
-  /** 1-indexed line → content hash captured at read time, used to ignore no-op mtime staleness. */
   lineHashes?: Record<number, string>;
   contentBinding?: ReadContentBinding;
   turnIndex: number;
   writeIndex: number;
   timestamp: number;
-  /**
-   * Provenance tag. Absent (undefined) = recorded by the normal internal
-   * tool-call path. `"bridge:<consumer>"` = recorded via the cross-extension
-   * read-recording bridge with the given consumer identifier.
-   */
   source?: string;
 }
 
@@ -107,19 +85,11 @@ export interface ReadGuardVerdict {
       mismatchedLines: number[];
       missingLines: number[];
     };
-    /** Content-verified new location of a range that drifted since it was read. */
     relocation?: {
       from: [number, number];
       to: [number, number];
     };
   };
-  /**
-   * Set when a single-range edit's target drifted but its content is verified
-   * (by read-time line hashes) to live uniquely at a new line range. The host
-   * adapter may shift the edit's range to `to` and let it proceed instead of
-   * blocking — the same content-verified auto-apply pi-hashline-readmap does.
-   * Only present for single-range edits (multi-range stays a hint).
-   */
   relocation?: {
     from: [number, number];
     to: [number, number];
@@ -136,25 +106,12 @@ export interface ReadGuardConfig {
   }>;
 }
 
-/**
- * Serializable snapshot of the guard's read-set (#1041). The in-memory `reads`
- * map is process-bound, so a `pi --session <id>` resume — which resets the
- * runtime to a fresh empty guard — used to falsely `zero_read`-block the first
- * edit of any file the prior session had read. Persisting `reads` on the SAME
- * #190 `PersistedSessionState` path that widget diagnostics ride lets a resumed
- * session rehydrate its read history. Only `reads` is persisted: edits/written
- * markers are re-derivable and `reads` is the payload that gates `checkEdit`.
- * Keys are `normalizeFilePath` form (see {@link ReadGuard.key}) so the round
- * trip re-folds identically on Windows/Linux.
- */
 export interface PersistedReadGuardState {
   version: number;
   reads: Array<[string, ReadRecord[]]>;
 }
 
 export const READ_GUARD_STATE_VERSION = 1;
-
-// --- Constants ---
 
 const DEFAULT_CONFIG: ReadGuardConfig = {
   enabled: true,
@@ -172,20 +129,13 @@ const OWN_EDIT_STALE_GRACE_MS = Math.max(
   Number.parseInt(process.env.CHOCO_PI_LSP_READ_GUARD_OWN_EDIT_GRACE_MS ?? "120000", 10) || 120000,
 );
 
-/** Avoid hashing very large reads in the hot path. */
 const READ_HASH_MAX_LINES = Math.max(
   0,
   Number.parseInt(process.env.CHOCO_PI_LSP_READ_GUARD_HASH_MAX_LINES ?? "3000", 10) || 3000,
 );
 
-/**
- * Content bindings are defense in depth on a read-adjacent hot path. Cap the
- * synchronous disk read so bridge registration never hashes an unbounded file.
- */
 const READ_BINDING_MAX_BYTES = 4 * 1024 * 1024;
 const READ_GUARD_MAX_FILES = 256;
-// Unconsumed reads remain valid until edit or session end, but this high
-// sanity cap prevents a read-only session from growing without bound.
 const READ_GUARD_MAX_UNCONSUMED_FILES = 4096;
 const READ_GUARD_IDLE_EVICT_MS_DEFAULT = 30 * 60_000;
 
@@ -197,8 +147,6 @@ export function captureReadContentBinding(
   try {
     if (fs.statSync(filePath).size > READ_BINDING_MAX_BYTES) return undefined;
     const content = fs.readFileSync(filePath, "utf-8");
-    // Allocate at most the classification prefix first. For range bindings,
-    // splitting then stops at the requested range end rather than the EOF.
     const lines = splitLinesThrough(content, READ_HASH_MAX_LINES + 1);
     if (lines.length <= READ_HASH_MAX_LINES) {
       return {
@@ -245,12 +193,6 @@ export function _currentContentMatchesBindingForTests(
 
 const currentContentMatchesBinding = _currentContentMatchesBindingForTests;
 
-// Adaptive relocation window (findRelocation). A globally-unique hash-sequence
-// match always wins; when the content is duplicated elsewhere, we fall back to
-// a match that is unique WITHIN this window of the original position. The window
-// widens with edits already applied to the file (accumulated line drift) —
-// floor + per-edit growth, capped — the analog of pi-hashline-readmap's
-// edits-scaled relocation window.
 const RELOCATION_WINDOW_MIN = Math.max(
   1,
   Number.parseInt(process.env.CHOCO_PI_LSP_READ_GUARD_RELOCATION_WINDOW_MIN ?? "40", 10) || 40,
@@ -268,7 +210,6 @@ function splitLines(text: string): string[] {
   return text.split(/\r?\n/);
 }
 
-/** `splitLines` semantics, but without scanning/allocating beyond `maxLines`. */
 function splitLinesThrough(text: string, maxLines: number): string[] {
   if (maxLines <= 0) return [];
   const lines: string[] = [];
@@ -291,8 +232,6 @@ function splitLinesThrough(text: string, maxLines: number): string[] {
 }
 
 export function lineContentHash(line: string): string {
-  // FNV-1a over whitespace-stripped content. This treats no-op formatter/touch
-  // changes as still-valid context while detecting semantic line changes.
   const normalized = line.replace(/\s+/g, "");
   let hash = 2166136261;
   for (let i = 0; i < normalized.length; i++) {
@@ -378,40 +317,17 @@ export function currentLinesMatchReadSnapshot(
   };
 }
 
-// --- ReadGuard Class ---
-
 export class ReadGuard {
   private readonly config: ReadGuardConfig;
   private readonly reads = new Map<string, ReadRecord[]>();
   private readonly edits = new Map<string, EditRecord[]>();
   private readonly fileLastUsed = new Map<string, number>();
   private readonly fileIdleTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  /** Reads remain behavior-gating until the corresponding edit is published. */
   private readonly consumedReadFiles = new Set<string>();
   private readonly fileTime: FileTime;
-  private readonly exemptions = new Set<string>(); // One-time exemptions via /lens-allow-edit
+  private readonly exemptions = new Set<string>();
   private readonly pendingCreations = new Map<string, { turnIndex: number; writeIndex: number }>();
-  // Files that recordWritten() has fired on this session. Lets
-  // wasWrittenThisSession() return a deterministic answer for files the
-  // pi Write tool authored, independent of filesystem mtime granularity
-  // or clock skew (NFS, FAT32, etc.).
   private readonly writtenThisSession = new Set<string>();
-  // Existence-independent index for hasKnownPath/forgetPath (#1668 review
-  // F1). `this.key()` (normalizeFilePath) branches on whether `filePath`
-  // currently exists on disk: an existing file resolves to realpathSync
-  // canonical casing, a missing one to a lowercased tail. recordRead/
-  // recordWritten always key while the file is still on disk (real
-  // casing); hasKnownPath/forgetPath are queried AFTER an external delete
-  // already landed, when the path no longer exists — recomputing
-  // `this.key()` at that point returns a DIFFERENT string for any
-  // mixed-case basename (`MyModule.ts` → `mymodule.ts`), so a lookup
-  // against `reads`/`writtenThisSession` silently misses. This index maps
-  // a purely syntactic key (`normalizeEphemeralMapKey` — slash-fold +
-  // lowercase, no filesystem access, so it never depends on current disk
-  // state) to the REAL key `reads`/`writtenThisSession` used at record
-  // time, so a post-delete lookup finds the same entry regardless of what
-  // happened to the file since. Pruned inside `evictFile` so it never
-  // outlives the record it points at.
   private readonly knownPathIndex = new Map<string, string>();
   private readonly sessionId: string;
   private readonly sessionStartMs: number;
@@ -423,16 +339,6 @@ export class ReadGuard {
     this.fileTime = createFileTime(sessionId);
   }
 
-  /**
-   * Canonical Map key for a file path. Read sources arrive with mixed
-   * separators/casing — the Read tool gives OS-native backslashes on Windows,
-   * while LSP-expanded and search-tool reads arrive slash-normalized from URIs.
-   * Keying the reads/edits/exemptions maps on the raw path made a read recorded
-   * under one form invisible to an edit checked under another, producing a false
-   * `zero_read` block despite the file having been read. `normalizeFilePath`
-   * folds separators and Windows casing to one key, so record and lookup always
-   * agree. Every map access in this class MUST key through here.
-   */
   private key(filePath: string): string {
     return normalizeFilePath(filePath);
   }
@@ -455,8 +361,6 @@ export class ReadGuard {
     this.fileLastUsed.delete(filePath);
     this.consumedReadFiles.delete(filePath);
     this.writtenThisSession.delete(filePath);
-    // #1668 review F1: prune the reverse-pointing knownPathIndex entries
-    // too, so it never outlives the record it points at.
     for (const [syntacticKey, stored] of this.knownPathIndex) {
       if (stored === filePath) this.knownPathIndex.delete(syntacticKey);
     }
@@ -466,14 +370,10 @@ export class ReadGuard {
     const now = Date.now();
     this.fileLastUsed.set(filePath, now);
     this.clearFileTimer(filePath);
-    // An outstanding read is enforcement state, not a rebuildable cache entry.
-    // It must survive idle time and file-cap pressure until the edit consumes it.
     if (this.reads.has(filePath) && !this.consumedReadFiles.has(filePath)) return;
     const stamp = now;
     const timer = setTimeout(() => {
       if (this.fileLastUsed.get(filePath) !== stamp) return;
-      // Never turn an outstanding read into a zero-read block through idle
-      // eviction. Only consumed reads and rebuildable edit history may expire.
       if (this.reads.has(filePath) && !this.consumedReadFiles.has(filePath)) return;
       this.evictFile(filePath);
     }, this.idleEvictMs());
@@ -494,24 +394,12 @@ export class ReadGuard {
         .filter((filePath) => !this.consumedReadFiles.has(filePath))
         .sort((a, b) => (this.fileLastUsed.get(a) ?? 0) - (this.fileLastUsed.get(b) ?? 0))[0];
       if (!victim) break;
-      // This is a normal read miss: a later edit must require a fresh read,
-      // never silently allow and never become a permanent hard-block.
       this.evictFile(victim);
     }
   }
 
-  // --- Public API ---
-
-  /**
-   * Record that a file was read.
-   * Call this from the tool_call handler after any LSP expansion.
-   */
   recordRead(record: ReadRecord): void {
     const filePath = this.key(record.filePath);
-    // #1668 review F1: index by the existence-independent syntactic key
-    // while the file is (presumably) still on disk, so a later
-    // hasKnownPath/forgetPath lookup after an external delete can still
-    // find this entry's real key.
     this.knownPathIndex.set(normalizeEphemeralMapKey(record.filePath), filePath);
     const storedRecord: ReadRecord = {
       ...record,
@@ -551,24 +439,9 @@ export class ReadGuard {
       },
     });
 
-    // Also update FileTime stamp for this file
     this.fileTime.read(storedRecord.filePath);
   }
 
-  /**
-   * Record a structured symbol read (the `readSymbol` engine capability / its
-   * MCP mirror) as a genuine read of that symbol's line range — the
-   * read-substitute tie-in for #245. `readSymbol` returns the verbatim body, so
-   * an edit within [startLine, endLine] is legitimately covered, exactly like a
-   * TS/LSP-expanded read that delivered the whole enclosing symbol. Line hashes
-   * for the range are captured by recordRead, so the edit is also
-   * snapshot-verified (drift since the symbol read still blocks).
-   *
-   * Intentionally NOT offered for module *outlines*: an outline shows a symbol's
-   * shape (name/signature/range), not its body, so granting edit coverage from
-   * it would let the agent edit lines it never saw. Only a body-delivering read
-   * (readSymbol / raw Read) records coverage.
-   */
   recordSymbolRead(
     filePath: string,
     symbol: { name: string; kind: string; startLine: number; endLine: number },
@@ -595,24 +468,17 @@ export class ReadGuard {
     });
   }
 
-  /**
-   * Check if an edit should be allowed.
-   * Returns verdict with action and optional reason for blocking.
-   */
   checkEdit(
     filePath: string,
     touchedLines?: [number, number],
     editRanges?: [number, number][],
     options?: { skipSnapshotCheck?: boolean; oldTextResolved?: boolean },
   ): ReadGuardVerdict {
-    // Canonicalize once: every map lookup below (and every private helper this
-    // passes filePath to) must agree with how recordRead keyed the read.
     filePath = this.key(filePath);
     if (this.reads.has(filePath) || this.edits.has(filePath)) this.touchFile(filePath);
 
-    // Check exemptions
     if (this.exemptions.has(filePath)) {
-      this.exemptions.delete(filePath); // One-time use
+      this.exemptions.delete(filePath);
       const verdict = this.allow();
       this.recordVerdict(filePath, "edit", touchedLines, verdict, {
         reasonKind: "manual_exemption",
@@ -620,7 +486,6 @@ export class ReadGuard {
       return verdict;
     }
 
-    // Check config exemptions by pattern
     const exemptionMode = this.getExemptionMode(filePath);
     if (exemptionMode === "allow") {
       const verdict = this.allow();
@@ -631,18 +496,11 @@ export class ReadGuard {
       return verdict;
     }
 
-    // "warn" pattern exemptions downgrade all blocking verdicts to warnings.
     const effectiveMode: "block" | "warn" | undefined =
       exemptionMode === "warn" ? "warn" : undefined;
 
-    // 1. Zero-read check
     const fileReads = this.reads.get(filePath);
     if (!fileReads || fileReads.length === 0) {
-      // If the file was written after this session started, the agent authored
-      // it in this session (via Write or any other mechanism). Allow the edit —
-      // a synthetic read would have been injected for Write tool calls, but
-      // this catches cases where the write bypassed the hook or the session
-      // restarted between write and edit.
       if (this.wasWrittenThisSession(filePath)) {
         this.injectCreationRead(filePath, 0, 0);
         const verdict = this.allow();
@@ -684,7 +542,6 @@ export class ReadGuard {
       return verdict;
     }
 
-    // 2. FileTime check (actual staleness)
     let ignoredOwnEditStaleness = false;
     let ignoredHashStaleness = false;
     if (this.fileTime.hasChanged(filePath)) {
@@ -708,7 +565,6 @@ export class ReadGuard {
       }
     }
 
-    // If no line range specified, we can only check zero-read and FileTime
     if (!touchedLines) {
       const verdict = this.allow();
       this.recordVerdict(filePath, "edit", touchedLines, verdict, {
@@ -717,10 +573,6 @@ export class ReadGuard {
       return verdict;
     }
 
-    // 3. Range coverage check
-    // When the edit touches multiple disjoint spots (e.g. rename across 4 tool
-    // registrations), check each spot independently. Collapsing to a bounding
-    // box would falsely flag reads that cover exactly the right lines.
     const rangesToCheck: [number, number][] =
       editRanges && editRanges.length > 1 ? editRanges : [touchedLines];
 
@@ -732,9 +584,6 @@ export class ReadGuard {
         const lastRead = fileReads[fileReads.length - 1];
         const [editStart, editEnd] = range;
         const lastReadEnd = lastRead.effectiveOffset + lastRead.effectiveLimit - 1;
-        // If oldText was resolved (content-verified), the model demonstrably
-        // knew the content it's replacing — line drift from prior edits in
-        // the session is the likely cause. Downgrade to warn rather than block.
         const outOfRangeMode = options?.oldTextResolved ? "warn" : effectiveMode;
         const verdict = this.blockOrWarn(
           "out-of-range",
@@ -763,20 +612,10 @@ export class ReadGuard {
       }
       if (snapshotValidation.shouldBlock && !options?.skipSnapshotCheck) {
         const [editStart, editEnd] = range;
-        // Grace period: when the snapshot is stale because THIS session's own
-        // earlier edit shifted line numbers (ignoredOwnEditStaleness), and
-        // the agent read the file recently, downgrade to a warning rather
-        // than blocking. The agent has fresh context — they just don't
-        // know the exact new line numbers after the shift.
         const RANGE_STALE_GRACE_MS = 60_000;
         const lastRead = fileReads[fileReads.length - 1];
         const graceActive =
           ignoredOwnEditStaleness && Date.now() - lastRead.timestamp < RANGE_STALE_GRACE_MS;
-        // Content-verified relocation: if the lines the agent read have
-        // merely shifted (same content, new offset), tell them exactly where
-        // so they re-target in one turn. We hint rather than silently
-        // re-apply: the host applies native range edits positionally and
-        // can't re-verify, so an unverified auto-relocation could corrupt.
         const relocation = this.findRelocation(filePath, fileReads, range);
         const relocationNote = relocation
           ? `\n\n📍 The content you read at lines ${relocation.from[0]}-${relocation.from[1]} now appears unchanged at lines ${relocation.to[0]}-${relocation.to[1]} — it shifted position. Re-target your edit to lines ${relocation.to[0]}-${relocation.to[1]}.`
@@ -809,10 +648,6 @@ export class ReadGuard {
           ),
           graceActive ? "warn" : effectiveMode,
         );
-        // Offer auto-apply only for a single-range edit: we relocated exactly
-        // one range, so shifting it is the whole edit. A multi-range edit
-        // could have other drifted spots we returned before checking, so it
-        // stays a hint.
         if (relocation && rangesToCheck.length === 1) {
           verdict.relocation = relocation;
         }
@@ -839,77 +674,30 @@ export class ReadGuard {
     return verdict;
   }
 
-  /**
-   * Check if this is a new file (no existing file on disk).
-   * New file writes are exempt from the guard.
-   */
   isNewFile(filePath: string): boolean {
     try {
       return !fs.existsSync(filePath);
     } catch {
-      return true; // Assume new if we can't stat
+      return true;
     }
   }
 
-  /**
-   * Whether choco-pi-lsp has any record of this path from a read or write this
-   * session (#1668). Gates external-delete detection: a path choco-pi-lsp never
-   * read or wrote is one no LSP server's cache was ever told about through
-   * us, so an `rm` naming it carries no signal worth checking disk for —
-   * this is a lookup against state already being tracked, never a fresh
-   * filesystem stat over an unbounded path set.
-   *
-   * MUST go through `knownPathIndex`, not `this.key(filePath)` directly
-   * (#1668 review F1): this is called AFTER a bash delete has already
-   * landed, when `filePath` no longer exists — `this.key()` at that point
-   * returns a lowercased-tail key, not the real-casing key `recordRead`/
-   * `recordWritten` stored while the file was still on disk. For a
-   * mixed-case basename (`MyModule.ts`) the two keys differ and a direct
-   * `this.key()` lookup always misses.
-   */
   hasKnownPath(filePath: string): boolean {
     const stored = this.knownPathIndex.get(normalizeEphemeralMapKey(filePath));
     return stored !== undefined && (this.reads.has(stored) || this.writtenThisSession.has(stored));
   }
 
-  /**
-   * Drop all record of a path choco-pi-lsp confirmed no longer exists on disk
-   * (#1668, external delete). Without this a later write reusing the same
-   * path would inherit a stale writtenThisSession/reads entry from before
-   * the delete, and a repeat `rm` of the same already-gone path would keep
-   * matching {@link hasKnownPath} and re-emitting a type-3 notification.
-   *
-   * MUST evict through `knownPathIndex`, not `this.key(filePath)` directly
-   * (#1668 review F1) — same reasoning as {@link hasKnownPath}: `filePath`
-   * is already gone from disk by the time this runs, so recomputing
-   * `this.key()` targets the wrong (lowercased-tail) key for a mixed-case
-   * basename and leaves the real entry behind un-evicted.
-   */
   forgetPath(filePath: string): void {
     const stored = this.knownPathIndex.get(normalizeEphemeralMapKey(filePath));
     this.evictFile(stored ?? this.key(filePath));
   }
 
-  /**
-   * Mark a file as pending creation (Write tool to a non-existing file).
-   * Must be called from the tool_call handler before the write lands so
-   * isNewFile() still returns true. recordWritten will inject a synthetic
-   * read so immediate follow-up edits are not blocked by zero_read.
-   */
   noteCreatedFile(filePath: string, turnIndex: number, writeIndex: number): void {
     this.pendingCreations.set(this.key(filePath), { turnIndex, writeIndex });
   }
 
-  /**
-   * Refresh the FileTime stamp after the model's own write lands on disk.
-   * Call this from the tool_result handler so the next checkEdit on the same
-   * file doesn't see "file_modified" caused by our own previous edit.
-   */
   recordWritten(rawFilePath: string): void {
     const filePath = this.key(rawFilePath);
-    // #1668 review F1: index by the existence-independent syntactic key
-    // (see `knownPathIndex`) so a later hasKnownPath/forgetPath lookup
-    // after an external delete can still find this entry's real key.
     this.knownPathIndex.set(normalizeEphemeralMapKey(rawFilePath), filePath);
     this.fileTime.read(filePath);
     this.writtenThisSession.add(filePath);
@@ -923,10 +711,6 @@ export class ReadGuard {
     }
   }
 
-  /**
-   * Add a one-time exemption for a file.
-   * Called via /lens-allow-edit command.
-   */
   addExemption(filePath: string): void {
     this.exemptions.add(this.key(filePath));
     logReadGuardEvent({
@@ -939,9 +723,6 @@ export class ReadGuard {
     });
   }
 
-  /**
-   * Get summary statistics for /lens-health.
-   */
   getSummary(): GetSummaryResultContract {
     let totalEdits = 0;
     let totalBlocks = 0;
@@ -964,7 +745,6 @@ export class ReadGuard {
           byReason[record.reason] = (byReason[record.reason] ?? 0) + 1;
         }
 
-        // Count LSP expansions that allowed an edit
         if (record.precedingReads.some((r) => r.expandedByLsp) && record.verdict === "allowed") {
           lspExpansionsHelped++;
         }
@@ -980,23 +760,12 @@ export class ReadGuard {
     };
   }
 
-  /**
-   * Get all read records for a file (for debugging).
-   */
   getReadHistory(filePath: string): ReadRecord[] {
     const key = this.key(filePath);
     if (this.reads.has(key)) this.touchFile(key);
     return this.reads.get(key) ?? [];
   }
 
-  /**
-   * Snapshot the read-set for persistence across a session resume (#1041).
-   * Mirrors widget-state's `exportWidgetState`: the Map is emitted as
-   * `[key, records]` tuples, keys already in `normalizeFilePath` form. Only
-   * `reads` is serialized — it is the payload `checkEdit`'s zero-read/coverage
-   * checks consult. Safe to call even when the guard is disabled (an empty or
-   * never-populated `reads` simply exports zero entries).
-   */
   exportState(): PersistedReadGuardState {
     return {
       version: READ_GUARD_STATE_VERSION,
@@ -1007,33 +776,13 @@ export class ReadGuard {
     };
   }
 
-  /**
-   * Rehydrate a persisted read-set (#1041) into this (fresh, post-resume)
-   * guard, with mandatory staleness reconciliation: each read is re-verified
-   * against the CURRENT on-disk content via its recorded `lineHashes`, and any
-   * read whose file changed (or no longer exists, or that carries no verifiable
-   * hashes) is DROPPED. A rehydrated read must never mask a real staleness — a
-   * resume must not let the agent edit a file that changed on disk while it
-   * believed it held a fresh read. Kept reads are replayed through
-   * {@link recordRead}, which re-keys through {@link key} (idempotent — the
-   * exported keys are already normalized) and re-stamps FileTime so the next
-   * `checkEdit` sees a consistent baseline. Version-guarded and null-safe:
-   * `undefined` / a mismatched version / a missing field loads as "no prior
-   * reads". Returns a count of imported vs dropped reads for logging.
-   */
   importState(state: PersistedReadGuardState | undefined): ImportStateResultContract {
     const result = { imported: 0, dropped: 0 };
 
     if (!state || state.version !== READ_GUARD_STATE_VERSION) return result;
-    // A corrupt/hand-edited sidecar must degrade to "no prior reads", never
-    // throw: loadSessionState validates only version/widget, so a malformed
-    // `reads` reaches here. If importState threw, the session_start try/catch
-    // would abort the ENTIRE rehydration (incl. widget + mountLensWidget)
-    // rather than just skipping the read-set.
 
     if (!Array.isArray(state.reads)) return result;
     for (const entry of state.reads) {
-      // Skip anything that isn't a well-formed [key, records] tuple.
       if (!Array.isArray(entry) || entry.length !== 2) continue;
       const [rawPath, records] = entry;
 
@@ -1044,15 +793,11 @@ export class ReadGuard {
       try {
         lines = splitLines(fs.readFileSync(filePath, "utf-8"));
       } catch {
-        // File gone since it was read → drop every read for it.
         result.dropped += records.length;
         continue;
       }
       for (const record of records) {
         const rehydrated: ReadRecord = { ...record, filePath };
-        // readHashesStillMatch returns false when the recorded hashes no
-        // longer match disk OR when the read captured no hashes — both
-        // unverifiable, so both drop (safety over convenience).
         if (this.readHashesStillMatch(rehydrated, lines)) {
           this.recordRead(rehydrated);
           result.imported += 1;
@@ -1065,16 +810,11 @@ export class ReadGuard {
     return result;
   }
 
-  /**
-   * Get all edit records for a file (for debugging).
-   */
   getEditHistory(filePath: string): EditRecord[] {
     const key = this.key(filePath);
     if (this.edits.has(key)) this.touchFile(key);
     return this.edits.get(key) ?? [];
   }
-
-  // --- Private helpers ---
 
   private injectCreationRead(filePath: string, turnIndex: number, writeIndex: number): void {
     let lineCount = 0;
@@ -1098,9 +838,6 @@ export class ReadGuard {
   }
 
   private wasWrittenThisSession(filePath: string): boolean {
-    // Authoritative path: we observed a write of this file via recordWritten.
-    // Survives mtime granularity (FAT32 ~2s), clock skew (NFS), and external
-    // tools that touch mtime backward.
     if (this.writtenThisSession.has(filePath)) return true;
     try {
       return fs.statSync(filePath).mtimeMs >= this.sessionStartMs;
@@ -1200,12 +937,6 @@ export class ReadGuard {
       lastMismatchTimestamp = Math.max(lastMismatchTimestamp, candidates[i].timestamp);
     }
 
-    // Enforce only when no candidate that actually delivered the target range
-    // lacks hashes. Context-only/symbol-only coverage may be unavailable without
-    // weakening enforcement from another hash-checkable read of the same range.
-    // Also suppress when a re-read (unavailable only due to context-zone boundary)
-    // is more recent than the stale read that triggered the mismatch — the agent
-    // refreshed their view, and the re-read's edge lines fall within contextLines.
     const shouldBlock =
       status === "mismatch" &&
       lastUnavailableTimestamp <= lastMismatchTimestamp &&
@@ -1262,24 +993,14 @@ export class ReadGuard {
     return true;
   }
 
-  /**
-   * Content-verified relocation. When a range the agent read has drifted, find
-   * where the read-time line-hash sequence for [startLine,endLine] now appears
-   * in the current file. Returns the unique new location, or undefined when:
-   * no recorded read captured hashes for the whole range; the sequence is too
-   * short to be collision-resistant (<2 lines); or it now matches zero or
-   * multiple spots. Powers a *hint* only — never a silent positional re-apply.
-   */
   private findRelocation(
     filePath: string,
     reads: ReadRecord[],
     [startLine, endLine]: [number, number],
   ): { from: [number, number]; to: [number, number] } | undefined {
     const span = endLine - startLine + 1;
-    // A single line's hash collides too easily to relocate on confidently.
     if (span < 2) return undefined;
 
-    // Newest read that captured hashes for the entire target range wins.
     let wanted: string[] | undefined;
     for (let i = reads.length - 1; i >= 0; i -= 1) {
       const hashes = reads[i].lineHashes;
@@ -1308,7 +1029,7 @@ export class ReadGuard {
       return undefined;
     }
     const currentHashes = lines.map((line) => lineContentHash(line));
-    const lastStart = currentHashes.length - span; // last valid 0-based start
+    const lastStart = currentHashes.length - span;
 
     const matchStarts: number[] = [];
     for (let i = 0; i <= lastStart; i += 1) {
@@ -1319,21 +1040,13 @@ export class ReadGuard {
           break;
         }
       }
-      if (ok) matchStarts.push(i + 1); // 1-indexed
+      if (ok) matchStarts.push(i + 1);
     }
 
     let newStart: number | undefined;
     if (matchStarts.length === 1) {
-      // Unique across the whole file → certainly the relocated span,
-      // regardless of how far it drifted (e.g. a large refactor moved it).
       newStart = matchStarts[0];
     } else if (matchStarts.length > 1) {
-      // Duplicated elsewhere: fall back to locality. Lines rarely teleport,
-      // so accept a match unique WITHIN an adaptive window of the original
-      // position — out-of-window duplicates don't poison a locally
-      // unambiguous relocation. The window widens with the edits already
-      // applied to this file this session (each prior edit shifts line
-      // numbers, so accumulated drift grows).
       const appliedEdits = (this.edits.get(filePath) ?? []).filter(
         (record) => record.verdict !== "blocked",
       ).length;
@@ -1372,7 +1085,6 @@ export class ReadGuard {
 
     const reads = this.reads.get(filePath) ?? [];
 
-    // First pass: check symbol coverage and any single read that covers the edit.
     for (const read of reads) {
       const readStart = Math.max(1, read.effectiveOffset - this.config.contextLines);
       const readEnd = read.effectiveOffset + read.effectiveLimit - 1 + this.config.contextLines;
@@ -1390,8 +1102,6 @@ export class ReadGuard {
       }
     }
 
-    // Second pass: merge all read intervals and check if their union covers
-    // [editStart, editEnd]. Handles multi-chunk reads (e.g. 1-100 + 101-200).
     const intervals = reads.map(
       (read) =>
         // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
@@ -1403,7 +1113,6 @@ export class ReadGuard {
 
     intervals.sort((a, b) => a[0] - b[0]);
 
-    // Merge overlapping/adjacent intervals
     const merged: Array<[number, number]> = [];
     for (const [s, e] of intervals) {
       if (merged.length > 0 && s <= merged[merged.length - 1][1] + 1) {
@@ -1432,13 +1141,11 @@ export class ReadGuard {
   }
 
   private matchesPattern(filePath: string, pattern: string): boolean {
-    // Simple glob matching — can be expanded
     if (pattern.startsWith("*")) {
       const suffix = pattern.slice(1);
       return filePath.endsWith(suffix);
     }
     if (pattern.includes("*")) {
-      // Convert glob to regex
       const regex = new RegExp(
         `^${pattern.replace(/\\/g, "\\\\").replace(/\./g, "\\.").replace(/\*/g, ".*")}$`,
       );
@@ -1525,8 +1232,6 @@ export class ReadGuard {
     });
   }
 }
-
-// --- Factory ---
 
 function mapVerdictAction(action: ReadGuardVerdict["action"]): EditRecord["verdict"] {
   switch (action) {

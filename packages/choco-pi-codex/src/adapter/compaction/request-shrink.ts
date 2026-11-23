@@ -12,18 +12,12 @@ const CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 95;
 export type NativeCompactionShrinkResult = {
   request: NativeCompactionRequestBody;
   rewrittenOutputs: number;
-  /** Oldest conversation items dropped to fit; compaction items are never dropped. */
   droppedItems: number;
 };
 
 export type ShrinkNativeCompactionRequestOptions = {
   budgetTokens?: number | null | undefined;
   tokensBefore: number;
-  /**
-   * Shrink by the local estimate even when `tokensBefore` fits the budget. Set
-   * after the provider rejected the request as over its context window, when
-   * the host's estimate is known to have been too low.
-   */
   force?: boolean | undefined;
 };
 
@@ -41,9 +35,6 @@ type TokenEncoder = { encode(value: string): ArrayLike<BoundaryValue> };
 let tokenEncoderPromise: Promise<TokenEncoder> | undefined;
 
 function getTokenEncoder(): Promise<TokenEncoder> {
-  // Fork note: upstream imported the full js-tiktoken bundle (all encodings,
-  // ~11 MB). Only o200k_base is ever used, so load it through the lite entry;
-  // getEncoding("o200k_base") is equivalent to new Tiktoken(o200k_base ranks).
   tokenEncoderPromise ??= Promise.all([
     import("js-tiktoken/lite"),
     import("js-tiktoken/ranks/o200k_base"),
@@ -98,13 +89,6 @@ export function resolveNativeCompactionRequestBudget(
   return Math.floor((contextWindow * CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT) / 100);
 }
 
-/**
- * Input budget for a compaction request: the endpoint budget, bounded by the
- * effective window of the model the request is sent to. The Responses Lite
- * endpoint budget (872k) exceeds the 272k/372k windows of the Codex models it
- * applies to, and the endpoint rejects input over the model's window, so the
- * endpoint budget alone never shrinks a request that cannot fit.
- */
 export function resolveNativeCompactionInputBudget(
   options: NativeCompactionBudgetOptions,
 ): number | undefined {
@@ -122,7 +106,6 @@ function compactRequestBudget(options: ShrinkNativeCompactionRequestOptions): nu
   return Math.floor(budgetTokens);
 }
 
-/** Tokens the request carries besides its input items: instructions and tool declarations. */
 function estimateFixedTokens(request: NativeCompactionRequestBody, encoding: TokenEncoder): number {
   return (
     estimateTokenCount(request.instructions ?? "", encoding) +
@@ -156,7 +139,6 @@ function isCompactionItem(item: ResponsesInputItem): boolean {
   const type = stringField(item, "type");
   return type === "compaction" || type === "compaction_summary";
 }
-/** A user turn boundary: every tool call before it has already been answered. */
 function isUserMessage(item: ResponsesInputItem): boolean {
   if (!isRecord(item)) return false;
   const record: JsonObject = item;
@@ -164,11 +146,6 @@ function isUserMessage(item: ResponsesInputItem): boolean {
   return (type === undefined || type === "message") && record["role"] === "user";
 }
 
-/**
- * Indices kept when every non-compaction item before `cut` is dropped; an
- * output whose call was dropped is dropped too, so each kept output still
- * follows its call.
- */
 function keptFromCut(input: readonly ResponsesInputItem[], cut: number): number[] {
   const kept: number[] = [];
   const calls = new Set<string>();
@@ -187,11 +164,6 @@ function keptFromCut(input: readonly ResponsesInputItem[], cut: number): number[
   return kept;
 }
 
-/**
- * Drop the oldest conversation turns until the request fits, cutting only at a
- * user message and keeping every earlier compaction item. The latest cut is
- * used when none fits; undefined when the input has no cut that drops anything.
- */
 function trimOldestTurns(
   input: readonly ResponsesInputItem[],
   itemTokens: readonly number[],
@@ -231,7 +203,6 @@ export async function shrinkNativeCompactionRequestForEndpoint(
 
   let rewrittenOutputs = 0;
   const input = [...request.input];
-  /** Rewrites one tool output in place; false when the item is not a tool output. */
   const rewriteAt = (index: number): boolean => {
     const item = input[index]!;
     const rewrite = rewriteToolOutputItem(item);
@@ -245,14 +216,11 @@ export async function shrinkNativeCompactionRequestForEndpoint(
     return true;
   };
 
-  // Upstream pass: the trailing run of tool outputs, newest first.
   let trailingStart = input.length;
   while (trailingStart > 0 && estimatedTokensAfter > budgetTokens && rewriteAt(trailingStart - 1))
     trailingStart--;
-  // choco-pi: earlier tool outputs, oldest first; calls and outputs stay paired.
   for (let index = 0; index < trailingStart && estimatedTokensAfter > budgetTokens; index++)
     rewriteAt(index);
-  // choco-pi: still over, so drop the oldest turns at a user-message cut.
   const trimmed =
     estimatedTokensAfter > budgetTokens
       ? trimOldestTurns(input, itemTokens, fixedTokens, budgetTokens)

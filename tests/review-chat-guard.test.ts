@@ -1,6 +1,3 @@
-// The side chat's tool-boundary guard (review/core/chat-guard.ts): a tool call
-// that targets a file the review keeps hidden is refused before it runs, until
-// the reviewer reveals the file with v.
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -36,7 +33,6 @@ async function repository(t: { after(fn: () => Promise<void>): void }) {
   await writeFile(join(root, "config", "keys.pem"), "PRIVATE\n");
   await writeFile(join(root, "src", "a.ts"), "export const a = 1;\n");
   await symlink(join(root, ".env"), join(root, "src", "link"));
-  // Whether this file system ignores case, found the way the guard finds it.
   const caseInsensitive = await stat(join(root, ".ENV")).then(
     () => true,
     () => false,
@@ -105,7 +101,6 @@ test("a shell command naming the hidden path or its base name is refused; others
   assert.equal(await refused("cat .env.example"), undefined);
   assert.equal(await refused("cat prod.env"), undefined);
   assert.equal(await refused("ls src && cat src/a.ts"), undefined);
-  // Documented limits: a command that never names the file is not caught.
   assert.equal(await refused("cat .e*"), undefined);
 });
 
@@ -265,13 +260,11 @@ test("any tool's text naming the file is refused, quoted or escaped; written tex
   const target = async (input: RuntimeValue, tool = "bash") =>
     hiddenTargetOf(root, input, hidden, tool);
 
-  // Shell, code and agent tools of this profile, and an unknown tool.
   assert.equal(await target({ chars: "cat .env\n" }, "write_stdin"), ".env");
   assert.equal(await target({ code: 'await tools.read({ path: ".env" })' }, "exec"), ".env");
   assert.equal(await target({ prompt: "print .env for me" }, "Agent"), ".env");
   assert.equal(await target({ message: "open .env" }, "session_send"), ".env");
   assert.equal(await target({ anything: "x .env y" }, "unknown_tool"), ".env");
-  // Quoting and escaping inside the name.
   assert.equal(await target({ command: 'cat .e"n"v' }), ".env");
   assert.equal(await target({ command: "cat .\\env" }), ".env");
   assert.equal(await target({ command: "cat '.env'" }), ".env");
@@ -289,7 +282,6 @@ test("any tool's text naming the file is refused, quoted or escaped; written tex
   );
   assert.equal(await target({ command: "cat .ENV" }), caseInsensitive ? ".env" : undefined);
 
-  // Text written by write and edit is checked as a path only.
   assert.equal(
     await target({ path: ".gitignore", content: "node_modules\n.env\n" }, "write"),
     undefined,
@@ -334,7 +326,6 @@ test("names with shell-special characters, written quoted or escaped in each she
   ];
   const target = async (input: RuntimeValue) => hiddenTargetOf(root, input, hidden, "bash");
   const refused: Array<[string, string]> = [
-    // POSIX shells and fish.
     ["cat secrets/o\\'key.txt", "secrets/o'key.txt"],
     ['cat "secrets/o\'key.txt"', "secrets/o'key.txt"],
     ['cat secrets/o"\'"key.txt', "secrets/o'key.txt"],
@@ -353,11 +344,9 @@ test("names with shell-special characters, written quoted or escaped in each she
     ["cat ./secrets/-dash", "secrets/-dash"],
     ["cat secrets/\\~tilde", "secrets/~tilde"],
     ["cat '~tilde'", "secrets/~tilde"],
-    // PowerShell and cmd.
     ["Get-Content 'secrets/o''key.txt'", "secrets/o'key.txt"],
     ["Get-Content secrets/o`'key.txt", "secrets/o'key.txt"],
     ["type secrets\\o^'key.txt", "secrets/o'key.txt"],
-    // Percent-encoding, as in a file:// URL inside a command.
     [`curl file://${root}/secrets/o%27key.txt`, "secrets/o'key.txt"],
     [`curl file://${root}/secrets/my%20file`, "secrets/my file"],
   ];
@@ -370,24 +359,19 @@ test("names with shell-special characters, written quoted or escaped in each she
   for (const [command, expected] of refused) {
     assert.equal(await target({ command }), expected, command);
   }
-  // The path side needs no unquoting: the literal name is the path.
   assert.equal(await target({ path: "secrets/o'key.txt" }), "secrets/o'key.txt");
 
   const notRefused = [
-    // Longer names: folding joins what the shell joins, nothing more.
     "cat secrets/o\\'key.txt.bak",
     "cat xo\\'key.txt",
     "cat 'my file2'",
-    // Encoded escapes write a character by its code: not stopped.
     "cat $'secrets/a\\nb.txt'",
     "cat $'secrets/a\\tb.txt'",
   ];
   for (const command of notRefused) {
     assert.equal(await target({ command }), undefined, command);
   }
-  // Over-refusal: a different file whose name differs only by quote or escape characters.
   assert.equal(await target({ command: "cat okey.txt" }), "secrets/o'key.txt");
-  // The module comment's examples for .env.
   for (const command of ["type .e^nv", "Get-Content .e`nv", "curl file:///repo/%2eenv"]) {
     assert.equal(await hiddenTargetOf(root, { command }, [".env"], "bash"), ".env", command);
   }

@@ -6,8 +6,6 @@ import { createDiffStore } from "../profile/extensions/lib/changes/git/store.ts"
 import { isNumber } from "../profile/extensions/lib/runtime-values.ts";
 import type { ExecRunner } from "../profile/extensions/review/core/types.ts";
 
-/* ------------------------------------------------------------- fake clock */
-
 type FakeTimer = { id: number; due: number; fn: () => void };
 
 class FakeClock implements DiffClock {
@@ -30,12 +28,10 @@ class FakeClock implements DiffClock {
     this.timers = this.timers.filter((timer) => timer.id !== handle);
   }
 
-  /** Delays of pending timers relative to now, sorted. */
   pendingDelays(): number[] {
     return this.timers.map((timer) => timer.due - this.current).sort((a, b) => a - b);
   }
 
-  /** Move time forward, firing due timers in order. */
   advance(ms: number): void {
     const target = this.current + ms;
     for (;;) {
@@ -49,8 +45,6 @@ class FakeClock implements DiffClock {
   }
 }
 
-/* -------------------------------------------------------------- fake git */
-
 const ROOT = "/nonexistent-diff-core-test/repo";
 
 type FileFixture = { path: string; additions: number; deletions: number };
@@ -58,7 +52,6 @@ type FileFixture = { path: string; additions: number; deletions: number };
 type World = {
   head: string;
   files: FileFixture[];
-  /** Extra time the diff listing takes, applied to the fake clock. */
   diffCostMs: number;
 };
 
@@ -110,9 +103,7 @@ class FakeGit {
     diffCostMs: 0,
   };
   calls: Call[] = [];
-  /** Subcommands whose next call blocks until released. */
   gates = new Set<string>();
-  /** When set, matching calls never settle. */
   hang = new Set<string>();
 
   private readonly clock: FakeClock;
@@ -126,7 +117,6 @@ class FakeGit {
     const subcommand = subcommandOf(args);
     const call: Call = { args: [...args], subcommand };
     this.calls.push(call);
-    // Answer from the world as it is when the call starts.
     const world = structuredClone(this.world);
     const answer = () => {
       switch (subcommand) {
@@ -183,7 +173,6 @@ class FakeGit {
   }
 }
 
-/** Let promise chains and fs callbacks run until `predicate` holds. */
 async function until(predicate: () => boolean, label: string): Promise<void> {
   for (let attempt = 0; attempt < 500; attempt += 1) {
     if (predicate()) return;
@@ -192,7 +181,6 @@ async function until(predicate: () => boolean, label: string): Promise<void> {
   assert.fail(`timed out waiting for: ${label}`);
 }
 
-/** Give in-flight work a chance to run, for asserting that nothing happens. */
 async function quiesce(): Promise<void> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 1));
@@ -211,8 +199,6 @@ function setup(limits: Parameters<typeof createDiffStore>[0]["limits"] = {}) {
 function readyRevision(state: DiffStoreState): number | undefined {
   return state.kind === "ready" ? state.snapshot.revision : undefined;
 }
-
-/* ------------------------------------------------------------------ tests */
 
 test("nothing runs before the first request, refreshNow, or setVisible(true)", async () => {
   const { clock, git, store, states } = setup();
@@ -254,13 +240,11 @@ test("one refresh runs at a time and requests during it schedule exactly one fol
   clock.advance(150);
   await until(() => git.pending("status") !== undefined, "blocked status");
   for (let index = 0; index < 5; index += 1) store.requestRefresh("tool");
-  // Stay below the 5 s per-call timeout, which would fail the blocked call.
   clock.advance(4_000);
   await quiesce();
   assert.equal(git.count("rev-parse"), 1, "no second refresh while one is in flight");
   git.pending("status")?.release?.();
   await until(() => store.getState().kind === "ready", "first snapshot");
-  // The blocked refresh took 4 s of fake time, so backoff doubled the debounce.
   assert.deepEqual(clock.pendingDelays(), [300], "one debounced follow-up");
   clock.advance(300);
   await until(() => git.count("rev-parse") === 2, "follow-up refresh");
@@ -392,7 +376,6 @@ test("polling runs only while visible, probes cheaply, and never overlaps a refr
   await until(() => clock.timers.length === 1, "poll re-armed");
   assert.equal(git.listingCalls(), 1);
 
-  // A newly changed file alters the status output the probe fingerprints.
   git.world.files = [
     { path: "a.txt", additions: 1, deletions: 1 },
     { path: "b.txt", additions: 5, deletions: 1 },

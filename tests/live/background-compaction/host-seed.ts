@@ -4,10 +4,6 @@ import { isString } from "./schema-check.ts";
 import { assistantMessage, STEP_TOOL } from "./fake-sse.ts";
 import type { EntryMarker } from "./transport-capture.ts";
 
-/**
- * Per-session marker lists derived from actual branch message text. Lists are
- * mutated in place so holders of `host.markers` see later entries.
- */
 export class MarkerBook {
   readonly #managers = new Map<string, SessionManager>();
   readonly #lists = new Map<string, EntryMarker[]>();
@@ -47,7 +43,6 @@ function messageTexts(entry: SessionEntry): string[] {
   );
 }
 
-/** String-content entries keep one marker (a seeded unique prefix wins over padded text). */
 function isKnown(list: readonly EntryMarker[], entry: SessionEntry, text: string): boolean {
   const stringContent =
     entry.type === "message" && "content" in entry.message && isString(entry.message.content);
@@ -59,7 +54,6 @@ function addEntryTexts(list: EntryMarker[], entry: SessionEntry): void {
     if (!isKnown(list, entry, text)) list.push({ entryId: entry.id, text });
 }
 
-/** Seeded tool exchanges: `count` step calls, each answered by a `chars`-long result. */
 export interface SeedToolResults {
   readonly count: number;
   readonly chars: number;
@@ -72,11 +66,6 @@ export interface SeedOptions {
   readonly model: Model<Api>;
 }
 
-/**
- * Plain English vocabulary for seeded tool output: realistic tokenization
- * (roughly one token per word) and nothing the artifact redactor treats as a
- * credential (no `sk-` words, no `Bearer`, no key blocks).
- */
 const SEED_WORDS = [
   "the",
   "build",
@@ -121,12 +110,10 @@ const SEED_WORDS = [
 ];
 const WORDS_PER_LINE = 14;
 
-/** Deterministic tool output of exactly `chars` characters, headed by a unique marker line. */
 export function seedToolResultText(namespace: string, index: number, chars: number): string {
   const header = `HARNESS-${namespace}-SEED-RESULT-${String(index).padStart(3, "0")}\n`;
   const parts = [header];
   let length = header.length;
-  // 32-bit linear congruential sequence seeded by the index: same text every run.
   let state = Math.imul(index + 1, 0x9e_37_79_b1) >>> 0;
   let line = 0;
   while (length < chars) {
@@ -143,7 +130,6 @@ export function seedToolResultText(namespace: string, index: number, chars: numb
   return parts.join("").slice(0, chars);
 }
 
-/** The step call a seeded result answers (history only; the harness tool is declared). */
 function seedToolCall(namespace: string, index: number, model: Model<Api>): AssistantMessage {
   const base = assistantMessage("", model);
   return {
@@ -184,7 +170,6 @@ function seedToolExchanges(
   return markers;
 }
 
-/** Seeds the frozen prefix through the real SessionManager; returns markers in branch order. */
 export function seedPrefix(manager: SessionManager, options: SeedOptions): EntryMarker[] {
   const namespace = options.namespace ?? "SEED";
   const padding = options.bytes

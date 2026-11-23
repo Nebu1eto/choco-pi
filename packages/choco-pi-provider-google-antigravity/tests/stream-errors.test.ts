@@ -68,7 +68,6 @@ const retryInfo = (retryDelay: string) => ({
   retryDelay,
 });
 
-/** One HTTP error case per G1 error kind that an HTTP response can produce. */
 const HTTP_CASES: readonly (readonly [AntigravityErrorKind, number, string])[] = [
   [
     "quota_exhausted",
@@ -148,8 +147,6 @@ describe("HTTP errors", () => {
       const retryable = RETRYABLE_ANTIGRAVITY_ERROR_KINDS.has(kind);
       assert.equal(isRetryableAssistantError(result), retryable);
       assert.equal(isContextOverflow(result), kind === "context_overflow");
-      // Retryable kinds whose server delay fits the transport budget retry here; long
-      // server delays (rate_limited 30s, capacity 60s) are left to Pi's visible retry.
       const retriedHere = kind === "server";
       assert.equal(fake.calls.length, retriedHere ? 3 : 1);
       assert.deepEqual(sleeps, retriedHere ? [1000, 2000] : []);
@@ -229,7 +226,6 @@ describe("HTTP errors", () => {
   });
 
   it("refuses a raw Gemini API key as auth, without a request, a retry or echoing the key", async () => {
-    // What Pi's inherited google API-key auth resolves from GEMINI_API_KEY or a stored key.
     const rawKey = "AIzaFAKE-gemini-api-key-for-tests";
     const fake = fakeFetch(() => sseResponse([okBody]));
     const { stream, sleeps } = start(piFetch(fake), { options: { apiKey: rawKey, maxRetries: 3 } });
@@ -360,7 +356,6 @@ describe("abort and stalls", () => {
     it(`ends ${label} that never sends or closes at the idle deadline as a retryable network error`, async () => {
       let cancelled = false;
       let calls = 0;
-      // A body that ignores the request signal: only the transport's own watchdog can end it.
       const fetch: typeof globalThis.fetch = async () => {
         calls += 1;
         const body = new ReadableStream<Uint8Array>({
@@ -390,7 +385,6 @@ describe("abort and stalls", () => {
   }
 });
 
-/** An SSE body that delivers `pieces` one per read, then fails the next read with `failure`. */
 function sseThenFail(pieces: readonly string[], failure: Error): Response {
   const encoder = new TextEncoder();
   let index = 0;
@@ -441,7 +435,6 @@ describe("attempt isolation", () => {
 });
 
 describe("leaving an attempt early", () => {
-  /** An SSE body that sends `first` and stays open; records how the transport lets go of it. */
   function openBody(first: string, signal: AbortSignal | null | undefined) {
     const seen = { cancelled: false, aborted: false };
     signal?.addEventListener(

@@ -4,7 +4,6 @@ import { access, chmod, copyFile, mkdir, readFile, rm, writeFile } from "node:fs
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Bundle identity of the two fixture instances; both run the same binary. */
 export const fixtureApps = {
   target: {
     bundleId: "com.choco-pi.FocusFixture",
@@ -66,11 +65,6 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-/**
- * Build the fixture into `<outDir>/<hash>/` once per source hash: one `swiftc` binary copied into
- * the target and holder bundles. Nothing is signed, installed, or registered here; LaunchServices
- * registers the bundles when the harness opens them.
- */
 export async function buildFixture(outDir: string): Promise<FixtureBuild> {
   const swift = await readFile(source);
   const hash = createHash("sha256")

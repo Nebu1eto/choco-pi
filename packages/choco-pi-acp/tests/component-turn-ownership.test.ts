@@ -9,12 +9,6 @@ import { PiAcpSession, type StopReason } from "../src/acp/session.ts";
 import { PiRpcProcess, type PiPromptDisposition } from "../src/pi-rpc/process.ts";
 import { FakeAgentSideConnection, FakePiRpcProcess, asAgentConn } from "./helpers-fakes.ts";
 
-// Pi's `agent_settled` carries no run identity (`{ type, aborted }` only), and a run that an
-// extension starts with `sendCustomMessage(..., { triggerTurn: true })` emits one too. Pi
-// answers a `started` prompt only after that prompt's run is active, and defers a prompt
-// that arrives while an earlier run's `agent_settled` is being emitted. So on Pi's stdout an
-// `agent_settled` that precedes a prompt's response frame belongs to an earlier run.
-
 function bounded<T>(promise: Promise<T>, label: string, ms = 5_000): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
@@ -73,7 +67,6 @@ test("an earlier run's agent_settled before the prompt is acknowledged does not 
   const turn = track(session.prompt("user prompt"));
   assert.equal(proc.prompts.length, 1);
 
-  // An autonomous run (subagent notification, goal continuation) settles before Pi answers.
   proc.emit({ type: "agent_settled" });
   await drain();
   assert.deepEqual(turn.settlements, [], "a settle from another run must not end this turn");
@@ -104,7 +97,6 @@ test("after a handled command, a queued turn ignores the command's autonomous ru
     ["/command", "next"],
   );
 
-  // The command fired a triggerTurn message; that run settles before Pi answers "next".
   proc.emit({ type: "agent_settled" });
   await drain();
   assert.deepEqual(second.settlements, [], "the command's run must not end the queued turn");
@@ -116,10 +108,6 @@ test("after a handled command, a queued turn ignores the command's autonomous ru
   assert.deepEqual(second.settlements, ["end_turn"]);
 });
 
-// The stub writes frames in the order Pi's stdout would carry them. For "interleaved" it
-// writes an earlier run's `agent_settled` and the prompt response in one write, then the
-// prompt's own run 150 ms later. For "same-chunk" it writes the response and the prompt's
-// own settle in one write, which must still settle the turn.
 const STUB_PI = `#!/usr/bin/env node
 const readline = require("node:readline");
 const line = (value) => JSON.stringify(value) + "\\n";

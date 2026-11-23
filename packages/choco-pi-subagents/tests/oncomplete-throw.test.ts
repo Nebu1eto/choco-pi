@@ -1,9 +1,3 @@
-/**
- * A throwing completion callback is a side-effect failure of one run. It must
- * not stop queued runs from starting, leak a concurrency slot, surface as an
- * unhandled rejection, or settle any run more than once. Two settle paths are
- * covered: the spawn `.catch` handler and `drainQueue`'s provider-block refusal.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -86,7 +80,6 @@ test("a throwing onComplete on the spawn .catch path still drains the queue", as
     assert.equal(runs.length, 1, "concurrency limit of one holds the second run");
     assert.equal(manager.getRecord(second)?.status, "queued");
 
-    // Runner rejection takes the spawn `.catch` settle path.
     runs[0].reject(new Error("runner crashed"));
     await flush();
 
@@ -116,7 +109,6 @@ test("a throwing onComplete in drainQueue's provider refusal keeps draining", as
   const { manager, runs, completions } = throwingHarness(throwFor);
   const unhandled = captureUnhandled();
   try {
-    // first and refused run on anthropic (the context default); other on openai.
     const first = manager.spawn(env.pi, env.context(), "implementer", "first", background);
     const refused = manager.spawn(env.pi, env.context(), "implementer", "refused", background);
     const other = manager.spawn(env.pi, env.context(), "implementer", "other", {
@@ -127,8 +119,6 @@ test("a throwing onComplete in drainQueue's provider refusal keeps draining", as
     await flush();
     assert.equal(runs.length, 1);
 
-    // A terminal rate-limit failure closes anthropic, so the drain after the
-    // first run refuses the queued anthropic run and calls onComplete for it.
     runs[0].resolve({
       responseText: "",
       session,

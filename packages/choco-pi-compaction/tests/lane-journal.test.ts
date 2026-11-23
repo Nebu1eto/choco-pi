@@ -1,4 +1,3 @@
-/** Lane journal: strict schema, validated append, reader, transition memo, model invisibility. */
 import assert from "node:assert/strict";
 import test from "node:test";
 

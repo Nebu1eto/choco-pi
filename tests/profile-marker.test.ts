@@ -416,7 +416,6 @@ test("harness rejects cancellation during marker reading", async () => {
   );
 });
 
-/** Whether `value` matches `schema`, narrowing like the compiled validator's check. */
 function checkSchema<S extends JsonSchema>(schema: S, value: RuntimeValue): value is Static<S> {
   return compile(schema).check(value);
 }

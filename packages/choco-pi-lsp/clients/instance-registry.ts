@@ -1,26 +1,3 @@
-/**
- * Cross-process instance registry (#449 slice 1).
- *
- * Observability substrate for multi-agent LSP resource sharing. Records, in
- * a single machine-global file (`~/.choco-pi-lsp/instances.json`), every live
- * choco-pi-lsp process: its pid, project root, live LSP child servers, RSS, and a
- * heartbeat timestamp. Later slices (cross-process budget, same-root warm
- * attach) build on this; slice 1 is purely observational — it changes no
- * dispatch/LSP behavior, it only records state and reaps stale entries /
- * orphaned LSP children (#472).
- *
- * File shape: `{ instances: InstanceEntry[] }`. Missing or corrupt file is
- * treated as `{ instances: [] }` — this module must never throw on a read.
- *
- * Concurrency: every write is read-modify-write-whole-file with an atomic
- * tmp+rename (same pattern as clients/review-graph/builder.ts). Two
- * processes racing a write is a KNOWN, ACCEPTED race for slice 1
- * (last-writer-wins) — a lost update here only means a stale/missing
- * observability entry, never data corruption (the tmp+rename guarantees the
- * file itself is always valid JSON). A future slice can add file locking or
- * per-pid shard files if this proves too lossy in practice.
- */
-
 import { hasErrorCode } from "./runtime-guards.ts";
 import { arr, compile, obj, unknown } from "@earendil-works/pi-schema";
 import * as fs from "node:fs";
@@ -28,15 +5,6 @@ import * as path from "node:path";
 import { writeFileAtomic, writeFileAtomicAsync } from "./atomic-write.ts";
 import { recordDegradationOnce } from "./degradation-ledger.ts";
 import { getGlobalPiLensDir } from "./file-utils.ts";
-// #735: reuse the #449/#525 reaper's exact conservative liveness check
-// (`process.kill(pid, 0)`, ESRCH-only-means-dead) rather than inventing a
-// second one — see realIsPidAlive's own docstring, which already calls out
-// clients/lsp-budget.ts as a precedent consumer. This creates a live-binding
-// import cycle with instance-reaper.ts (which imports readInstanceRegistry/
-// isInstanceRegistryEnabled from here); safe under Node ESM because every
-// use on both sides happens inside function bodies, never at module-
-// evaluation time, so both modules are fully initialized before either
-// import is actually invoked.
 import { realIsPidAlive } from "./instance-reaper.ts";
 import { normalizeFilePath } from "./path-utils.ts";
 import { getSubagentIdentity, isSubagentSession } from "./subagent-mode.ts";
@@ -45,17 +13,9 @@ export interface LspChildEntry {
   pid: number;
   serverId: string;
   command: string;
-  /** Per-spawn-unique marker (e.g. a temp sgconfig path) for command-line
-   *  re-identification when the pid itself is gone/recycled. */
   marker?: string;
   spawnedAt: string;
-  /** Resident set size in bytes, sampled at heartbeat cadence via
-   *  clients/resource-sampler.ts (#620). Best-effort — `undefined` when the
-   *  pid couldn't be sampled (already exited, or sampling itself failed). */
   rssBytes?: number;
-  /** CPU percent (0-100+, matching `pidusage`'s convention — can exceed 100
-   *  on a multi-core box under sustained load) sampled at the same cadence.
-   *  Same best-effort/undefined semantics as `rssBytes`. */
   cpuPercent?: number;
 }
 
@@ -66,14 +26,8 @@ export interface InstanceEntry {
   lspChildren: LspChildEntry[];
   lspChildCount: number;
   rssBytes: number;
-  /** Host process CPU percent, sampled at the same heartbeat cadence as
-   *  `rssBytes` (#620). `undefined` when sampling failed/unavailable (e.g.
-   *  the `pidusage` dependency errored) — a missing value must never be
-   *  read as "0% CPU". */
   cpuPercent?: number;
   heartbeatAt: string;
-  /** Best-effort identity for concurrency-profile analysis (#822). Absent
-   *  entirely for primary sessions and tolerated as absent on old entries. */
   subagent?: {
     marker?: string;
     agentType?: string;
@@ -93,45 +47,18 @@ function registryPath(): string {
   return path.join(getGlobalPiLensDir(), "instances.json");
 }
 
-// --- Kill switch (lazy, memoized — house style per clients/runtime-config.ts) ---
-
 let _enabledCache: boolean | undefined;
 
-/**
- * `CHOCO_PI_LSP_INSTANCE_REGISTRY=0` disables the registry entirely: every
- * exported function in this module becomes a no-op (including the reaper
- * sweep in clients/instance-reaper.ts, which checks this too).
- */
 export function isInstanceRegistryEnabled(): boolean {
   if (_enabledCache !== undefined) return _enabledCache;
   _enabledCache = process.env.CHOCO_PI_LSP_INSTANCE_REGISTRY !== "0";
   return _enabledCache;
 }
 
-/** Test-only: clear the memoized kill-switch read. */
 export function _resetInstanceRegistryEnabledForTests(): void {
   _enabledCache = undefined;
 }
 
-// --- Read ---
-
-/**
- * Distinguishes "no registry yet" (ENOENT — a genuinely clean start, never
- * recorded) from "a registry file exists but couldn't be trusted" (corrupt
- * JSON, wrong shape, or another read error — e.g. a torn write left behind by
- * a killed process, #1609 layer b). Both degrade to `{ instances: [] }`
- * either way (this store is purely observational, per the module docstring),
- * but only the latter is worth recording — a clean empty start must never
- * read the same as a corrupt one, or a genuine torn-file regression would be
- * invisible.
- *
- * `readRegistrySync`/`readRegistryAsync` are called from many sites across a
- * session (register/heartbeat/reap/footprint — not only session_start), so
- * this goes through `recordDegradationOnce` (#1609 review, the small fix)
- * rather than a plain log call: the ledger's own per-kind/subject dedup caps
- * it at one record for the session regardless of how many times the same
- * torn file gets re-read, instead of re-logging on every call.
- */
 function recordCorruptRegistryRead(reasonCode: string): void {
   recordDegradationOnce({
     kind: "instance-registry-corrupt",
@@ -151,9 +78,6 @@ function readRegistrySync(): RegistryFile {
     recordCorruptRegistryRead("invalid shape");
     return { instances: [] };
   } catch (err) {
-    // Missing file, corrupt JSON, or a read error — treat as empty, never
-    // throw. Missing (ENOENT) is a clean start and stays silent; anything
-    // else is recorded so a corrupt/torn file is distinguishable from one.
     const code = hasErrorCode(err) ? err.code : undefined;
     if (code !== "ENOENT") recordCorruptRegistryRead(code ?? "invalid");
     return { instances: [] };
@@ -177,13 +101,10 @@ async function readRegistryAsync(): Promise<RegistryFile> {
   }
 }
 
-/** Read-only snapshot of the whole registry (used by the reaper). */
 export async function readInstanceRegistry(): Promise<InstanceEntry[]> {
   const file = await readRegistryAsync();
   return file.instances;
 }
-
-// --- Write (atomic tmp + rename via clients/atomic-write.ts, #762) ---
 
 async function writeRegistryAsync(file: RegistryFile): Promise<void> {
   const dir = getGlobalPiLensDir();
@@ -191,12 +112,8 @@ async function writeRegistryAsync(file: RegistryFile): Promise<void> {
   try {
     await fs.promises.mkdir(dir, { recursive: true });
   } catch {
-    // Best-effort observability substrate — a failed mkdir just means this
-    // update is lost, never a thrown error for the caller.
     return;
   }
-  // bestEffort (default): a failed write just means this update is lost,
-  // never a thrown error for the caller.
   await writeFileAtomicAsync(target, JSON.stringify(file));
 }
 
@@ -211,9 +128,6 @@ function writeRegistrySync(file: RegistryFile): void {
   writeFileAtomic(target, JSON.stringify(file));
 }
 
-// --- Mutations (all read-modify-write whole file) ---
-
-/** Create/overwrite this process's entry. */
 export async function registerInstance(projectRoot: string): Promise<void> {
   if (!isInstanceRegistryEnabled()) return;
   const pid = process.pid;
@@ -247,32 +161,16 @@ export async function registerInstance(projectRoot: string): Promise<void> {
 
 export interface HeartbeatPatch {
   rssBytes?: number;
-  /** Host CPU percent for this heartbeat (#620). Omit to leave the
-   *  previously-recorded value untouched (sampling is best-effort and may
-   *  legitimately fail on a given tick — an omission must not be read as
-   *  "0% CPU", so this only overwrites when a fresh sample is supplied). */
   cpuPercent?: number;
-  /** Per-lspChild resource samples (#620), keyed by pid, applied on top of
-   *  the process's current `lspChildren` array. A pid not present in this
-   *  map keeps its previous rss/cpu values untouched (the child may simply
-   *  not have been sampled this tick, e.g. sampling failed for that pid
-   *  alone) — never zeroed out. Pids the entry no longer knows about are
-   *  ignored (the child was already removed via `removeLspChild`).
-   */
   childUsage?: Record<number, { rssBytes?: number; cpuPercent?: number }>;
 }
 
-/** Update this process's heartbeat/rss (and, since #620, host CPU% + live
- *  LSP children's rss/CPU%). Cheap — safe to call every turn end. */
 export async function updateHeartbeat(patch: HeartbeatPatch = {}): Promise<void> {
   if (!isInstanceRegistryEnabled()) return;
   const pid = process.pid;
   const file = await readRegistryAsync();
   const idx = file.instances.findIndex((entry) => entry.pid === pid);
   if (idx === -1) {
-    // No prior registerInstance in this run (e.g. registry file was reaped
-    // out from under us, or heartbeat fired before session_start finished) —
-    // nothing to update against; skip rather than fabricate a projectRoot.
     return;
   }
   const now = new Date().toISOString();
@@ -306,21 +204,6 @@ export interface RecordLspChildInput {
   marker?: string;
 }
 
-// Every mutation below (`recordLspChild`, `removeLspChild`) reads the WHOLE
-// registry file, edits this process's own `lspChildren`, and writes the whole
-// file back. Two such mutations from the SAME process — e.g. a client-ceiling
-// eviction's `removeLspChild(victimPid)` racing the replacement spawn's
-// `recordLspChild(newChild)` that follows it — are ordinary concurrent async
-// calls with no ordering guarantee between them. Without serialization, the
-// later WRITE can be built from a read taken before the earlier write landed,
-// silently reverting it (last-writer-wins losing a same-process update, not
-// just the already-accepted cross-process one — see the module docstring).
-// #1724: this is why a forced LSP shutdown's deregistration could get
-// clobbered by a concurrent respawn's registration. One shared tail
-// serializes every same-process registry mutation of this shape so "record"
-// and "remove" can never interleave their read-modify-write against each
-// other — the single seam both the forced-shutdown and self-crash
-// deregistration paths route through.
 let registryChildMutationTail: Promise<void> = Promise.resolve();
 
 function queueRegistryChildMutation(op: () => Promise<void>): Promise<void> {
@@ -329,7 +212,6 @@ function queueRegistryChildMutation(op: () => Promise<void>): Promise<void> {
   return run;
 }
 
-/** Append/replace (by pid) an LSP child under this process's entry. */
 export function recordLspChild(entry: RecordLspChildInput): Promise<void> {
   return queueRegistryChildMutation(() => recordLspChildNow(entry));
 }
@@ -348,8 +230,6 @@ async function recordLspChildNow(entry: RecordLspChildInput): Promise<void> {
     spawnedAt: now,
   };
   if (idx === -1) {
-    // registerInstance hasn't run yet in this process (or was reaped) —
-    // synthesize a minimal entry so the child is still tracked.
     file.instances.push({
       pid,
       startedAt: now,
@@ -372,19 +252,6 @@ async function recordLspChildNow(entry: RecordLspChildInput): Promise<void> {
   await writeRegistryAsync(file);
 }
 
-/**
- * Remove an LSP child (by pid) from this process's entry. `expectedMarker`,
- * when supplied, guards against the pid-recycling window between this
- * child's death and this call landing: if the recorded entry for `pid` now
- * carries a DIFFERENT marker than the one this caller spawned, some other
- * child has already claimed that pid (recycled) and must not be removed on
- * this caller's behalf — same asymmetric-safety contract as the reaper's
- * `buildIdentityMatcher` (never remove on an unverifiable/mismatched
- * identity). Omit `expectedMarker` for a server this process never derived a
- * marker for (pid-only match, unchanged pre-#1724 behavior) — safe because
- * this call fires synchronously off THIS process's own just-confirmed exit
- * of that exact pid, well inside the OS's pid-reuse latency.
- */
 export function removeLspChild(pid: number, expectedMarker?: string): Promise<void> {
   return queueRegistryChildMutation(() => removeLspChildNow(pid, expectedMarker));
 }
@@ -397,13 +264,13 @@ async function removeLspChildNow(pid: number, expectedMarker?: string): Promise<
   if (idx === -1) return;
   const current = file.instances[idx];
   const filtered = current.lspChildren.filter((child) => {
-    if (child.pid !== pid) return true; // keep — different pid
+    if (child.pid !== pid) return true;
     if (expectedMarker && child.marker && child.marker !== expectedMarker) {
-      return true; // keep — pid recycled onto a differently-marked child
+      return true;
     }
-    return false; // drop — this is the child we're deregistering
+    return false;
   });
-  if (filtered.length === current.lspChildren.length) return; // nothing removed
+  if (filtered.length === current.lspChildren.length) return;
   file.instances[idx] = {
     ...current,
     lspChildren: filtered,
@@ -412,21 +279,14 @@ async function removeLspChildNow(pid: number, expectedMarker?: string): Promise<
   await writeRegistryAsync(file);
 }
 
-/**
- * Remove this process's entry entirely. SYNC fs only — safe to call from
- * `session_shutdown` (#234: no child spawns permitted at teardown; this
- * function spawns nothing).
- */
 export function deregisterInstance(): void {
   if (!isInstanceRegistryEnabled()) return;
   const pid = process.pid;
   const file = readRegistrySync();
   const remaining = file.instances.filter((entry) => entry.pid !== pid);
-  if (remaining.length === file.instances.length) return; // nothing to remove
+  if (remaining.length === file.instances.length) return;
   writeRegistrySync({ instances: remaining });
 }
-
-// --- Resource footprint aggregation (#620) ----------------------------------
 
 export interface InstanceFootprint {
   pid: number;
@@ -441,50 +301,11 @@ export interface InstanceFootprint {
 export interface ResourceFootprint {
   instanceCount: number;
   totalRssBytes: number;
-  /** Sum of every sampled CPU%, host + every LSP child, across every
-   *  registered instance. This is a SUM, not an average — on a multi-core
-   *  box it can exceed 100 even for a single busy process (matches
-   *  `pidusage`'s per-process convention), so read it as "how much CPU is
-   *  attributable to choco-pi-lsp", not "% of one core". */
   totalCpuPercent: number;
   totalLspChildCount: number;
   perInstance: InstanceFootprint[];
 }
 
-/**
- * PURE aggregation over a registry snapshot: "how much CPU/RAM is choco-pi-lsp
- * attributable to, right now, across every process it owns" (#620) — the
- * host of every registered instance plus every one of its live LSP children.
- * Missing/unsampled `rssBytes`/`cpuPercent` (best-effort sampling can fail)
- * are treated as 0 for summation purposes — never as a full instance to
- * exclude, since a partially-sampled instance's other numbers are still real
- * data worth surfacing.
- *
- * Does NOT include transient analyzer children (jscpd/knip/etc.) — those are
- * short-lived and sampled separately per-invocation via
- * clients/resource-sampler.ts into clients/latency-logger.ts, not carried in
- * the registry (see the module docstring's scope note).
- *
- * #735: `isPidAlive`, when supplied, drops any instance whose owning pid is
- * confirmed dead BEFORE aggregation — a hard-killed pi process otherwise
- * leaves a registry entry with heartbeat-cached RSS that reads as a live,
- * resource-consuming instance until it eventually ages out (up to
- * `STALE_HEARTBEAT_MS`, see clients/instance-reaper.ts). Dropped rather than
- * flagged `stale: true`: a dead pid is unambiguous (unlike heartbeat
- * staleness, which the reaper deliberately treats as "maybe idle-but-alive"
- * and never uses to justify removing/hiding anything) — the wire shape and
- * every existing caller (chiefly `lsp_health`'s headline instance
- * count/RSS/CPU numbers) simply expects a footprint of currently-live
- * instances. Left `undefined` for pure/synchronous callers (incl. every
- * pre-#735 unit test) that pass a plain snapshot with no intent to check OS
- * process state — no filtering happens, preserving prior behavior exactly.
- * No pid-reuse identity check is applied here (unlike the reaper's child-pid
- * `matchProcess`): `InstanceEntry` never recorded the host's own command
- * line to verify against (same gap #525 called out for the reaper's PARENT
- * pid, deliberately left unfixed there too), and a health-report false
- * positive is a much smaller blast radius than the reaper's mistaken kill —
- * so plain liveness is judged sufficient here.
- */
 export function computeResourceFootprint(
   instances: InstanceEntry[],
   isPidAlive?: (pid: number) => boolean,
@@ -530,24 +351,6 @@ export function computeResourceFootprint(
   };
 }
 
-/**
- * Read the live registry and compute the aggregate footprint — the query
- * side of "how much CPU/RAM is choco-pi-lsp using right now" (#620). Best-effort
- * (readInstanceRegistry never throws); the answer only reflects whatever
- * heartbeats have landed so far.
- *
- * #735: defaults to the reaper's `realIsPidAlive` so dead-pid registry
- * entries (a hard-killed pi process) are excluded from both the returned
- * footprint AND — opportunistically, fire-and-forget, best-effort — pruned
- * from the on-disk registry, the same "entry removal only, never blocks the
- * caller" convention `sweepOrphans`/`pruneDeadInstances` already use.
- * Pruning here is a bonus cleanup, not a substitute for the reaper sweep:
- * this path only prunes pids this particular read happened to find dead,
- * while the reaper sweep is the authoritative, scheduled cleanup. Injectable
- * so tests can pass a fake predicate (or omit filtering entirely by passing
- * a function that always returns true) without touching real OS process
- * state.
- */
 export async function getResourceFootprint(
   isPidAlive: (pid: number) => boolean = realIsPidAlive,
 ): Promise<ResourceFootprint> {
@@ -556,25 +359,11 @@ export async function getResourceFootprint(
     instances.filter((instance) => !isPidAlive(instance.pid)).map((instance) => instance.pid),
   );
   if (deadPids.size > 0) {
-    // Fire-and-forget: a health-report read must never block on, or fail
-    // because of, a registry write.
-    prunePids(deadPids).catch(() => {
-      // best-effort — a dead-pid entry that fails to prune here is simply
-      // re-evaluated (and re-dropped from the report) on the next read, and
-      // remains catchable by the scheduled reaper sweep regardless.
-    });
+    prunePids(deadPids).catch(() => {});
   }
   return computeResourceFootprint(instances, isPidAlive);
 }
 
-/** Best-effort removal of specific dead pids' entries from the on-disk
- *  registry (#735). Re-reads immediately before writing (rather than reusing
- *  an earlier snapshot) to narrow — not eliminate — the last-writer-wins race
- *  already accepted for this module's read-modify-write model (see the
- *  module docstring). Mirrors clients/instance-reaper.ts's
- *  `pruneDeadInstances`, kept local here rather than imported to avoid
- *  reaching back across the same import edge `realIsPidAlive` already
- *  crosses in the other direction. */
 async function prunePids(deadPids: Set<number>): Promise<void> {
   const file = await readRegistryAsync();
   const remaining = file.instances.filter((entry) => !deadPids.has(entry.pid));

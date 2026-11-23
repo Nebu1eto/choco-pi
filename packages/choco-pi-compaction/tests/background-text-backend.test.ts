@@ -1,11 +1,3 @@
-/**
- * Background text backend: prefix-only prompts, bounded two-pass,
- * cancellation, typed failures, and draft/details compatibility.
- *
- * The prompt check is independent of the backend's own entry-ID assertion:
- * every retained or later entry carries a unique marker string, and no
- * prompt text may contain one.
- */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -83,7 +75,6 @@ const VALID_SUMMARY = [
 
 type Message = SessionMessageEntry["message"];
 
-/** Linear branch builder; every message carries a unique marker. */
 class Branch {
   readonly entries: SessionEntry[] = [];
   private counter = 0;
@@ -163,7 +154,6 @@ interface Transcript {
   readonly postCutMarkers: readonly string[];
 }
 
-/** Long single-prompt child: one request, many tool batches, then later entries. */
 function childTranscript(batches: number, padding: number, laterBatches = 4): Transcript {
   const branch = new Branch();
   const all: { id: string; marker: string }[] = [];
@@ -187,7 +177,6 @@ function childTranscript(batches: number, padding: number, laterBatches = 4): Tr
     capturedAt: 0,
   });
   if (isSnapshotRefusal(frozen)) assert.fail(`refused: ${frozen.detail}`);
-  // The session keeps working after the freeze: D/E land after the snapshot.
   for (let index = 0; index < laterBatches; index++) {
     const think = branch.marker("LATER");
     add(branch.calls([`l${index}`], think), think);
@@ -265,8 +254,6 @@ function expectPrefixOnlyPrompts(
       );
     }
   }
-  // Coverage: every pre-cut message reaches exactly one pass. The governing
-  // request of a split turn is restated in every pass by design.
   const governing = transcript.snapshot.governingUserRequest?.content;
   for (const marker of transcript.prefixMarkers) {
     const hits = requests.filter((request) => request.promptText.includes(marker)).length;

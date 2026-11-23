@@ -104,15 +104,11 @@ export async function formatWebSearchResults(
     let excerptBytes = Buffer.byteLength(inline);
 
     if (truncation.truncated) {
-      // truncateHead preserves complete lines. Fall back to a byte-safe prefix
-      // when a single line is larger than the shared result budget.
       if (!inline) {
         inline = truncateUtf8(result.text, maxBytesPerResult);
       }
       excerptBytes = Buffer.byteLength(inline);
 
-      // Keep an equally sized excerpt for every result, while preserving the
-      // complete response outside the model context for targeted follow-up.
       tempFilePath = join(
         tmpdir(),
         `pi-synthetic-search-${slug}-${randomBytes(4).toString("hex")}.md`,
@@ -146,8 +142,6 @@ export async function formatWebSearchResults(
 export const syntheticWebSearchTool = defineTool({
   name: SYNTHETIC_WEB_SEARCH_TOOL,
   label: "Synthetic: Web Search",
-  // Inactive until session_start proves subscription eligibility; Pi 1.4.0 would
-  // otherwise re-activate it when `/tree` restores a branch that never recorded it.
   defaultActive: false,
   description: `Search the web using Synthetic's zero-data-retention API. Returns search results with titles, URLs, content snippets, and publication dates. Use for finding documentation, articles, recent information, or any web content. Results are fresh and not cached by Synthetic. Body excerpts share a 20KB budget, with an equal 4KB maximum per result. Larger results include a bounded excerpt and are saved to temp files for full inspection with the read tool.`,
   promptSnippet: "Search the web using Synthetic's zero-data-retention API",
@@ -223,9 +217,6 @@ export const syntheticWebSearchTool = defineTool({
     const results = details?.results || [];
     const container = new Container();
 
-    // When the tool throws, the framework calls renderResult with
-    // details={} (empty object) and the error message in content.
-    // Detect this both via context.isError and missing expected details.
     if (context.isError || !details?.results) {
       const textBlock = result.content.find((c) => c.type === "text");
       const errorMsg = (textBlock?.type === "text" && textBlock.text) || "Search failed";
@@ -238,7 +229,6 @@ export const syntheticWebSearchTool = defineTool({
     if (results.length === 0) {
       container.addChild(new Text(theme.fg("muted", "Synthetic: WebSearch: no results"), 0, 0));
     } else if (!expanded) {
-      // Collapsed: show result count + first result title
       let text = theme.fg("success", `Found ${results.length} result(s)`);
       if (hasTruncation) {
         text += theme.fg("warning", " (excerpted)");
@@ -253,7 +243,6 @@ export const syntheticWebSearchTool = defineTool({
       text += theme.fg("muted", ` ${keyHint("app.tools.expand", "to expand")}`);
       container.addChild(new Text(text, 0, 0));
     } else {
-      // Expanded: show each result with title, URL, date, and snippet
       container.addChild(new Text(theme.fg("success", `Found ${results.length} result(s)`), 0, 0));
 
       for (const r of results) {

@@ -16,7 +16,6 @@ import type { FixtureBuild } from "./fixture/build.ts";
 import { plan } from "./isolation.ts";
 import { scoreTierB, type FixtureEvidence, type TierBInput } from "./tier-b.ts";
 
-/** Synthetic fixture logs in FocusFixture.swift's shape; the Pi process spans 1000..9000. */
 function fixture(target: RecordValue[], holder: RecordValue[] = []): FixtureEvidence {
   return {
     target: [{ event: "launched", ts: 900, pid: 42 }, ...target],
@@ -54,7 +53,6 @@ const worked = (extra: RecordValue = {}): RecordValue => ({
 function input(partial: Partial<TierBInput>): TierBInput {
   return { requests: [], traces: [], results: [], noDispatch: false, ...partial };
 }
-/** A persisted act_ui toolResult message with the given text. */
 function result(text: string): RecordValue {
   return { role: "toolResult", toolName: "act_ui", content: [{ type: "text", text }] };
 }
@@ -95,7 +93,6 @@ test("S1 tolerates an unverified Increment press but not unverified typing or a 
     s1(`${executed} Effect not verified for action 3 (click: unknown)${confirm}`).errors,
     [],
   );
-  // The fixture log stays the proof: an unverified press with no increment still fails.
   assert.match(
     s1(
       `${executed} Effect not verified for action 3 (press: unknown)${confirm}`,
@@ -229,14 +226,12 @@ test("S5 passes only on one helper window-frame stale_look refusal", () => {
   assert.deepEqual(pass.errors, []);
   assert.equal(pass.notes.staleRefusal, "stale_look");
   const refusal = /stale action not refused as a window-frame stale_look/;
-  // A generation stale_look is not the frame check; neither is an effect-possible refusal.
   assert.match(s5([refused("Look id 'look_3' is no longer available")]).errors.join(";"), refusal);
   assert.match(s5([refused(frame, true)]).errors.join(";"), refusal);
   assert.match(
     s5([refused(frame), { ...refused(frame), seq: 21, at: 3200 }]).errors.join(";"),
     refusal,
   );
-  // No act at all is not a pass in tier B: only the helper can see an out-of-band resize.
   assert.match(
     s5([], [result('observation_refresh_required: {"reason":"stale"}')]).errors.join(";"),
     /0 act\(s\) after the mutation/,
@@ -278,7 +273,6 @@ test("S6 requires a refused background act, then one granted act that hits the c
   assert.deepEqual(pass.errors, []);
   assert.equal(pass.notes.grantedOutcome, "unknown");
   assert.deepEqual(s6([refused, granted("worked")]).errors, []);
-  // Pre-fix B1 shape: an ungranted pid click answered unknown and no grant path.
   const b1 = act(1, "click", { ok: true, result: { outcome: "unknown" } });
   assert.match(
     s6([b1], [quit("", 0, 0)]).errors.join(";"),
@@ -305,7 +299,6 @@ test("S6 requires a refused background act, then one granted act that hits the c
     s6([refused, granted("didnt")]).errors.join(";"),
     /granted foreground act answered didnt/,
   );
-  // unknown needs the fixture proof: no hit, a second hit, or a hit before the granted act fail.
   assert.match(
     s6([refused, granted()], [quit("", 0, 0)]).errors.join(";"),
     /custom-view hits 0 != 1/,
@@ -324,7 +317,6 @@ test("S6 requires a refused background act, then one granted act that hits the c
   );
 });
 
-/** The granted act's (`r2`) execution trace; `step` overrides the step's fields. */
 function grantTrace(outcome: string, step: RecordValue = {}): RecordValue {
   return {
     strategy: "act",
@@ -348,7 +340,6 @@ function wireOutcome(row: RecordValue): string {
   const outcome = isJsonObject(result) ? result.outcome : undefined;
   return isString(outcome) ? outcome : "missing";
 }
-/** S6 scoring; by default the trace agrees with every granted act's wire outcome. */
 function scoreS6(
   requests: RecordValue[],
   target: RecordValue[],
@@ -365,7 +356,6 @@ const s6Refused = act(
   { ok: false, error: { code: "foreground_required", effectPossible: false } },
   { target: { ref: "e141" } },
 );
-/** The granted act `r2`, logged at 1200. */
 const s6Granted = (outcome = "unknown") =>
   act(
     2,
@@ -382,12 +372,10 @@ test("S6 fails on any holder input and on holder focus loss before the granted a
     { event: "windowResignKey", ts: 1261 },
   ];
   assert.deepEqual(scoreS6(requests, s6Target, afterGrant).errors, []);
-  // Reviewer reproduction: a holder keyDown at 1150, before the granted act at 1200.
   assert.match(
     scoreS6(requests, s6Target, [{ event: "keyDown", ts: 1150 }, ...afterGrant]).errors.join(";"),
     /holder received input: keyDown@1150/,
   );
-  // Holder input fails at any time, also after the granted act and outside the Pi window.
   assert.match(
     scoreS6(requests, s6Target, [...afterGrant, { event: "keyDown", ts: 1300 }]).errors.join(";"),
     /holder received input: keyDown@1300/,
@@ -417,7 +405,6 @@ test("S6 cross-checks the granted act's trace step against the wire reply", () =
   const held = [{ event: "appInactive", ts: 1260 }];
   const s6 = (traces: RecordValue[]) => scoreS6(requests, s6Target, held, traces).errors.join(";");
   assert.equal(s6([grantTrace("unknown")]), "");
-  // Reviewer reproduction: wire `unknown`, trace `worked` without escalation.
   assert.match(
     s6([grantTrace("worked", { escalatedToForeground: false })]),
     /granted foreground act r2 trace disagrees with the wire reply: step escalatedToForeground false != true, step outcome "worked" != "unknown", trace outcome "worked" != "unknown"/,
@@ -449,7 +436,6 @@ test("each attempt gets its own fixture directory", () => {
   assert.notEqual(dirs[0], dirs[1]);
   assert.match(dirs[0], /S6\.attempt-0\.[0-9a-f-]{36}\.fixture$/);
   assert.match(dirs[1], /S6\.attempt-1\.[0-9a-f-]{36}\.fixture$/);
-  // A second plan for the same attempt index still differs by session.
   assert.notEqual(
     plan("/tmp/cu-e2e-test", "b", "m/x", "S6", "", "", "/bin/pi", undefined, 0).fixtureDir,
     dirs[0],
@@ -458,7 +444,6 @@ test("each attempt gets its own fixture directory", () => {
 
 const build: FixtureBuild = { hash: "h", dir: "/nowhere", target: "/T.app", holder: "/H.app" };
 
-/** A fake `open`: appends each scripted row to the CU_FIXTURE_LOG named in the arguments. */
 function fakeLaunch(
   script: (app: string) => { code: number; rows: RecordValue[] },
   quits: FixtureRun[],
@@ -487,7 +472,6 @@ const holderUp = [
 test("a partial fixture launch stops the started holder and reports the cleanup", async () => {
   const scratch = await mkdtemp(join(tmpdir(), "cu-e2e-launch-"));
   try {
-    // Target launch fails after the holder started.
     const quits: FixtureRun[] = [];
     const run = newFixtureRun(join(scratch, "a0.fixture"));
     const failed = launchFixture(
@@ -504,10 +488,8 @@ test("a partial fixture launch stops the started holder and reports the cleanup"
       defects: ['quit {"holder":4242}'],
     });
     assert.equal(quits.length, 1);
-    // The caller's run object names the holder, so its own cleanup sees the partial launch.
     assert.deepEqual(run.pids, { holder: 4242 });
 
-    // Target opened but never logged launched: still one cleanup of the holder.
     const silent: FixtureRun[] = [];
     await assert.rejects(
       launchFixture(
@@ -525,7 +507,6 @@ test("a partial fixture launch stops the started holder and reports the cleanup"
       [{ holder: 4242 }],
     );
 
-    // Holder started but never became active.
     const inactive: FixtureRun[] = [];
     await assert.rejects(
       launchFixture(
@@ -540,7 +521,6 @@ test("a partial fixture launch stops the started holder and reports the cleanup"
       [{ holder: 4242 }],
     );
 
-    // A full launch records both pids and cleans nothing up.
     const none: FixtureRun[] = [];
     const ok = newFixtureRun(join(scratch, "a3.fixture"));
     await launchFixture(
@@ -564,7 +544,6 @@ test("a partial fixture launch stops the started holder and reports the cleanup"
 test("launchFixture refuses a reused directory and quitFixture runs once", async () => {
   const scratch = await mkdtemp(join(tmpdir(), "cu-e2e-launch-"));
   try {
-    // An earlier attempt's directory: launching into it would inherit its .cu-quit and rows.
     const dir = join(scratch, "S6.attempt-0.x.fixture");
     await mkdir(dir);
     const opened: string[] = [];
@@ -582,12 +561,10 @@ test("launchFixture refuses a reused directory and quitFixture runs once", async
     );
     assert.deepEqual(opened, []);
     assert.equal(quits.length, 0);
-    // The refused run is closed: the caller's cleanup never writes .cu-quit into the old dir.
     assert.equal(reused.closed, true);
     assert.deepEqual(await quitFixture(reused), []);
     await assert.rejects(access(join(dir, ".cu-quit")));
 
-    // A run with no started instance quits cleanly once; later calls are no-ops.
     const idle = newFixtureRun(join(scratch, "idle"));
     await mkdir(idle.dir);
     assert.deepEqual(await quitFixture(idle), []);

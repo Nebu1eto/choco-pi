@@ -57,7 +57,6 @@ export interface ToolExecutionContext {
   cwd: string;
   defaultYieldTimeMs?: number | undefined;
   toolCallId?: string | undefined;
-  /** The `exec`/`wait` tool's own context, passed through unchanged (its tool members are non-enumerable). */
   extensionContext?: ExtensionToolContext | undefined;
   preflight?: CodeModeToolPreflightRunner | undefined;
   onUpdate?: ((result: AgentToolResult<unknown>) => void) | undefined;

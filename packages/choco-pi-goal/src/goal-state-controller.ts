@@ -53,7 +53,6 @@ export interface GoalStateController {
   resumePausedGoal: (ctx: StatusContext) => void;
 }
 
-/** Session reload reads only the active branch and refreshes the status line. */
 export type SessionReloadContext = StatusContext & {
   sessionManager: Pick<ExtensionContext["sessionManager"], "getBranch">;
 };

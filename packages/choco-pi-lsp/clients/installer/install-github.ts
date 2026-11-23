@@ -1,6 +1,3 @@
-/**
- * GitHub release installs.
- */
 import fs from "node:fs/promises";
 import path from "node:path";
 import { writeFileAtomicAsync } from "../atomic-write.ts";
@@ -12,23 +9,18 @@ import { GITHUB_BIN_DIR, debugLog } from "./installer-env.ts";
 import type { ToolDefinition } from "./tool-catalog.ts";
 import { getArchiveBinaryCandidates, getGitHubInstalledBinaryName } from "./tool-resolution.ts";
 
-/**
- * Download and install a tool from a GitHub release.
- * Returns the path to the installed binary, or undefined on failure.
- */
 export async function installGitHubTool(tool: ToolDefinition): Promise<string | undefined> {
   const spec = tool.github;
   if (!spec) return undefined;
 
-  const platform = process.platform; // "linux" | "darwin" | "win32"
-  const arch = process.arch; // "x64" | "arm64" | ...
+  const platform = process.platform;
+  const arch = process.arch;
   const assetSubstring = spec.assetMatch(platform, arch);
   if (!assetSubstring) {
     logSessionStart(`github-install ${tool.id}: unsupported platform=${platform} arch=${arch}`);
     return undefined;
   }
 
-  // Fetch latest release metadata from GitHub API
   logSessionStart(`github-install ${tool.id}: fetching release metadata from ${spec.repo}`);
   let releaseJson: {
     tag_name?: string;
@@ -58,7 +50,6 @@ export async function installGitHubTool(tool: ToolDefinition): Promise<string | 
   logSessionStart(`github-install ${tool.id}: downloading ${asset.name}`);
   debugLog(`[github] downloading ${asset.name} from ${asset.browser_download_url}`);
 
-  // Download the asset
   const downloadStart = Date.now();
   let assetBuffer: Buffer;
   try {
@@ -83,7 +74,6 @@ export async function installGitHubTool(tool: ToolDefinition): Promise<string | 
 
   try {
     if (assetName.endsWith(".gz") && !assetName.endsWith(".tar.gz")) {
-      // Bare gzip (e.g. rust-analyzer-x86_64-unknown-linux-gnu.gz) — decompress directly
       const decompressed = await new Promise<Buffer>((resolve, reject) => {
         const gunzip = createGunzip();
         const chunks: Buffer[] = [];
@@ -97,7 +87,6 @@ export async function installGitHubTool(tool: ToolDefinition): Promise<string | 
         mode: 0o750,
       });
     } else if (assetName.endsWith(".tar.gz") || assetName.endsWith(".tar.xz")) {
-      // Write archive to temp file, extract with system tar
       const tmpArchive = path.join(GITHUB_BIN_DIR, `_tmp_${assetName}`);
       await fs.writeFile(tmpArchive, assetBuffer);
       const tmpDir = path.join(GITHUB_BIN_DIR, `_tmp_extract_${tool.id}`);
@@ -112,12 +101,6 @@ export async function installGitHubTool(tool: ToolDefinition): Promise<string | 
         return undefined;
       }
 
-      // Locate the binary at any depth — handles both flat tarballs (e.g.
-      // gleam ships a bare `gleam` at the archive root) and tools nested
-      // under a top-level dir (e.g. shellcheck-vX/shellcheck). Each registered
-      // tar tool has a uniquely-named binary, so a recursive match is
-      // unambiguous; this replaces the old `--strip-components=1` assumption,
-      // which silently extracted nothing from a flat tarball.
       const tarBinaryName = spec.binaryInArchive ?? binaryName;
       const tarSrcBinary = await findFirstFileRecursive(
         tmpDir,
@@ -136,7 +119,6 @@ export async function installGitHubTool(tool: ToolDefinition): Promise<string | 
       await fs.rm(tmpDir, { recursive: true, force: true });
       if (!isWindows) await fs.chmod(destPath, 0o750);
     } else if (assetName.endsWith(".zip")) {
-      // Write zip to temp, extract with unzip (Linux/macOS) or Expand-Archive (Windows)
       const tmpArchive = path.join(GITHUB_BIN_DIR, `_tmp_${assetName}`);
       await fs.writeFile(tmpArchive, assetBuffer);
       const tmpDir = path.join(GITHUB_BIN_DIR, `_tmp_extract_${tool.id}`);
@@ -162,7 +144,6 @@ export async function installGitHubTool(tool: ToolDefinition): Promise<string | 
         return undefined;
       }
 
-      // Find binary — may be at root or inside a subdir
       const archiveBinaryName = spec.binaryInArchive ?? binaryName;
       const srcBinary = await findFirstFileRecursive(
         tmpDir,
@@ -181,7 +162,6 @@ export async function installGitHubTool(tool: ToolDefinition): Promise<string | 
       await fs.rm(tmpDir, { recursive: true, force: true });
       if (!isWindows) await fs.chmod(destPath, 0o750);
     } else {
-      // Bare binary (e.g. shfmt_*_linux_amd64)
       await writeFileAtomicAsync(destPath, assetBuffer, {
         bestEffort: false,
         mode: 0o750,
@@ -193,9 +173,6 @@ export async function installGitHubTool(tool: ToolDefinition): Promise<string | 
     return undefined;
   }
 
-  // Download any sibling assets the primary wrapper depends on (e.g. ktlint's
-  // `ktlint` jar next to `ktlint.bat`, #218). Matched by EXACT name and written
-  // as bare files into the same dir; a missing one fails the install.
   for (const extraName of spec.extraAssets?.(platform, arch) ?? []) {
     const extraAsset = releaseJson.assets.find((a) => a.name === extraName);
     if (!extraAsset) {
@@ -225,7 +202,6 @@ export async function installGitHubTool(tool: ToolDefinition): Promise<string | 
   return destPath;
 }
 
-/** Recursively find the first matching file under a directory. */
 async function findFirstFileRecursive(dir: string, names: string[]): Promise<string | undefined> {
   const wanted = new Set(names.map((name) => name.toLowerCase()));
   const entries = await fs.readdir(dir, { withFileTypes: true });

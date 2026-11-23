@@ -2,14 +2,7 @@ import type { FactRule } from "../fact-provider-types.ts";
 import type { ImportEntry } from "../facts/import-facts.ts";
 import type { Diagnostic } from "../types.ts";
 
-/**
- * high-import-coupling — a file importing from > 15 distinct modules. Fact-based
- * (reads `file.imports` from the tree-sitter import provider, no compiler);
- * formerly QR-003 (#402).
- */
-
 const IMPORT_COUPLING_THRESHOLD = 15;
-// Registry/hub files are intentionally wide — they import everything by design
 const IMPORT_COUPLING_EXEMPT = /[/\\](index|integration)\.[cm]?tsx?$/;
 
 export const highImportCouplingRule: FactRule = {

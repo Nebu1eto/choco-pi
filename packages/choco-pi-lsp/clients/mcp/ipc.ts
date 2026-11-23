@@ -1,20 +1,5 @@
 import type { RuntimeValue } from "../../tools/runtime-values.ts";
 import { isRuntimeNumber, isRuntimeObject } from "../../tools/runtime-values.ts";
-/**
- * Warm side-channel for the push path. The MCP server is a long-lived process
- * with a warm LSP, but its stdio is owned by the MCP client — so the
- * PostToolUse-hook bin can't reach it that way. Instead the server listens on a
- * local IPC endpoint (Unix domain socket / Windows named pipe), and the hook
- * connects to it to get LSP-complete diagnostics from the warm process instead
- * of running its own cold analysis.
- *
- * This module is the CLIENT + the shared path derivation + the one-shot line
- * reader the server wires into its socket (deliberately light: node:net +
- * type-only result, so the bin can try the warm path WITHOUT loading the
- * dispatch graph). The analysis engine lives in mcp/server.ts. If the warm
- * path is unavailable, the client resolves `undefined` and the caller falls
- * back to cold local analysis.
- */
 
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
@@ -28,12 +13,6 @@ import type { McpAnalyzeResult } from "./analyze.ts";
 export const WARM_DIAGNOSTICS_SCHEMA_VERSION = 1;
 export const WARM_CODE_ACTION_LOOKUP_LIMIT = 6;
 
-/**
- * Stable per-workspace endpoint path. The server (from its launch cwd) and the
- * hook (from the PostToolUse cwd) must resolve the same path — both hash the
- * resolved root (lowercased for case-insensitive filesystems), so when they're
- * the same project they meet. Mismatch → the client just falls back to cold.
- */
 export function ipcPathForCwd(cwd: string): string {
   const hash = workspaceHash(cwd);
   if (process.platform === "win32") {
@@ -42,20 +21,11 @@ export function ipcPathForCwd(cwd: string): string {
   return path.join(os.tmpdir(), `choco-pi-lsp-mcp-${hash}.sock`);
 }
 
-/**
- * The single stable per-workspace id both endpoint derivations key on. Every
- * per-workspace side-channel name (socket/pipe, turn-end status file) must come
- * from HERE, so the hook process and the server process cannot drift apart.
- */
 function workspaceHash(cwd: string): string {
   const root = path.resolve(cwd).toLowerCase();
-  // sha256 (not for security — just a stable short id for the IPC socket/pipe
-  // name keyed by cwd; sha256 over sha1 keeps SonarCloud's weak-hash check quiet)
   return crypto.createHash("sha256").update(root).digest("hex").slice(0, 16);
 }
 
-/** PID-scoped endpoint used by pi sessions. The legacy MCP analyze endpoint
- * remains workspace-scoped for compatibility with the PostToolUse hook. */
 export function diagnosticsIpcPathForCwd(cwd: string, pid: number): string {
   const base = ipcPathForCwd(cwd);
   if (process.platform === "win32") return `${base}-diagnostics-${pid}`;
@@ -80,31 +50,7 @@ export interface WarmDiagnosticsResponse {
   servedAt: number;
   fresh: boolean;
   inconclusive: boolean;
-  /**
-   * #1253: the incumbent's `TouchFileResult.confirmation` — present only when
-   * that touch completed its configured diagnostics/confirmation policy (which
-   * includes the silent-clean gates a `silentOnClean` server like marksman
-   * depends on). `inconclusive: false` alone is NOT the same evidence, so the
-   * flag is carried explicitly rather than inferred. Optional: an incumbent
-   * built before this field simply omits it, and the consumer then falls back
-   * to today's unconfirmed handling.
-   *
-   * #1470/#1493: `"partial"` is the narrowed verdict — the incumbent's touch
-   * completed, but an auxiliary contributed no evidence and `unconfirmedServerIds`
-   * names it. A consumer testing `=== "confirmed"` therefore fails closed for free;
-   * one that wants the narrowing reads the id list.
-   */
   confirmation?: "confirmed" | "partial";
-  /**
-   * #1470/#1493: server ids the incumbent's touch carries no evidence for — every
-   * auxiliary that never reported, whether the aux grace timer cut its push wait
-   * off (#1470) or it stayed silent with no stored publication for this content
-   * (#1493). Both shapes cross this boundary under the one name; a consumer must
-   * not assume a hung server. Present only alongside `confirmation: "partial"`.
-   * Re-surfaced as an EXPLICIT enumerable DTO field for the same reason
-   * `inconclusive` is: no side-channel survives `JSON.stringify` of the
-   * diagnostics array.
-   */
   unconfirmedServerIds?: string[];
 }
 
@@ -153,16 +99,6 @@ type WarmIpcOutcome<TResponse> =
   | { available: true; response: TResponse }
   | { available: false; reason: WarmDiagnosticsFailureReason };
 
-/**
- * Shared one-shot request/response transport for the tagged IPC routes (#822):
- * connect to `endpoint`, write one JSON line, read one JSON line back,
- * classify. The endpoint is PID-scoped for the warm-attach routes and
- * workspace-scoped for the hook bin's turn-end route. The per-route `validate`
- * callback returns a failure reason for an on-time but unusable reply (schema
- * skew, staleness) or `undefined` to accept it; transport failures map
- * uniformly to timeout/ipc-error. One transport, N routes — the clients cannot
- * drift apart.
- */
 function requestOverWarmIpc<TResponse>(
   endpoint: string,
   timeoutMs: number,
@@ -292,21 +228,13 @@ export function requestWarmCodeActions(
   );
 }
 
-/** One IPC request: analyze a file in the warm server process. */
 export interface WarmAnalyzeRequest {
   file: string;
   cwd: string;
 }
 
-// v2 adds an explicit receipt acknowledgement. A v1 server must reject rather
-// than consume a pass without the new delivery contract.
 export const WARM_TURN_END_SCHEMA_VERSION = 2;
 
-/**
- * Turn-end over the WORKSPACE endpoint, not the PID-scoped one: a Claude Code
- * Stop hook knows its cwd, never the server's pid. Tagged so the untagged
- * analyze request on the same socket keeps working unchanged.
- */
 export interface WarmTurnEndRequest {
   route: "turn-end";
   version: number;
@@ -318,7 +246,6 @@ export interface WarmTurnEndResponse {
   version: number;
   turnEnd?: string;
   tests?: string;
-  /** Present when the server admitted a durable findings delivery. */
   deliveryId?: string;
 }
 
@@ -339,14 +266,6 @@ export type WarmTurnEndResult =
   | { available: true; response: WarmTurnEndResponse }
   | { available: false; reason: WarmDiagnosticsFailureReason };
 
-/**
- * Ask the warm server to run choco-pi-lsp's real turn-end pass. Execution and
- * delivery are separate: the first one-shot connection returns a capability,
- * then a second one-shot connection acknowledges receipt. If the client
- * deadline or either connection loses, the server leaves the durable finding
- * cache untouched for a later Stop. 55 s expires inside Claude Code's 60 s hook
- * timeout.
- */
 export async function requestWarmTurnEnd(
   cwd: string,
   timeoutMs = 55_000,
@@ -386,14 +305,6 @@ export async function requestWarmTurnEnd(
     : { available: false, reason: ack.reason };
 }
 
-// --- Turn-end status surface (#1272) ----------------------------------------
-// The Stop hook runs in a SEPARATE, short-lived process, so a skip it decides
-// (no warm server, timeout, schema skew) leaves no trace the long-lived MCP
-// server could report. Before this, that skip was one stderr line the agent
-// never sees — the exact invisible-state shape #544 fixed for auto-session.
-// The hook records its outcome to a small per-workspace file; `lsp_health`
-// reads it. Best-effort throughout: telemetry must never break a hook.
-
 export interface TurnEndStatus {
   ran: number;
   skipped: number;
@@ -402,7 +313,6 @@ export interface TurnEndStatus {
   lastSkipAt?: string;
 }
 
-/** Per-workspace status file, keyed by the same hash as the IPC endpoint. */
 export function turnEndStatusPathForCwd(cwd: string): string {
   return path.join(os.tmpdir(), `choco-pi-lsp-turn-end-${workspaceHash(cwd)}.json`);
 }
@@ -421,25 +331,10 @@ export function readTurnEndStatus(cwd: string): TurnEndStatus | undefined {
       lastSkipAt: parsed.lastSkipAt,
     };
   } catch {
-    // never written, unreadable, or corrupt — "no turn-end activity recorded"
     return undefined;
   }
 }
 
-/**
- * Append one turn-end outcome from the hook process. Never throws.
- *
- * Read-modify-write against a shared per-workspace tmpdir file: two Stop
- * hooks for the same workspace can race this concurrently (separate
- * processes, no lock). `writeFileAtomic` only closes the *publication* half
- * of that — it guarantees this write's own staging+rename can't torn-read
- * (parse-fail and reset counters) or hit a Windows sharing violation against
- * a concurrent writer's rename. It does NOT fix the read-modify-write race
- * itself: two overlapping calls can still both read the same `previous` and
- * publish from it, silently dropping one increment. That's accepted here —
- * this is bounded best-effort telemetry (self-heals, errors already
- * swallowed below), and a lock on this path isn't worth it.
- */
 export function recordTurnEndOutcome(
   cwd: string,
   outcome: { ran: true } | { ran: false; reason: string },
@@ -456,16 +351,9 @@ export function recordTurnEndOutcome(
           lastSkipAt: now,
         };
     writeFileAtomic(turnEndStatusPathForCwd(cwd), `${JSON.stringify(next)}\n`);
-  } catch {
-    // telemetry only — a read-only tmpdir must not break the Stop hook
-  }
+  } catch {}
 }
 
-/**
- * Ask the warm server to analyze a file. Resolves the server's result, or
- * `undefined` on ANY failure (no server, refused, stale socket, timeout, bad
- * response) so the caller transparently falls back to cold local analysis.
- */
 export function requestWarmAnalyze(
   cwd: string,
   file: string,
@@ -510,20 +398,11 @@ export function requestWarmAnalyze(
       }
       socket.end();
     });
-    // No server / connection refused / reset → cold fallback.
     socket.on("error", () => finish(undefined));
     socket.on("close", () => finish(undefined));
   });
 }
 
-/**
- * One-shot line reader for the warm IPC socket (#1219). The clients write
- * exactly one newline-terminated request per connection and read one reply, so
- * the server must dispatch at most one line and ignore anything after it — a
- * `data` handler that keeps re-reading the same buffered line re-dispatches
- * the request on stray bytes. Returns the handler to attach to the socket's
- * `data` event.
- */
 export function createWarmIpcLineReader(onLine: (line: string) => void): (chunk: string) => void {
   let buffer = "";
   let dispatched = false;

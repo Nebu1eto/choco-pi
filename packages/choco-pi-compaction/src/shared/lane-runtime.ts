@@ -1,22 +1,13 @@
-/**
- * Process-wide transport-capture state shared in shape by the Anthropic and
- * xAI native lanes. Each lane keeps its own slot (its own symbol), so the two
- * lanes never see each other's calls, captures, or refusals; only the slot
- * handling, the bounded per-session rings, and the request helpers are shared.
- */
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { ProjectedSessionEntry } from "@earendil-works/pi-coding-agent";
 
 import { isNonNegativeInteger, isRecord, readProperty } from "../guards.ts";
 
-/** Most sessions a per-session ring keeps; the least recently stored is evicted first. */
 export const MAX_SESSIONS = 64;
 
-/** The session's branch projection at request time. */
 export type ProjectionSource = () => readonly ProjectedSessionEntry[];
 
-/** One lane's process-wide state; `TCall`, `TCapture`, and `TRefusal` are lane-owned shapes. */
 export interface LaneRuntime<TCall, TCapture, TRefusal> {
   readonly schemaVersion: 1;
   readonly calls: AsyncLocalStorage<TCall>;
@@ -26,7 +17,6 @@ export interface LaneRuntime<TCall, TCapture, TRefusal> {
   readonly counter: { value: number };
 }
 
-/** The slot's shape; element shapes are written only by the owning lane and are not rechecked. */
 function isLaneRuntime<TCall, TCapture, TRefusal, T>(
   value: T,
 ): value is T & LaneRuntime<TCall, TCapture, TRefusal> {
@@ -42,11 +32,6 @@ function isLaneRuntime<TCall, TCapture, TRefusal, T>(
   );
 }
 
-/**
- * The lane runtime on `symbol`, created on first use. Shared by every
- * extension instance that loads the lane module; an occupied slot of another
- * shape throws `Invalid <label> native lane runtime slot`.
- */
 export function laneRuntime<TCall, TCapture, TRefusal>(
   symbol: symbol,
   label: string,
@@ -71,10 +56,6 @@ export function laneRuntime<TCall, TCapture, TRefusal>(
   return created;
 }
 
-/**
- * The process-wide ring of unusable responses on `symbol`, kept apart from
- * the capture ring so a host retry burst never evicts the last usable capture.
- */
 export function responseRingSlot<TResponse>(
   symbol: symbol,
   label: string,
@@ -88,11 +69,6 @@ export function responseRingSlot<TResponse>(
   return created;
 }
 
-/**
- * Append `item` to the session's ring (at most `limit` items, oldest
- * dropped), mark the session most recently used, and evict the least recently
- * stored sessions beyond {@link MAX_SESSIONS}.
- */
 export function storeBounded<TItem>(
   ring: Map<string, TItem[]>,
   sessionId: string,
@@ -109,7 +85,6 @@ export function storeBounded<TItem>(
   }
 }
 
-/** The session's projection at request time, or undefined when none is bound or it is stale. */
 export function projectionFor(
   projections: ReadonlyMap<string, ProjectionSource>,
   sessionId: string | undefined,
@@ -120,7 +95,6 @@ export function projectionFor(
   try {
     return source();
   } catch {
-    // A stale or disposed session context cannot describe this request; leave it unmapped.
     return undefined;
   }
 }
@@ -131,7 +105,6 @@ export function requestUrl(input: Parameters<typeof globalThis.fetch>[0]): strin
   return input;
 }
 
-/** Origin and path of a request URL (no query), or empty for an unparsable URL. */
 export function endpointOf(url: string): string {
   try {
     const parsed = new URL(url);

@@ -27,7 +27,6 @@ const OPUS = "anthropic/claude-opus-4-5";
 const background = { description: "usage limit", isBackground: true, isolated: true };
 const LIMIT = "Codex usage limit reached (plus plan). Resets in ~60m.";
 
-/** Real env plus one real child session; built before mock timers are enabled. */
 async function setup(t: TestContext): Promise<{ env: UsageLimitEnv; session: AgentSession }> {
   const env = await createUsageLimitEnv();
   t.after(() => env.dispose());
@@ -85,7 +84,6 @@ test("none: limit settles as error with a usageLimit block and closes the provid
       /Provider anthropic unavailable .*Usage limit until .*; suggested: openai\/gpt-5\.6-sol\./,
     );
     assert.equal(runs.length, 1, "no substitution: nothing else was started");
-    // A closure recorded under owner X never blocks another root owner Y.
     const otherOwner = env.context({ sessionManager: env.freshSessionManager() });
     assert.equal(
       manager.isProviderAvailable("anthropic", otherOwner.sessionManager.getSessionId()),
@@ -176,7 +174,6 @@ test("auto-resume parks, releases its slot, resumes once on the same model, and 
     harness({ maxConcurrent: 1 });
   try {
     const parkedId = manager.spawn(pi, env.context(), "implementer", "task", background);
-    // Another provider: the limited provider is closed to new work until the reset.
     const peerId = manager.spawn(pi, env.context(), "implementer", "peer", {
       ...background,
       model: env.models.sol,
@@ -244,7 +241,6 @@ test("a second limit after the post-reset resume settles as exhausted", async (t
   const state = policyState({
     preference: "auto-resume",
     classification: { kind: "quota", confidence: "parsed", resetAt: Date.now() + 60_000 },
-    // Only the wake-up check (the second) reports capacity; the second limit is confirmed.
     corroborate: (count) => ({ ready: count === 2 }),
   });
   const installed = installPolicy(state, env.owner);
@@ -468,7 +464,6 @@ test("resume with model validates scope and availability, and reports setModel f
     join(cwd, ".pi", "settings.json"),
     JSON.stringify({ enabledModels: [OPUS, SOL] }),
   );
-  // Model Scope reads the snapshot the spawn entry points load first.
   await loadEnabledModels(cwd);
   let failSetModel = false;
   const { manager, runs, resumes, resumePrompts, modelSwitches } = harness({

@@ -1,37 +1,3 @@
-/**
- * Module Report (#245) — a structured, navigable substitute for raw full-file
- * reads. An agent calls this to understand a module's shape (outline, signatures,
- * who-uses-this) before requesting exact source, so `read` becomes the fallback
- * rather than the default.
- *
- * Language-uniform by construction: the outline is extracted for EVERY supported
- * language through the one tree-sitter symbol extractor (jsts uses the
- * `typescript` query), giving the same fields — name/kind/startLine/endLine/
- * signature/exported — across all 18 SYMBOL_QUERIES languages plus jsts. The
- * review graph supplies cross-file enrichment (who-uses-this, complexity, fanout)
- * merged onto entries by symbol name; that enrichment is additive and varies by
- * language (e.g. complexity exists for jsts), which is honest rather than faked.
- *
- * Single mode (no depth knob — #256). READ-ONLY by contract — it never builds a
- * graph and never calls an LSP server on this path (both repeatedly OOM'd pi when
- * an agent fanned out reports). Every call:
- *   1. tree-sitter extract of THE one file (always; cold-safe structure).
- *   2. language-agnostic inline executable extraction over the same tree-sitter
- *      AST (callbacks/closures/lambdas/function literals; no second parse).
- *   3. read the already-built review graph (in-memory, else the persisted disk
- *      snapshot) for who-uses-this / flags / imports — never a build. Cold cache
- *      → outline only.
- * `semantic.source` reflects who-uses-this provenance: "review-graph" when the
- * cached graph backs it, "unavailable:file-cap" when a size verdict disabled the
- * graph, else "none" (cold). Live-LSP enrichment is re-homed to #236, where LSP
- * writes provenance-tagged edges INTO the graph (once, persisted) for this path
- * to read as "graph-lsp".
- *
- * Guard integrity: moduleReport injects NO read records — an outline is not
- * "having seen the body". readSymbol returns the actual body lines so the host
- * can record a read that legitimately satisfies the read-guard for that symbol.
- */
-
 import { assignOptionalProperties } from "./optional-properties.ts";
 import { isFiniteNumber, type LspBoundaryValue } from "./runtime-guards.ts";
 import * as fs from "node:fs";
@@ -59,13 +25,6 @@ type ColdImportsResultContract = { external: string[]; internal: string[]; warni
 type BlastReadArgsResultContract = { path: string; offset: number; limit: number };
 type ClampSliceRangeResultContract = { startLine: number; endLine: number };
 
-// NOTE: live-LSP enrichment is NO LONGER called on this read path (#256). Firing
-// LSP per read — speculatively, on the agent's fan-out path — repeatedly OOM'd
-// pi. The enrichment logic is kept as a separate module (clients/module-report-
-// lsp.ts) to be re-homed in #236, where LSP writes provenance-tagged edges INTO
-// the review graph (computed once, persisted) so this path just reads them.
-
-/** Hard payload bound for the per-symbol who-uses-this section. */
 export const MAX_MODULE_REPORT_REFS = 100;
 
 function normalizeMaxRefsPerSymbol(value: number | undefined): number {
@@ -74,26 +33,12 @@ function normalizeMaxRefsPerSymbol(value: number | undefined): number {
 }
 
 export interface ModuleReportOptions {
-  /** Cap on who-uses-this entries per symbol (hard-capped at 100). */
   maxRefsPerSymbol?: number;
-  /** Optional task hint used only to rank recommendedReads; never expands scope or triggers scans. */
   focus?: string;
-  /** Payload tier. `summary` keeps top-level read handles/recommendations only.
-   * `compact` computes the same full data as `default` (so the JSON shape and
-   * `ModuleReport` type are unaffected) but signals the caller to render it as
-   * the line-oriented text view (`renderCompactModuleReport`) instead of JSON —
-   * see tools/module-report.ts. */
   view?: "summary" | "default" | "compact";
-  /** Include the cross-file blast-radius section (#304): the transitive
-   * dependents of this module, aggregated to ranked file `read` args. Read-only
-   * over the CACHED graph — omitted entirely on a cold cache (never builds). */
   blastRadius?: boolean;
-  /** Max hops for the blast-radius walk (default 3). Only meaningful with
-   * `blastRadius`. */
   blastRadiusDepth?: number;
-  /** Include the bounded derived caller/callee view from the cached call graph. */
   callGraph?: boolean;
-  /** Per-direction cap for call-graph relations (default 20). */
   maxCallGraphEntries?: number;
 }
 
@@ -102,22 +47,7 @@ export interface ModuleSymbolUsedBy {
   symbol: string;
   line: number;
   relation: ReviewGraphEdgeKind;
-  /** Where this edge came from: the AST review graph, or a live LSP query. */
   provenance?: "ast" | "lsp";
-  /**
-   * Resolution confidence for an `ast`-provenance hit (refs #655). `"exact"` =
-   * matched to exactly one same-named symbol graph-wide — unambiguous.
-   * `"import"` = the caller's own import statements named exactly which file
-   * the bare-name callee comes from, narrowing to that file. `"receiver-type"`
-   * = a `obj.method()` call whose receiver's class was determined from the
-   * same file's tree-sitter parse (a `new ClassName()` assignment or a typed
-   * parameter) and resolved directly to that class's method. `"name-only"` =
-   * the callee/reference name has 0 or 2+ same-named candidates even after any
-   * import/receiver-type narrowing, so this entry may be a name-collision
-   * guess rather than a confirmed call to THIS symbol — weight it
-   * accordingly. Undefined for `lsp`-provenance hits (out of scope here; LSP
-   * resolution has its own, separate confidence story per #236).
-   */
   resolution?: "exact" | "import" | "receiver-type" | "name-only";
 }
 
@@ -127,101 +57,52 @@ export interface ModuleSymbolEntry {
   startLine: number;
   endLine: number;
   exported: boolean;
-  /** Set only for non-public members of an exported class (#258); omitted
-   * otherwise. Explains why an otherwise-reachable member sits in `internal`. */
   visibility?: "private" | "protected";
   signature?: string;
   doc?: string;
-  /** Decorators/attributes/annotations on the declaration, in source order
-   * (`@app.get("/x")`, `#[tokio::main]`, `@Override`) — the symbol's role without
-   * reading its body. Omitted when none. */
   decorators?: string[];
-  /** Outgoing call count (jsts graph path only). */
   fanout?: number;
-  /** McCabe complexity (jsts graph path only). */
   complexity?: number;
-  /** Non-derivable risk/lifecycle signals (e.g. "async", "high fanout", "high
-   * complexity", "boundary wrapper", "middle man"). "exported" is NOT repeated
-   * here — it already rides the `exported` boolean field above (#512). Empty
-   * flags omit the key entirely from the wire. */
   flags?: string[];
-  /** Share of a class's real methods (excludes accessors/constructors) whose
-   * ENTIRE body is a single pure-forwarding call to ONE held field (#325).
-   * Only set on class-kind entries that clear the "middle man" flag threshold
-   * — see `middle-man-analysis.ts`. Not a general-purpose metric surfaced for
-   * every class; absent means either not a class, too few methods to judge,
-   * or below threshold. */
   delegationRatio?: number;
   usedBy?: ModuleSymbolUsedBy[];
-  /** Members nested under their container by line-range containment (#301) —
-   * a class/interface's methods/fields, an outer class's inner classes. Each
-   * member is a full entry (visibility, who-uses-this); omitted when
-   * the symbol has none. The api/internal split is over TOP-LEVEL entries only;
-   * members ride along inside their container. */
   members?: ModuleSymbolEntry[];
-  // NOTE (#512): no `read` block here. offset/limit are pure derivations of
-  // startLine/endLine (offset = startLine, limit = endLine - startLine + 1) and
-  // the path is the report's own `path` field — repeating all three per symbol
-  // cost real tokens with zero new information. To read a symbol: call
-  // `read`/`read_symbol` with offset=startLine, limit=endLine-startLine+1 on
-  // THIS report's path.
 }
 
 export interface RecommendedRead {
   reason: string;
-  /** Named symbol or synthetic callback handle. */
   symbol?: string;
   startLine: number;
   endLine: number;
 }
 
 export interface ModuleCallbackEntry {
-  /** Stable synthetic handle usable with read_symbol. */
   name: string;
-  /** Normalized role for an inline callback/closure/lambda. */
   kind: string;
-  /** Raw tree-sitter node kind for debugging. */
   rawKind: string;
   startLine: number;
   endLine: number;
   signature?: string;
   parentChain?: string[];
   flags?: string[];
-  // NOTE (#512): no `read` block — same derivation as ModuleSymbolEntry
-  // (offset = startLine, limit = endLine - startLine + 1, path = report's own
-  // `path`). Use readArgsFor(...)-equivalent math to build a read call.
 }
 
-/** One file in the blast radius (#304): a transitive dependent of this module,
- * aggregated from its (possibly several) dependent symbols. */
 export interface BlastRadiusFile {
-  /** cwd-relative display path of the dependent file. */
   file: string;
-  /** How many dependent symbols/edges in this file reach the module. */
   dependents: number;
-  /** Closest hop at which this file depends on the module (1 = direct). */
   minDepth: number;
-  /** Distinct edge kinds by which it depends (calls/references/imports). */
   relations: ReviewGraphEdgeKind[];
-  /** Ready-to-use read args for the whole dependent file (verify the change). */
   read: { path: string; offset: number; limit: number };
 }
 
-/** Cross-file blast radius (#304): "if you change this module, read/verify these
- * files". Present only when requested AND the cached graph is warm. */
 export interface BlastRadius {
-  /** True when the impact walk hit its node cap (the list is a prefix). */
   truncated: boolean;
-  /** Deepest hop reached (transitivity actually observed). */
   maxDepth: number;
-  /** Dependent files, ranked closest-and-most-depended-on first. */
   files: BlastRadiusFile[];
 }
 
 export interface ModuleCallGraphRelation {
-  /** Stable FunctionCallGraph symbol key for the related symbol. */
   symbolId: string;
-  /** Stable symbol key for the module symbol this relation belongs to. */
   targetSymbolId: string;
   file: string;
   symbol?: string;
@@ -251,7 +132,6 @@ export interface ModuleCallGraphCoverage {
 
 export interface ModuleCallGraph {
   available: boolean;
-  /** Why the cached view is unavailable; never infer zero calls from this state. */
   reason?:
     | "cache-missing"
     | "review-graph-missing"
@@ -261,19 +141,15 @@ export interface ModuleCallGraph {
     | "file-cap";
   callers: ModuleCallGraphRelation[];
   callees: ModuleCallGraphRelation[];
-  /** True when either bounded relation list is a prefix of the cached data. */
   truncated: boolean;
   coverage: ModuleCallGraphCoverage;
 }
 
 export interface ModuleReport {
-  /** False when the file is unreadable or has no symbols and no graph node. */
   available: boolean;
   staleness: "fresh" | "unavailable";
   path: string;
-  /** Present when the report degraded because parsing/extraction failed. */
   error?: string;
-  /** Non-fatal degradation notes for approximate sections. */
   warnings?: string[];
   language?: string;
   lineCount?: number;
@@ -282,31 +158,11 @@ export interface ModuleReport {
   imports: { external: string[]; internal: string[] };
   api: ModuleSymbolEntry[];
   internal: ModuleSymbolEntry[];
-  /** Important anonymous callbacks/closures that normal symbol outlines miss. */
   callbacks: ModuleCallbackEntry[];
-  /**
-   * Honesty signal for the callbacks section. `tuned` = language-specific
-   * callback rules applied (e.g. Go goroutines/defer); `generic` = the default
-   * JS/TS-shaped heuristics were used (named/assigned/captured callbacks only —
-   * no language-specific role detection). Lets callers avoid over-trusting the
-   * callbacks list for languages without a tuned rule set.
-   */
   callbackSupport?: "tuned" | "generic";
   recommendedReads: RecommendedRead[];
-  /** Cross-file blast radius (#304) — present only when requested via
-   * `blastRadius` and the cached graph is warm; omitted otherwise. */
   blastRadius?: BlastRadius;
-  /** Derived caller/callee relationships — present only when requested via
-   * `callGraph`, including explicit cache coverage when unavailable. */
   callGraph?: ModuleCallGraph;
-  /**
-   * ISO timestamp the cached review graph was last built (`ReviewGraph.builtAt`),
-   * present whenever a graph was consulted (warm or cold-but-existing). Omitted
-   * when no graph exists at all. Additive (#536) — this is the persisted
-   * timestamp an MCP adapter uses to compute a staleness hint; the pi tool
-   * surface ignores it (staleness signage is MCP-only, per #536's decision:
-   * pi's graph is per-edit warm, so a staleness line there would be noise).
-   */
   graphBuiltAt?: string;
   provenance?: {
     symbols: "syntax" | "none";
@@ -317,8 +173,6 @@ export interface ModuleReport {
     callGraph?: "cached-call-graph" | "unavailable:file-cap" | "none";
   };
   semantic: {
-    /** Provenance of who-uses-this: AST review graph, future graph-LSP edges
-     * (#236), an explicit graph-unavailable reason, or none (cold cache). */
     source: "review-graph" | "graph-lsp" | "unavailable:file-cap" | "none";
     references: boolean;
     implementations: boolean;
@@ -329,39 +183,18 @@ export interface ReadSymbolResult {
   found: boolean;
   path: string;
   name: string;
-  /** Present when extraction failed rather than the symbol being absent. */
   error?: string;
-  /** Non-fatal degradation notes from symbol/callback extraction. */
   warnings?: string[];
   kind?: string;
   startLine?: number;
   endLine?: number;
   signature?: string;
-  /** The verbatim body lines — recording this read satisfies the read-guard. */
   source?: string;
-  /**
-   * ~3 nearest symbol/callback names in the file, by name similarity, when
-   * `symbolName` misses (#523). Lets the caller self-correct a typo or
-   * qualification mismatch without a module_report round-trip. Omitted when
-   * found, or when nothing in the file scores above the similarity threshold.
-   */
   suggestions?: string[];
-  /**
-   * Set when more than one same-file symbol shares the requested name
-   * (overloads, a type and a value sharing a name) — `match` above is the
-   * FIRST one (source order), same as the historical silent behavior; this
-   * just makes the ambiguity visible so the caller can pass `kind` to pick a
-   * specific one (#523).
-   */
   ambiguous?: { count: number; kinds: string[] };
 }
 
 export interface ReadSymbolOptions {
-  /**
-   * Disambiguates same-name matches by kind (e.g. "function" vs "interface").
-   * Optional; omitting it preserves the historical "return the first match"
-   * behavior (#523).
-   */
   kind?: string;
 }
 
@@ -396,28 +229,15 @@ export interface ReadEnclosingResult {
   outline?: ReadEnclosingOutlineItem[];
   error?: string;
   warnings?: string[];
-  /** The verbatim enclosing body lines — recording this read satisfies the read-guard. */
   source?: string;
 }
 
 export interface ReadEnclosingOptions {
-  /** Optional semantic kind filter, e.g. function, method, callback, class. */
   kinds?: string[];
-  /** Optional maximum body size to return. Oversized matches obey onOversize. */
   maxLines?: number;
-  /** Oversize behavior: error (default), bounded slice, or nested outline. */
   onOversize?: "error" | "slice" | "outline";
-  /** Maximum lines for onOversize=slice; defaults to maxLines, then 80. */
   aroundLine?: number;
 }
-
-// kind -> tree-sitter languageId. The languageId keys BOTH the grammar map
-// (tree-sitter-client) and SYMBOL_QUERIES (tree-sitter-symbol-extractor), so it
-// must match a key present in both. jsts/cxx are extension-split kinds resolved
-// through the SHARED ext→grammar resolver below (never a local extension map —
-// #887). Using these gives the primary languages the same rich outline
-// (classes/interfaces/types/signatures) as every other language, not the
-// functions-only FunctionSummary.
 
 interface KINDTOTSLANGValues extends Record<string, string> {}
 const KIND_TO_TS_LANG: KINDTOTSLANGValues = {
@@ -436,21 +256,9 @@ const KIND_TO_TS_LANG: KINDTOTSLANGValues = {
   ocaml: "ocaml",
   zig: "zig",
   shell: "bash",
-  // cxx resolved by extension below (c vs cpp)
 };
 
 export function tsLangForFile(filePath: string, kind: string | undefined): string | undefined {
-  // jsts/cxx are extension-split kinds: resolve them through the shared
-  // ext→grammar authority (tree-sitter-shared.ts EXT_TO_LANG) — the SAME
-  // resolver the dispatch tree-sitter runner, fact providers, project scanner
-  // and read expansion use — so a file is parsed and TreeCache-keyed
-  // (`languageId:path`) under exactly one grammar process-wide. #887: this
-  // used to hand-roll a local map that sent .js/.mjs/.cjs to the typescript
-  // grammar and .jsx to tsx, so every plain-JS file was parsed and cached
-  // twice under two grammars and ran TS-grammar symbol queries on JS trees.
-  // Extensions the shared map does not cover (.svelte/.vue for jsts; the
-  // module-interface/Objective-C/CUDA tail for cxx) keep the historical
-  // kind default.
   if (kind === "jsts") {
     return resolveTreeSitterLanguage(filePath) ?? "typescript";
   }
@@ -460,9 +268,6 @@ export function tsLangForFile(filePath: string, kind: string | undefined): strin
   return kind ? KIND_TO_TS_LANG[kind] : undefined;
 }
 
-// Per-language extractor cache — extractors are cheap once their queries are
-// compiled. The shared TreeSitterClient (which memoizes grammar init) is obtained
-// per call from the process-wide singleton.
 const extractorCache = new Map<string, Promise<TreeSitterSymbolExtractor | null>>();
 
 async function getExtractor(languageId: string): Promise<TreeSitterSymbolExtractor | null> {
@@ -488,7 +293,6 @@ type ModuleReportNode = {
   text: string;
   children: ModuleReportNode[];
   parent?: ModuleReportNode | null;
-  /** Named (vs anonymous punctuation/keyword) node — web-tree-sitter field. */
   isNamed?: boolean;
   startPosition: { row: number; column: number };
   endPosition: { row: number; column: number };
@@ -605,15 +409,7 @@ function resolveUsedBy(
       from?.filePath ?? (edge.from.startsWith("file:") ? edge.from.slice("file:".length) : "");
     if (!rawFile) continue;
     const file = toDisplayPath(rawFile, projectRoot);
-    // refs #655 phase 2: prefer the owner-qualified display name
-    // (`UserService.run`) when the caller has one, so two different classes'
-    // same-named methods are distinguishable in `usedBy`/`blastRadius` output
-    // without cross-referencing line numbers. This exact dotted string is a
-    // valid `read_symbol` qualifier (see `ReviewGraphNode.qualifiedName`'s doc
-    // comment) — both derive from the same containment notion of "owner".
     const symbol = from?.qualifiedName ?? from?.symbolName ?? "";
-    // Caller line: a symbol caller node carries metadata.line; a file-level
-    // `references` edge carries the line on the edge metadata.
     const line =
       // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
       (isFiniteNumber(from?.metadata?.line) ? (from.metadata.line as number) : undefined) ??
@@ -632,10 +428,6 @@ function resolveUsedBy(
   return out;
 }
 
-// Human-facing path: cwd-relative + forward-slashed when the file sits under the
-// project root, else the absolute (slash-normalized) path. Machine fields (the
-// `read` args) keep the absolute path so the host's Read tool resolves them
-// unambiguously; only display fields (`path`, `usedBy.file`, imports) relativize.
 function toDisplayPath(p: string, projectRoot: string): string {
   return toProjectRelativePath(p, projectRoot);
 }
@@ -669,25 +461,10 @@ function collectImports(
   };
 }
 
-// An import source string "looks internal" when its shape names a same-project
-// target the per-language resolver couldn't pin to a file (a not-yet-created
-// file, or a language we don't resolve to disk). Relative paths and Rust's
-// crate-relative prefixes are unambiguously in-project; everything else
-// (bare specifiers, absolute package paths) is treated as external. This is the
-// floor under `resolveImportToFiles` — it never fabricates a file path, only a
-// best-effort internal/external bucket.
 function looksInternal(source: string, languageId: string): boolean {
-  // C/C++ (#302): a #include is local-vs-system by syntax, not by a leading dot.
-  // A system header keeps its angle brackets (<stdio.h>) → external; a quoted
-  // local include arrives bare (foo.h, quotes already stripped) → internal, even
-  // when the header file isn't on disk.
   if (languageId === "c" || languageId === "cpp") {
     return !source.startsWith("<");
   }
-  // A leading "." is relative across every language we extract (JS ./ ../,
-  // Python . .foo ..pkg, Ruby/Dart/bash relative paths) and never begins a bare
-  // or scoped package specifier (react, @scope/pkg, java.util.List, fmt). Rust's
-  // crate-relative prefixes are likewise unambiguously in-project.
   return (
     source.startsWith(".") ||
     source.startsWith("crate::") ||
@@ -696,14 +473,6 @@ function looksInternal(source: string, languageId: string): boolean {
   );
 }
 
-// Cold-cache imports (#301): the warm review graph is the source of truth for
-// imports, but on a cold cache it's absent and `collectImports` returns empty
-// even though the tree-sitter extractor already parsed the import sources. Rebuild
-// the same {external, internal} shape language-uniformly from those sources:
-// resolve each to real in-project files via the warm graph's own resolver
-// (`resolveImportToFiles`) when the language supports it, else fall back to the
-// shape heuristic. Internal entries are cwd-relative display paths (resolved) or
-// the raw source (heuristic), mirroring `collectImports`.
 function coldImports(
   imports: ImportRef[],
   languageId: string,
@@ -757,17 +526,6 @@ function toEntry(
 ): ModuleSymbolEntry {
   const startLine = sym.line;
   const endLine = sym.endLine ?? sym.line;
-  // The graph-node `kind` bucket in the ID must match whatever builder.ts
-  // actually stamped on the node (refs #655 shared-ID-helper invariant), NOT
-  // necessarily this file's own extractor's `sym.kind`. For jsts specifically,
-  // builder.ts's addJsTsFile sources symbols from a DIFFERENT extractor
-  // (dispatch/facts/function-facts.ts) that has no method/function distinction
-  // — every jsts symbol (including class methods) is stamped `"function"`. This
-  // extractor (tree-sitter-symbol-extractor, used here for ALL languages'
-  // outlines) does distinguish `"method"` from `"function"`, so naively reusing
-  // `sym.kind` for jsts would look up the wrong bucket and silently break
-  // usedBy/fanout for every TS/JS method. Every other language builds its graph
-  // node with THIS SAME extractor, so `sym.kind` matches there.
   const idKind = fileKind === "jsts" ? "function" : sym.kind;
   const symbolNodeId = buildSymbolId(normalizedPath, sym.name, idKind, sym.line);
   const node = graph?.nodes.get(symbolNodeId);
@@ -780,15 +538,8 @@ function toEntry(
     ? (graph.edgesByFrom.get(symbolNodeId) ?? []).filter((edge) => edge.kind === "calls").length
     : undefined;
 
-  // A private/protected member of an exported class is reachable but NOT part
-  // of the public API, so it must not count as `exported` for the api/internal
-  // split or read ranking (#258). The extractor's sym.isExported is untouched
-  // (the review graph still sees the full surface); this gating is local to
-  // the report's presentation.
   const nonPublic = sym.visibility === "private" || sym.visibility === "protected";
   const exported = (sym.isExported || !!node?.exported) && !nonPublic;
-  // `flags` carries only non-derivable signals — "exported" is NOT pushed here
-  // since it duplicates the `exported` boolean field below (#512).
   const flags: string[] = [];
   if (sym.isAsync) flags.push("async");
   if (fanout !== undefined && fanout >= 4) flags.push("high fanout");
@@ -823,13 +574,6 @@ function toEntry(
   );
 }
 
-// Nest members under their container by line-range containment (#301), mirroring
-// ast-grep's outline: a class/interface's methods sit in its `members[]`, not at
-// the top level. Each entry attaches to its NEAREST (smallest) strictly-enclosing
-// entry, so arbitrary depth (a method in an inner class in an outer class) nests
-// correctly. Mutates the entries (sets `members`) and returns the TOP-LEVEL ones
-// (no container) for the api/internal split. The flat list stays usable for
-// ranking so hot nested methods still surface in recommendedReads.
 function nestEntries(entries: ModuleSymbolEntry[]): ModuleSymbolEntry[] {
   const span = (e: ModuleSymbolEntry) => e.endLine - e.startLine;
   const containerOf = new Map<ModuleSymbolEntry, ModuleSymbolEntry | undefined>();
@@ -837,8 +581,6 @@ function nestEntries(entries: ModuleSymbolEntry[]): ModuleSymbolEntry[] {
     let best: ModuleSymbolEntry | undefined;
     for (const c of entries) {
       if (c === e) continue;
-      // Strict containment: c wraps e AND is strictly larger, so equal-range
-      // pairs (a mis-extracted class+ctor on the same lines) never mutually nest.
       const contains = c.startLine <= e.startLine && c.endLine >= e.endLine && span(c) > span(e);
       if (!contains) continue;
       if (!best || span(c) < span(best)) best = c;
@@ -1000,10 +742,6 @@ function rankRecommendedReads(
   });
 }
 
-// Cap the blast-radius list so a high-fanout module doesn't blow the token
-// budget; the ranking puts the closest/most-depended-on files first. The read
-// limit is the dependent file's own line count when the graph knows it, else a
-// modest default — these are "go verify" pointers, not full dumps.
 const BLAST_RADIUS_FILE_CAP = 12;
 const BLAST_RADIUS_DEFAULT_READ_LIMIT = 400;
 
@@ -1012,18 +750,10 @@ function blastReadArgs(graph: ReviewGraph, normalizedFile: string): BlastReadArg
   const lineCount = fileNodeId ? graph.nodes.get(fileNodeId)?.metadata?.lineCount : undefined;
   const limit =
     isFiniteNumber(lineCount) && lineCount > 0 ? lineCount : BLAST_RADIUS_DEFAULT_READ_LIMIT;
-  // Machine field keeps the absolute (slash-normalized) path so the host's Read
-  // resolves it unambiguously — same convention as ModuleSymbolEntry.read.
 
   return { path: normalizedFile, offset: 1, limit };
 }
 
-// Cross-file blast radius (#304): the transitive dependents of this module,
-// aggregated from symbol-level impact hits to ranked FILE reads — "if you change
-// this module, read/verify these files". Read-only over the CACHED graph the
-// caller already loaded (never builds; the caller gates on a warm graph), so it
-// shares module_report's #256 no-build contract. Returns undefined when nothing
-// depends on the module (no section to show).
 async function computeBlastRadius(
   graph: ReviewGraph,
   normalizedPath: string,
@@ -1043,7 +773,7 @@ async function computeBlastRadius(
   for (const hit of result.hits) {
     if (!hit.file) continue;
     const key = normalizeMapKey(hit.file);
-    if (key === normalizedPath) continue; // never list the module itself
+    if (key === normalizedPath) continue;
     const cur = byFile.get(key) ?? {
       dependents: 0,
       minDepth: Number.POSITIVE_INFINITY,
@@ -1063,7 +793,6 @@ async function computeBlastRadius(
       relations: [...v.relations].sort((a, b) => a.localeCompare(b)),
       read: blastReadArgs(graph, key),
     }))
-    // Closest hop first, then most-depended-on, then stable by path.
     .sort(
       (a, b) =>
         a.minDepth - b.minDepth || b.dependents - a.dependents || a.file.localeCompare(b.file),
@@ -1106,18 +835,12 @@ function findNearestSymbolName(
 }
 
 const INLINE_EXECUTABLE_NODE_KINDS = new Set([
-  // JavaScript / TypeScript
   "arrow_function",
   "function_expression",
-  // Python
   "lambda",
-  // Go
   "func_literal",
-  // Rust
   "closure_expression",
-  // Swift / Kotlin (trailing/lambda closures)
   "lambda_literal",
-  // Other grammars use one of these for lambdas/anonymous functions.
   "lambda_expression",
   "anonymous_function",
 ]);
@@ -1128,9 +851,6 @@ const ARGUMENT_CONTAINER_NODE_KINDS = new Set([
   "argument_list_expression",
 ]);
 
-// Call-node kinds across grammars: JS/TS/Rust use `call_expression`; Python and
-// Ruby use a bare `call`. Accepting both lets the per-language callback rules see
-// the enclosing call name (e.g. `loop.call_later`) regardless of grammar.
 const CALL_NODE_KINDS = new Set(["call_expression", "call"]);
 
 function callNameForCallback(node: ModuleReportNode): string | undefined {
@@ -1181,15 +901,6 @@ function assignedNameForCallback(node: ModuleReportNode): string | undefined {
   return undefined;
 }
 
-// ── Callback classification: per-language rule sets ──────────────────────────
-// The inline-executable NODE KINDS are language-uniform (above), but the
-// SEMANTICS — what role a callback plays, what risk flags it carries, whether
-// it is high-signal enough to surface — are language-specific. Each language
-// group supplies a rule set; languages without one fall back to the generic
-// (JS/TS-tuned) rules. This mirrors how SYMBOL_QUERIES / IMPORT_QUERIES are
-// keyed per language, and is the seam for adding more languages incrementally
-// (one guarded vertical slice at a time).
-
 type CallbackContext = {
   node: ModuleReportNode;
   callName: string | undefined;
@@ -1202,7 +913,6 @@ type CallbackClassification = {
   kind: string;
   flags?: string[];
   include: boolean;
-  /** Optional name base; when absent, extractCallbacks builds one generically. */
   nameBase?: string;
 };
 
@@ -1210,7 +920,6 @@ type CallbackLanguageRules = {
   classify(ctx: CallbackContext, owner: string | undefined): CallbackClassification;
 };
 
-/** Walk up to `maxHops` ancestors looking for a node of one of `types`. */
 function ancestorOfType(
   node: ModuleReportNode,
   types: Set<string>,
@@ -1226,7 +935,6 @@ function ancestorOfType(
   return undefined;
 }
 
-/** Find the first descendant of `type` within `maxDepth` levels (shallow). */
 function descendantOfType(
   node: ModuleReportNode,
   type: string,
@@ -1241,12 +949,6 @@ function descendantOfType(
   return undefined;
 }
 
-/**
- * Generic, JS/TS-tuned classification — the historical behavior, now the
- * default rule set for any language without a tuned entry. Kept byte-for-byte
- * equivalent to the previous callbackKind/callbackFlags/shouldIncludeCallback
- * so the refactor is behavior-preserving for every currently-supported language.
- */
 function classifyGenericCallback(ctx: CallbackContext): CallbackClassification {
   const { node, callName, propertyName, assignedName } = ctx;
   let kind: string;
@@ -1289,11 +991,6 @@ const jstsCallbackRules: CallbackLanguageRules = {
   classify: (ctx) => classifyGenericCallback(ctx),
 };
 
-// Go: goroutines (`go func() {…}()`) and deferred closures (`defer func() {…}()`)
-// are the high-signal lifecycle constructs the generic rules DROP (they land as
-// a bare "callback"). Detect them structurally via the enclosing go_statement /
-// defer_statement — unambiguous node kinds, no call-name heuristics. Anything
-// else (assigned closures etc.) delegates to the generic rules unchanged.
 const GO_GOROUTINE_KINDS = new Set(["go_statement"]);
 const GO_DEFER_KINDS = new Set(["defer_statement"]);
 
@@ -1319,17 +1016,12 @@ const goCallbackRules: CallbackLanguageRules = {
   },
 };
 
-/** Append a flag without duplicating it; tolerates an undefined start list. */
 function withFlag(flags: string[] | undefined, flag: string): string[] {
   const next = flags ? [...flags] : [];
   if (!next.includes(flag)) next.push(flag);
   return next;
 }
 
-// Python: lambdas handed to schedulers/futures are the lifecycle-sensitive
-// inline executables the generic rules drop (a bare-arg lambda lands as
-// "callback"). Classify by the enclosing call name — now visible via the `call`
-// node kind. Python has no `async` lambdas, so no async boundary to add here.
 const pythonCallbackRules: CallbackLanguageRules = {
   classify(ctx) {
     const base = classifyGenericCallback(ctx);
@@ -1355,9 +1047,6 @@ const pythonCallbackRules: CallbackLanguageRules = {
   },
 };
 
-// Rust: closures handed to thread/task spawns, and `move` closures (capture by
-// value — the classic detached-state shape), are high-signal. `move` is
-// structurally certain: the closure text begins with `move` / `async move`.
 const rustCallbackRules: CallbackLanguageRules = {
   classify(ctx) {
     const base = classifyGenericCallback(ctx);
@@ -1380,11 +1069,6 @@ const rustCallbackRules: CallbackLanguageRules = {
   },
 };
 
-// Swift: the canonical Swift lifecycle bug is a closure that captures `self`
-// strongly across an async boundary (retain cycle). The capture list is fully
-// structural — `capture_list → capture_list_item → ownership_modifier`
-// (weak/unowned) — so weak-vs-strong self capture is detectable with zero
-// guessing. A strong self capture is the high-signal one we surface.
 const swiftCallbackRules: CallbackLanguageRules = {
   classify(ctx) {
     const base = classifyGenericCallback(ctx);
@@ -1418,10 +1102,6 @@ const swiftCallbackRules: CallbackLanguageRules = {
   },
 };
 
-// C++: a lambda with a by-reference default capture (`[&]`) can dangle once the
-// enclosing scope returns — the classic async/thread bug. Capture mode is
-// structural (`lambda_capture_specifier → lambda_default_capture`). Also flag
-// std::thread / std::async launches.
 const cppCallbackRules: CallbackLanguageRules = {
   classify(ctx) {
     const base = classifyGenericCallback(ctx);
@@ -1452,7 +1132,6 @@ const cppCallbackRules: CallbackLanguageRules = {
   },
 };
 
-/** Trailing identifier of a (possibly dotted) callee, e.g. `scope.launch` → `launch`. */
 function lastCalleeSegment(text: string | undefined): string {
   const m = String(text ?? "")
     .trim()
@@ -1460,10 +1139,6 @@ function lastCalleeSegment(text: string | undefined): string {
   return m ? m[1] : "";
 }
 
-// Kotlin: coroutine builders (`launch`/`async`/`withContext`/`runBlocking`/…)
-// are the dominant lifecycle/leak source. The trailing lambda sits under
-// `call_expression → call_suffix → annotated_lambda`, so resolve the builder
-// name from the enclosing call's callee.
 const KOTLIN_COROUTINE_BUILDERS = new Set([
   "launch",
   "async",
@@ -1492,9 +1167,6 @@ const kotlinCallbackRules: CallbackLanguageRules = {
   },
 };
 
-// Java: lambdas handed to `new Thread(...)`, executor `submit`/`execute`/
-// `schedule`, or UI/event listeners. Resolve the constructor type or the
-// method name from the enclosing invocation.
 const JAVA_TASK_METHODS =
   /^(?:submit|execute|schedule|scheduleAtFixedRate|scheduleWithFixedDelay|invokeLater|invokeAndWait)$/;
 const JAVA_LISTENER_METHODS = /^(?:add\w*Listener|set\w*Listener|subscribe|addCallback|then\w*)$/;
@@ -1538,9 +1210,6 @@ const javaCallbackRules: CallbackLanguageRules = {
   },
 };
 
-// C#: event subscriptions (`x.Click += (s,e) => …`), `Task.Run`/`StartNew`
-// launches, and `async` lambdas. The event case is a lambda whose parent is a
-// `+=` assignment.
 const csharpCallbackRules: CallbackLanguageRules = {
   classify(ctx) {
     const base = classifyGenericCallback(ctx);
@@ -1597,11 +1266,6 @@ function callbackRulesFor(languageId: string | undefined): CallbackLanguageRules
   return (languageId ? CALLBACK_RULES[languageId] : undefined) ?? jstsCallbackRules;
 }
 
-/**
- * Whether a language has a TUNED callback rule set (explicit CALLBACK_RULES
- * entry) vs. falling back to the generic JS/TS-shaped heuristics. Drives the
- * report's `callbackSupport` honesty signal.
- */
 function callbackSupportFor(languageId: string | undefined): "tuned" | "generic" {
   return languageId && CALLBACK_RULES[languageId] ? "tuned" : "generic";
 }
@@ -1758,12 +1422,6 @@ function callGraphRelation(
   );
 }
 
-/**
- * Read the separately persisted FunctionCallGraph projection. This accessor is
- * deliberately conservative: the module-report path never walks/builds the
- * review graph, and a changed source file invalidates the projection rather
- * than being reported as a clean zero-call result.
- */
 function readCallGraph(
   projectRoot: string,
   normalizedPath: string,
@@ -1773,8 +1431,6 @@ function readCallGraph(
   reviewGraph: ReviewGraph | undefined,
 ): ModuleCallGraph {
   if (graphFileCap !== undefined) return unavailableCallGraph("file-cap");
-  // The canonical review graph is the only freshness authority. This path is
-  // read-only: do not walk source files or compare an independent mtime map.
   if (!reviewGraph) return unavailableCallGraph("review-graph-missing");
   if (reviewGraph.persistCoverage?.partial || reviewGraph.persistCoverage?.inProgress) {
     return unavailableCallGraph("partial");
@@ -1842,14 +1498,6 @@ function unavailableReport(displayPath: string, error?: string): ModuleReport {
   );
 }
 
-/**
- * Build a structured report for a single module. Read-only, single mode (#256):
- * tree-sitter extract + 3-tier-cached review graph (who-uses-this, imports,
- * complexity/fanout) + callback extraction. This path never calls LSP; LSP-derived
- * relationships must be written into the cached graph ahead of time (#236) and are
- * then read here as graph data. Each tier degrades independently, so a cold graph
- * never aborts the report — it just narrows what's populated.
- */
 export async function moduleReport(
   file: string,
   cwd: string,
@@ -1896,9 +1544,6 @@ export async function moduleReport(
     return unavailableReport(toDisplayPath(absPath, cwd), extractionError);
   }
 
-  // READ-ONLY: consume the already-built review graph, never build one here. A
-  // synchronous full build re-runs every fact provider (TS-compiler ASTs for
-  // jsts) and two racing builds OOM'd pi (#256). Cold cache → outline-only.
   let graph: ReviewGraph | undefined;
   let graphFileCap: number | undefined;
   let callGraphIdentity: CallGraphCacheIdentity | undefined;
@@ -1923,22 +1568,13 @@ export async function moduleReport(
     callGraphIdentity = undefined;
   }
 
-  // Drop function-local declarations (a nested const/arrow/function) from the
-  // outline — they're implementation detail of a parent symbol, not navigable
-  // module structure (#259). Presentation-only: the review graph keeps them.
   const outlineSymbols = extracted.filter((sym) => !sym.local);
 
-  // Flat entries first — ranking and cold-import resolution both read the full
-  // list. `entries` is mutated by nestEntries (members attached); `topLevel` is
-  // the api/internal split surface.
   const entries = outlineSymbols.map((sym) =>
     toEntry(sym, normalizedPath, graph, maxRefs, cwd, kind),
   );
   const topLevel = nestEntries(entries);
 
-  // Middle-man / delegate-only class detection (#325): a whole-class judgment
-  // over the now-nested members[], so it must run AFTER nestEntries. Mutates
-  // `entries` in place (topLevel/api/internal hold the same object references).
   annotateMiddleMan(entries, content, languageId);
 
   const api = topLevel.filter((entry) => entry.exported);
@@ -1964,9 +1600,6 @@ export async function moduleReport(
     );
   }
 
-  // Imports: the warm review graph is source-of-truth; on a cold cache (or a
-  // graph without this file's node) fall back to the language-uniform tree-sitter
-  // resolution (#301) so a cold report no longer shows zero imports.
   const warmImports = graph
     ? collectImports(graph, normalizedPath, cwd)
     : { external: [], internal: [] };
@@ -1984,13 +1617,6 @@ export async function moduleReport(
 
   const hasGraphNode = graph?.fileNodes.has(normalizedPath) ?? false;
 
-  // #511: distinguish two very different reasons `usedBy`/`semantic` degrade to
-  // "none". A graph that doesn't exist at all (`!graph`) is an honest, expected
-  // cold start — the edit pipeline hasn't warmed this workspace yet. But a graph
-  // that DOES exist and just doesn't have a node for THIS file (e.g. the file was
-  // added/renamed after the graph was last persisted) is silently
-  // indistinguishable from "no who-uses-this data exists" unless we say so. Make
-  // the second case actionable: a rebuild (pilens_rebuild) would populate it.
   if (graph && !hasGraphNode) {
     warnings.push(
       "who-uses-this is unavailable for this file: the cached review graph " +
@@ -1999,10 +1625,6 @@ export async function moduleReport(
     );
   }
 
-  // Cross-file blast radius (#304): opt-in, read-only over the CACHED graph. Only
-  // computed when requested AND the file is in a warm graph — a cold cache omits
-  // the section entirely (never builds, same #256 contract as the rest of this
-  // path). Aggregated to file reads; undefined when nothing depends on the module.
   const blastRadius =
     options?.blastRadius && graph && hasGraphNode
       ? await computeBlastRadius(
@@ -2025,10 +1647,6 @@ export async function moduleReport(
 
   const view = options?.view ?? "default";
   const summaryView = view === "summary";
-  // "compact" computes the same full data as "default" — it's a rendering
-  // instruction for the caller (renderCompactModuleReport), not a data tier —
-  // so it only needs to echo back on the report; it never gates section content
-  // the way summaryView does.
   const compactView = view === "compact";
   let importsProvenance: NonNullable<ModuleReport["provenance"]>["imports"] = "none";
   if (coldImportResult) {
@@ -2077,18 +1695,12 @@ export async function moduleReport(
   if (callGraph) reportBase.callGraph = callGraph;
   if (graph) reportBase.graphBuiltAt = graph.builtAt;
   const semantic: ModuleReport["semantic"] = {
-    // Provenance of who-uses-this / references. The AST review graph is the
-    // only source on this read path; "graph-lsp" is reserved for #236 (LSP
-    // writes provenance edges INTO the graph). Cold cache → "none".
     source: hasGraphNode ? "review-graph" : unavailableGraphProvenance,
     references: hasGraphNode,
     implementations: false,
   };
   const report: ModuleReport = Object.assign(reportBase, { provenance, semantic });
 
-  // Observability (#256): record graph source (cached vs cold) so a future
-  // regression is attributable per call. This path is read-only by contract —
-  // "graph: cached|cold", never a build, never an LSP call.
   logLatency({
     type: "phase",
     phase: "module_report",
@@ -2103,15 +1715,6 @@ export async function moduleReport(
 
   return report;
 }
-
-// --- Compact (line-oriented text) rendering (#512 slice 4) ------------------
-//
-// An opt-in `view: "compact"` alternative to the JSON report: one line per
-// symbol/callback instead of a repeated-keys JSON object, at roughly a quarter
-// of the token cost for the same information. Purely a rendering step over the
-// already-built ModuleReport — it changes no data, only presentation, so a
-// caller that wants JSON just skips this function. Default view stays JSON
-// (this is opt-in for dogfooding, not a default flip).
 
 function padRange(startLine: number, endLine: number, width: number): string {
   return `${startLine}-${endLine}`.padEnd(width);
@@ -2166,22 +1769,6 @@ function compactCallbackLine(callback: ModuleCallbackEntry, width: number): stri
   return `  ${range}${kind}${callback.name}${flagsSuffix}${ownerSuffix}`;
 }
 
-/**
- * Render a ModuleReport as the line-oriented compact text view (#512 slice 4):
- * one line per symbol/member/callback instead of a JSON object per entry.
- * Example:
- * ```
- * clients/agent-nudge.ts jsts 266L — 8 symbols, 5 exported | imports: bus-publish, latency-logger
- * API:
- *   77-81    fn  _resetAgentNudgeForTests()  — Test-only: clear accumulator state.
- * INTERNAL:
- *   95-104   fn  isValidPayload(data: unknown)
- * CALLBACKS:
- *   164-172  event_handler  events.on@164  [lifecycle]  (in wireAgentNudgeSubscriber)
- * ```
- * Purely presentational over an already-built report — call `moduleReport`
- * first (with `view: "compact"` or any other view) and pass its result here.
- */
 export function renderCompactModuleReport(report: ModuleReport): string {
   if (!report.available) {
     return `${report.path} — unavailable${report.error ? `: ${report.error}` : ""}`;
@@ -2258,19 +1845,11 @@ function baseNameNoExt(p: string): string {
   return base.replace(/\.[^./\\]+$/, "");
 }
 
-// ── readSymbol lookup helpers (#523) ──────────────────────────────────────────
-
 interface SymbolSelection {
   match?: ExtractedSymbol;
   ambiguous?: { count: number; kinds: string[] };
 }
 
-// Duplicate-name disambiguation (#523 item 4). `candidates` is every symbol
-// already known to share the requested name; when `kind` is given it narrows
-// first, else the historical "first match" (source order) wins — unchanged
-// behavior for the common (unambiguous) case. `ambiguous` is populated only
-// when the CHOSEN pool still has more than one entry, so a kind that uniquely
-// resolves the collision reports no ambiguity.
 function selectMatch(candidates: ExtractedSymbol[], kind: string | undefined): SymbolSelection {
   if (candidates.length === 0) return {};
   const filtered = kind ? candidates.filter((c) => c.kind === kind) : candidates;
@@ -2286,14 +1865,6 @@ function selectMatch(candidates: ExtractedSymbol[], kind: string | undefined): S
   };
 }
 
-// `Class.method` qualification (#523 item 3). Members are located by line-range
-// containment within the named parent — the same shape module-report's
-// `nestEntries` uses for the outline, computed directly here over the flat
-// extractor list (readSymbol never builds the nested outline). Returns
-// undefined (NOT a miss) when the qualifier doesn't resolve to a known parent —
-// the caller then falls through to the plain unqualified lookup using the full
-// dotted string, which naturally misses and feeds the did-you-mean path below
-// rather than crashing.
 function resolveQualifiedMatch(
   symbols: ExtractedSymbol[],
   qualifiedName: string,
@@ -2318,17 +1889,6 @@ function resolveQualifiedMatch(
   return selectMatch(members, kind);
 }
 
-// Did-you-mean on miss (#523 item 2). A small, focused Levenshtein distance —
-// NOT a reuse of read-guard-tool-lines.ts's `findSimilarLines`/`tokenSimilarity`.
-// That function does Jaccard similarity over whitespace-tokenized LINE CONTENT
-// (built for relocated-block suggestions across a window of file lines); a
-// single identifier is one token to it, so "isAgentNudgeEnable" vs
-// "isAgentNudgeEnabled" scores 0 (disjoint token sets) despite being a
-// one-character typo. Symbol-name matching needs character-level edit distance
-// instead, so this is a small dedicated implementation rather than a forced
-// reuse. No existing levenshtein/editDistance utility was found elsewhere in
-// the codebase (checked clients/read-guard-tool-lines.ts and clients/dispatch/
-// dispatcher.ts, the only other "similarity" hits).
 function levenshteinDistance(a: string, b: string): number {
   const al = a.length;
   const bl = b.length;
@@ -2350,17 +1910,12 @@ function levenshteinDistance(a: string, b: string): number {
   return prev[bl];
 }
 
-// Normalized similarity in [0, 1]; 1 = identical (case-insensitive).
 function nameSimilarity(a: string, b: string): number {
   const maxLen = Math.max(a.length, b.length);
   if (maxLen === 0) return 1;
   return 1 - levenshteinDistance(a.toLowerCase(), b.toLowerCase()) / maxLen;
 }
 
-// Threshold chosen so a plausible typo/near-miss (one-two edits on a
-// medium-length identifier, e.g. "isAgentNudgeEnable" -> "isAgentNudgeEnabled",
-// score ~0.95) clears it while a wildly-wrong name (near-zero character
-// overlap) doesn't — avoids suggesting misleading names on a genuine miss.
 const SIMILAR_NAME_MIN_SCORE = 0.45;
 const SIMILAR_NAME_MAX_SUGGESTIONS = 3;
 
@@ -2374,12 +1929,6 @@ function suggestSimilarNames(candidates: string[], target: string): string[] {
     .map((entry) => entry.name);
 }
 
-/**
- * Return the verbatim body of a single symbol. Unlike moduleReport (which shows
- * shape, not content), this delivers the actual source lines — so the host can
- * record it as a read that legitimately satisfies the read-guard's coverage for
- * that symbol's range.
- */
 export async function readSymbol(
   file: string,
   symbolName: string,
@@ -2389,8 +1938,6 @@ export async function readSymbol(
   const { kind: symbolKindFilter } = options;
   const startedAt = Date.now();
   const absPath = path.resolve(cwd, file);
-  // Pure tree-sitter on one file — no graph, no LSP. Log for correlation with
-  // module_report frequency/timing (#256), one event per outcome.
   const log = (found: boolean): void => {
     logLatency({
       type: "phase",
@@ -2434,24 +1981,12 @@ export async function readSymbol(
   }
   const lines = content.split(/\r?\n/);
 
-  // #523 item 3: a dotted name tries the qualified (Class.method) lookup
-  // first; a hit there wins outright. Otherwise fall through to the plain
-  // unqualified lookup using the FULL requested name (so an unresolved
-  // qualifier or a non-dotted name both flow through the same miss/did-you-
-  // mean path below rather than a separate branch).
   const qualified = resolveQualifiedMatch(symbols, symbolName, symbolKindFilter);
   const unqualifiedMatches = symbols.filter((candidate) => candidate.name === symbolName);
   const selection = qualified ?? selectMatch(unqualifiedMatches, symbolKindFilter);
 
   if (selection.match) {
     const sym = selection.match;
-    // #523 item 1: extend the returned range (and thus the read-guard
-    // coverage recorded for it — see tools/module-report.ts's
-    // recordReadCoverage) to include an attached doc comment, when one
-    // exists. `docStartLine` is the SAME position-based, blank-line-gap-aware
-    // attachment computation the outline's `doc` summary already uses (#517's
-    // extractDocCommentInfo) — no re-derivation here, just reusing the line
-    // it already computed.
     const startLine = sym.docStartLine ?? sym.line;
     const endLine = sym.endLine ?? sym.line;
     const source = lines.slice(startLine - 1, endLine).join("\n");
@@ -2489,11 +2024,6 @@ export async function readSymbol(
   const callback = allCallbacks.find((candidate) => candidate.name === symbolName);
   if (!callback) {
     log(false);
-    // #523 item 2: embed the ~3 nearest symbol/callback names directly in the
-    // miss response so the caller can self-correct without a module_report
-    // round-trip. Non-local symbols only — locals aren't reachable by name
-    // from outside their enclosing scope, so suggesting one would send the
-    // caller to a dead end.
     const corpus = [
       ...symbols.filter((candidate) => !candidate.local).map((c) => c.name),
       ...allCallbacks.map((c) => c.name),
@@ -2637,11 +2167,6 @@ function enclosingOutline(
     .slice(0, 25);
 }
 
-/**
- * Read the smallest useful symbol/callback enclosing a source line. This is the
- * search/diagnostic → exact-body bridge: single-file tree-sitter only, no graph,
- * no LSP, and the returned range is concrete read-guard coverage.
- */
 export async function readEnclosing(
   file: string,
   line: number,

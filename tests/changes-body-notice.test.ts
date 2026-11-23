@@ -1,5 +1,3 @@
-// A file whose patch section does not parse gets an unreadable body naming why, not an
-// empty one that reads as "no changes".
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

@@ -1,6 +1,3 @@
-/**
- * Extension UI bridging: sanitizing Pi extension UI requests and answering them through ACP elicitation or permission prompts.
- */
 import type {
   ContentBlock,
   CreateElicitationRequest,
@@ -24,16 +21,11 @@ export type PendingExtensionUi = {
   release: () => void;
 };
 
-/** The `session_info_update` variant of an ACP session update. */
 export type SessionInfoNotification = Extract<
   SessionUpdate,
   { sessionUpdate: "session_info_update" }
 >;
 
-/**
- * The sanitized, bounded projection of an extension UI request published to the
- * client, either as ACP `_meta` or as a synthetic tool call's `rawInput`.
- */
 export type ExtensionUiRawInput = {
   method: string;
   title?: string;
@@ -43,7 +35,6 @@ export type ExtensionUiRawInput = {
   prefill?: string;
 };
 
-/** The synthetic ACP tool call standing in for an extension UI request on legacy clients. */
 export type ExtensionUiToolCall = {
   toolCallId: string;
   title: string;
@@ -75,11 +66,6 @@ export const EXTENSION_UI_TOMBSTONE_CAPACITY = 8_192;
 export const SENSITIVE_UI_REQUEST =
   /\b(?:auth(?:entication|orization)?|credential|login|pass(?:code|phrase|word)?|secret|token|api[ _-]?key|private[ _-]?key)\b/i;
 
-/**
- * Extension UI methods that only display text and never collect a reply. They cannot
- * carry a credential prompt, so the keyword guard does not inspect them: their text is
- * routinely source code, file names, and diffs, where those words are ordinary.
- */
 export const DISPLAY_ONLY_UI_METHODS: ReadonlySet<string> = new Set([
   "notify",
   "setStatus",
@@ -90,7 +76,6 @@ export const DISPLAY_ONLY_UI_METHODS: ReadonlySet<string> = new Set([
 export const SENSITIVE_UI_REQUEST_WARNING =
   "Pi requested sensitive authentication or credential input. Open a Terminal Thread and complete the authentication flow in the terminal; sensitive content was not sent through ACP.";
 
-/** Convert bounded TUI-oriented extension text into portable ACP text. */
 export function sanitizeExtensionUiText(input: string): string {
   const source = input.slice(0, MAX_EXTENSION_UI_TEXT_LENGTH);
   const output: string[] = [];
@@ -166,7 +151,6 @@ export function sanitizeExtensionUiText(input: string): string {
         runLength += 1;
         index += 1;
       }
-      // A maximal progress/decoration run becomes a readable bar capped at 32 cells.
       output.push("#".repeat(Math.min(runLength, 32)));
       continue;
     }
@@ -194,13 +178,6 @@ export class BoundedRequestIdTombstones {
   }
 }
 
-/**
- * Candidate values a client may have supplied for one elicitation field.
- *
- * Clients place accepted content in `content`, in `_meta`, or in `_meta.content`,
- * and some place it directly on the response, so every source is inspected in
- * that precedence order.
- */
 export function acceptedElicitationValues(
   response: CreateElicitationResponse | null,
   field: string,
@@ -238,12 +215,6 @@ export function extensionUiMessage(ev: PiExtensionUiRequestEvent): string {
   return title || message || "Pi requests input";
 }
 
-/**
- * The form field's label. The request's title is already the form's message
- * (`extensionUiMessage`, the one text ACP requires), and Zed draws both, so
- * the field gets a generic word for its kind instead; none when that word is
- * the message itself.
- */
 export function extensionUiFieldTitle(label: string, message: string): { title?: string } {
   return label === message ? {} : { title: label };
 }
@@ -257,8 +228,6 @@ export function extensionUiTitle(ev: PiExtensionUiRequestEvent): string | undefi
 }
 
 export function isSensitiveUiRequest(ev: PiExtensionUiRequestEvent): boolean {
-  // Only a request that collects a reply (select, confirm, input, editor) or an unknown
-  // method can be a credential prompt. Display-only methods are never inspected.
   if (ev.method !== undefined && DISPLAY_ONLY_UI_METHODS.has(ev.method)) return false;
   const parts: string[] = [ev.method ?? ""];
   for (const value of [ev.title, ev.message, ev.placeholder]) {
@@ -267,19 +236,12 @@ export function isSensitiveUiRequest(ev: PiExtensionUiRequestEvent): boolean {
   return SENSITIVE_UI_REQUEST.test(parts.join(" "));
 }
 
-/** One extension UI option list, bounded in both entry count and entry length. */
 export function boundedExtensionUiOptions(options: BoundaryValue[], maxLength: number): string[] {
   return options
     .slice(0, 100)
     .map((item) => sanitizeExtensionUiText(String(item).slice(0, maxLength)));
 }
 
-/**
- * Sanitize and bound every renderable field of an extension UI request.
- *
- * `maxLength` bounds each individual string; `EXTENSION_UI_RAW_INPUT_KEYS` records
- * the published field set this mirrors.
- */
 export function extensionUiRawInput(
   ev: PiExtensionUiRequestEvent,
   maxLength: number,
@@ -354,25 +316,17 @@ export function optionIndex(optionId: string): number | null {
   return Number.isSafeInteger(index) && index >= 0 && String(index) === rawIndex ? index : null;
 }
 
-/** The session state and output channel an extension UI bridge reads and writes. */
 export type ExtensionUiHost = {
   readonly sessionId: string;
   readonly conn: AcpConnection;
   readonly proc: PiRpcProcessLike;
-  /** Shared with the session, which clears it when extension UI closes. */
   readonly pendingExtensionUi: Map<string, PendingExtensionUi>;
   readonly settledExtensionUi: BoundedRequestIdTombstones;
-  /** Whether the session still accepts extension UI requests. */
   isActive(): boolean;
-  /** The session's current extension UI generation; closing bumps it. */
   generation(): number;
   emit(update: SessionUpdate): void;
 };
 
-/**
- * Answers one session's Pi extension UI requests through ACP: elicitation forms when the
- * client supports them, permission prompts otherwise, and display-only updates for the rest.
- */
 export class ExtensionUiBridge {
   private readonly host: ExtensionUiHost;
 
@@ -409,7 +363,6 @@ export class ExtensionUiBridge {
         this.host.emit({
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: SENSITIVE_UI_REQUEST_WARNING } satisfies ContentBlock,
-          // Marks the adapter's own warning; extension text can repeat its words, not this.
           _meta: { piAcp: { sensitiveUiRequest: true } },
         });
         await this.settleExtensionUi(id, generation, { id, cancelled: true });
@@ -432,8 +385,6 @@ export class ExtensionUiBridge {
       }
 
       if (method === "notify") {
-        // A validated envelope renders as native diffs; a malformed one is dropped with a
-        // one-line error. Either way it is display-only, like every other notification.
         if (ev.message?.startsWith(NATIVE_DIFF_NOTIFY_PREFIX)) {
           this.emitNativeDiff(ev.message);
           await this.settleExtensionUi(id, generation, { id, cancelled: true });
@@ -463,7 +414,6 @@ export class ExtensionUiBridge {
           sessionUpdate: "session_info_update",
           _meta: { piAcp: { extensionUi: boundedExtensionUiRawInput(ev) } },
         };
-        // An empty or unusable title must leave the client's current title untouched.
         if (title) update.title = title;
         this.host.emit(update);
         await this.settleExtensionUi(id, generation, { id, cancelled: true });
@@ -722,9 +672,7 @@ export class ExtensionUiBridge {
     const proc = this.host.proc;
     try {
       await proc.sendExtensionUiResponse?.(response);
-    } catch {
-      // A disconnected subprocess cannot receive the response; do not retry it.
-    }
+    } catch {}
   }
 
   private emitExtensionUiMessage(text: string): void {
@@ -734,11 +682,6 @@ export class ExtensionUiBridge {
     });
   }
 
-  /**
-   * Render choco-pi's `/diff` notification as a display-only, already completed tool
-   * call carrying native ACP diff content. Pi has no matching tool call or session
-   * entry, so the model's context and the persisted transcript are unchanged.
-   */
   private emitNativeDiff(message: string): void {
     const presentation = decodeNativeDiff(message);
     if (!presentation) {

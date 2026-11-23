@@ -14,17 +14,13 @@ export function standaloneExtras(extras: PreferencesExtraSection[]): Preferences
   return extras.filter((extra) => extra.mergeInto === undefined);
 }
 
-/** Source-to-target map of sections rendered inside another section. */
 export type SectionMerges = Readonly<Record<string, string>>;
 
-/** Layout entry prefix that takes every remaining row of one source section. */
 const SECTION_ROW_PREFIX = "section:";
 
-/** A section that builds rows: built-in, or contributed by the host. */
 export interface RowSource {
   id: string;
   label: string;
-  /** The tab an unplaced row of this source falls back to. */
   home: string;
   owner?: PreferencesExtraSection;
   build: () => SettingItem[];
@@ -35,7 +31,6 @@ export function rowSources(
   active: ReadonlyMap<string, string>,
   extras: PreferencesExtraSection[],
 ): RowSource[] {
-  // A standalone host section that reuses a built-in id replaces that section.
   const replaced = new Set(standaloneExtras(extras).map((extra) => extra.id));
   const builtin: RowSource[] = settingsSections
     .filter((section) => !replaced.has(section))
@@ -66,23 +61,12 @@ export interface PlacedTab {
   groups: PlacedGroup[];
 }
 
-/** Every placed row by tab and group, plus where each row came from. */
 export interface Placement {
   tabs: PlacedTab[];
-  /** Host section that owns each contributed row; changes dispatch by row id. */
   owners: Map<string, PreferencesExtraSection>;
   rowSource: Map<string, string>;
 }
 
-/**
- * Places rows into tab groups. Explicit row ids win over `section:` entries,
- * hidden rows are dropped, and with `withFallback` every row left over is
- * appended to its source's home tab — an existing tab gains a group headed by
- * the source label, any other home becomes a tab of its own.
- *
- * Without explicit entries or fallback only the sources the given tabs name
- * are built, which keeps a single-tab placement as cheap as the tab itself.
- */
 export function placeRows(
   specs: readonly PreferencesLayoutTab[],
   sources: readonly RowSource[],
@@ -106,7 +90,6 @@ export function placeRows(
     if (indexed.has(source.id)) return;
     indexed.add(source.id);
     for (const item of rowsOf(source)) {
-      // The first source to build an id owns it; a duplicate never renders twice.
       if (rowSource.has(item.id)) continue;
       byId.set(item.id, item);
       rowSource.set(item.id, source.id);
@@ -177,11 +160,6 @@ export function placeRows(
   return { tabs, owners, rowSource };
 }
 
-/**
- * The layout the panel used before hosts could define one: one tab per
- * section, merged host sections folded into their target, and each
- * `mergeSections` source rendered as a headed block of its target.
- */
 export function legacyLayout(
   extras: PreferencesExtraSection[],
   merges: SectionMerges,
@@ -205,13 +183,11 @@ export function legacyLayout(
   }));
 }
 
-/** One tab's rows in render order and the ids of its heading rows. */
 export interface TabItems {
   items: SettingItem[];
   headers: Set<string>;
 }
 
-/** One tab's rows in render order; each labeled group opens with a dim heading. */
 export function tabItems(
   tab: PlacedTab | undefined,
   theme: ExtensionContext["ui"]["theme"],
@@ -264,20 +240,13 @@ export function previousSection(section: string, order: readonly string[]): stri
     order[(order.indexOf(section) - 1 + order.length) % order.length] ?? order[0] ?? "appearance"
   );
 }
-/** Rows the settings list shows at once; it scrolls to keep the selection in view. */
 export const LIST_ROWS = 8;
 
-/**
- * The rows the settings list draws in its window, as pi-tui's SettingsList
- * picks them: centered on the selection where the list allows. The mouse
- * maps a row back to its item with it.
- */
 export function visibleListRange(selected: number, count: number) {
   const start = Math.max(0, Math.min(selected - Math.floor(LIST_ROWS / 2), count - LIST_ROWS));
   return { start, end: Math.min(start + LIST_ROWS, count) };
 }
 
-/** A forwarded mouse result without its focus request: the host keeps keyboard focus. */
 export function keepHostFocus(
   result: TuiMouseEventResult | undefined,
 ): TuiMouseEventResult | undefined {
@@ -288,10 +257,6 @@ export function keepHostFocus(
   return kept;
 }
 
-/**
- * One cell of the section strip: a section's label, or a `‹`/`›` marker
- * that stands for the sections hidden on its side and names the nearest one.
- */
 export interface StripCell {
   section: string;
   kind: "label" | "more";
@@ -299,12 +264,6 @@ export interface StripCell {
   column: number;
 }
 
-/**
- * The section strip laid out for `width`: every label when they fit,
- * otherwise the widest run of neighbours around the active section, with a
- * marker on each side that hides sections. `undefined` when not even the
- * active label fits that way.
- */
 export function sectionStrip(
   active: string,
   labelOf: (section: string) => string,
@@ -351,7 +310,6 @@ export function sectionStrip(
     column += (widths[index] ?? 0) + 3;
   }
   const after = order[high + 1];
-  // The marker follows the last label after one space, not a separator.
   if (after !== undefined)
     cells.push({ section: after, kind: "more", text: "›", column: column - 2 });
   return cells;
@@ -383,10 +341,6 @@ export function formatSectionTabs(
   }
   return strip;
 }
-/**
- * The section a click at column `x` of the strip formatSectionTabs draws
- * picks: a label's own section, or for a marker the nearest hidden one.
- */
 export function sectionAtColumn(
   x: number,
   active: string,

@@ -14,11 +14,6 @@ import type { StreamPart, StreamResponse, StreamUsageMetadata } from "./chunks.t
 
 const LENGTH_REASONS: ReadonlySet<string> = new Set(["MAX_TOKENS", "CONTINUATION"]);
 
-/**
- * google FinishReason to Pi StopReason, the table pi-ai's mapStopReason uses. pi-ai's function
- * takes the @google/genai enum (not a dependency of this package) and throws on values it does
- * not know; an unknown reason here is an error stop instead.
- */
 export function stopReasonFor(finishReason: string): StopReason {
   if (finishReason === "STOP") return "stop";
   if (LENGTH_REASONS.has(finishReason)) return "length";
@@ -27,7 +22,6 @@ export function stopReasonFor(finishReason: string): StopReason {
 
 type OpenBlock = TextContent | ThinkingContent;
 
-/** The usage of a message before any usage metadata arrived. */
 export function zeroUsage(): AssistantMessage["usage"] {
   return {
     input: 0,
@@ -48,12 +42,6 @@ function generatedToolCallId(name: string): string {
   return `${prefix}_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
 }
 
-/**
- * Folds streamed GenerateContentResponse chunks into one Pi assistant message and its events.
- * Consecutive text (or thought) parts extend one block; a part that brings a second, different
- * thought signature starts a new block so no signature is ever overwritten. Signature-only
- * empty parts are kept, because Gemini requires them echoed back on replay.
- */
 export class ResponseAccumulator {
   readonly #output: AssistantMessage;
   readonly #stream: AssistantMessageEventStream;
@@ -71,22 +59,16 @@ export class ResponseAccumulator {
     this.#model = model;
   }
 
-  /** Whether any content block has been emitted (after which a transport retry is unsafe). */
   get emittedContent(): boolean {
     return this.#output.content.length > 0;
   }
 
-  /** Pushes the start event once. */
   start(): void {
     if (this.#started) return;
     this.#started = true;
     this.#stream.push({ type: "start", partial: this.#output });
   }
 
-  /**
-   * Forgets what a failed attempt reported (finish reason, usage, response id and model) so a
-   * transport retry starts from a pending message. Only valid while no content was emitted.
-   */
   resetAttempt(): void {
     const output = this.#output;
     output.stopReason = "pending";
@@ -115,7 +97,6 @@ export class ResponseAccumulator {
     if (response.usageMetadata) this.#usage(response.usageMetadata);
   }
 
-  /** Closes the open block. Call once the stream ends or fails. */
   close(): void {
     const block = this.#open;
     if (!block) return;

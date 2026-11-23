@@ -9,10 +9,6 @@ export const DAYBREAK_ENTITLEMENT_TTL_MS = 10 * 60_000;
 export const DAYBREAK_FAILURE_TTL_MS = 60_000;
 export const DAYBREAK_CACHE_MAX_ENTRIES = 64;
 
-/**
- * `security-key-required`: the account has no grant and OpenAI says this credential
- * must come from a hardware security key sign-in (or the key is not set up yet).
- */
 export type DaybreakEntitlement =
   | "blue"
   | "red"
@@ -24,7 +20,6 @@ export type DaybreakLookupResult = Readonly<{
   status?: number | undefined;
 }>;
 
-/** Credentials copied at request start; later mutation of caller objects cannot reach the lookup. */
 export type DaybreakLookupCredentials = Readonly<{
   apiKey: string;
   headers: Readonly<Record<string, string | null>> | undefined;
@@ -33,17 +28,12 @@ export type DaybreakLookupCredentials = Readonly<{
 
 export type DaybreakAccount = Readonly<{ key: string; accountId: string; url: string }>;
 
-// External payload: required fields are validated strictly; unknown fields are tolerated.
-// Observed live shape (2026-10-08): grants are objects such as
-// { level: "tac1", source: "individual" }.
 const grantSchema = obj({ level: str() }, { open: true });
 const programSchema = obj(
   {
     program: str(),
     state: str(),
     grants: opt(arr(grantSchema)),
-    // Observed live 2026-10-17: true until the session is signed in with the enrolled
-    // hardware security key; a security-key sign-in cleared it on the same account.
     individual_blue_security_signin_required: opt(bool()),
     individual_blue_security_setup_required: opt(bool()),
   },
@@ -71,7 +61,6 @@ const defaultDependencies: EntitlementDependencies = {
 };
 let dependencies: EntitlementDependencies = defaultDependencies;
 
-/** Test seam: replaces lookup I/O and clock, and clears all cached entitlements. */
 export function configureCodexDaybreakEntitlementForTest(
   overrides: Partial<EntitlementDependencies> | undefined,
 ): void {
@@ -85,7 +74,6 @@ export function copyDaybreakHeaders<Value extends string | null>(
   return headers ? Object.freeze({ ...headers }) : undefined;
 }
 
-/** Normalized cache key: canonical ChatGPT backend URL plus JWT account id; else ineligible. */
 export function daybreakAccount(
   apiKey: string,
   baseUrl: string | undefined,
@@ -102,7 +90,6 @@ export function daybreakAccount(
   return Object.freeze({ accountId, url, key: JSON.stringify([accountId, url]) });
 }
 
-/** Drops cached entitlement for one account+backend, e.g. after an inference 401/403. */
 export function invalidateCodexDaybreakEntitlement(
   apiKey: string | undefined,
   baseUrl: string | undefined,
@@ -112,7 +99,6 @@ export function invalidateCodexDaybreakEntitlement(
   if (account) invalidateCodexDaybreakAccount(account);
 }
 
-/** Invalidate both lookup caches using the already-validated account identity. */
 export function invalidateCodexDaybreakAccount(account: DaybreakAccount): void {
   cache.delete(account.key);
   invalidateCodexDaybreakModelSupport(account);
@@ -135,8 +121,6 @@ function entitlementFromVerifiedAccess(
   }
   if (grants.has("tac3") || grants.has("government")) return "red";
   if (grants.has("tac1") || grants.has("tac2")) return "blue";
-  // Without a grant, the catalog still advertises Daybreak, but the backend serves it only
-  // to a security-key session; sending it from this credential would not be honored.
   if (securityKeyRequired) return "security-key-required";
   return "not-granted";
 }
@@ -165,10 +149,6 @@ async function fetchVerifiedAccess(url: string, headers: Headers): Promise<Daybr
   }
 }
 
-/**
- * Single-flight, TTL-bounded entitlement lookup. Pending and completed entries are dropped on
- * token change or when `invalidate` reports a toggle-on transition; a dropped flight cannot refill.
- */
 export function lookupCodexDaybreakEntitlement(
   account: DaybreakAccount,
   credentials: DaybreakLookupCredentials,
@@ -200,7 +180,6 @@ export function lookupCodexDaybreakEntitlement(
     credentials.apiKey,
   );
   created.pending = fetchVerifiedAccess(account.url, headers).then((result) => {
-    // An invalidated or replaced entry must not be refilled by its stale flight.
     if (cache.get(account.key) !== created) return result;
     created.pending = undefined;
     if (result.status === 401 || result.status === 403) {
@@ -223,7 +202,6 @@ export function lookupCodexDaybreakEntitlement(
   return created.pending;
 }
 
-/** True while a completed or pending entry exists for the account; test and status support. */
 export function hasCodexDaybreakEntitlementEntry(account: DaybreakAccount): boolean {
   return cache.has(account.key);
 }

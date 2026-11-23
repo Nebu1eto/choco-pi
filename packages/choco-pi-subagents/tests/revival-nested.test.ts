@@ -83,7 +83,6 @@ test("a nested child revives with its parent, and the parent's prompt lists it",
     parentAgentId: "parent",
     sessionFile: await file(s.dir, "c.jsonl"),
   });
-  // Child first in the input: revival must still start the parent first.
   const reports = await s.manager.reviveFromJournal([input(child), input(parent)], s.context);
 
   assert.deepEqual(

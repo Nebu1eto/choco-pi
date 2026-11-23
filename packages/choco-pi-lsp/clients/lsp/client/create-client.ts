@@ -1,11 +1,6 @@
-/**
- * createLSPClient: initializes a server connection and returns the LSPClientInfo method table.
- */
 import { EventEmitter } from "node:events";
 import { pathToFileURL } from "node:url";
 import { withTimeout } from "../../deadline-utils.ts";
-// vscode-jsonrpc v9 ships an `exports` map exposing the Node entry as the
-// `./node` subpath (no `.js`); the old `/node.js` file path no longer resolves.
 import {
   createMessageConnection,
   StreamMessageReader,
@@ -80,8 +75,6 @@ import {
   clientWaitForDiagnostics,
 } from "./workspace-diagnostics.ts";
 
-// --- Client Factory ---
-
 interface LspStartupState {
   exitCode: number | null;
   exitSignal: NodeJS.Signals | null;
@@ -96,10 +89,6 @@ export async function createLSPClient(options: {
   root: string;
   initialization?: JsonObject;
   initializeTimeoutMs?: number;
-  /** See `LSPServerInfo.spawn`'s `launchVariant` (server.ts) — which concrete
-   *  binary/protocol variant was launched for this server id. Undefined =
-   *  single-variant server or not yet reported; consumers must treat that as
-   *  the classic/default behavior (fail-safe). */
   launchVariant?: "classic" | "native-ts7";
 }): Promise<LSPClientInfo> {
   installLspCrashGuard();
@@ -113,20 +102,12 @@ export async function createLSPClient(options: {
     launchVariant,
   } = options;
 
-  // #449/#472: register this LSP child in the cross-process instance registry
-  // as soon as we have a live pid — BEFORE `initialize` completes, not after.
-  // Registering early means a child that dies/hangs during initialize (the
-  // catch block below kills it) is still deregistered by that same path via
-  // removeLspChild, and a process that crashes mid-initialize is still
-  // visible to the orphan reaper rather than silently untracked. Fire-and-
-  // forget: registry I/O must never block or fail LSP startup.
   void recordLspChild({
     pid: lspProcess.pid,
     serverId,
     command: lspProcess.command,
     marker: extractSpawnMarker(lspProcess.args),
   }).catch((err) => {
-    // best-effort observability — never fail LSP startup over this
     logLatency({
       type: "phase",
       phase: "lsp_registry_write_failed",
@@ -144,15 +125,12 @@ export async function createLSPClient(options: {
     stderr: "",
   };
 
-  // Persistent stderr ring buffer — captures last ~100 lines for diagnostics.
-  // Used in error messages to show what the server said before dying.
   const stderrRing: string[] = [];
   const MAX_STDERR_LINES = 100;
 
   const onStderr = (chunk: Buffer | string): void => {
     stderrRing.push(chunk.toString());
     if (stderrRing.length > MAX_STDERR_LINES) stderrRing.shift();
-    // Also capture startup stderr for the initialized-failed error path
     if (startupState.stderr.length < 4096) {
       startupState.stderr += chunk.toString();
     }
@@ -160,7 +138,6 @@ export async function createLSPClient(options: {
 
   const recentStderr = (lines = 10): string => stderrRing.slice(-lines).join("").trim();
 
-  // Pre-request health check — returns error string if process is dead.
   const checkProcessAlive = (): string | undefined => {
     const exited = lspProcess.process.exitCode;
     if (exited !== null) {
@@ -186,14 +163,6 @@ export async function createLSPClient(options: {
   lspProcess.process.on("exit", onProcessExit);
   lspProcess.process.on("close", onProcessClose);
 
-  // Attach persistent 'error' listeners to all three stdio streams.
-  //
-  // Why: when the LSP process exits, Node.js destroys its stdio streams and
-  // may emit 'error' (ERR_STREAM_DESTROYED / EPIPE / ECONNRESET) on them.
-  // Without a listener that becomes an uncaught exception.
-  //
-  // vscode-jsonrpc covers stdin/stdout during the connection lifetime but
-  // removes its listeners on dispose(). Our permanent listeners cover the gap.
   const streamErrorHandler = (_label: string) => (err: Error & { code?: string }) => {
     if (
       err.code === "ERR_STREAM_DESTROYED" ||
@@ -212,9 +181,6 @@ export async function createLSPClient(options: {
     new StreamMessageWriter(lspProcess.stdin),
   );
 
-  // Local event emitter — signals waitForDiagnostics when new diagnostics arrive.
-  // Scoped to this client instance. setMaxListeners guards against Node.js warning
-  // for concurrent waitForDiagnostics calls.
   const diagnosticEmitter = new EventEmitter();
   diagnosticEmitter.setMaxListeners(50);
 
@@ -257,7 +223,6 @@ export async function createLSPClient(options: {
     openDocumentUris: new Map(),
     pendingOpens: new Set(),
     projectIdentityProbedFiles: new Set(),
-    // These defaults are replaced by the parsed initialize response below.
     workspaceDiagnosticsSupport: detectWorkspaceDiagnosticsSupport(undefined),
     operationSupport: detectOperationSupport(undefined),
     staticDiagnosticsMode: "push-only",
@@ -291,16 +256,9 @@ export async function createLSPClient(options: {
       initializeTimeoutMs,
     );
   } catch (err) {
-    // Hard-kill the hung process so it doesn't become a zombie.
-    // SIGTERM alone is unreliable on Windows for cmd.exe/PowerShell trees.
     const pid = lspProcess.pid;
     void killProcessTree(lspProcess.process, pid);
-    // A child registered above (recordLspChild) but never reaching a healthy
-    // createLSPClient return must still be deregistered here — otherwise the
-    // registry keeps a stale entry for a process we just killed.
     void removeLspChild(pid, extractSpawnMarker(lspProcess.args)).catch((err) => {
-      // best-effort — a stale registry entry is harmless (the reaper's
-      // liveness check will find it dead on the next sweep regardless)
       logLatency({
         type: "phase",
         phase: "lsp_registry_write_failed",
@@ -310,19 +268,6 @@ export async function createLSPClient(options: {
       });
     });
     setTimeout(() => {
-      // #1114: gate on the process's own observed `exitCode`/`signalCode`,
-      // not `.killed` — `killProcessTree` above signals the POSIX process
-      // GROUP via the raw `process.kill(-pid, …)`, which never touches
-      // this `ChildProcess` instance's `.killed` flag, so `!…killed` here
-      // was always true and this 2s backstop unconditionally re-sent
-      // SIGKILL even when the group had already exited. `exitCode` alone
-      // is insufficient too: a process that died FROM a signal (the
-      // common case here — killProcessTree's own SIGTERM/SIGKILL) has
-      // `exitCode === null` forever and only `signalCode` set, so
-      // checking `exitCode === null` alone still re-SIGKILLs that corpse
-      // on the common path (harmless — `kill()` on an already-exited pid
-      // is a swallowed no-op — but not actually "observed still alive").
-      // Require both null to mean "no exit observed by either signal".
       if (
         lspProcess.process.exitCode === null &&
         lspProcess.process.signalCode === null &&
@@ -385,16 +330,12 @@ export async function createLSPClient(options: {
     connection,
     isAlive: () => isClientAlive(state),
 
-    /** True if the server process has exited or been killed. */
     processExited: () => lspProcess.process.exitCode !== null || lspProcess.process.killed === true,
 
-    /** #1127: mirrors `state.shutdownRequested` — see interface doc. */
     wasShutdownIntentional: () => state.shutdownRequested,
 
-    /** #1127: mirrors `state.exitedAt` — see interface doc. */
     getExitedAt: () => state.exitedAt,
 
-    /** Last N lines of server stderr for diagnostics. */
     recentStderr: (lines?: number) => recentStderr(lines),
     getPullFailureHistory: () =>
       state.pullFailureHistory.map((entry) => ({
@@ -402,10 +343,8 @@ export async function createLSPClient(options: {
         message: entry.message.slice(0, 200),
       })),
 
-    /** Pre-request health check — returns error string if dead. */
     checkAlive: () => checkProcessAlive(),
 
-    /** #1277: cheap request round-trip proving the server still responds. */
     pingLiveness: (timeoutMs?: number) => clientPingLiveness(state, timeoutMs),
 
     notify: {
@@ -631,9 +570,6 @@ export async function createLSPClient(options: {
 
     async workspaceSymbol(query) {
       if (!isClientAlive(state)) return [];
-      // Route through navRequest for the shared withTimeout ceiling — a hung
-      // server would otherwise await forever (safeSendRequest only settles on
-      // a reply or a destroyed stream). No staleCheckPath: not single-file.
       const result = await navRequest<LSPSymbol[]>(state, "workspace/symbol", {
         query,
       });
@@ -643,9 +579,6 @@ export async function createLSPClient(options: {
     async codeAction(filePath, line, character, endLine, endCharacter) {
       if (!isClientAlive(state)) return [];
       const uri = pathToFileURL(filePath).href;
-      // navRequest adds the shared withTimeout ceiling + single-file
-      // stale-drop (matches documentSymbol); a hung server no longer awaits
-      // forever, and code actions computed against superseded content drop.
       const result = await navRequest<JsonValue[]>(
         state,
         "textDocument/codeAction",

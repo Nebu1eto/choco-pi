@@ -1,7 +1,3 @@
-/**
- * Adapter-owned builtin slash commands: their advertised catalog entries and the local
- * handlers that answer them without a model turn.
- */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AvailableCommand, PromptResponse } from "@agentclientprotocol/sdk";
@@ -12,7 +8,6 @@ import { parseCommandArgs } from "./slash-commands.ts";
 import type { SlashInvocation } from "./pi-commands.ts";
 import type { PiAcpSession } from "./session.ts";
 
-/** The builtin commands the adapter advertises; Pi-discovered commands of the same name win. */
 export function builtinAvailableCommands(): AvailableCommand[] {
   return [
     {
@@ -57,18 +52,11 @@ export function builtinAvailableCommands(): AvailableCommand[] {
   ];
 }
 
-/** What a builtin command needs from the agent beyond its session. */
 export type BuiltinCommandContext = {
-  /** The Pi command whose installation `/changelog` describes. */
   readonly piCommand: string | undefined;
-  /** Throws when the agent was disposed or replaced since the prompt began. */
   assertCurrent(): void;
 };
 
-/**
- * Answer an adapter-owned builtin slash command. Returns the prompt response when the
- * command was handled here, or undefined so the text goes to Pi as an ordinary prompt.
- */
 export async function runBuiltinCommand(
   session: PiAcpSession,
   invocation: SlashInvocation,
@@ -127,7 +115,6 @@ export async function runBuiltinCommand(
       if (parts.length) lines.push(`Tokens: ${parts.join(", ")}`);
     }
 
-    // Fallback if stats shape changes.
     const text = lines.length
       ? lines.join("\n")
       : `Session stats:\n${JSON.stringify(stats, null, 2)}`;
@@ -156,7 +143,6 @@ export async function runBuiltinCommand(
       await setSessionName.call(session.proc, name);
     } catch (error) {
       // SAFETY: catch bindings may contain any thrown JavaScript value; `errorMessage`
-      // handles Error instances and stringifies every other boundary value.
       const msg = errorMessage(error as BoundaryValue);
       const hint = /set_session_name/i.test(msg)
         ? " This requires a newer pi version that supports `set_session_name` in RPC mode."
@@ -190,7 +176,6 @@ export async function runBuiltinCommand(
     const state = await getState.call(session.proc);
     const current = String(state.steeringMode ?? "");
 
-    // If no arg, just report current.
     if (!modeRaw) {
       await session.sendUpdate({
         sessionUpdate: "agent_message_chunk",
@@ -232,7 +217,6 @@ export async function runBuiltinCommand(
     const state = await getState.call(session.proc);
     const current = String(state.followUpMode ?? "");
 
-    // If no arg, just report current.
     if (!modeRaw) {
       await session.sendUpdate({
         sessionUpdate: "agent_message_chunk",
@@ -268,7 +252,6 @@ export async function runBuiltinCommand(
   }
 
   if (cmd === "changelog") {
-    // Read pi's installed CHANGELOG.md. Adapter-side, no model call.
     const changelogPath = await findPiChangelog(context.piCommand);
     context.assertCurrent();
     if (!changelogPath) {
@@ -288,7 +271,6 @@ export async function runBuiltinCommand(
     } catch (error) {
       context.assertCurrent();
       // SAFETY: catch bindings may contain any thrown JavaScript value; `errorMessage`
-      // handles Error instances and stringifies every other boundary value.
       const message = errorMessage(error as BoundaryValue);
       await session.sendUpdate({
         sessionUpdate: "agent_message_chunk",
@@ -301,7 +283,6 @@ export async function runBuiltinCommand(
     }
     context.assertCurrent();
 
-    // Keep it reasonably sized in chat.
     const maxChars = 20_000;
     if (text.length > maxChars) text = text.slice(0, maxChars) + "\n\n...(truncated)...";
 
@@ -314,10 +295,6 @@ export async function runBuiltinCommand(
   }
 
   if (cmd === "export") {
-    // For now we always export into the session cwd and do not accept a user-provided path.
-    // IMPORTANT: pi's export_html reads the session JSONL file. If it doesn't exist yet
-    // (no messages) or is empty, pi throws and RPC mode emits an uncorrelated parse error
-    // (no id), which would otherwise hang our request. So we guard here.
     const getState = session.proc.getState;
     if (!getState) throw missingPiCapability("get_state");
     const state = await getState.call(session.proc);
@@ -369,7 +346,6 @@ export async function runBuiltinCommand(
       resultPath = result.path;
     } catch (error) {
       // SAFETY: catch bindings may contain any thrown JavaScript value; `errorMessage`
-      // handles Error instances and stringifies every other boundary value.
       const message = errorMessage(error as BoundaryValue);
       await session.sendUpdate({
         sessionUpdate: "agent_message_chunk",
@@ -394,8 +370,6 @@ export async function runBuiltinCommand(
 
     const uri = `file://${resultPath}`;
 
-    // Emit a short prefix + a resource link. Many clients concatenate chunks into a single
-    // assistant message, so this avoids the "link + duplicate plain text" look.
     await session.sendUpdate({
       sessionUpdate: "agent_message_chunk",
       content: {
@@ -426,7 +400,6 @@ export async function runBuiltinCommand(
       enabled = false;
 
     if (enabled === null) {
-      // toggle: read current state and invert.
       const getState = session.proc.getState;
       if (!getState) throw missingPiCapability("get_state");
       const state = await getState.call(session.proc);

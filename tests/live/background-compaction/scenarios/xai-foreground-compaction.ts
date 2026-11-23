@@ -28,14 +28,9 @@ import { replyPrompt } from "./prompts.ts";
 import { evidence, type Host, type Scenario } from "./types.ts";
 
 const MANUAL_INSTRUCTIONS = "HARNESS-XAI-INSTRUCTIONS keep every acknowledgement token verbatim";
-/** Prefix of every xAI foreground fallback, cancel and guard notice. */
 const XAI_NOTICE = "xAI server-side compaction";
 const GUARD_NOTICE = "compaction cancelled";
 const SEED_BYTES = 400;
-/**
- * The second xAI model of the capture-retention phase: switched to and
- * straight back from, never prompted (installed catalog `xai/grok-4.6`).
- */
 const SWITCH_MODEL: Model<"openai-responses"> = {
   ...XAI_GROK_MIRROR,
   id: "grok-4.6",
@@ -133,7 +128,6 @@ async function compact(host: Host, instructions: string | undefined): Promise<vo
   }
 }
 
-/** The compact-lane request(s) of a phase: one, for the subject model, carrying the focus when given. */
 function laneObservations(host: Host, phase: Phase): Observation[] {
   const { from, to, instructions } = phase;
   const requests = host.xaiLane.slice(from.lane, to.lane);
@@ -229,7 +223,6 @@ function fallbackObservations(host: Host, from: Mark): Observation[] {
   ];
 }
 
-/** Lane records of the phase: only the expected ones, none credential-looking. */
 function journalObservations(host: Host, window: Phase): Observation[] {
   const phase = journal(host).slice(window.from.journal, window.to.journal);
   const expected = window.journal;
@@ -263,13 +256,11 @@ function firstReplayAfter(host: Host, from: Mark): XaiWireRequest | undefined {
 
 interface Phase {
   readonly from: Mark;
-  /** After the follow-up turn: the phase's evidence ends here. */
   readonly to: Mark;
   readonly instructions: string | undefined;
   readonly added: readonly Checkpoint[];
   readonly replay: XaiWireRequest | undefined;
   readonly replayFrom: Mark;
-  /** Lane records the phase must append, as `event:reason`. */
   readonly journal: readonly string[];
 }
 
@@ -301,12 +292,6 @@ async function runPhase(
   };
 }
 
-/**
- * Two turns, `/compact <instructions>` answered by the xAI lane, one turn
- * carrying the item; then a switch to a second xAI model and straight back
- * (captures are kept across model_select of the same session, D8), a plain
- * `/compact` answered by the lane again, and one more turn carrying the new item.
- */
 async function run(host: Host): Promise<CheckEvidence> {
   await prompt(host, "HARNESS-XAI-TURN-A", "HARNESS-XAI-ACK-A");
   await prompt(host, "HARNESS-XAI-TURN-B", "HARNESS-XAI-ACK-B");

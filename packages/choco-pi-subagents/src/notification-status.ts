@@ -1,4 +1,3 @@
-/** Human-readable terminal status for structured completion notifications. */
 export function formatTaskNotificationStatus(status: string, error?: string): string {
   switch (status) {
     case "completed":

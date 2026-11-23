@@ -1,7 +1,3 @@
-/**
- * Keys and the mouse in the full-screen review, once the lifecycle guard in
- * `review-view.ts` has let them through.
- */
 import { matchesKey, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { launchEditorProject } from "../core/editor-launch.ts";
 import { actionFor } from "../../lib/changes/view/keys.ts";
@@ -14,13 +10,8 @@ import { finish } from "./review-view-lifecycle.ts";
 import { notify, setFocus, type ReviewContext } from "./review-view-state.ts";
 import { toggleToolExpansion } from "./review-view-tools.ts";
 
-/** A key while the review is open and nothing is closing it. */
 export function handleReviewKey(ctx: ReviewContext, data: string): void {
   if (ctx.closed) return;
-  // A focused input owns the keys the prompt gives it: ↑/↓ move
-  // through the text and reach history at the edges, Tab completes a
-  // path, and an open completion list takes Esc to dismiss itself
-  // before the view reads Esc as leaving.
   if (ctx.commentDraft) {
     if (matchesKey(data, "escape") && !ctx.commentInput.isShowingAutocomplete()) stopComment(ctx);
     else {
@@ -31,19 +22,13 @@ export function handleReviewKey(ctx: ReviewContext, data: string): void {
     }
     return;
   }
-  // The main agent's Ctrl+O owns tool-output expansion, so the
-  // review chat honors it from either pane whenever tools exist.
   if (matchesKey(data, "ctrl+o") && ctx.chatOpen) {
     toggleToolExpansion(ctx);
     return;
   }
   if (ctx.focus === "chat") {
-    // Tab belongs to the editor here, so returning to the diff moves
-    // to Shift+Tab rather than costing the chat its completions.
     if (matchesKey(data, "shift+tab")) setFocus(ctx, "review");
     else if (matchesKey(data, "escape") && !ctx.chatInput.isShowingAutocomplete()) closeChat(ctx);
-    // The input has no use for page keys, so they scroll the
-    // transcript pane instead, one viewport at a time.
     else if (matchesKey(data, "pageUp")) {
       ctx.chatScrollOffset += Math.max(1, ctx.lastBodyHeight - 2);
       ctx.tui.requestRender();
@@ -63,7 +48,6 @@ export function handleReviewKey(ctx: ReviewContext, data: string): void {
     setFocus(ctx, "chat");
     return;
   }
-  // Leaving (and closing the key list) never waits for other work.
   if (actionFor(REVIEW_KEYS, data) === "back") {
     ctx.changes.handleKey(data);
     ctx.tui.requestRender();
@@ -100,14 +84,6 @@ export function handleReviewKey(ctx: ReviewContext, data: string): void {
   ctx.tui.requestRender();
 }
 
-/**
- * The mouse on the diff, as in the `/diff` pane: a press on a line
- * puts the cursor there and drags select lines; a click on a file
- * row opens or closes it. Every left press on the diff is taken,
- * because Pi starts its own text selection on a press nothing takes
- * and copies it on release. The chat, the input and the title row
- * are left to Pi.
- */
 export function handleReviewMouse(
   ctx: ReviewContext,
   event: TuiMouseEvent,
@@ -117,11 +93,9 @@ export function handleReviewMouse(
   if (ctx.selecting && (event.type === "drag" || event.type === "release")) {
     if (event.type === "release") ctx.selecting = false;
     else {
-      // At most one row past either edge, so the selection scrolls a row at a time.
       const visible = Math.max(-1, Math.min(area.rows, event.y - area.top));
       ctx.changes.pointer({ kind: "drag", row: ctx.scrollTop + visible });
     }
-    // The view asks for a frame itself, and only when the selection changed.
     return { handled: true };
   }
   if (event.button !== "left" || (event.type !== "press" && event.type !== "click")) {
@@ -132,7 +106,6 @@ export function handleReviewMouse(
   if (!onDiff) return undefined;
   const visible = event.y - area.top;
   const row = visible >= 0 ? ctx.scrollTop + visible : undefined;
-  // A comment being written keeps its lines, and a running action its target.
   const usable = !ctx.commentDraft && !ctx.busy;
   if (event.type === "press") {
     const onLine =

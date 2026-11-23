@@ -12,7 +12,6 @@ import type { HookInput, JsonObject } from "../src/types.ts";
 
 const SUBAGENTS_MANAGER_KEY = Symbol.for("pi-subagents:manager");
 
-/** One activation per session, as Pi binds extensions separately for each subagent. */
 async function activate(name: string) {
   const cwd = process.cwd();
   const loader = new DefaultResourceLoader({
@@ -99,7 +98,6 @@ test("subagent hooks fire in the top-level session and skip session-level events
     ["root", undefined],
     ["child", "root"],
     ["grandchild", "child"],
-    // A subagent transcript resumed as an ordinary session keeps its marker.
     ["resumed", "root"],
   ] as const;
   children.add("child");
@@ -122,7 +120,6 @@ test("subagent hooks fire in the top-level session and skip session-level events
         ctx,
       );
     }
-    // The subagents manager drops a child id before emitting its shutdown.
     children.clear();
     for (const [index, [id, parent]] of sessions.entries())
       await hooks[index]?.emit("session_shutdown", { reason: "quit" }, sessionContext(id, parent));
@@ -139,7 +136,6 @@ test("subagent hooks fire in the top-level session and skip session-level events
         input.agent_type ?? null,
         input.root_session_id ?? null,
       ]);
-  // Session-level and prompt events belong to top-level sessions only.
   assert.deepEqual(fired("SessionStart"), [
     ["root", null, null, null],
     ["resumed", null, null, null],
@@ -152,7 +148,6 @@ test("subagent hooks fire in the top-level session and skip session-level events
     fired("SessionEnd").map(([id]) => id),
     ["root", "resumed"],
   );
-  // A subagent's hooks carry its top-level session id and its own identity.
   assert.deepEqual(fired("SubagentStart"), [
     ["root", "agent-child", "Explore", "root"],
     ["root", "agent-grandchild", "Explore", "root"],

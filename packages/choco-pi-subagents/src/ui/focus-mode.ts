@@ -73,16 +73,10 @@ export type FocusControllerOptions = {
   getActivity?: (id: string) => AgentActivity | undefined;
   getHideThinkingBlock?: () => boolean;
   onSteered?: (id: string, message: string) => void;
-  /**
-   * Whether a visible switcher (FleetView) can currently move focus. Focus is
-   * normally left by selecting another row there, so Esc is swallowed; without a
-   * switcher Esc stays the escape hatch and must not strand the prompt.
-   */
   hasSwitcher?: () => boolean;
   resolveModel?: (query: string) => AgentSession["model"] | undefined;
 };
 
-/** Preserve fullscreen focus while unwinding nested `/agents` menus. */
 export async function continueRunningAgentNavigation(
   focusRequested: boolean,
   reopenList: () => Promise<boolean>,
@@ -147,19 +141,8 @@ export function executeFocusedFastMode(
   return `Fast mode: ${requested ? "on" : "off"}${supported ? "" : " (saved; inactive for this model)"}`;
 }
 
-/**
- * A value that crossed Pi's host boundary — a TUI child, the focused component,
- * or a patched method argument. Unparsed by construction: the guards below are
- * its parser. Spelled as a union rather than `unknown` to match the named
- * host-boundary type choco-pi-lsp uses for the same job.
- */
 type HostBoundaryValue = {} | null | undefined;
 
-/**
- * The properties this module probes on a host object. Named rather than an
- * index signature so the value contract stays explicit, mirroring
- * choco-pi-lsp's `HostObject` convention.
- */
 interface HostProbe {
   handleInput?: HostBoundaryValue;
   getText?: HostBoundaryValue;
@@ -171,10 +154,6 @@ interface HostProbe {
 
 type TUIWithFocusedComponent = TUI & { getFocusedComponent?: () => HostBoundaryValue };
 
-/**
- * A plain host object whose probed properties stay unnarrowed until each one is
- * checked below, rather than passing `any` around.
- */
 function hostObject(value: HostBoundaryValue): HostProbe | undefined {
   if (
     value === null ||
@@ -185,7 +164,6 @@ function hostObject(value: HostBoundaryValue): HostProbe | undefined {
     return undefined;
   }
   // SAFETY: The guard above admits only a non-array, non-callable host object,
-  // whose probed properties are host-boundary values narrowed at each use below.
   return value as HostProbe;
 }
 
@@ -216,19 +194,15 @@ function hostString(value: HostBoundaryValue): string | undefined {
   return isString(value) ? value : undefined;
 }
 
-/** Pi mounts the transcript document first in both regular and fullscreen TUI modes. */
 function findDocument(tui: TUI): RenderTarget | undefined {
   const candidate = tui.children[0];
   return isRenderTarget(candidate) ? candidate : undefined;
 }
 
-/** Pi mounts pending messages immediately after the transcript document. */
 function findPendingMessages(tui: TUI, document: RenderTarget): RenderTarget | undefined {
   const documentIndex = tui.children.findIndex((child) => child === document);
   const candidate = documentIndex < 0 ? undefined : tui.children[documentIndex + 1];
   if (!isRenderTarget(candidate)) return undefined;
-  // Small host fixtures and alternate renderers may put the editor directly
-  // after the document. Never replace a root that owns prompt input.
   if (isEditorLike(candidate) || childrenOf(candidate).some(isEditorLike)) return undefined;
   return candidate;
 }
@@ -239,8 +213,6 @@ function findEditor(tui: TUI): EditorLike | undefined {
   const focused = getFocused instanceof Function ? getFocused.call(tui) : undefined;
   if (isEditorLike(focused)) return focused;
 
-  // The editor container is a top-level root. Search only two levels so chat
-  // message components that happen to expose getText cannot be mistaken for it.
   for (const root of tui.children) {
     if (isEditorLike(root)) return root;
     for (const child of childrenOf(root)) {
@@ -250,7 +222,6 @@ function findEditor(tui: TUI): EditorLike | undefined {
   return undefined;
 }
 
-/** Recover Pi's first, built-in Mermaid renderer from a mounted transcript component. */
 function findHostMarkdownTransformers(root: HostBoundaryValue): readonly MarkdownTransformer[] {
   const seen = new Set<object>();
   const visit = (value: HostBoundaryValue): readonly MarkdownTransformer[] | undefined => {
@@ -259,9 +230,6 @@ function findHostMarkdownTransformers(root: HostBoundaryValue): readonly Markdow
     seen.add(object);
     const transformers = object.markdownTransformers;
     if (Array.isArray(transformers) && transformers.every((item) => item instanceof Function)) {
-      // InteractiveMode prepends Mermaid before extension transformers. Carry
-      // only that host transformer; the child runner supplies its own extension
-      // transformers below, without duplicating the orchestrator's instances.
       // SAFETY: every array entry was checked callable immediately above.
       return (transformers as MarkdownTransformer[]).slice(0, 1);
     }
@@ -286,21 +254,15 @@ function withoutFocusedUsage(runtime: FocusedAgentRuntime): FocusedAgentRuntime 
   return retained;
 }
 
-/** `/exit` and its aliases, as typed at a prompt that a focused agent owns. */
 function isExitCommand(text: string): boolean {
   const command = text.trim().toLowerCase();
   return command === "/exit" || command === "/quit";
 }
 
-/**
- * `/stop …` and `/resume-work`, as typed at a prompt that a focused agent owns. They address the
- * root session's stop coordinator, never the focused child, so they must not be steered to it.
- */
 function isRootStopCommand(text: string): boolean {
   return /^\/(?:stop(?:\s.*)?|resume-work)\s*$/isu.test(text.trim());
 }
 
-/** Owns the orchestrator ↔ focused-agent state transition and both host patches. */
 export class FocusedAgentController {
   private ui: FocusUICtx | undefined;
   private active: ActiveFocus | undefined;
@@ -310,7 +272,6 @@ export class FocusedAgentController {
   private restoreEditor: (() => void) | undefined;
   private clearFocusedRuntime: (() => void) | undefined;
   private patchedEditor: EditorLike | undefined;
-  /** Main prompt draft held outside the focused editor and restored on exit. */
   private orchestratorEditorText: string | undefined;
   private toolOutputExpandedByAgent = new Map<string, boolean>();
   private manager: FocusManager;
@@ -335,12 +296,10 @@ export class FocusedAgentController {
     return this.active !== undefined;
   }
 
-  /** Id of the focused record, for UI that mirrors focus (FleetView's cursor). */
   getFocusedAgentId(): string | undefined {
     return this.active?.record.id;
   }
 
-  /** Replace the main transcript renderer and bind the current prompt editor. */
   focus(record: AgentRecord, tui: TUI, theme: Theme): boolean {
     const session = record.session;
     const initialRuntime = focusedAgentRuntime(record);
@@ -418,16 +377,10 @@ export class FocusedAgentController {
     return true;
   }
 
-  /** Leave focus and repaint the restored orchestrator transcript. */
   unfocus(): void {
     this.restoreOrchestrator("render");
   }
 
-  /**
-   * Restore editor input before transcript output, then remove focus chrome.
-   * `silent` skips the repaint for a caller that paints something else in the
-   * same tick — a focus switch — or is tearing the controller down.
-   */
   private restoreOrchestrator(repaint: "render" | "silent"): void {
     const previous = this.active;
     this.active = undefined;
@@ -484,17 +437,12 @@ export class FocusedAgentController {
         // SAFETY: This adapter is installed only on the EditorLike value found above.
         const submitTarget = receiver as EditorLike;
         const keybindings = getKeybindings();
-        // Pi's root dequeue action moves a pending main-session message into the
-        // editor. While that pending renderer is replaced, claim its configured
-        // key too so hidden orchestrator state cannot enter the focused prompt.
         if (
           this.active.pendingMessages !== undefined &&
           keybindings.matches(data, "app.message.dequeue")
         ) {
           return undefined;
         }
-        // The predecessor owns Pi's main toolOutputExpanded action. Claim the
-        // configured action first so fullscreen focus toggles only its viewer.
         if (keybindings.matches(data, "app.tools.expand")) {
           this.active.viewer.toggleToolOutputExpanded();
           return undefined;
@@ -503,9 +451,6 @@ export class FocusedAgentController {
           this.active.viewer.toggleThinkingVisibility();
           return undefined;
         }
-        // `/exit` addressed to a focused agent means "end this agent", not "quit
-        // pi" — the prompt belongs to the subagent while focus is active. Claim
-        // it before the predecessor so Pi's own command dispatch never sees it.
         if (matchesKey(data, Key.enter) && isExitCommand(submitTarget.getText())) {
           this.stopFocused(submitTarget);
           return undefined;
@@ -513,16 +458,9 @@ export class FocusedAgentController {
         if (matchesKey(data, Key.enter) && this.submitFocusedCommand(submitTarget)) {
           return undefined;
         }
-        // Stop-control commands belong to the root session. The editor's own submit handler is
-        // untouched here (it is swapped only for the call below), so the host dispatches them.
         if (matchesKey(data, Key.enter) && isRootStopCommand(submitTarget.getText())) {
           return Function.prototype.apply.call(predecessor, receiver, args);
         }
-        // Esc does NOT leave focus while the switcher is up: focus is switched
-        // there (↑↓, with `main` restoring the orchestrator), exactly like
-        // selecting any other agent. Swallowing it also keeps a prompt addressed
-        // to a subagent from reaching the main session's interrupt. With no
-        // switcher rendered, Esc remains the only way back and still exits.
         if (matchesKey(data, "escape")) {
           if (this.options.hasSwitcher?.() !== true) this.unfocus();
           return undefined;
@@ -600,10 +538,6 @@ export class FocusedAgentController {
     return true;
   }
 
-  /**
-   * Stop the focused agent and return to the orchestrator. Reached from `/exit`
-   * typed at the focused prompt, which must not quit the session.
-   */
   private stopFocused(editor: EditorLike): void {
     const active = this.active;
     if (!active) return;
@@ -627,8 +561,6 @@ export class FocusedAgentController {
 
     const { record } = active;
     if (record.status !== "running" && record.status !== "queued") {
-      // A settled focused agent is RESUMED through the same path /btw replies
-      // use — focus must never eat user input for a resumable session.
       if (record.session) {
         record.resultConsumed = false;
         editor.addToHistory?.(text);
@@ -651,8 +583,6 @@ export class FocusedAgentController {
           });
         return;
       }
-      // Pi's Editor clears before invoking onSubmit. Put the focused draft back
-      // when nothing can receive it so a session-less record cannot eat input.
       editor.setText(text);
       this.ui?.notify(
         `Agent ${focusLabel(record)} is ${record.status} and cannot be steered.`,
@@ -681,10 +611,6 @@ export class FocusedAgentController {
     this.ui?.setWidget(
       FOCUS_WIDGET_KEY,
       (_tui, theme) => ({
-        // The FleetView switcher already names the focused agent and its keys,
-        // so a second line above the editor only repeats it. Speak only when
-        // the switcher is off, where this is the one signal focus is active —
-        // and there Esc is the exit, not the switcher.
         render: (width) => {
           if (this.options.hasSwitcher?.() === true) return [];
           return [

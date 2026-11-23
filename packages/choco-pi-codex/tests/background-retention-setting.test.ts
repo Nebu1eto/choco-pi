@@ -74,7 +74,6 @@ function response(compact: boolean): Response {
   });
 }
 
-/** Four user messages of 3,000 approximate tokens each (12,000 ASCII bytes, 4 bytes per token). */
 const MESSAGES = ["a", "b", "c", "d"].map((letter, index) => ({
   role: "user" as const,
   content: `${letter}${"x".repeat(11_999)}`,
@@ -98,13 +97,11 @@ const isWindow = compile(
   ),
 ).check;
 
-/** The retained user messages' first letters, in window order. */
 interface PrepareOptions {
   readonly retentionTokens?: (() => number) | undefined;
   readonly customInstructions?: string | undefined;
 }
 
-/** Request bodies the lane sent, decoded. */
 async function decodedBody(body: RequestInit["body"]): Promise<string> {
   if (isString(body)) return body;
   assert.ok(body instanceof Uint8Array);
@@ -192,7 +189,6 @@ async function prepareBackground(
     onInstalled: () => {},
     userMessageRetentionTokens: retentionTokens,
   };
-  // Seed the canonical baseline the lane captures from.
   const seeded = await createOpenAICodexProviderStream(
     model,
     normalizeContext({ messages: MESSAGES }),
@@ -240,7 +236,6 @@ test("a configured retention budget bounds the background window: 8,000 tokens k
 test("the config multiplier: v2UserMessageRetention 16 keeps 16,000 tokens (all four 3,000-token messages fit, 5 would not)", async () => {
   const config = structuredClone(DEFAULT_CODEX_CONVERSION_CONFIG);
   config.compaction.v2UserMessageRetention = 16;
-  // events.ts passes `state.config.compaction.v2UserMessageRetention * 1_000`.
   assert.deepEqual(await retainedLetters(() => config.compaction.v2UserMessageRetention * 1_000), [
     "a",
     "b",

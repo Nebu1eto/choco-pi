@@ -1,12 +1,4 @@
 #!/usr/bin/env node
-// Drift check between formal artefacts (TLA+ models, property tests) and the
-// source symbols they declare in formal/**/coverage.json.
-//
-// This detects TEXTUAL change only. A fresh result means the covered text is
-// unchanged since the artefact was last checked; it does not show that the
-// artefact still matches the code. The check fails closed: a missing or
-// ambiguous symbol, an unreadable or unparseable file, or a malformed
-// declaration is never reported as fresh.
 
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -105,7 +97,6 @@ function flagsFor(command: string): readonly string[] | undefined {
   }
 }
 
-/** Parse CLI arguments; throws UsageError on anything unexpected. */
 export function parseArgs(argv: readonly string[]): Args {
   const [command, ...rest] = argv;
   if (command === undefined || command === "help" || command === "--help" || command === "-h") {
@@ -206,7 +197,6 @@ interface MalformedIdentity {
 
 const identityValidator = compile(obj({ name: opt(str()), kind: opt(str()) }, { open: true }));
 
-/** Best-effort name and kind of a declaration that failed validation, for reporting only. */
 function describeMalformed(text: string): MalformedIdentity {
   let value: unknown;
   try {
@@ -226,7 +216,6 @@ export interface DeclarationReport {
   readonly status: "fresh" | "stale" | "error";
   readonly entries: readonly EntryResult[];
   readonly error?: string;
-  /** Why a declaration is stale beyond its entries, for example a pending checkedAt.commit. */
   reason?: string;
 }
 
@@ -236,7 +225,6 @@ export interface CheckReport {
   readonly declarations: readonly DeclarationReport[];
 }
 
-/** check: every declaration under <root>/formal. */
 export async function runCheck(root: string): Promise<{ report: CheckReport; exitCode: number }> {
   const paths = await findCoverageFiles(root);
   const loaded = await Promise.all(paths.map((path) => loadDeclaration(root, path)));
@@ -282,7 +270,6 @@ export async function runCheck(root: string): Promise<{ report: CheckReport; exi
   return { report: { schema: 1, root, declarations }, exitCode };
 }
 
-/** Repository-relative paths changed since `base`: committed, staged, unstaged and untracked. */
 export async function changedFilesSince(root: string, base: string): Promise<string[]> {
   if (base.startsWith("-")) throw new UsageError(`invalid revision "${base}"`);
   const [diff, untracked] = await Promise.all([
@@ -306,9 +293,7 @@ export interface AffectedMatch {
   readonly file: string;
   symbol?: string;
   readonly via: "covers" | "assumes";
-  /** Entry status from the hash check; absent for assumptions, which have no hash. */
   readonly status?: EntryResult["status"];
-  /** Whether the covered text differs from the recorded hash (pending and missing count as changed); null for assumptions. */
   readonly changed: boolean | null;
   reason?: string;
 }
@@ -328,7 +313,6 @@ export interface AffectedReport {
   readonly errors: readonly { readonly path: string; readonly error: string }[];
 }
 
-/** affected: declarations covering or assuming any of `files`. */
 export async function runAffected(
   root: string,
   files: readonly string[],
@@ -384,7 +368,6 @@ export async function runAffected(
   return { report: { schema: 1, root, files, declarations, errors }, exitCode };
 }
 
-/** Serialise a declaration the way update writes it: 2-space JSON and a trailing newline. */
 export function formatCoverage(coverage: Coverage): string {
   return `${JSON.stringify(coverage, null, 2)}\n`;
 }
@@ -412,7 +395,6 @@ export interface UpdateReport {
   readonly warnings: readonly string[];
 }
 
-/** update: recompute hashes of one declaration and record them with the commit. */
 export async function runUpdate(
   root: string,
   cwd: string,
@@ -472,7 +454,6 @@ export interface Io {
   readonly stderr: (text: string) => void;
 }
 
-/** Run the CLI and return its exit code. */
 export async function main(argv: readonly string[], io: Io): Promise<number> {
   try {
     const args = parseArgs(argv);

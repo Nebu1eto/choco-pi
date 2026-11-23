@@ -1,4 +1,3 @@
-/** Pure text formatting for the pane and the inline fallback list. */
 import type {
   DiffSnapshot,
   DiffSource,
@@ -22,7 +21,6 @@ export {
   totalsText,
 } from "../../lib/changes/view/source-text.ts";
 
-// The row widgets moved to the shared layer; pane code and its tests keep importing them from here.
 export {
   bodyNotice,
   countsText,
@@ -40,7 +38,6 @@ export {
 
 const INLINE_FILE_LIMIT = 30;
 
-/** Compact plain-text list used when the pane cannot be shown. */
 export function inlineList(state: DiffStoreState): string {
   if (state.kind === "idle") return "Diff: not loaded yet.";
   if (state.kind === "not-a-repository")
@@ -65,7 +62,6 @@ export function inlineList(state: DiffStoreState): string {
   return lines.join("\n");
 }
 
-/** The source's name, with any untrusted part (a branch, a turn's label) as a code span. */
 function sourceMarkdown(source: DiffSource): string {
   if (source.kind === "session") return "Session changes";
   if (source.kind === "uncommitted") return "Uncommitted changes";
@@ -79,7 +75,6 @@ function emptyMarkdown(snapshot: DiffSnapshot): string {
   if (source.kind === "since-checkpoint" || source.kind === "range") {
     return `No changes ${source.turnOnly ? "in" : "since"} ${markdownName(source.label)}`;
   }
-  // Session and uncommitted sentences are ours (a session's reason is one of our constants).
   return markdownText(emptyMessage(snapshot));
 }
 
@@ -101,12 +96,6 @@ function fileMarkdown(file: FileSummary): string {
   return `- ${markdownText(statusLetter(file.status))} ${path}${counts ? ` ${markdownText(counts)}` : ""}`;
 }
 
-/**
- * {@link inlineList} for an editor that renders notifications as Markdown (Zed
- * through the choco-pi ACP adapter): the same facts, with each untrusted name
- * sanitised once and written as a code span, our prose escaped, git's error in
- * a code block, and the files as a list so the lines do not run together.
- */
 export function inlineMarkdown(state: DiffStoreState): string {
   if (state.kind === "idle") return "Diff: not loaded yet.";
   if (state.kind === "not-a-repository") {

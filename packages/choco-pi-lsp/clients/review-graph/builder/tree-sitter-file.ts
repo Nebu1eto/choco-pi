@@ -1,6 +1,3 @@
-/**
- * Tree-sitter symbol extraction for non-JS/TS files, structural IR capture, and LSP fallback symbols.
- */
 import { includePropertiesWhen } from "../../optional-properties.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -83,10 +80,6 @@ async function getExtractor(languageId: string): Promise<TreeSitterSymbolExtract
   const extractor = new TreeSitterSymbolExtractor(languageId, client);
   const ok = await extractor.init();
   if (!ok) {
-    // Memoize failures too (#955 review): the scan loop probes the
-    // extractor once per file, and an unmemoized grammar-load failure
-    // re-attempted resolution (possibly a lazy fetch) for every file of
-    // that language. A restart re-probes; within a process, one verdict.
     extractorCache.set(languageId, null);
     return null;
   }
@@ -123,11 +116,6 @@ export async function extractTreeSitterSymbols(
   return extracted.parsed ? extracted.value : empty;
 }
 
-/**
- * Extract the compact graph-facing facts while the scanner's parse is still
- * hot. The caller publishes the result only after every consumer of that file
- * has completed, so cancellation can never expose an in-progress entry.
- */
 export async function captureReviewGraphStructuralIr(
   filePath: string,
   cwd: string,
@@ -180,8 +168,6 @@ export async function captureReviewGraphStructuralIr(
     };
   }
   const languageId = mapKindToTreeSitterLanguage(kind, filePath);
-  // A graph-relevant kind without a tree-sitter mapping is unsupported, not
-  // an empty successful extraction. Do not publish a complete IR for it.
   if (!languageId) return { complete: false };
   const client = getSharedTreeSitterClient();
   if (!client || !(await client.init())) return { complete: false };
@@ -201,20 +187,6 @@ export async function captureReviewGraphStructuralIr(
   };
 }
 
-// #655: some grammars' SYMBOL_QUERIES match the SAME declaration node under two
-// patterns — e.g. python's generic `function_definition` rule also matches a
-// method's `function_definition` nested inside a class body, in addition to
-// the class-scoped "method" rule (tree-sitter-symbol-extractor.ts has no
-// `#not-`-style scope predicate to exclude it). `extract()` then yields TWO
-// Symbol records for one real declaration: identical name/line/column,
-// differing only in `kind` ("function" vs "method"). The pre-#655
-// `${file}:${name}` ID silently collapsed these onto one node (`Map.set`
-// overwrote by name, last-extracted kind winning in whatever order
-// `Query.matches` returned). The new kind-qualified ID would otherwise turn
-// that pre-existing extractor quirk into two REAL, persisted duplicate nodes
-// for one symbol — so dedupe by (name, line, column) here, preferring the
-// more specific kind, keeping exactly one node per real declaration regardless
-// of how many query patterns matched it.
 interface SymbolKindSpecificity {
   [kind: string]: number;
 }
@@ -265,12 +237,6 @@ export function addTreeSitterFile(
   });
 
   const dedupedSymbols = dedupeSamePositionSymbols(extracted.symbols);
-  // refs #655 phase 2: qualified (owner-chain) display name, computed via the
-  // SAME strict-containment/smallest-span algorithm module-report.ts's outline
-  // nesting (`nestEntries`, #301) uses over its own tree-sitter-symbol-extractor
-  // output — see symbol-containment.ts. Candidates are the file's OWN deduped
-  // symbol list; a symbol with no strictly-containing entry (top-level) gets
-  // no qualifiedName.
   const containers = dedupedSymbols.map((s) => ({
     name: s.name,
     startLine: s.line,
@@ -323,24 +289,11 @@ export function addTreeSitterFile(
         column: ref.column,
         referenceKind: ref.referenceKind ?? "unknown",
       },
-      // Always starts bare-name-only (the extractor has no scope/type info);
-      // resolveDeferredSymbolEdges may upgrade this to "exact" below.
       resolution: "name-only",
     });
   }
 
-  // #249: import edges for tree-sitter languages. First try to resolve the
-  // source to in-project FILE(s) (ruby/zig/bash/dart relative paths, python
-  // dotted modules, go package dirs, java source-root files — see
-  // import-resolvers.ts); on success emit real file→file edges like jsts/cxx.
-  // An unresolvable source (stdlib, third-party, namespace-only langs) falls
-  // back to an UNRESOLVED external/module node — never a fabricated file edge.
   for (const imp of extracted.imports) {
-    // #694: drop any resolved target that's untracked-AND-gitignored (a build
-    // artifact with no surviving source twin) BEFORE deciding resolved vs
-    // unresolved — a fully-filtered-out result falls through to the same
-    // unresolved module/external placeholder below, never a fabricated
-    // ignored-file node.
     const resolved = resolveImportToFiles(cwd, filePath, languageId, imp.source).filter(
       (target) => !ignoredIds?.has(target),
     );
@@ -380,12 +333,6 @@ export function addTreeSitterFile(
   }
 }
 
-/**
- * Add documentSymbol results only after tree-sitter produced no declarations.
- * Hierarchical responses preserve their parent/child containment. Flat
- * SymbolInformation results (including native TypeScript 7) recover the same
- * containment through `containerName` when the owner is present in the result.
- */
 export function addLspFallbackSymbols(
   graph: ReviewGraph,
   filePath: string,
@@ -413,9 +360,6 @@ export function addLspFallbackSymbols(
       const line = range.start.line + 1;
       const kind = lspSymbolKindName(symbol.kind);
       const symbolId = buildSymbolId(normalized, symbol.name, kind, line);
-      // Shared with the read-path enrichment (#951 Sonar dedup): flat
-      // results qualify through the full containerName chain, not just
-      // the immediate owner.
       const owners = ancestry.length > 0 ? ancestry : containerNameChain(symbol, symbols);
       const qualifiedName = owners.length > 0 ? [...owners, symbol.name].join(".") : undefined;
       addNode(graph, {

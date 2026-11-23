@@ -52,7 +52,6 @@ function asExtensionAPI(value: RuntimeValue): ExtensionAPI {
 
 function asExtensionContext(value: RuntimeValue): ExtensionContext {
   // SAFETY: The fixture supplies the session binding reads; child setup is
-  // deliberately incomplete so this test can observe its terminal error.
   return value as ExtensionContext;
 }
 
@@ -96,7 +95,6 @@ test("top-level get_subagent_result refuses repeated generation reads and retain
 
   try {
     // SAFETY: Session binding needs only these session-manager reads; the detached
-    // runner still fails on the deliberately incomplete child-runtime context.
     const context = asExtensionContext({
       cwd: process.cwd(),
       sessionManager: { getSessionId: () => "result-generation-probe", getEntries: () => [] },

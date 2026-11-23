@@ -3,7 +3,6 @@ import test from "node:test";
 import { createPrototypeHost } from "../src/prototype/host.ts";
 import { demoServer } from "./prototype-support.ts";
 
-// Opt-in real Pi SDK host, deterministic transport; never part of the baseline suite.
 for (const mode of ["steering", "async"] as const) {
   test(`public Pi extension host: ${mode}, no Pi tools or monkeypatches`, async () => {
     const server = demoServer(mode);

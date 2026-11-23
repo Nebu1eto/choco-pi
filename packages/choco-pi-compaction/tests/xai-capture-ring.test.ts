@@ -1,10 +1,3 @@
-/**
- * xAI usable capture ring (the Anthropic ring's policy, D8): only an HTTP 200
- * answer to a mapped request is a usable capture. Any other response goes to
- * a bounded diagnostics ring (eight per session), so a retry burst never
- * evicts the last usable capture and a failed request never becomes the
- * prefix sent to the compact endpoint.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -35,7 +28,6 @@ function outage(): Response {
   });
 }
 
-/** A session with one projected user message and a captured stream answering per `respond`. */
 function rig(sessionId: string, respond: (index: number) => Response, options = { bind: true }) {
   const manager = SessionManager.inMemory("/xai-capture-ring");
   manager.appendMessage({ role: "user", content: "XRING-PROMPT", timestamp: 0 });

@@ -1,13 +1,3 @@
-/**
- * The threshold route asks a lane at most once per context position: the
- * host observes usage at several boundary hooks of one run (turn_end,
- * agent_before_settle, agent_settled), and a failed candidate must not be
- * replaced at each of them. An `unsupported` lane gets no further candidate
- * until the owner is replaced (model or Codex eligibility change), unless the
- * backend reported a retry delay with it (a capture-specific condition such as
- * a Daybreak request): that lane retries at a later position once the delay
- * passed. Offline.
- */
 import assert from "node:assert/strict";
 import test, { afterEach } from "node:test";
 
@@ -64,7 +54,6 @@ const STATE: CompactionSessionState = {
 
 const USAGE = { tokens: 190_000, contextWindow: 200_000, percent: 95 };
 
-/** A Codex lane whose verdicts the test sets; counts every call that could reach a provider. */
 class ScriptedCodexLane implements Backend {
   readonly id = CODEX_BACKEND_SETTING_ID;
   capabilityCalls = 0;
@@ -94,7 +83,6 @@ class ScriptedCodexLane implements Backend {
   }
 }
 
-/** A clock the test moves by hand; its timers never fire (no failure here is retryable). */
 function manualClock(): SchedulerClock & { advance(ms: number): void } {
   let at = 1_000_000;
   return {
@@ -208,10 +196,8 @@ function appendAssistant(session: SessionManager, text: string, timestamp: numbe
   });
 }
 
-/** One run's boundary hooks: each observes usage after the previous candidate settled. */
 async function boundaryHooks(core: OwnerCore, session: SessionManager): Promise<void> {
   for (const hook of ["turn_end", "agent_before_settle", "agent_settled"]) {
-    // Extension state entries land between hooks; they do not move the context position.
     session.appendCustomEntry("burst-fixture-state", { hook });
     core.observeUsage(USAGE);
     await core.coordinator.waitForPreparation();
@@ -226,7 +212,6 @@ test("an unsupported lane yields for the owner: one candidate and one record per
   const lane = new ScriptedCodexLane({ supported: false, reason: "unsupported" }, { legal: true });
   const { core, session, records } = await rig({ lane, cooldownMs: 0 });
   try {
-    // Three observations in one tick: the first candidate is still outstanding.
     core.observeUsage(USAGE);
     core.observeUsage(USAGE);
     core.observeUsage(USAGE);
@@ -240,7 +225,6 @@ test("an unsupported lane yields for the owner: one candidate and one record per
     );
     assert.equal(records[0]?.candidateId, core.coordinator.status().candidateId);
 
-    // New messages do not lift the yield: only a replaced owner asks again.
     appendAssistant(session, "BURST-D", 4);
     session.appendMessage({ role: "user", content: "BURST-E", timestamp: 5 });
     await boundaryHooks(core, session);
@@ -251,7 +235,6 @@ test("an unsupported lane yields for the owner: one candidate and one record per
     core.dispose();
   }
 
-  // A model or eligibility change replaces the owner; the new owner asks once.
   const replaced = await rig({ lane, cooldownMs: 0, ownerGeneration: 2, session, records });
   try {
     await boundaryHooks(replaced.core, session);
@@ -278,7 +261,6 @@ test("a refused cut is not retried at the same context position, even with no co
       "the unowned refusal code is journaled as provider-error, once",
     );
 
-    // The next run moves the context: the lane may answer again.
     appendAssistant(session, "BURST-D", 4);
     session.appendMessage({ role: "user", content: "BURST-E", timestamp: 5 });
     await boundaryHooks(core, session);
@@ -320,15 +302,11 @@ test("after a provider-error refusal the owner waits for the cooldown before a l
   }
 });
 
-/** Position the session past the last observed context: a new user turn. */
 function nextTurn(session: SessionManager, label: string, timestamp: number): void {
   appendAssistant(session, `${label}-REPLY`, timestamp);
   session.appendMessage({ role: "user", content: label, timestamp: timestamp + 1 });
 }
 
-// Review finding: the Codex lane answers a Daybreak capture (`access_programs`) with
-// `unsupported` and a 60 s retry delay; Daybreak can be switched off within the same
-// owner, so that answer must not bar the lane for the owner's lifetime.
 test("an unsupported answer with a retry delay retries at a later position once the delay passed", async () => {
   const clock = manualClock();
   const retryAfterMs = 60_000;
@@ -337,7 +315,6 @@ test("an unsupported answer with a retry delay retries at a later position once 
     { legal: true },
     { ok: false, reason: "unsupported", retryable: false, retryAfterMs },
   );
-  // No configured cooldown: only the reported delay holds the lane back.
   const { core, session, records } = await rig({ lane, cooldownMs: 0, clock });
   try {
     core.observeUsage(USAGE);

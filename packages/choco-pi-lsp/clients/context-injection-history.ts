@@ -20,7 +20,6 @@ function contentHash(messages: readonly ContextInjectionMessage[]): string {
   return hash.digest("hex");
 }
 
-/** Retain delivered guidance at its original position until the agent run ends. */
 export class ContextInjectionHistory<Message extends ContextInjectionMessage> {
   private sessions = new Map<string, InjectionState<Message>>();
 
@@ -46,7 +45,6 @@ export class ContextInjectionHistory<Message extends ContextInjectionMessage> {
       (messages.length < state.baseLength ||
         contentHash(messages.slice(0, state.baseLength)) !== state.baseHash)
     ) {
-      // Compaction, rewind, or a real context rewrite must not resurrect old guidance.
       this.sessions.delete(sessionId);
       state = undefined;
     }

@@ -17,13 +17,9 @@ import {
   type BoundaryValue,
 } from "./runtime-values.ts";
 
-/** Selection text is capped at 16 KiB to keep explicit editor context bounded. */
 export const DEFAULT_SELECTION_TEXT_BYTES = 16 * 1024;
-/** A complete context document is capped at 64 KiB, including selection text. */
 export const DEFAULT_CONTEXT_PAYLOAD_BYTES = 64 * 1024;
-/** Paths are capped at 4096 UTF-16 code units, the conventional POSIX maximum. */
 export const DEFAULT_PATH_LENGTH = 4096;
-/** Captures more than 30 seconds ahead of the validator clock are implausible. */
 export const DEFAULT_CLOCK_SKEW_MS = 30_000;
 export const MAX_EDITOR_CONTEXT_DIAGNOSTICS = 16;
 
@@ -46,10 +42,6 @@ export interface EditorContextFileStat {
   uid?: number;
 }
 
-/**
- * This deliberately accepts an lstat-shaped function rather than Node's fs
- * types so validation remains testable and independent from the storage layer.
- */
 export type EditorContextFileStatCheck = (path: string) => EditorContextFileStat | undefined;
 
 export type EditorContextPathPlatform = "posix" | "win32";
@@ -89,10 +81,6 @@ export type EditorContextDiagnosticField =
   | "selection.end.line"
   | "selection.end.column";
 
-/**
- * Diagnostics intentionally contain only fixed codes, fixed field labels, and
- * bounded numeric metadata. In particular they have no message or text field.
- */
 export type EditorContextDiagnostic =
   | Readonly<{ code: "DOCUMENT_SHAPE_INVALID" }>
   | Readonly<{ code: "UNSUPPORTED_VERSION"; actual?: number }>
@@ -320,11 +308,6 @@ function validateContextFile(
   return "verified";
 }
 
-/**
- * Validates an untrusted serialized editor-context value without retaining it
- * on rejection. File ownership is checked only when contextFile is supplied;
- * Windows ownership limitations are surfaced through fileSecurity.
- */
 export function validateEditorContextDocument(
   value: BoundaryValue,
   options: EditorContextValidationOptions,

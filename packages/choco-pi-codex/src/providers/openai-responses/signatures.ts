@@ -35,9 +35,7 @@ export function parseTextSignature(
           ? { id: parsed.id, phase: parsed.phase }
           : { id: parsed.id };
       }
-    } catch {
-      // Fall through to legacy plain-string handling.
-    }
+    } catch {}
   }
   return { id: signature };
 }

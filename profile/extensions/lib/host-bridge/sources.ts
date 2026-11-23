@@ -3,19 +3,12 @@ import { finiteNum } from "../finite-number.ts";
 
 import { isJsonRecord, isString, type RuntimeValue } from "../runtime-values.ts";
 
-/**
- * Structural access to sibling-package runtimes. Nothing here imports another
- * package: each process-global slot is validated before use (pi-schema for data,
- * predicates for the function members JSON Schema cannot describe), so a
- * missing or older package degrades to "unavailable" instead of a type lie.
- */
 export const SUBAGENT_REGISTRY_SYMBOL = Symbol.for("pi-subagents:manager");
 export const SHELL_MANAGER_SYMBOL = Symbol.for("choco-pi-shells:manager");
 export const GOAL_RUNTIME_SYMBOL = Symbol.for("choco-pi-goal:runtime");
 
 const ModelRefSchema = obj({ provider: str(), id: str() }, { open: true });
 
-/** The AgentRecord fields the bridge reads (choco-pi-subagents/src/types.ts). */
 export const AgentRecordSchema = obj(
   {
     id: str(),
@@ -57,7 +50,6 @@ interface SubagentRegistry {
   isChildSessionId(id: string): boolean;
 }
 
-/** True when every named member of `value` is a function (arguments and results are not checked). */
 function hasFunctionMembers(value: RuntimeValue, names: readonly string[]): boolean {
   return isJsonRecord(value) && names.every((name) => value[name] instanceof Function);
 }
@@ -71,7 +63,6 @@ function isSubagentRegistry(value: RuntimeValue): value is SubagentRegistry {
   ]);
 }
 
-/** Shell record as the shell manager reports it. */
 export const ShellResultSchema = obj(
   {
     shellId: str(),
@@ -154,12 +145,10 @@ function shellManager(): ShellManager | undefined {
   return isShellManager(slot) ? slot : undefined;
 }
 
-/** Live view of the subagent registry, narrowed to records owned by `sessionId`. */
 export interface SubagentSource {
   readonly available: boolean;
   records(): AgentRecordView[];
   record(id: string): AgentRecordView | undefined;
-  /** Session model of a live record as `provider/id`, when its session exposes one. */
   sessionModel(id: string): string | undefined;
   stop(id: string): boolean;
 }
@@ -179,13 +168,8 @@ export interface GoalSource {
 }
 
 export interface HostBridgeSources {
-  /** True when the current extension load runs inside a subagent child session. */
   inChildLoad(): boolean;
   isChildSession(sessionId: string): boolean;
-  /**
-   * Records narrowed to `sessionId` (a foreign `rootSessionId` is always
-   * excluded) and to the caller's private ownership predicate.
-   */
   subagents(sessionId: string, owns: (record: AgentRecordView) => boolean): SubagentSource;
   shells(sessionId: string): ShellSource;
   goals(sessionId: string): GoalSource;
@@ -203,7 +187,6 @@ function ownedRecords(
   const owned: AgentRecordView[] = [];
   for (const raw of rawRecords(registry)) {
     if (!isAgentRecord(raw)) continue;
-    // rootSessionId names the owning root session; a record of another root session is not ours.
     if (raw.rootSessionId !== undefined && raw.rootSessionId !== sessionId) continue;
     if (!owns(raw)) continue;
     owned.push(raw);
@@ -238,7 +221,6 @@ function createSubagentSource(
       return undefined;
     },
     stop: (id) => {
-      // Ownership is checked at this boundary, before the registry mutates anything.
       if (!ownedRecords(registry, sessionId, owns).some((record) => record.id === id)) return false;
       return registry.stop(id);
     },
@@ -291,7 +273,6 @@ function goalRuntime(sessionId: string): GoalRuntime | undefined {
   if (!(slot instanceof Map)) return undefined;
   const runtime: RuntimeValue = slot.get(sessionId);
   if (!isGoalRuntime(runtime)) return undefined;
-  // The map key is publisher-supplied; trust only an entry that names the same owner.
   return runtime.owner === sessionId ? runtime : undefined;
 }
 
@@ -311,7 +292,6 @@ function createGoalSource(sessionId: string): GoalSource {
   };
 }
 
-/** Default sources read the live process-global slots on every call. */
 export function createProcessSources(): HostBridgeSources {
   return {
     inChildLoad: () => subagentRegistry()?.isChildSessionContext() === true,

@@ -1,4 +1,3 @@
-// oxlint anti-slop/no-runtime-typeof forbids typeof here, so these guards use instanceof, identity and a pi-schema string check.
 import { compile, str } from "@earendil-works/pi-schema";
 
 const stringCheck = compile(str()).check;
@@ -77,7 +76,6 @@ export function isSymbol<Value>(value: Value): value is Value & symbol {
   return boxed !== value && boxed instanceof Symbol;
 }
 
-/** Exact replacement for JavaScript's runtime `typeof` operator when its type name is data. */
 export function runtimeTypeOf<Value>(value: Value): RuntimeTypeName {
   if (value === undefined) return "undefined";
   if (isString(value)) return "string";

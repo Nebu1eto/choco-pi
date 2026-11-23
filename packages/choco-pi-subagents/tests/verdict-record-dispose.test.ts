@@ -1,9 +1,3 @@
-/**
- * After the manager is disposed (session shutdown, switch or replacement all
- * end in dispose()), a settle that finishes a verdict-recording await
- * publishes for internal waiters but calls no completion callback.
- * No assertion compares a record object.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -105,8 +99,6 @@ test("a running reviewer stopped then disposed during recording calls no complet
   const after = s.h.completions.length;
   await done;
   await flush();
-  // The runner path already settled internally on dispose (pre-existing guard):
-  // the run's promise resolved and the record left the manager unpublished.
   assert.equal(s.h.manager.getRecord(id) === undefined, true, "settled internally");
   assert.equal(s.h.completions.length - after, 0, "no completion callback after dispose");
 });

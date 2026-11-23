@@ -14,7 +14,6 @@ const CatalogVariantSchema = obj({
   runtimeId: str({ minLength: 1 }),
   modelEnum: opt(str()),
   maxOutputTokens: num({ minimum: 1 }),
-  /** ModelDetails.thinking_level: 1 LOW, 2 MEDIUM, 3 HIGH, 100 XHIGH. */
   wireThinkingLevel: opt(num()),
   thinkingBudget: opt(num()),
 });
@@ -47,18 +46,12 @@ const DISPLAY_LEVEL = /\s*\((?:minimal|low|medium|high|xhigh|extra high|max)\)\s
 const RUNTIME_ID = /^[a-z0-9][a-z0-9._-]*$/u;
 const DEFAULT_CONTEXT_WINDOW = 131_072;
 const DEFAULT_MAX_OUTPUT = 8192;
-/** ModelDetails.thinking_level for XHIGH; agy sends it as this number, it has no enum name. */
 const XHIGH_WIRE_LEVEL = 100;
 
-/**
- * Model ids never offered: the Antigravity Orchestrator is agy's client-side plan/execute loop
- * (gemini-4-neon-xhigh planning, gemini-4-hydrogen-xhigh executing), not a plain model.
- */
 export function isHiddenModelId(id: string): boolean {
   return id.startsWith("gemini-pro-orchestrator");
 }
 
-/** The catalog without hidden models, also for catalogs persisted before they were hidden. */
 export function withoutHiddenModels(catalog: AntigravityCatalog): AntigravityCatalog {
   const models = catalog.models.flatMap((model) => {
     if (isHiddenModelId(model.id)) return [];
@@ -120,7 +113,6 @@ function utilityIds(response: FetchAvailableModelsResponse): Set<string> {
   ]);
 }
 
-/** Whether a runtime id is an agent chat model a user may select. */
 function isSelectable(
   id: string,
   details: AntigravityModelDetails,
@@ -192,11 +184,6 @@ function variantOf(
   return variant;
 }
 
-/**
- * Builds the catalog from fetchAvailableModels: filters internal, disabled, tab and image ids,
- * collapses effort-suffixed runtime ids into one model per base id (groupedModels first, suffix
- * parsing otherwise) and keeps per-variant runtime metadata.
- */
 export function buildAntigravityCatalog(
   response: FetchAvailableModelsResponse,
 ): AntigravityCatalog {
@@ -276,7 +263,6 @@ function thinkingLevelMap(model: CatalogModel): PiThinkingLevelMap {
   };
 }
 
-/** Pi model configs: one per base id, api google-generative-ai, zero cost (subscription). */
 export function catalogToProviderModels(catalog: AntigravityCatalog): ProviderModelConfig[] {
   return catalog.models.map((model) => {
     const config: ProviderModelConfig = {
@@ -319,10 +305,6 @@ function fallbackModel(
   };
 }
 
-/**
- * The only hardcoded catalog: used until the first successful refresh (offline start, no
- * credential). Taken from the 2026-11 agy 1.5.14 capture; model enums are omitted on purpose.
- */
 export const FALLBACK_CATALOG: AntigravityCatalog = {
   models: [
     fallbackModel("gemini-4-neon", "Gemini 4 Neon", "gemini", 1_048_576, 262_144, [
@@ -350,11 +332,9 @@ export const FALLBACK_CATALOG: AntigravityCatalog = {
   webSearchModelIds: [],
 };
 
-// Pi loads extensions with separate module caches, but they share this global slot.
 const ACTIVE_CATALOG_KEY = Symbol.for("choco-pi.provider-google-antigravity.catalog");
 const catalogRegistry: object = globalThis;
 
-/** Replaces the catalog resolveRuntimeModel reads. Called by refreshModels on publication. */
 export function setActiveCatalog(catalog: AntigravityCatalog | undefined): void {
   if (catalog === undefined) {
     Reflect.deleteProperty(catalogRegistry, ACTIVE_CATALOG_KEY);
@@ -366,7 +346,6 @@ export function setActiveCatalog(catalog: AntigravityCatalog | undefined): void 
   }
 }
 
-/** The refreshed catalog, or the offline fallback before the first refresh. */
 export function getActiveCatalog(): AntigravityCatalog {
   const catalog =
     ACTIVE_CATALOG_KEY in catalogRegistry ? catalogRegistry[ACTIVE_CATALOG_KEY] : undefined;
@@ -375,7 +354,6 @@ export function getActiveCatalog(): AntigravityCatalog {
 
 export type AntigravityThinkingConfig = {
   includeThoughts: boolean;
-  /** Named levels as agy sends them; XHIGH goes out as the number 100, as agy sends it. */
   thinkingLevel?: "LOW" | "MEDIUM" | "HIGH" | typeof XHIGH_WIRE_LEVEL;
   thinkingBudget?: number;
 };
@@ -386,7 +364,6 @@ export interface RuntimeModelResolution {
   maxOutputTokens: number;
   modelEnum: string | undefined;
   family: AntigravityFamily;
-  /** The advertised level actually used, after clamping. */
   level: CatalogLevel | undefined;
 }
 
@@ -422,7 +399,6 @@ function thinkingConfigFor(
   return config;
 }
 
-/** Resolves a base model and level against a specific catalog. */
 export function resolveRuntimeModelIn(
   catalog: AntigravityCatalog,
   modelId: string,
@@ -446,10 +422,6 @@ export function resolveRuntimeModelIn(
   };
 }
 
-/**
- * Maps a Pi base model id and thinking level to the runtime id agy would send, its
- * thinkingConfig, output cap, model enum and family, from the persisted catalog metadata.
- */
 export function resolveRuntimeModel(
   modelId: string,
   level: RequestedThinkingLevel | undefined,

@@ -3,9 +3,7 @@ import { createWriteStream, type WriteStream } from "node:fs";
 import type { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
 
-/** Upper bound for every harness wait that follows a child's exit or a stop request. */
 export const WAIT_BOUND_MS = 5000;
-/** Delay between SIGTERM and SIGKILL. */
 export const KILL_GRACE_MS = 2000;
 
 export type Bounded<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -18,7 +16,6 @@ async function settle<T>(work: Promise<T>): Promise<Bounded<T>> {
   }
 }
 
-/** Resolve with the outcome of `work`, or a timeout error after `ms`; never rejects or hangs. */
 export async function within<T>(work: Promise<T>, ms: number): Promise<Bounded<T>> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<Bounded<T>>((resolve) => {
@@ -41,10 +38,6 @@ export interface Exit {
   error?: string;
 }
 
-/**
- * Settles on the first `exit` or spawn `error`. Attach immediately after spawn:
- * a late attachment misses an `exit` that was already emitted.
- */
 export function exitOf(child: ChildProcess): Promise<Exit> {
   if (exited(child)) return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
   return new Promise((resolve) => {
@@ -61,12 +54,9 @@ function signal(child: ChildProcess, name: NodeJS.Signals): void {
   if (exited(child) || child.pid === undefined) return;
   try {
     child.kill(name);
-  } catch {
-    /* already gone; the exit wait decides */
-  }
+  } catch {}
 }
 
-/** SIGTERM now and SIGKILL after `graceMs` unless the child exits first. Returns a cancel. */
 export function escalate(child: ChildProcess, graceMs = KILL_GRACE_MS): () => void {
   signal(child, "SIGTERM");
   const timer = setTimeout(() => signal(child, "SIGKILL"), graceMs);
@@ -75,10 +65,6 @@ export function escalate(child: ChildProcess, graceMs = KILL_GRACE_MS): () => vo
   return clear;
 }
 
-/**
- * Stop a child with SIGTERM, then SIGKILL after `graceMs`, waiting at most `boundMs` for
- * `exit`. Returns a harness-defect description instead of hanging when the bound expires.
- */
 export async function stopProcess(
   child: ChildProcess,
   label: string,
@@ -93,11 +79,6 @@ export async function stopProcess(
   return result.ok ? undefined : `${label} did not exit after SIGTERM/SIGKILL (${result.error})`;
 }
 
-/**
- * Wait for the child's piped output streams to end so no chunk arrives after the sinks close.
- * A descendant that inherited the pipes can keep them open; on timeout the streams are
- * destroyed and a defect is returned.
- */
 export async function drainOutput(
   child: ChildProcess,
   label: string,
@@ -120,11 +101,6 @@ export interface Sink {
   errors: string[];
 }
 
-/**
- * File sink whose errors are recorded instead of thrown. Callers write chunks explicitly
- * rather than `pipe()`: a pipe ends the sink on source EOF, which emits `finish` before a
- * later `once(sink, "finish")` can observe it.
- */
 export function sink(path: string): Sink {
   const errors: string[] = [];
   const stream = createWriteStream(path);
@@ -132,7 +108,6 @@ export function sink(path: string): Sink {
   return { stream, errors };
 }
 
-/** End a sink and wait (bounded) until it is flushed; resolves immediately if already done. */
 export async function closeSink(
   target: Sink,
   label: string,

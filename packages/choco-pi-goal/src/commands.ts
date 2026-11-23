@@ -43,11 +43,6 @@ function queueGoalUserTurn(pi: GoalCommandPi, goal: ThreadGoal): void {
   pi.sendUserMessage(compactContinuationPrompt(goal), { deliverAs: "followUp" });
 }
 
-/**
- * Hands the objective to the agent instead of storing the typed words as the
- * goal. `/goal <objective>` absorbed the retired `/create-goal` prompt, so the
- * agent drafts the full completion contract and calls the goal creation tool.
- */
 function queueGoalDrafting(pi: GoalCommandPi, task: string): void {
   pi.sendUserMessage(goalObjectivePrompt(task), { deliverAs: "followUp" });
 }

@@ -1,5 +1,3 @@
-// The shared changes view (lib/changes/view): the options and key table the
-// pane leaves at their defaults, exercised on a real store.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
@@ -40,7 +38,6 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 
 type Cleanup = { after(fn: () => void | Promise<void>): void };
 
-/** .env, a.ts and b.ts modified; returns the view over a real store. */
 async function mount(t: Cleanup, options: Partial<ChangesViewOptions> = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "changes-view-")));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -100,7 +97,6 @@ test("the pane's key table binds each key to exactly one action", () => {
   assert.equal(actionFor(PANE_KEYS, "\u001b[D"), "olderTurn");
   assert.equal(actionFor(PANE_KEYS, "\u001b[C"), "newerTurn");
   assert.equal(actionFor(PANE_KEYS, "\u001b[1;2D"), "back", "Shift+← still leaves the pane");
-  // Copying is Cmd+C on macOS, where Ctrl+C stays the interrupt key, and Ctrl+C elsewhere.
   assert.deepEqual(copyKeyFor("darwin"), { key: "super+c", label: "Cmd+C" });
   assert.deepEqual(copyKeyFor("linux"), { key: "ctrl+c", label: "Ctrl+C" });
   const CMD_C = "\u001b[99;9u";
@@ -182,8 +178,6 @@ test("fileOrder orders the list and selection; rowBadges add to the row", async 
   assert.match(row(), /▲9/, "a changed badge is not served from the row cache");
 });
 
-/* ------------------------------------------------- the review's options */
-
 const H1: DiffHunk = {
   id: "h1",
   header: "@@ -1,3 +1,3 @@ first",
@@ -227,7 +221,6 @@ const FILES: DiffFile[] = [
   { path: "b.ts", kind: "modified", hunks: [H3], additions: 1, deletions: 1 },
 ];
 
-/** Inverted rows read as <…>, so a selection is visible in plain text. */
 const MARKING: PaneStyler = { ...plainPaneStyler, inverse: (text) => `<${text}>` };
 
 function fileNamed(path: string): DiffFile {
@@ -236,7 +229,6 @@ function fileNamed(path: string): DiffFile {
   return found;
 }
 
-/** A line-cursor view over an in-memory store, every file expanded and loaded. */
 async function lineView(options: Partial<ChangesViewOptions> = {}): Promise<ChangesView> {
   const summaries: FileSummary[] = FILES.map((file) => ({
     path: file.path,
@@ -255,7 +247,6 @@ async function lineView(options: Partial<ChangesViewOptions> = {}): Promise<Chan
     keyHint: "hint",
     helpLines: [],
     cursor: "line",
-    // The review's movement: j/k and the arrows both walk lines.
     keys: {
       ...PANE_KEYS,
       down: ["j", { key: "down" }],
@@ -297,9 +288,7 @@ async function lineView(options: Partial<ChangesViewOptions> = {}): Promise<Chan
 
 const SHIFT_DOWN = "\u001b[1;2B";
 const ENTER = "\r";
-/** Word-level changes are inverted too, so marks are dropped before matching text. */
 const unmarked = (line: string) => line.replaceAll(/[<>]/gu, "");
-/** Rows inverted whole (from the gutter or the file row on), as the cursor draws them. */
 const inverted = (view: ChangesView, width = 80) =>
   view
     .renderBody(width, true)
@@ -447,12 +436,9 @@ test("expandContext, annotations, rowDetails and trailers: host rows sit where t
   assert.doesNotMatch(body(view), /COMMENT/, "a folded hunk's annotations are not drawn");
 });
 
-/* --------------------------------------------- the pane's cursor and mouse */
-
 const DOWN = "\u001b[B";
 const UP = "\u001b[A";
 
-/** The line view as the /diff pane configures it, recording what `a` asks about. */
 async function paneLineView() {
   const asked: AskTarget[] = [];
   const view = await lineView({
@@ -471,7 +457,6 @@ async function paneLineView() {
       ask: (target) => asked.push(target),
     },
   });
-  /** The body row showing `pattern`, as just drawn. */
   const rowOf = (pattern: RegExp) => {
     const row = view.renderBody(80, true).findIndex((line) => pattern.test(unmarked(line)));
     assert.ok(row >= 0, `no row matches ${pattern}`);
@@ -585,14 +570,12 @@ test("sticky rows: an open file's row, then its hunk's header, stay pinned; a cl
     },
   });
 
-  // A press on the first unpinned row puts the cursor there; up moves it under the pins.
   top = file + 3;
   view.stickyRows(top, 6);
   assert.equal(view.pointer({ kind: "press", row: top + 2 }), true);
   view.handleKey(UP);
   assert.equal(top, file + 2, "scrolled so the line shows below both pinned rows");
 
-  // A click on the pinned hunk header: the hunk is selected and its header shown, not folded.
   top = file + 3;
   view.stickyRows(top, 6);
   assert.equal(
@@ -605,7 +588,6 @@ test("sticky rows: an open file's row, then its hunk's header, stay pinned; a cl
   assert.equal(view.foldedHunks.has("h1"), false, "still open");
   assert.equal(top, file, "its header shows below the file's row");
 
-  // A click on the pinned file row: the file is selected and its own row scrolled into view, not folded.
   top = file + 3;
   view.stickyRows(top, 6);
   assert.equal(view.pointer({ kind: "click", row: top }), true);
@@ -651,8 +633,6 @@ test("hunks fold: Enter or a click on a header folds and unfolds its hunk; the c
   assert.equal(view.expanded.has("a.ts"), false, "Enter on a line still collapses its file");
 });
 
-/* ------------------------------------------- a cursor move is cheap work */
-
 test("moving the cursor or the selection never renders a file's hunks again; a fold or new contents do", async () => {
   let renders = 0;
   let frames = 0;
@@ -682,7 +662,6 @@ test("moving the cursor or the selection never renders a file's hunks again; a f
   const drawn = renders;
   assert.ok(drawn > 0);
 
-  // Keys, a press and drags move the cursor over both files' lines.
   for (const key of [DOWN, DOWN, DOWN, SHIFT_DOWN, SHIFT_DOWN, "n", DOWN, "j", "k"]) {
     counted.handleKey(key);
     counted.renderBody(80, true);
@@ -693,7 +672,6 @@ test("moving the cursor or the selection never renders a file's hunks again; a f
   assert.equal(renders, drawn, "the hunks were rendered once");
   assert.equal(inverted(counted).length, 3, "and the selection is drawn on them");
 
-  // A drag that leaves the selection as it was (the pointer moved inside a row) asks for no frame.
   frames = 0;
   counted.pointer({ kind: "drag", row: rowOf(/keep three/) });
   counted.pointer({ kind: "drag", row: rowOf(/keep three/) });

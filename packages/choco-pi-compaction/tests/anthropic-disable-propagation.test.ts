@@ -1,16 +1,3 @@
-/**
- * Disable propagation (D7) through a real `createAgentSession` (installed
- * Anthropic adapter behind the captured provider stream, fake transports, no
- * network), background on with the Anthropic and text lanes:
- * - a replay rejection cancels the outstanding `anthropic-native` candidate
- *   (`disabled`), threshold work moves to the text lane, and the journal has
- *   one `disable` and one `yield` record;
- * - a ready native candidate prepared before the rejection is never adopted;
- * - a rejection that resolves after a `model_select` rebind belongs to a
- *   stale binding: it neither disables nor journals (F2);
- * - the background lane uses the registration's one capability gate, so a
- *   foreground failure streak cools it too, and a gate cooldown is journaled.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -168,7 +155,6 @@ function deferred(): Deferred {
   return { promise, release };
 }
 
-/** Resolve on `gate`, or reject like fetch when `signal` aborts first. */
 function heldUntil(gate: Promise<void>, signal: AbortSignal | undefined): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const abort = (): void => reject(new DOMException("aborted", "AbortError"));
@@ -354,7 +340,6 @@ function settled(status: CoordinatorStatus): boolean {
   return status.state !== "queued" && status.state !== "preparing";
 }
 
-/** Seed turns, commit one native checkpoint, then answer two replayed turns. */
 async function seedCheckpoint(rig: Rig): Promise<void> {
   for (let turn = 0; turn < 3; turn++) await rig.session.prompt(`DISABLE-SEED-${turn} ${PADDING}`);
   await requestNative(rig);
@@ -367,7 +352,6 @@ async function seedCheckpoint(rig: Rig): Promise<void> {
   await rig.session.prompt(`DISABLE-AFTER-1 ${PADDING}`);
 }
 
-/** Foreground script: answers text with `tokens` of usage; `reject` answers the next request with a replay rejection. */
 function foregroundScript() {
   const state = {
     reject: false,
@@ -410,20 +394,17 @@ test(
 
       script.state.reject = true;
       await rig.session.prompt(`DISABLE-REJECTED ${PADDING}`);
-      // (a) The outstanding native candidate was cancelled as `disabled`.
       await waitFor("the cancelled candidate", () => settled(coordinatorOf(rig).status()));
       const cancelled = coordinatorOf(rig).status();
       assert.equal(cancelled.state, "canceled", JSON.stringify(cancelled));
       assert.equal(cancelled.reason, "disabled");
       assert.equal(cancelled.backendId, ANTHROPIC_BACKEND_ID);
-      // (e) One disable notice.
       const disableNotices = rig.notices.filter((notice) =>
         /server-side compaction is off/u.test(notice),
       );
       assert.equal(disableNotices.length, 1, JSON.stringify(rig.notices));
       assert.ok(disableNotices[0]?.includes(REJECTION_CODE));
 
-      // (b) The next threshold request selects the text lane; no native request is made.
       const laneAfterDisable = rig.lane.count;
       script.state.tokens = 150_000;
       await rig.session.prompt(`DISABLE-HIGH ${PADDING}`);
@@ -432,7 +413,6 @@ test(
       const thresholdStatus = coordinatorOf(rig).status();
       assert.equal(thresholdStatus.backendId, "text", JSON.stringify(thresholdStatus));
 
-      // (d) One `disable` and one `yield` record for the disabled lane.
       const all = records(rig);
       const disables = all.filter((record) => record.event === "disable");
       assert.equal(disables.length, 1, JSON.stringify(all));
@@ -473,11 +453,9 @@ test(
       await seedCheckpoint(rig);
       hold = deferred();
       const laneBefore = rig.lane.count;
-      // Frozen while idle (the last answered request holds the cut), answered later.
       await requestNative(rig);
       await waitFor("the held native request", () => rig.lane.count === laneBefore + 1);
       const inFlight: string[] = [];
-      // The candidate becomes ready while the rejected request is in flight.
       script.state.beforeReject = async () => {
         try {
           hold.release();
@@ -490,12 +468,10 @@ test(
       await rig.session.prompt(`DISABLE-REJECTED ${PADDING}`);
       assert.deepEqual(inFlight, []);
       assert.equal(rig.lane.count, laneBefore + 1, "the candidate was prepared");
-      // The boundary after the rejected turn did not adopt it.
       const status = coordinatorOf(rig).status();
       assert.equal(status.state, "canceled", JSON.stringify(status));
       assert.equal(status.reason, "disabled");
       assert.equal(compactions(rig.manager).length, 1, "only the first checkpoint exists");
-      // A later idle input does not adopt it either.
       await rig.session.prompt(`DISABLE-LATER ${PADDING}`);
       assert.equal(compactions(rig.manager).length, 1);
     } finally {
@@ -522,7 +498,6 @@ test(
       script.state.reject = true;
       const rejected = rig.session.prompt(`DISABLE-STALE ${PADDING}`);
       await sent.promise;
-      // Rebind: a new model is a new owner and a new replay binding.
       await rig.session.setModel(OTHER_MODEL);
       hold.release();
       await rejected;
@@ -537,7 +512,6 @@ test(
         "no disable record for the stale binding",
       );
 
-      // Back on the checkpoint's model: a fresh rejection on the new binding disables once.
       await rig.session.setModel(MODEL);
       script.state.beforeReject = async () => undefined;
       script.state.reject = true;
@@ -561,7 +535,6 @@ test(
     const script = foregroundScript();
     const rig = await createRig({
       foreground: script.respond,
-      // A refusal is not transient: the first failure starts a cooldown.
       lane: () => reply({ type: "text", text: "no" }, "refusal"),
       sidecar: { cooldownMs: 60_000, text: false },
     });
@@ -631,16 +604,12 @@ test("the background lane uses the shared gate: a foreground 529 streak cools it
   const native = sharedBackends.get(ANTHROPIC_BACKEND_ID);
   assert.ok(native, "the native backend resolved");
   assert.deepEqual(await native.capability(scope), { supported: true });
-  // The foreground handler records its failures on the same gate instance.
   for (let attempt = 0; attempt < 3; attempt++) shared.recordFailure(scope, "529");
-  // The gate reports the cooled reason itself.
   assert.deepEqual(await native.capability(scope), { supported: false, reason: "529" });
-  // A private gate (partial test runtimes only) would not have seen the streak.
   const privateBackends = await resolveBackends(spec(undefined), {});
   assert.deepEqual(await privateBackends.get(ANTHROPIC_BACKEND_ID)?.capability(scope), {
     supported: true,
   });
-  // A replay-disabled session reports the lane unsupported.
   disabled = true;
   assert.deepEqual(await privateBackends.get(ANTHROPIC_BACKEND_ID)?.capability(scope), {
     supported: false,

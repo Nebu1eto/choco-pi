@@ -2,11 +2,6 @@ import { includePropertiesWhen } from "../clients/optional-properties.ts";
 import type { ProtocolDictionary } from "./runtime-values.ts";
 import type { RuntimeValue } from "./runtime-values.ts";
 import { isRuntimeNumber, isRuntimeString } from "./runtime-values.ts";
-/**
- * ast_grep_search tool definition
- *
- * Extracted from index.ts for maintainability.
- */
 
 import { arr, bool, num, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import { hostParams } from "./schema-bridge.ts";
@@ -25,12 +20,6 @@ import { compactRenderResult } from "./render-compact.ts";
 import { combineAbortSignals } from "../clients/deadline-utils.ts";
 import { LANGUAGES } from "./shared.ts";
 
-/**
- * Build the agent-facing error text, appending a remediation hint derived from
- * the same classification we log. The two curated spawn errors return null from
- * the hint map (their message already carries guidance), so this never doubles
- * up — it only adds value for the raw-stderr categories (#ast-grep tool errors).
- */
 function errorTextWithHint(raw: string): string {
   const hint = astGrepRemediationHint(classifyAstGrepError(raw));
   return hint ? `Error: ${raw}\n\n${hint}` : `Error: ${raw}`;
@@ -45,7 +34,6 @@ export function _telemetryClassificationErrorForTest(raw: string | undefined): s
   return raw?.replace(/\0/g, "");
 }
 
-/** Map matches to the 1-based line spans shown, for read-guard registration (#169). */
 function toSearchReads(matches: AstGrepMatch[]): SearchReadLocation[] {
   const out: SearchReadLocation[] = [];
   for (const m of matches) {
@@ -60,21 +48,11 @@ function toSearchReads(matches: AstGrepMatch[]): SearchReadLocation[] {
   return out;
 }
 
-// Default and ceilings for agent-facing search inputs. `max_matches` lets a caller
-// trade volume for completeness within these bounds (the default preserves the
-// historical page size). Explicit path lists are capped like the other bounded
-// multi-file tools, while a single directory path remains a valid project scope.
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 200;
 const MAX_PATHS = 200;
 const AST_GREP_SEARCH_TIMEOUT_MS = 30_000;
 
-/**
- * Compact, file-grouped rendering for high-volume searches (refs #345). Instead
- * of each match's full body, emit one line per file with its 1-based
- * `L<line>:<col>` locations — a distribution view that drills in via the read
- * slices already surfaced in `details.matchLocations`/`searchReads`.
- */
 function formatGroupedByFile(matches: AstGrepMatch[]): string {
   const byFile = new Map<string, AstGrepMatch[]>();
   for (const m of matches) {
@@ -128,7 +106,7 @@ function patternValidationError(pattern: string): string | null {
 function toLineSpan(
   match: AstGrepMatch,
 ): { file: string; startLine: number; endLine: number } | null {
-  const start = match.range?.start?.line; // ast-grep ranges are 0-based
+  const start = match.range?.start?.line;
   if (!match.file || !isRuntimeNumber(start)) return null;
   const end = match.range?.end?.line;
   return {
@@ -204,10 +182,6 @@ function looksLikeRuleYamlOrPlainText(pattern: string): boolean {
   return false;
 }
 
-/**
- * Detect common mistakes in ast-grep patterns and return a hint.
- * Helps the LLM self-correct when a search returns zero matches.
- */
 function getPatternHint(pattern: string, lang: string, selector?: string): string | null {
   const src = pattern.trim();
 
@@ -215,7 +189,6 @@ function getPatternHint(pattern: string, lang: string, selector?: string): strin
     return `Hint: selector=${JSON.stringify(selector)} narrows the AST node kind searched; it does not extract fields from matches. Retry once without selector, or use a selector that is the outer node kind you want to match.`;
   }
 
-  // --- regex misuse ---
   if (/\\[wWdDsSbB]/.test(src)) {
     return 'Hint: "\\w", "\\d", "\\s", "\\b" are regex escapes. ast-grep matches AST nodes, not text — use $VAR for identifiers, $$$ for node lists, or switch to grep for text search.';
   }
@@ -229,7 +202,6 @@ function getPatternHint(pattern: string, lang: string, selector?: string): strin
     return 'Hint: "|" is regex alternation and does NOT work in ast-grep patterns. Options: (a) fire one ast_grep_search per alternative, or (b) switch to grep with a regex pattern like "foo|bar".';
   }
 
-  // --- language-specific mistakes ---
   if (lang === "python") {
     if ((src.startsWith("def ") || src.startsWith("async def ")) && src.endsWith(":")) {
       return `Hint: Remove trailing colon from Python patterns. Try: "${src.slice(0, -1)}"`;
@@ -410,8 +382,6 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
       _onUpdate: RuntimeValue,
       ctx: { cwd?: string; signal?: AbortSignal },
     ) {
-      // Escape aborts the turn via ctx.signal; the positional signal is the
-      // tool-call one. Honor both so a broad search cancels on Escape.
       const abortSignal = combineAbortSignals(_signal, ctx.signal);
       const startedAt = Date.now();
       const deadlineAt = startedAt + AST_GREP_SEARCH_TIMEOUT_MS;
@@ -484,8 +454,6 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
             durationMs: Date.now() - startedAt,
           });
         } catch (err) {
-          // Telemetry must never break the tool path. Surface failures through
-          // Node's warning channel instead of console output.
           try {
             process.emitWarning(`ast_grep_search telemetry failed: ${err}`, {
               code: "CHOCO_PI_LSP_AST_GREP_SEARCH_TELEMETRY_FAILED",
@@ -604,11 +572,6 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
           };
         }
 
-        // #747/#250: only guard the DEFAULTED-cwd case. Explicit `paths` are
-        // what the user asked to search — never second-guessed. But when no
-        // paths are given we fall back to `ctx.cwd`, and if that resolves at or
-        // above $HOME a full structural scan of the entire home tree would be
-        // spawned. Refuse and tell the caller how to scope it.
         if (!paths?.length && isAtOrAboveHomeDir(ctx.cwd || ".")) {
           logOutcome("error", {
             errorRaw: "defaulted cwd resolves at or above home directory",
@@ -657,7 +620,6 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
           ),
         );
 
-        // Phase 3: synthesize YAML from structural-intent params
         let effectiveRule = hasRawRule ? rawRule : undefined;
         if (
           !effectiveRule &&
@@ -736,7 +698,6 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
           };
         }
 
-        // Phase 4: raw YAML rule passthrough — routes through sg scan --config
         if (effectiveRule && effectiveRule.trim().length > 0) {
           if (abortSignal?.aborted) return abortError();
           const ruleResult = await astGrepClient.searchWithRule(
@@ -782,10 +743,7 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
               hasMore,
               skip: skipOffset,
               groupByFile: groupByFile === true,
-              // Lines shown to the agent — the read-guard registers these so a
-              // follow-up edit to a match isn't blocked (#169). 1-based.
               searchReads: toSearchReads(page),
-              // Agent-facing follow-up handles for bounded context reads.
               matchLocations,
               suggestedDump: page.length === 0 ? suggestedDump(lang) : undefined,
             },
@@ -810,7 +768,6 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
           };
         }
 
-        // Apply skip-based pagination over the full in-memory match list.
         const afterSkip = result.matches.slice(skipOffset);
         const page = afterSkip.slice(0, PAGE_SIZE);
         const hasMore = afterSkip.length > PAGE_SIZE || result.truncated;
@@ -839,10 +796,7 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
             hasMore,
             skip: skipOffset,
             groupByFile: groupByFile === true,
-            // Lines shown to the agent — registered as reads by the read-guard
-            // so a follow-up edit to a match isn't blocked (#169). 1-based.
             searchReads: toSearchReads(page),
-            // Agent-facing follow-up handles for bounded context reads.
             matchLocations,
             suggestedDump: page.length === 0 ? suggestedDump(lang) : undefined,
           },

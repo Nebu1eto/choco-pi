@@ -1,7 +1,3 @@
-/**
- * session-execution.ts — Drives child session prompts, resumes, steering, and event/compaction tracking.
- */
-
 import type {
   AgentSession,
   AgentSessionEvent,
@@ -30,7 +26,6 @@ import {
   resolveAgentMaxTurns,
 } from "./turn-limit.ts";
 
-/** Execute the initial prompt on a prepared child session and collect its result. */
 export async function executeChildSession(
   ctx: ExtensionContext,
   type: SubagentType,
@@ -115,9 +110,6 @@ export interface ResumeResult {
   steered?: boolean;
 }
 
-/**
- * Send a new prompt to an existing session (resume).
- */
 export async function resumeAgent(
   session: AgentSession,
   prompt: string,
@@ -133,9 +125,6 @@ export async function resumeAgent(
     signal?: AbortSignal;
   } = {},
 ): Promise<ResumeResult> {
-  // Boundary for the history fallback: the session already holds prior turns,
-  // so only assistant text produced by THIS resume prompt counts as its output
-  // — a failed resume must not surface the previous turn's answer (#144).
   const startLen = session.messages.length;
   const maxTurns = normalizeMaxTurns(options.maxTurns);
   const turnLimit =
@@ -170,14 +159,10 @@ export async function resumeAgent(
       : () => {};
   const childCompaction = getChildCompactionBridge(session);
   const stopChildAdoptions = childCompaction?.onAdoption((info) => options.onCompaction?.(info));
-  // Fleet view compaction window, scoped to this run.
   const stopCompactionTracking = trackSessionCompaction(session);
 
   try {
-    // A compaction may still run on the settled child (an agent_settled `ctx.compact()`);
-    // Pi rejects a prompt during one, so let it commit before reattaching and prompting.
     if (!options.signal?.aborted && session.isCompacting) await session.waitForIdle();
-    // A canceled or timed-out run quiesced the attachment; resume gets a fresh coordinator.
     if (!options.signal?.aborted) await childCompaction?.reattach();
     if (!options.signal?.aborted && session.isCompacting) await session.waitForIdle();
     if (!options.signal?.aborted) await session.prompt(prompt);
@@ -206,10 +191,6 @@ export async function resumeAgent(
   return result;
 }
 
-/**
- * Send a steering message to a running subagent.
- * The message will interrupt the agent after its current tool execution.
- */
 export async function steerAgent(session: AgentSession, message: string): Promise<void> {
   await session.steer(message);
 }

@@ -1,7 +1,6 @@
 import { lstat, open, readlink } from "node:fs/promises";
 import { isString } from "../../runtime-values.ts";
 
-/** Bytes inspected for a NUL byte when deciding whether a file is binary. */
 export const BINARY_SNIFF_BYTES = 8000;
 
 export type WorktreeRead =
@@ -24,10 +23,6 @@ function asError(error: Error | string): Error {
   return error instanceof Error ? error : new Error(error);
 }
 
-/**
- * Cheap change signature for one worktree path: size, mtime, ctime, and mode.
- * Used by the poll fingerprint and the body cache, never as content.
- */
 export async function statSignature(absolutePath: string): Promise<string> {
   try {
     const stats = await lstat(absolutePath);
@@ -37,7 +32,6 @@ export async function statSignature(absolutePath: string): Promise<string> {
   }
 }
 
-/** Size of a regular file or symlink, or undefined when absent. */
 export async function worktreeSize(absolutePath: string): Promise<number | undefined> {
   try {
     const stats = await lstat(absolutePath);
@@ -47,11 +41,6 @@ export async function worktreeSize(absolutePath: string): Promise<number | undef
   }
 }
 
-/**
- * Read one worktree file the way git would store it: a symlink becomes its
- * target text, a regular file is read up to `maxBytes`, and a NUL byte in the
- * first chunk marks it binary. Never reads more than `maxBytes + 1` bytes.
- */
 export async function readWorktreeFile(
   absolutePath: string,
   maxBytes: number,
@@ -88,7 +77,6 @@ export async function readWorktreeFile(
   }
 }
 
-/** Line count git would report for an added file with this content. */
 export function countLines(content: Buffer): number {
   if (content.length === 0) return 0;
   let lines = 0;
@@ -100,7 +88,6 @@ export function countLines(content: Buffer): number {
   return content[content.length - 1] === 10 ? lines : lines + 1;
 }
 
-/** Map with bounded concurrency, preserving input order. */
 export async function mapLimited<Item, Result>(
   items: readonly Item[],
   concurrency: number,

@@ -12,7 +12,6 @@ import type {
 } from "../src/pi-rpc/protocol.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 
-/** A session manager that hands out one prepared session and records closures. */
 class SingleSessionManager implements SessionManagerLike {
   readonly closeCalls: string[] = [];
 
@@ -47,7 +46,6 @@ class SingleSessionManager implements SessionManagerLike {
   async shutdownAll(): Promise<void> {}
 }
 
-/** A Pi process fake that reports no configured models. */
 class NoModelsProcess implements PiRpcProcessLike {
   onEvent(_handler: (ev: PiRpcEvent) => void): () => void {
     return () => {};
@@ -79,8 +77,6 @@ test("PiAcpAgent: newSession throws AUTH_REQUIRED when pi reports zero available
 
   const sessions = new SingleSessionManager(session);
   const agent = new PiAcpAgent(asAgentConn(conn), {});
-  // `sessions` is a private implementation detail of `PiAcpAgent`; `Object.assign`
-  // installs the fake through the same property without weakening any declared type.
   Object.assign(agent, { sessions });
 
   let threw = false;

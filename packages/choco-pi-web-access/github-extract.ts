@@ -167,11 +167,9 @@ function normalizePositiveNumber(value: ConfigValue | undefined, fallback: numbe
 
 function expandPath(value: string): string {
   let expanded = value;
-  // Expand ~ at the start of the path
   if (expanded.startsWith("~/") || expanded === "~") {
     expanded = expanded.replace(/^~/, process.env.HOME || process.env.USERPROFILE || "");
   }
-  // Expand environment variables like $HOME, $USER, etc.
   expanded = expanded.replace(/\$([A-Z_][A-Z0-9_]*)/gi, (match, varName) => {
     return process.env[varName] ?? match;
   });
@@ -354,15 +352,11 @@ function terminateProcessTree(child: ChildProcess): void {
   }
 
   try {
-    // Clone commands run in their own process group so git/gh helpers cannot
-    // survive a timeout or cancellation and keep reading from the host TTY.
     process.kill(-pid, "SIGTERM");
   } catch {
     child.kill();
   }
 
-  // A credential helper may handle or ignore SIGTERM. Escalate against the
-  // entire process group so neither git nor any descendant can block forever.
   const forceKill = setTimeout(() => {
     try {
       process.kill(-pid, "SIGKILL");
@@ -822,7 +816,6 @@ export async function extractGitHub(
     return null;
   }
 
-  // Re-check: another concurrent caller may have started a clone while we awaited the size check
   const cachedAfterSizeCheck = cloneCache.get(key);
   if (cachedAfterSizeCheck) {
     const cachedResult = await awaitCachedClone(

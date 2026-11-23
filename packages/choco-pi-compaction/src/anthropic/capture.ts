@@ -1,24 +1,3 @@
-/**
- * Wire-faithful transport capture for the Anthropic native lane.
- *
- * A provider registered through the public `registerProvider` `streamSimple`
- * hook delegates to the INSTALLED Anthropic adapter and passes a capturing
- * `fetch`. That fetch sees the serialized body after every
- * `before_provider_request` handler, so it is the only trustworthy view of
- * what is sent (a handler-level observer can be overridden by a later handler).
- *
- * Each captured request is mapped to branch entry IDs by aligning wire content
- * keys (text, tool_use id, tool_result id, image data, compaction signature)
- * with the session projection at request time. Keys no entry produced are
- * reported as unmapped and keys several entries could own are reported as
- * ambiguous; neither is silently attributed. Captures hold the request body
- * (conversation content, never credentials): only the `anthropic-beta` header
- * and the endpoint without its query are kept from the request envelope.
- *
- * Transport checks registered for the current provider call (replay
- * verification) run before the request leaves the process; a failed check
- * refuses the request (fail closed) and records a reason code.
- */
 import type {
   Api,
   AssistantMessageEventStream,
@@ -54,13 +33,6 @@ import {
   storeBounded,
 } from "../shared/lane-runtime.ts";
 
-// ---------------------------------------------------------------------------
-// Wire model
-// ---------------------------------------------------------------------------
-
-// Each wire object is its named fields plus a JSON value for every other key
-// (the previous `Intersect([Object, Record(String, JsonValue)])`); a schema
-// embedding these is wrapped with `withJsonValueDefs` where it is compiled.
 const wireBlock = jsonRest({ type: str() });
 const wireMessage = jsonRest({
   role: str(),
@@ -70,9 +42,7 @@ const wireBody = jsonRest({
   model: nonEmptyStr(),
   messages: arr(wireMessage),
 });
-/** Wire objects keep every provider field as JSON; only the named fields are required. */
 export const WireBlockSchema = withJsonValueDefs(wireBlock);
-/** The un-wrapped block schema, for embedding in a root wrapped with `withJsonValueDefs`. */
 export const wireBlockMember = wireBlock;
 export const WireBodySchema = withJsonValueDefs(wireBody);
 export type WireBlock = Static<typeof wireBlock>;
@@ -129,10 +99,6 @@ interface BindingDigests {
   readonly toolsDigest: string;
 }
 
-/**
- * Digests of the inputs preserved thinking is bound to: `system` and the tools
- * not marked `defer_loading: true` (compaction-thinking-blocks doc).
- */
 export function bindingDigests(body: WireBody): BindingDigests {
   const tools = Array.isArray(body.tools)
     ? body.tools.filter((tool) => !isDeferredTool(tool))
@@ -151,12 +117,7 @@ export function countCompactionBlocks(messages: readonly WireMessage[]): number 
   );
 }
 
-// ---------------------------------------------------------------------------
-// Key alignment (wire message <-> projected entry)
-// ---------------------------------------------------------------------------
-
 export type WireKeyKind = "text" | "tool_use" | "tool_result" | "image" | "compaction";
-/** Non-secret reference to a wire key: kind plus digest prefix, never raw content. */
 interface WireKeyRef {
   readonly kind: WireKeyKind;
   readonly digest: string;
@@ -176,7 +137,6 @@ export function wireKey(kind: WireKeyKind, value: string): WireKey {
 
 const key = wireKey;
 
-/** The installed adapter's tool-call ID normalization (Anthropic ID pattern and length). */
 function normalizeToolCallId(id: string): string {
   return id.replace(/[^a-zA-Z0-9_-]/gu, "_").slice(0, 64);
 }
@@ -185,7 +145,6 @@ function isBlank(text: string): boolean {
   return text.trim().length === 0;
 }
 
-/** Keys of one transport message. Thinking and system content are deliberately unkeyed. */
 function wireMessageKeys(message: WireMessage): WireKey[] {
   if (message.role === "system") return [];
   if (!Array.isArray(message.content)) {
@@ -201,7 +160,6 @@ function wireMessageKeys(message: WireMessage): WireKey[] {
   });
 }
 
-/** Keys the installed adapter derives from one model-visible message. */
 function llmMessageKeys(message: Message): WireKey[] {
   if (message.role === "user") {
     if (!Array.isArray(message.content)) {
@@ -228,8 +186,6 @@ function llmMessageKeys(message: Message): WireKey[] {
 function projectedEntryKeys(entry: ProjectedSessionEntry): WireKey[] {
   const keys = convertToLlm(entry.messages).flatMap(llmMessageKeys);
   const source = entry.sourceEntry;
-  // Only the newest compaction is projected with messages (and sent as a block);
-  // an older one retained in the kept range is invisible and absent from the wire.
   if (
     source.type === "compaction" &&
     entry.messages.length > 0 &&
@@ -242,15 +198,12 @@ function projectedEntryKeys(entry: ProjectedSessionEntry): WireKey[] {
 
 interface ProjectionRef {
   readonly entryId: string;
-  /** The entry contributes at least one model-visible message. */
   readonly visible: boolean;
-  /** At least one of its messages produces an alignment key. */
   readonly keyed: boolean;
 }
 
 interface AmbiguousKey {
   readonly key: WireKeyRef;
-  /** Entries that could own the key at this position; empty owner order means out of order. */
   readonly candidates: readonly string[];
   readonly outOfOrder: boolean;
 }
@@ -268,38 +221,18 @@ export interface WireMapping {
   readonly messages: readonly WireMessageMapping[];
 }
 
-/** One transport message (or item) reduced to its role and alignment keys. */
 export interface KeyedWireMessage {
   readonly role: string;
   readonly keys: readonly WireKey[];
-  /**
-   * This wire message continues the previous one's source turn (Responses
-   * input splits one assistant turn into reasoning, message and call items),
-   * so it may map to the same projected entry instead of a strictly later one.
-   */
   readonly continuesPrevious?: boolean;
 }
 
-/** One projected entry reduced to its identity, visibility and alignment keys. */
 export interface KeyedProjection {
   readonly entryId: string;
   readonly visible: boolean;
   readonly keys: readonly WireKey[];
 }
 
-/**
- * Order-preserving alignment. Each keyed wire message is owned by projected
- * entries after the previous message's owners; within a message, owners never
- * move backwards. A key with several viable owners takes the earliest one.
- *
- * Repeated identical content (for example a persona message appended every
- * turn) resolves by position: when the wire messages carrying a key claim
- * every projected owner of that key exactly once, the monotone assignment of
- * two equally long ordered sequences is unique, so those choices are not
- * ambiguous. Any other multi-owner choice (an owner left unclaimed, so the
- * wire could have skipped a different one) stays reported, and a key with no
- * owner at or after the floor stays out of order.
- */
 export function mapWireToEntries(
   messages: readonly WireMessage[],
   entries: readonly ProjectedSessionEntry[],
@@ -314,14 +247,12 @@ export function mapWireToEntries(
   );
 }
 
-/** {@link mapWireToEntries} over pre-keyed wire messages and projected entries (any wire format). */
 export function alignKeyedWire(
   messages: readonly KeyedWireMessage[],
   entries: readonly KeyedProjection[],
 ): WireMapping {
   const owners = indexKeyOwners(entries);
   let floor = 0;
-  // Floor at the start of the current run of continuing messages.
   let runFloor = 0;
   const alignments = messages.map((message) => {
     if (message.continuesPrevious !== true) runFloor = floor;
@@ -352,12 +283,6 @@ export function alignKeyedWire(
   return { projection: owners.projection, messages: mapped };
 }
 
-/**
- * Keys whose every projected owner was claimed, in order, by the wire. Picks
- * of distinct messages strictly increase (the floor moves past each message's
- * owners), so claiming all owners means a bijection between the key's wire
- * occurrences and its owners. A key that also went out of order is excluded.
- */
 function positionallyResolvedKeys(
   alignments: readonly MessageAlignment[],
   owners: KeyOwners,
@@ -381,7 +306,6 @@ function positionallyResolvedKeys(
   return resolved;
 }
 
-/** Projection refs plus, per wire key, the ascending projection indexes that produce it. */
 interface KeyOwners {
   readonly projection: readonly ProjectionRef[];
   readonly owners: ReadonlyMap<string, readonly number[]>;
@@ -410,7 +334,6 @@ function entryIdsAt(projection: readonly ProjectionRef[], indexes: readonly numb
   return indexes.map((index) => projection[index]?.entryId ?? "");
 }
 
-/** An ambiguity record plus the internal key it belongs to. */
 interface KeyedAmbiguity extends AmbiguousKey {
   readonly keyId: string;
 }
@@ -419,11 +342,9 @@ interface MessageAlignment {
   readonly entryIndexes: number[];
   readonly unmapped: WireKeyRef[];
   readonly ambiguous: KeyedAmbiguity[];
-  /** Owner chosen for each placed key occurrence. */
   readonly picks: { readonly keyId: string; readonly pick: number }[];
 }
 
-/** Align one wire message's keys to owners at or after `floor`, never moving backwards. */
 function alignWireMessage(
   message: KeyedWireMessage,
   owners: KeyOwners,
@@ -462,10 +383,6 @@ function alignWireMessage(
   return alignment;
 }
 
-// ---------------------------------------------------------------------------
-// Captures and the per-call transport context
-// ---------------------------------------------------------------------------
-
 export interface WireCapture {
   readonly schemaVersion: 1;
   readonly sessionId: string;
@@ -474,15 +391,11 @@ export interface WireCapture {
   readonly provider: string;
   readonly modelId: string;
   readonly baseUrl: string;
-  /** Request URL origin and path; the query is dropped. */
   readonly endpoint: string;
   readonly betas: readonly string[];
-  /** HTTP status of the response to this exact request. */
   readonly status: number;
   readonly bodyText: string;
-  /** Deep-frozen parse of bodyText. */
   readonly body: WireBody;
-  /** Undefined when no projection source was bound for the session. */
   readonly mapping: WireMapping | undefined;
 }
 
@@ -513,8 +426,6 @@ export const WireMappingSchema = obj(
   },
   { open: true },
 );
-// `mapping` is the one key whose value may be undefined; pi-schema treats an undefined
-// property as absent, so the schema marks it optional and the guard requires the key.
 const WireCaptureSchema = withJsonValueDefs(
   obj(
     {
@@ -537,7 +448,6 @@ const WireCaptureSchema = withJsonValueDefs(
 );
 const isWireCaptureFields = compile(WireCaptureSchema).check;
 
-/** Narrow an opaque `FrozenSnapshot.backendCapture` produced by this module. */
 export function isWireCapture<T>(value: T): value is T & WireCapture {
   return isWireCaptureFields(value) && hasProperty(value, "mapping");
 }
@@ -552,13 +462,8 @@ export type TransportVerdict =
   | { readonly ok: true }
   | { readonly ok: false; readonly code: string };
 type TransportCheck = (request: TransportRequest) => TransportVerdict;
-/**
- * Observes the provider's response to a transmitted request before the
- * adapter reads it. Observers must read a clone and must not throw.
- */
 export type TransportResponseObserver = (response: Response) => Promise<void>;
 
-/** Per provider-call context, visible to before_provider_request handlers of that call. */
 interface TransportCall {
   readonly sessionId: string | undefined;
   readonly checks: TransportCheck[];
@@ -574,23 +479,16 @@ interface TransportRefusal {
 
 const RUNTIME_SYMBOL = Symbol.for("choco-pi:anthropic-native-lane");
 
-/** Process-wide state shared by every extension instance that loads this module. */
 function runtime(): LaneRuntime<TransportCall, WireCapture, TransportRefusal> {
   return laneRuntime<TransportCall, WireCapture, TransportRefusal>(RUNTIME_SYMBOL, "Anthropic");
 }
 
 const MAX_REFUSALS = 64;
 
-/** The transport call a before_provider_request handler is running for, if any. */
 export function currentTransportCall(): TransportCall | undefined {
   return runtime().calls.getStore();
 }
 
-/**
- * Bind the projection the capture maps against (the host binds it at session start:
- * `() => ctx.sessionManager.buildSessionProjection().entries`). Returns an
- * unbind that only removes this exact source.
- */
 export function bindSessionProjection(sessionId: string, source: ProjectionSource): () => void {
   const projections = runtime().projections;
   projections.set(sessionId, source);
@@ -599,7 +497,6 @@ export function bindSessionProjection(sessionId: string, source: ProjectionSourc
   };
 }
 
-/** Captures for a session, oldest first. */
 export function capturesFor(sessionId: string): readonly WireCapture[] {
   return runtime().captures.get(sessionId) ?? [];
 }
@@ -611,11 +508,6 @@ export function releaseSessionCaptures(sessionId: string): void {
   responseRing().delete(sessionId);
 }
 
-// ---------------------------------------------------------------------------
-// Responses that left no usable capture (diagnostics only)
-// ---------------------------------------------------------------------------
-
-/** A transmitted session request whose response was not HTTP 200 or whose body could not be mapped. */
 export interface RecordedResponse {
   readonly sequence: number;
   readonly status: number;
@@ -628,16 +520,10 @@ export interface RecordedResponse {
 const RESPONSES_SYMBOL = Symbol.for("choco-pi:anthropic-native-responses");
 const MAX_RESPONSES_PER_SESSION = 8;
 
-/**
- * Process-wide ring of unusable responses per session, kept apart from the
- * capture ring so a host retry burst (non-200 answers) never evicts the last
- * usable capture. Its own slot, so the capture runtime's shape is unchanged.
- */
 function responseRing(): Map<string, RecordedResponse[]> {
   return responseRingSlot<RecordedResponse>(RESPONSES_SYMBOL, "Anthropic");
 }
 
-/** Unusable responses of a session, oldest first (at most 8). */
 export function recentResponsesFor(sessionId: string): readonly RecordedResponse[] {
   return responseRing().get(sessionId) ?? [];
 }
@@ -654,9 +540,7 @@ export function transportRefusals(sessionId?: string): readonly TransportRefusal
 }
 
 export const TRANSPORT_REFUSAL_PREFIX = "choco-pi anthropic native transport refused";
-/** Prefix of the local answer to a request refused by the opaque-history guard. */
 export const OPAQUE_REFUSAL_PREFIX = "choco-pi compaction";
-/** Marks a locally answered (never transmitted) refusal response. */
 const TRANSPORT_REFUSAL_HEADER = "x-choco-pi-transport-refusal";
 
 export type ProviderStream = (
@@ -666,9 +550,7 @@ export type ProviderStream = (
 ) => AssistantMessageEventStream;
 
 export interface CapturingProviderOptions {
-  /** Defaults to the installed Anthropic adapter's streamSimple. */
   readonly delegate?: typeof installedStreamSimple;
-  /** Base transport; defaults to the host-provided fetch, then globalThis.fetch. */
   readonly fetch?: typeof globalThis.fetch;
   readonly now?: () => number;
   readonly maxCapturesPerSession?: number;
@@ -704,11 +586,6 @@ function storeCapture(capture: WireCapture, limit: number): void {
   storeBounded(runtime().captures, capture.sessionId, capture, limit);
 }
 
-/**
- * A refused request is answered locally and never transmitted. The answer is a
- * non-retryable 400 whose message carries the reason code, so the foreground
- * turn fails visibly instead of looping through transport-error retries.
- */
 function refuse(call: TransportCall, code: string, now: number, text?: string): Response {
   call.refusals.push(code);
   const refusals = runtime().refusals;
@@ -726,12 +603,6 @@ function refuse(call: TransportCall, code: string, now: number, text?: string): 
 
 const DEFAULT_CAPTURES_PER_SESSION = 4;
 
-/**
- * Provider `streamSimple` that runs the installed adapter with a capturing,
- * verifying fetch. Captures are keyed by the host's `options.sessionId`;
- * requests without a session ID (host summaries, other lanes) are verified but
- * not captured.
- */
 export function createCapturingStreamSimple(
   options: CapturingProviderOptions = {},
 ): ProviderStream {
@@ -752,7 +623,6 @@ interface CaptureSettings {
   readonly fetch: typeof globalThis.fetch | undefined;
 }
 
-/** One provider call: its model, transport call context, and base transport. */
 interface CaptureCall {
   readonly settings: CaptureSettings;
   readonly model: Model<"anthropic-messages">;
@@ -779,8 +649,6 @@ function streamWithCapture(
   const capture: CaptureCall = { settings, model, call, base };
   const capturingFetch: typeof globalThis.fetch = (input, init) =>
     captureAndForward(capture, input, init);
-  // Pi 1.6.0 Anthropic message threads send only new messages on a `continue` and omit
-  // system and tools; captures, entry mapping, and replay checks need the full conversation.
   return runtime().calls.run(call, () =>
     settings.delegate(model, context, {
       ...streamOptions,
@@ -803,13 +671,6 @@ function readRequest(init: RequestInit | undefined): ReadRequest {
   return { bodyText, body, betas };
 }
 
-/**
- * Refuse a session request while the session's newest checkpoint is an
- * opaque record this request cannot carry (D2): sending it would give the
- * model placeholder-only context. The xAI replay handler sets the block (and
- * already notified and journaled it); the request is answered locally here,
- * because a `before_provider_request` handler cannot stop a request.
- */
 function refuseOpaque(capture: CaptureCall): Response | undefined {
   const sessionId = capture.call.sessionId;
   if (sessionId === undefined) return undefined;
@@ -819,7 +680,6 @@ function refuseOpaque(capture: CaptureCall): Response | undefined {
   return refuse(capture.call, "opaque-checkpoint", capture.settings.now(), text);
 }
 
-/** Run every registered transport check; returns the local refusal when one fails. */
 function verifyRequest(capture: CaptureCall, request: ReadRequest): Response | undefined {
   const { call, settings } = capture;
   const opaque = refuseOpaque(capture);
@@ -844,7 +704,6 @@ async function captureAndForward(
   const request = readRequest(init);
   const refusal = verifyRequest(capture, request);
   if (refusal) return refusal;
-  // Map against the branch as it is when this request is sent.
   const entries = projectionFor(runtime().projections, capture.call.sessionId);
   const mapping =
     request.body === undefined || entries === undefined
@@ -856,12 +715,6 @@ async function captureAndForward(
   return response;
 }
 
-/**
- * Store the sent body for a session-bound call; calls without a session ID are
- * not captured. Only an HTTP 200 answer to a mapped body is a usable capture;
- * any other response goes to the diagnostics ring, so the host's retries of a
- * failing request never evict the last usable capture (D8).
- */
 function recordCapture(
   capture: CaptureCall,
   sent: {
@@ -909,16 +762,10 @@ function recordCapture(
   );
 }
 
-/** The registry read capture needs (a `ModelRegistry` fits). */
 export interface NativeProviderLookup {
   getRegisteredNativeProvider(provider: string): Provider | undefined;
 }
 
-/**
- * A native provider whose Anthropic `streamSimple` is `capture`; every other
- * member delegates to `native` (its prototype, so wrappers built on it stay
- * recognizable through the prototype chain).
- */
 function capturingNativeProvider(native: Provider, capture: ProviderStream): Provider {
   const wrapper: Provider = {
     get id() {
@@ -969,12 +816,6 @@ function capturingNativeProvider(native: Provider, capture: ProviderStream): Pro
   return wrapper;
 }
 
-/**
- * Override `provider`'s Anthropic stream with the capturing wrapper (keeps the
- * provider's models and auth). Register for every provider the capability
- * allow-list admits. A config registration would replace a registered native
- * provider (and its model filter), so a native one is wrapped instead.
- */
 export function registerAnthropicCapture(
   pi: ExtensionAPI,
   provider: string,

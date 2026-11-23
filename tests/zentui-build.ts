@@ -1,16 +1,4 @@
 import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
-/**
- * Loading the real zentui from a test process.
- *
- * zentui ships TypeScript sources. Pi transpiles them for the session, but a
- * plain `node --test` process only strips types, which zentui's parameter
- * properties defeat. This helper compiles the package once with the project's
- * own TypeScript and loads that output, so the review's frame contract is
- * checked against zentui itself rather than a stand-in.
- *
- * The output goes to the repository's `node_modules` cache: emitting there,
- * rather than a temporary directory, keeps zentui's bare imports resolvable.
- */
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -35,7 +23,6 @@ import {
 } from "../profile/extensions/review/ui/zentui-frame.ts";
 
 const REPOSITORY_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
-/** The fork this repository pins, after it was renamed from `pi-zentui`. */
 const PINNED_MANIFEST = resolvePath(REPOSITORY_ROOT, "packages/choco-pi-ui/package.json");
 const execFileAsync = promisify(execFile);
 const COMPLETION_MARKER = ".complete";
@@ -62,8 +49,6 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 async function compileZentui(): Promise<string | undefined> {
-  // The pinned fork is the copy the session loads; the adapter's lookup still
-  // covers an installed package or a fork pinned elsewhere.
   const manifest = (await pathExists(PINNED_MANIFEST))
     ? PINNED_MANIFEST
     : await resolveZentuiFile("package.json");
@@ -107,9 +92,6 @@ async function compileZentui(): Promise<string | undefined> {
     resolvePath(REPOSITORY_ROOT, "node_modules/.cache/choco-pi-zentui");
   const outDir = resolvePath(cacheRoot, hash.digest("hex"));
   const marker = resolvePath(outDir, COMPLETION_MARKER);
-  // Node imports modules by their real path, and the import hook below compares
-  // against the directory returned here, so a checkout reached through a
-  // symbolic link (a relocated copy with linked node_modules) names it the same way.
   if (await pathExists(marker)) return await realpath(outDir);
 
   const temporaryOutDir = `${outDir}.tmp-${process.pid}`;
@@ -147,7 +129,6 @@ export const SKIP_WITHOUT_ZENTUI = ZENTUI_BUILD
   : "choco-pi-ui could not be compiled for tests";
 
 let hooksRegistered = false;
-/** zentui's relative imports carry no extension, which Node ESM requires. */
 function registerBuildHooks(buildDirectory: string): void {
   if (hooksRegistered) return;
   hooksRegistered = true;
@@ -169,19 +150,12 @@ function registerBuildHooks(buildDirectory: string): void {
   });
 }
 
-/**
- * Imports one compiled zentui module by file name, e.g. `working-line.js`.
- *
- * Guard the call with `SKIP_WITHOUT_ZENTUI`; it throws when the package could
- * not be compiled, rather than silently returning a stand-in.
- */
 export async function loadZentuiModule(file: string): Promise<Record<string, RuntimeValue>> {
   if (!ZENTUI_BUILD) throw new Error("choco-pi-ui could not be compiled for tests");
   registerBuildHooks(ZENTUI_BUILD);
   return import(pathToFileURL(resolvePath(ZENTUI_BUILD, file)).href);
 }
 
-/** Loads zentui's real renderers, config reader, and provider labels. */
 export const realZentuiLoader: ZentuiLoader = async () => {
   if (!ZENTUI_BUILD) return undefined;
   registerBuildHooks(ZENTUI_BUILD);
@@ -202,17 +176,6 @@ export const realZentuiLoader: ZentuiLoader = async () => {
   } as ZentuiModules;
 };
 
-/**
- * The user's own zentui config decides the prompt style, so a test that asserts
- * one style pins it rather than depending on whatever is configured here.
- */
-/**
- * Overrides editor config keys on top of the loaded configuration.
- *
- * zentui's `loadConfig` reads the developer's real config file, so a test that
- * asserts a fixed frame layout has to pin every setting that moves rows;
- * otherwise a local preference such as `paddingRows` decides the assertion.
- */
 export function withEditorConfig(
   loader: ZentuiLoader,
   patch: Record<string, RuntimeValue>,
@@ -242,7 +205,6 @@ export function withEditorStyle(loader: ZentuiLoader, style: string): ZentuiLoad
   return withEditorConfig(loader, { style });
 }
 
-/** zentui as it draws the box: the style the polished renderer never handles. */
 export const realBoxZentuiLoader: ZentuiLoader = withEditorStyle(realZentuiLoader, "minimalist");
 
 export const unavailableZentuiLoader: ZentuiLoader = async () => undefined;

@@ -1,10 +1,5 @@
 import { osInfo } from "./node-runtime.ts";
 
-/**
- * Codex CLI release whose wire identity this provider mirrors. openai/codex sends its
- * `CARGO_PKG_VERSION` both as the `version` header and inside the User-Agent; this matches the
- * codex-cli build the request shape was last verified against.
- */
 export const CODEX_CLIENT_VERSION = "0.169.0";
 
 export type CodexRequestKind = "turn" | "prewarm";
@@ -34,7 +29,6 @@ if (globalThis.process?.platform === "darwin") {
     });
 }
 
-/** Mirrors `os_info`'s `{os_type} {version}; {architecture}` segment of the Codex User-Agent. */
 function osDescriptor(): string {
   const os = osInfo.current;
   if (!os) return "Unknown unknown; unknown";
@@ -47,10 +41,6 @@ function osDescriptor(): string {
   return `${platform} ${os.release()}; ${machine}`;
 }
 
-/**
- * Mirrors codex terminal-detection `user_agent_token`: TERM_PROGRAM[/version], then TERM, with
- * characters outside `[A-Za-z0-9._/-]` replaced by `_`.
- */
 function terminalToken(): string {
   return rawTerminalToken().replace(/[^A-Za-z0-9._/-]/g, "_");
 }
@@ -65,27 +55,20 @@ function rawTerminalToken(): string {
   return env["TERM"]?.trim() || "unknown";
 }
 
-/** Replaces characters outside printable ASCII, as Codex's `sanitize_user_agent` does. */
 function sanitizeHeaderValue(value: string): string {
   return value.replace(/[^\x20-\x7e]/g, "_");
 }
 
-/** Mirrors openai/codex `get_codex_user_agent` for a client that sets no suffix. */
 export function codexUserAgent(originator: string): string {
   return sanitizeHeaderValue(
     `${originator}/${CODEX_CLIENT_VERSION} (${osDescriptor()}) ${terminalToken()}`,
   );
 }
 
-/**
- * Codex window ids are `<thread>:<auto-compaction window number>`. This provider does not track
- * compaction windows, so every request reports window 0.
- */
 export function codexWindowId(threadId: string): string {
   return `${threadId}:0`;
 }
 
-/** ASCII-only JSON, matching Codex's `to_ascii_json_string` for header-safe metadata. */
 function toAsciiJson(value: CodexTurnMetadataPayload): string {
   return JSON.stringify(value).replace(
     /[\u007f-\uffff]/g,
@@ -93,7 +76,6 @@ function toAsciiJson(value: CodexTurnMetadataPayload): string {
   );
 }
 
-/** The `x-codex-turn-metadata` subset this provider can state truthfully. */
 export function codexTurnMetadataHeader(threadId: string, metadata: CodexTurnMetadata): string {
   const payload: CodexTurnMetadataPayload = {
     session_id: threadId,

@@ -1,8 +1,3 @@
-/**
- * Model-scoped usage limits: Anthropic's Fable weekly limit covers the Claude
- * Fable and Claude Mythos series only, so it must never close Opus, Sonnet or
- * Haiku. A scoped window of unknown coverage closes only the model that failed.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -114,7 +109,6 @@ test("an exhausted account-wide window makes the limit provider-wide for every m
 
 test("a scoped window of unknown coverage closes only the model whose request failed", async () => {
   const nova = window("Nova 7d", 100, NOW + DAY, "Nova");
-  // claude-opus-5 is an id prefix of claude-opus-5-5, which did not fail.
   const result = await corroborate("claude-opus-5", sessionAt(30), nova);
   assert.equal(result.evidence, "confirmed");
   assert.deepEqual(result.classification.scope, {
@@ -200,14 +194,12 @@ test("a Fable limit falls back to gpt-6.2-astra, then to Opus before any last re
       pickFallback(table, current, { available, scoped: [], isClosed });
 
     assert.deepEqual(pick(fableClosed), { provider: "openai-codex", id: "gpt-6.2-astra" });
-    // Codex closed as well: Opus on the same provider, never xai first.
     assert.deepEqual(
       pick((provider, account, modelId) =>
         provider === "openai-codex" ? true : fableClosed(provider, account, modelId),
       ),
       { provider: "anthropic", id: "claude-opus-5-5" },
     );
-    // A provider-wide Anthropic limit with Codex closed still reaches the last resort.
     assert.deepEqual(
       pick((provider) => provider === "openai-codex" || provider === "anthropic"),
       { provider: "xai", id: "grok-4.7" },
@@ -232,14 +224,12 @@ test("re-checks judge each closure by the windows of its own scope", async () =>
   policy.closeProvider("anthropic", "acct", NOW + DAY, FABLE_SCOPE);
   clock += MIN;
 
-  // Opus: only the provider-wide closure blocks it, and no account-wide window is exhausted.
   assert.deepEqual(await policy.recheck("anthropic", "acct", undefined, "claude-opus-5-5"), {
     open: true,
     detail: "live usage shows capacity",
   });
   assert.equal(policy.isClosed("anthropic", "acct", clock, "claude-opus-5-5"), false);
 
-  // Fable: its closure stays while the Fable window is exhausted (capped at 24 h), and says so.
   assert.deepEqual(await policy.recheck("anthropic", "acct", undefined, "claude-fable-5-2"), {
     open: false,
     until: clock + DAY,
@@ -249,7 +239,6 @@ test("re-checks judge each closure by the windows of its own scope", async () =>
   });
   assert.equal(policy.isClosed("anthropic", "acct", clock, "claude-fable-5-2"), true);
 
-  // With no closure on record, a re-check for a model reads the windows that block it.
   windows = [sessionAt(30), fableExhausted()];
   const fresh = createUsageLimitPolicy({
     owner: "scope-recheck-unrecorded",
@@ -295,7 +284,6 @@ test("after a switch to astra, an astra limit still reaches Opus before the last
       const slash = ref.indexOf("/");
       return { provider: ref.slice(0, slash), id: ref.slice(slash + 1) };
     });
-    // Fable is closed by its scoped limit; Codex (astra's account) is closed as a whole.
     const isClosed = (provider: string, _account: string, modelId?: string): boolean =>
       provider === "openai-codex" ||
       (provider === "anthropic" &&
@@ -329,7 +317,6 @@ test("a widened Fable closure keeps Fable closed after the account-wide window r
   assert.equal(widened.open, false);
   assert.equal(policy.isClosed("anthropic", "acct", clock, "claude-opus-5-5"), true);
 
-  // The account-wide window resets; the Fable window is still exhausted.
   windows = [sessionAt(30), fableExhausted()];
   clock += MIN;
   const answer = await policy.recheck("anthropic", "acct", undefined, "claude-fable-5-2");
@@ -364,7 +351,6 @@ test("without live usage data a limit closes only the failed model, never the ac
     assert.equal(policy.isClosed("anthropic", "acct", NOW, modelId), false, modelId);
   }
   assert.equal(policy.isClosed("anthropic", "acct"), false);
-  // Still no data on the next gate: the failed model is tried again.
   const recheck = await policy.recheck("anthropic", "acct", undefined, "claude-fable-5-2");
   assert.equal(recheck.open, true);
 });
@@ -388,7 +374,6 @@ test("a success during an in-flight re-check is not undone by the older reading"
   clock = 3000;
   policy.reopen("anthropic", "acct", 3000, "claude-fable-5-2");
   assert.equal(policy.isClosed("anthropic", "acct", clock, "claude-fable-5-2"), false);
-  // The reading was taken at 2000, before the success, and shows the account exhausted.
   release({
     observedAt: 2000,
     windows: [window("5h", 100, 2000 + HOUR), window("Fable 7d", 100, 2000 + 3 * DAY, "Fable")],

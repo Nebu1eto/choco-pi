@@ -1,4 +1,3 @@
-// The review's model store: a refresh whose comparison moved is a new model even when the hunks match.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createModelStore } from "../profile/extensions/lib/changes/model-store.ts";

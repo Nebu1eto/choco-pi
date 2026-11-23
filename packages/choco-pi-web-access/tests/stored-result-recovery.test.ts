@@ -183,7 +183,6 @@ test("get_search_content recovers a fetch result from disk after session_tree dr
   assert.match(resultText(before), /recovered body text/);
 
   resetLogs.length = 0;
-  // The fetch entry was never appended to this branch, so session_tree restore drops it.
   await emitSessionTree();
   assert.equal(getLastResetReason(), "session_tree");
   assert.ok(
@@ -214,8 +213,6 @@ test("a reset during the disk read returns the data without repopulating the map
   clearResults("session_tree");
   assert.equal(getResult("resetduringread1"), null);
 
-  // resolveStoredResult runs synchronously up to its first filesystem await, so this
-  // clear lands after the generation snapshot and before the disk read settles.
   const pending = resolveStoredResult("resetduringread1");
   clearResults("shutdown");
   const lookup = await pending;
@@ -229,7 +226,6 @@ test("a reset during the disk read returns the data without repopulating the map
   assert.equal(getResult("resetduringread1"), null);
   assert.deepEqual(getAllResults(), []);
 
-  // Without a concurrent reset the same lookup rehydrates the map.
   const settled = await resolveStoredResult("resetduringread1");
   if (settled.data === null || settled.source !== "disk") {
     assert.fail(`expected a cached disk hit, got ${JSON.stringify(settled)}`);

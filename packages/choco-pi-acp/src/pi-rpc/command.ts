@@ -18,11 +18,6 @@ export class PiCommandResolutionError extends Error {
   }
 }
 
-/**
- * The Pi command used when no override is given: `pi` from PATH, or, under the standalone
- * `choco-pi` launcher's env contract, the launcher itself (`CHOCO_PI_LAUNCHER`), which runs the
- * workspace-pinned Pi with the choco-pi state directories and runtime preference.
- */
 export function defaultPiCommand(env: NodeJS.ProcessEnv = process.env): string {
   const launcher = env.CHOCO_PI_LAUNCHER;
   if (standaloneHome(env) !== undefined && launcher !== undefined && isAbsolute(launcher)) {
@@ -62,7 +57,6 @@ function candidates(command: string, env: NodeJS.ProcessEnv, os: NodeJS.Platform
   );
 }
 
-/** Read the `pi` entry from an npm manifest's `bin`, which is either a string or a record. */
 function manifestPiBin(manifest: BoundaryValue): string | undefined {
   if (!isBoundaryRecord(manifest)) return undefined;
   const bin = manifest.bin;
@@ -96,7 +90,6 @@ async function nodeLaunchForNpmShim(
   }
 }
 
-/** Resolve Pi to an exact executable/argv pair. No returned launch requires a shell. */
 export async function resolvePiLaunch(
   override?: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -119,7 +112,6 @@ export async function resolvePiLaunch(
   );
 }
 
-/** Retained for upstream callers; Pi launches are deliberately shell-free. */
 export function shouldUseShellForPiCommand(_cmd: string): boolean {
   return false;
 }

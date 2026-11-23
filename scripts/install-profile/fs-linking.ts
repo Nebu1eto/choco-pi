@@ -20,16 +20,6 @@ export type InstallLinkResult = {
   backup?: string;
 };
 
-/**
- * State of an installed profile link target:
- * - `absent`: nothing there yet;
- * - `current`: a symlink to the tracked source;
- * - `same-file`: a regular file with the source's contents;
- * - `legacy`: a symlink an old-layout install wrote, either to this checkout's
- *   old source path (`<root>/.pi/...`) or a dangling one whose target ends with
- *   that old relative path (a moved or deleted old-layout checkout);
- * - `conflict`: anything else, which only `--backup` may replace.
- */
 export type LinkState = "absent" | "current" | "same-file" | "legacy" | "conflict";
 
 export async function exists(target: string): Promise<boolean> {
@@ -58,10 +48,6 @@ function isMissingPathError(error: Error): boolean {
   return "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 
-/**
- * Where an old-layout install linked a profile file from: the tracked source
- * path before `.pi/` became `profile/`, such as `.pi/SYSTEM.md`.
- */
 function legacySourceRelative(sourceRelative: string): string | undefined {
   const prefix = "profile/";
   return sourceRelative.startsWith(prefix)
@@ -96,11 +82,9 @@ export async function classifyLink(
   } catch (error) {
     if (!(error instanceof Error && isMissingPathError(error))) throw error;
   }
-  // Dangling: the old checkout moved or its `.pi` sources are gone.
   return current.endsWith(`${path.sep}${path.normalize(legacy)}`) ? "legacy" : "conflict";
 }
 
-/** Replace the symlink at `target` with one to `source` in a single rename. */
 async function replaceSymlink(source: string, target: string): Promise<void> {
   const temporary = `${target}.${process.pid}.link.tmp`;
   await rm(temporary, { force: true });
@@ -150,11 +134,6 @@ export async function installLink(
   return { target, action: "backed-up", backup: saved };
 }
 
-/**
- * Remove each retired file that is still a symlink (dangling or not) or a
- * regular file. Anything else at that path is left in place with a warning.
- * Returns the removed paths.
- */
 export async function removeRetiredProfileFiles(
   agentDir: string,
   warnings: string[],

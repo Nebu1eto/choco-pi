@@ -1,19 +1,8 @@
-/**
- * schedule-menu.ts — `/agents → Scheduled jobs` submenu.
- *
- * Minimal v1 surface: list scheduled jobs, select one to inspect details +
- * confirm cancellation. No create wizard (the `Agent` tool's `schedule` param
- * is the canonical creation path), no toggle/cleanup (cancel is enough for
- * "I scheduled something dumb, get rid of it"). Add management surfaces here
- * if real demand emerges.
- */
-
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { SubagentScheduler } from "../schedule.ts";
 import type { ScheduledSubagent } from "../types.ts";
 import { selectItem } from "./select-item.ts";
 
-/** Format an ISO timestamp as relative time ("in 4h", "2d ago", "—"). */
 function relTime(iso: string | undefined, now = Date.now()): string {
   if (!iso) return "—";
   const t = new Date(iso).getTime();
@@ -30,7 +19,6 @@ function relTime(iso: string | undefined, now = Date.now()): string {
   return future ? `in ${d}d` : `${d}d ago`;
 }
 
-/** One-line status icon. */
 function statusIcon(j: ScheduledSubagent): string {
   if (!j.enabled) return "✗";
   if (j.lastStatus === "error") return "!";
@@ -38,7 +26,6 @@ function statusIcon(j: ScheduledSubagent): string {
   return "✓";
 }
 
-/** Compact selectable row — name, schedule, agent type, next/last run, count. */
 function formatJob(j: ScheduledSubagent, scheduler: SubagentScheduler): string {
   const next = scheduler.getNextRun(j.id);
   return [
@@ -52,7 +39,6 @@ function formatJob(j: ScheduledSubagent, scheduler: SubagentScheduler): string {
   ].join("  ");
 }
 
-/** Multi-line details block for the cancel confirm. */
 function formatDetails(j: ScheduledSubagent, scheduler: SubagentScheduler): string {
   const next = scheduler.getNextRun(j.id) ?? "—";
   return [
@@ -67,10 +53,6 @@ function formatDetails(j: ScheduledSubagent, scheduler: SubagentScheduler): stri
   ].join("\n");
 }
 
-/**
- * List scheduled jobs; selecting one opens a cancel-confirm with details.
- * Returns when the user backs out or after a cancellation.
- */
 export async function showSchedulesMenu(
   ctx: ExtensionCommandContext,
   scheduler: SubagentScheduler,
@@ -86,9 +68,6 @@ export async function showSchedulesMenu(
     return;
   }
 
-  // Numbered + item-paired: two jobs whose names agree in the first 18
-  // characters format identically, and matching the returned string back
-  // against a parallel label array cancelled whichever came first.
   const job = await selectItem(
     ctx.ui,
     `Scheduled jobs (${jobs.length}) — select to cancel`,
@@ -104,7 +83,6 @@ export async function showSchedulesMenu(
   try {
     await scheduler.removeJob(job.id);
   } catch (err) {
-    // A stopped scheduler (session ended during the write) has no UI to report to.
     if (!scheduler.isActive()) return;
     ctx.ui.notify(
       `Could not cancel "${job.name}": ${err instanceof Error ? err.message : String(err)}`,

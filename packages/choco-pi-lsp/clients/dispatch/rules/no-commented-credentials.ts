@@ -1,19 +1,12 @@
 import type { FactRule } from "../fact-provider-types.ts";
 import type { Diagnostic } from "../types.ts";
 
-/**
- * no-commented-credentials — password/token/secret in comments (TS/JS/Python/Go/
- * Ruby/YAML/JSON/env). Regex/line-based (no compiler); formerly SN-007 (#402).
- */
-
 const CREDENTIAL_PATTERNS = [
   /password\s*[:=]\s*["'][^"']{3,}/i,
   /(?:api[_-]?key|secret|token)\s*[:=]\s*["'][^"']{6,}/i,
   /(?:aws|gcp|azure)[_-]?(?:key|secret|token)\s*[:=]\s*["'][^"']{6,}/i,
 ];
 
-// Files that define credential patterns as code (scanners, test fixtures, etc.) —
-// their own regex literals would otherwise self-trigger this rule.
 const CREDENTIALS_EXEMPT =
   /[/\\](secrets?[-_]?(scanner|detect|check)|scanner|fixture|mock)[^/\\]*\.(tsx?|ya?ml|json|env)$/i;
 

@@ -23,13 +23,6 @@ const CodexCompactionSchema = obj(
 );
 const isCodexCompaction = compile(CodexCompactionSchema).check;
 
-/**
- * Whether the installed codex config compacts server-side. Mirrors the codex
- * adapter: `compaction.responsesCompaction` must be a boolean, and anything
- * else (including a missing file or key) is the default `false`. Throws when
- * the file exists but is not a JSON object, so the caller can skip migration
- * instead of deriving lanes from a file it could not read.
- */
 async function readCodexResponsesCompaction(agentDir: string): Promise<boolean> {
   const target = path.join(agentDir, "choco-pi-codex.json");
   let contents: string;
@@ -48,19 +41,9 @@ async function readCodexResponsesCompaction(agentDir: string): Promise<boolean> 
   if (!isCodexCompaction(parsed)) {
     throw new Error(`${target} is not a codex config object`);
   }
-  // Only a literal `true` turns it on; any non-boolean is the default `false`.
   return parsed.compaction?.responsesCompaction === true;
 }
 
-/**
- * Bring the global background-compaction sidecar's backend switches in line
- * with the vendor compaction modes: text always on, codex-native from
- * `compaction.responsesCompaction` in the installed codex config,
- * anthropic-native when `compactionAnthropic` is server-side (the default).
- * The master switch and every other key are kept; a missing sidecar stays
- * missing (background compaction stays off). A malformed sidecar is left
- * untouched and reported as a warning.
- */
 export async function migrateBackgroundCompactionSidecar(
   agentDir: string,
   warnings: string[],

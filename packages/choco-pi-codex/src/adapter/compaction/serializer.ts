@@ -30,12 +30,6 @@ import {
 import { isCodexTransportModel } from "../prompt/codex-model.ts";
 import { isProviderContextExcludedMessage } from "../prompt/context-filter.ts";
 
-/**
- * Responses compaction reuses the provider's serializer.
- *
- * Replay parity must match the actual OpenAI Codex provider payload, including
- * tool-call id normalization and cross-model/provider history handling.
- */
 export type AssistantPhase = "commentary" | "final_answer";
 
 type ResponsesTextInputItem = {

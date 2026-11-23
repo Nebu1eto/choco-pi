@@ -59,7 +59,6 @@ test("live Opus native surface matches the capture and stays within its budget",
   assert.equal(capture.rewrites, 0);
 });
 
-/** The context members the tool-search policy reads: a fresh session with no recorded tools. */
 interface FreshSessionContext {
   sessionManager: { getBranch(): [] };
 }

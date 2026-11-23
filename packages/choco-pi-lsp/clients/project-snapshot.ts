@@ -36,8 +36,6 @@ type ReadSnapshotBodyResultContract = {
   rawBytes: number;
 };
 
-// v2: added `wordIndex` (identifier inverted index + BM25, #162). Bumping the
-// version invalidates pre-v2 snapshots so they rebuild with the new field.
 export const PROJECT_SNAPSHOT_VERSION = 2;
 
 export interface ProjectSnapshotFile {
@@ -60,16 +58,6 @@ export interface ProjectSnapshotSymbol {
   endLine?: number;
 }
 
-/**
- * The derived project-changes sequence index as of `ProjectSnapshot.seq`
- * (#1019). Persisting it lets session-start BOUND the change-log replay: hydrate
- * this (O(files)) then fold only entries with `seq > snapshot.seq`
- * (O(changes-since-snapshot)) instead of replaying the entire append-only log.
- * `projectSeq` is invariably `=== snapshot.seq` (both come from the same
- * `runtime.projectSeq` moment); `fileSeqByPath` uses the same
- * `normalizeMapKey(path.resolve())` keys as the change-log replay, so no
- * re-normalization (and no per-key `realpath` syscall) is needed on hydrate.
- */
 export interface SnapshotSequenceIndex {
   projectSeq: number;
   fileSeqByPath: Array<[filePath: string, fileSeq: number]>;
@@ -107,22 +95,10 @@ function parseSequenceIndex(value: LspBoundaryValue): SnapshotSequenceIndex | un
   return { projectSeq: index.projectSeq, fileSeqByPath };
 }
 
-// #958 item 2: the canonical snapshot body is now streamed gzip
-// (`project-snapshot.json.gz`), written by a worker thread off the save path
-// (see the persist plumbing below). The previous uncompressed
-// `project-snapshot.json` remains readable for ONE compatibility release so an
-// upgrading user doesn't lose their snapshot — see loadSnapshotBody's legacy
-// fallback. gzip measured 5-10x on top of the #957 compaction win (the
-// review-graph's own measurement was 60MB → 1.4MB).
 export function getProjectSnapshotPath(cwd: string): string {
   return path.join(getProjectDataDir(cwd), "cache", "project-snapshot.json.gz");
 }
 
-/**
- * Pre-#958 uncompressed body path. Read as a one-release fallback when no
- * `.json.gz` is present; deleted whenever a fresh gz body is promoted so the
- * two never coexist.
- */
 export function getProjectSnapshotLegacyPath(cwd: string): string {
   return path.join(getProjectDataDir(cwd), "cache", "project-snapshot.json");
 }
@@ -180,12 +156,6 @@ export interface ProjectSnapshotMeta {
   timestamp: string;
   version: number;
   seq: number;
-  /**
-   * The derived sequence index as of `seq` (#1019), MIRRORED here from the
-   * snapshot body so session-start can bound the change-log replay WITHOUT
-   * parsing the (40-112MB) body — which would forfeit the #947 skip-stale
-   * optimization. Absent on legacy metas (pre-#1019) → callers full-replay.
-   */
   sequenceIndex?: SnapshotSequenceIndex;
 }
 
@@ -206,12 +176,6 @@ function parseSnapshotMeta(value: LspBoundaryValue): ProjectSnapshotMeta | null 
   };
 }
 
-/**
- * Read the tiny meta sidecar (`project-snapshot.meta.json`) WITHOUT parsing
- * the (potentially 40-112MB) snapshot body. Written on every save; absent on
- * legacy installs — callers must treat a `null` return as "no opinion" and
- * fall through to parsing the body. #947.
- */
 export function readProjectSnapshotMeta(cwd: string): ProjectSnapshotMeta | null {
   const meta = readJsonCache<ProjectSnapshotMeta>(
     getProjectSnapshotMetaPath(cwd),
@@ -220,12 +184,6 @@ export function readProjectSnapshotMeta(cwd: string): ProjectSnapshotMeta | null
   return meta ?? null;
 }
 
-/**
- * Cheap staleness verdict from the meta sidecar alone. When this returns
- * true, the snapshot body CANNOT be fresh (isProjectSnapshotFresh would
- * reject it on the same two fields), so the expensive body parse can be
- * skipped entirely. #947.
- */
 export function isProjectSnapshotMetaStale(
   meta: ProjectSnapshotMeta,
   currentProjectSeq: number,
@@ -233,40 +191,12 @@ export function isProjectSnapshotMetaStale(
   return meta.version !== PROJECT_SNAPSHOT_VERSION || meta.seq !== currentProjectSeq;
 }
 
-/**
- * In-process parse cache for the snapshot body, keyed by file path and
- * validated by mtime+size. The body is large (40-112MB observed) and several
- * session-start/background consumers parse it seconds after we ourselves
- * wrote it — `saveRuntimeProjectSnapshot` alone re-parsed the file it had
- * just written 2-3x per session (~300-600ms of event-loop blocks). A hit
- * returns the already-parsed object; any external write changes the mtime
- * and forces a re-parse. #947. This tier serves READER processes (module_report,
- * mcp/analyze) that never write; the writer process's read-your-writes is
- * served by the authoritative map below.
- */
 interface SnapshotParseCacheEntry {
   mtimeMs: number;
-  /**
-   * On-disk file size in bytes at cache time. FAT/exFAT round `mtime` to a 2s
-   * bucket, so two writes inside the same bucket can report an IDENTICAL
-   * `mtimeMs` even though the body changed — mtime alone would then serve a
-   * stale cached parse for a file that was, in fact, just rewritten. `size`
-   * is a free, defensive tiebreaker: a same-bucket rewrite that also keeps
-   * the exact same byte length still slips through, but that residual case is
-   * the same fail-open/self-healing posture as the rest of this cache. NOTE
-   * (#958): for the gz body this is the COMPRESSED file size; the
-   * cache-eligibility gate below uses the UNCOMPRESSED byte length instead,
-   * because that is what actually bounds resident heap.
-   */
   size: number;
   snapshot: ProjectSnapshot | null;
 }
 const SNAPSHOT_PARSE_CACHE_MAX = 4;
-// #957 review: the cache exists to avoid re-parsing NORMAL snapshots within a
-// session. A 112MB-class body parses to hundreds of MB of heap — pinning that
-// for process lifetime inverts the win, so oversized bodies are simply never
-// cached (they re-parse per read, exactly the pre-#947 behavior). Measured
-// against the UNCOMPRESSED body size, never the (much smaller) gz file size.
 const SNAPSHOT_PARSE_CACHE_MAX_BYTES = 24 * 1024 * 1024;
 const snapshotParseCache = new Map<string, SnapshotParseCacheEntry>();
 
@@ -277,7 +207,6 @@ function withoutWordIndex(snapshot: ProjectSnapshot | null): ProjectSnapshot | n
 }
 
 function cacheParsedSnapshot(snapshotPath: string, entry: SnapshotParseCacheEntry): void {
-  // Refresh recency (Map preserves insertion order).
   snapshotParseCache.delete(snapshotPath);
   snapshotParseCache.set(snapshotPath, entry);
   while (snapshotParseCache.size > SNAPSHOT_PARSE_CACHE_MAX) {
@@ -287,30 +216,8 @@ function cacheParsedSnapshot(snapshotPath: string, entry: SnapshotParseCacheEntr
   }
 }
 
-/**
- * Authoritative in-process "latest write" for a snapshot, keyed by canonical
- * cwd (#958 item 2). The body is now written by a worker thread AFTER
- * `saveProjectSnapshot` returns, so between a save and the worker's promotion
- * the on-disk gz still holds the PREVIOUS generation. Reading disk in that
- * window would serve stale data to the merge-write callers
- * (`saveRuntimeProjectSnapshot`, word-index, reverse-deps) that do
- * load→mutate→save and would silently drop each other's fields. Because every
- * write in a process funnels through `saveProjectSnapshot` — and each process
- * runs in its own worktree cwd, so there is effectively one writer per snapshot
- * — the in-memory object we just handed the worker IS the authoritative truth
- * for this process. `loadProjectSnapshot` consults it first and only falls
- * through to disk when the on-disk file has an mtime STRICTLY NEWER than the
- * one we last observed for our own write (an external writer we should honor).
- */
 interface AuthoritativeSnapshotEntry {
   snapshot: ProjectSnapshot;
-  /**
-   * The mtime of the body file as we last wrote/observed it. Set to the
-   * pre-write file's mtime at save time (or -Infinity when no file exists
-   * yet), then updated to the promoted file's mtime once the worker (or the
-   * sync fallback) lands the write. Load prefers this entry while the on-disk
-   * mtime is `<=` this value.
-   */
   knownMtime: number;
   lastUsedAt: number;
   idleTimer?: ReturnType<typeof setTimeout>;
@@ -329,8 +236,6 @@ function clearAuthoritativeSnapshotTimer(entry: AuthoritativeSnapshotEntry): voi
   entry.idleTimer = undefined;
 }
 
-// Primary session_shutdown releases idle handles (entries stay warm; the next
-// use re-arms) so a shut-down module graph is not pinned for the idle window.
 registerIdleTimerRelease(() => {
   for (const entry of authoritativeSnapshots.values()) clearAuthoritativeSnapshotTimer(entry);
 });
@@ -372,26 +277,22 @@ function enforceAuthoritativeSnapshotCap(): void {
   }
 }
 
-/** Test-only cache keys, in LRU order from oldest to newest. */
 export function _getAuthoritativeSnapshotCacheKeysForTests(): string[] {
   return [...authoritativeSnapshots.entries()]
     .sort(([, a], [, b]) => a.lastUsedAt - b.lastUsedAt)
     .map(([key]) => key);
 }
 
-/** Test hook: drop all cached parses + authoritative writes (per-worker isolation). */
 export function _resetProjectSnapshotParseCacheForTests(): void {
   snapshotParseCache.clear();
   for (const entry of authoritativeSnapshots.values()) clearAuthoritativeSnapshotTimer(entry);
   authoritativeSnapshots.clear();
 }
 
-/** Test hook: prove the parse-cache tier never owns serialized postings. */
 export function _projectSnapshotParseCacheRetainsWordIndexForTests(): boolean {
   return [...snapshotParseCache.values()].some((entry) => entry.snapshot?.wordIndex !== undefined);
 }
 
-/** Resolve which body file is currently on disk: gz canonical, else legacy. */
 function resolveSnapshotBodyPath(cwd: string): {
   path: string;
   gz: boolean;
@@ -402,9 +303,7 @@ function resolveSnapshotBodyPath(cwd: string): {
   try {
     const stat = fs.statSync(gzPath);
     return { path: gzPath, gz: true, mtimeMs: stat.mtimeMs, size: stat.size };
-  } catch {
-    /* fall through to the legacy uncompressed body */
-  }
+  } catch {}
   const legacyPath = getProjectSnapshotLegacyPath(cwd);
   try {
     const stat = fs.statSync(legacyPath);
@@ -419,17 +318,6 @@ function resolveSnapshotBodyPath(cwd: string): {
   }
 }
 
-/**
- * Read + parse the body off disk, transparently gunzipping the `.json.gz`
- * canonical form and falling back to the pre-#958 uncompressed `.json` body
- * for one compatibility release. Returns the parsed snapshot (or null on any
- * failure) plus the UNCOMPRESSED byte length, so the caller can apply the
- * heap-bounded cache gate against the real body size rather than the gz size.
- */
-// Test-observable count of ACTUAL disk body reads (both gz and legacy), so the
-// #947 meta-gate tests can assert "body parsed / not parsed" independently of
-// the compression format — the pre-#958 tests keyed this off a readJsonCache
-// spy, which the gz path (gunzip + JSON.parse) legitimately bypasses.
 let _snapshotBodyReadCountForTests = 0;
 export function getSnapshotBodyReadCountForTests(): number {
   return _snapshotBodyReadCountForTests;
@@ -447,9 +335,7 @@ function readSnapshotBody(bodyPath: string, gz: boolean): ReadSnapshotBodyResult
     let rawBytes = 0;
     try {
       rawBytes = fs.statSync(bodyPath).size;
-    } catch {
-      /* best-effort */
-    }
+    } catch {}
 
     return { snapshot, rawBytes };
   }
@@ -459,10 +345,6 @@ function readSnapshotBody(bodyPath: string, gz: boolean): ReadSnapshotBodyResult
 
     return { snapshot, rawBytes: Buffer.byteLength(json) };
   } catch (err) {
-    // Corrupt / truncated gz, or a parse failure: fail open exactly like
-    // readJsonCache does — a null return rebuilds the snapshot. Log it so a
-    // corrupt body is diagnosable rather than indistinguishable from "no
-    // snapshot yet" (both return a null snapshot here).
     logLatency({
       type: "phase",
       phase: "project_snapshot_body_corrupt",
@@ -481,10 +363,6 @@ function loadProjectSnapshotInternal(
 ): ProjectSnapshot | null {
   const key = normalizeMapKey(cwd);
   const body = resolveSnapshotBodyPath(cwd);
-  // Authoritative in-process write wins while our own (possibly still
-  // in-flight) write has not been superseded on disk by a newer external
-  // mtime. `body === null` means nothing is on disk yet — our just-scheduled
-  // write is the only truth, so serve it.
   const authoritative = authoritativeSnapshots.get(key);
   if (authoritative) {
     const diskMtime = body ? body.mtimeMs : Number.NEGATIVE_INFINITY;
@@ -492,8 +370,6 @@ function loadProjectSnapshotInternal(
       touchAuthoritativeSnapshot(key, authoritative);
       return authoritative.snapshot;
     }
-    // An external writer moved past our write — honor disk and stop
-    // serving the now-stale in-memory object.
     deleteAuthoritativeSnapshot(key);
   }
   if (!body) {
@@ -502,18 +378,12 @@ function loadProjectSnapshotInternal(
   }
   const cacheKey = body.path;
   const cached = snapshotParseCache.get(cacheKey);
-  // Both mtime AND size must match (see the `size` field doc on
-  // SnapshotParseCacheEntry for why: coarse FAT/exFAT mtime resolution can
-  // otherwise alias a just-rewritten file onto a stale cache entry).
   if (cached && cached.mtimeMs === body.mtimeMs && cached.size === body.size) {
     if (!requireWordIndex || !cached.snapshot || cached.snapshot.wordIndex) {
       return cached.snapshot;
     }
   }
   const { snapshot, rawBytes } = readSnapshotBody(body.path, body.gz);
-  // Serialized postings expand into a much larger object graph. Cache only a
-  // shallow postings-stripped body: metadata/report consumers stay warm while
-  // the live warm WordIndex remains the sole retained postings graph (#1370).
   const cacheSnapshot = withoutWordIndex(snapshot);
   if (rawBytes > 0 && (rawBytes <= SNAPSHOT_PARSE_CACHE_MAX_BYTES || snapshot?.wordIndex)) {
     cacheParsedSnapshot(cacheKey, {
@@ -527,29 +397,13 @@ function loadProjectSnapshotInternal(
   return snapshot;
 }
 
-/** Load the canonical body, including serialized postings when present. */
 export function loadProjectSnapshot(cwd: string): ProjectSnapshot | null {
   return loadProjectSnapshotInternal(cwd, true);
 }
 
-/**
- * Load snapshot metadata without retaining or re-reading serialized postings.
- * After publication this is served by the postings-stripped parse cache.
- */
 export function loadProjectSnapshotWithoutWordIndex(cwd: string): ProjectSnapshot | null {
   return loadProjectSnapshotInternal(cwd, false);
 }
-
-// --- Worker-thread body persist (gzip off the save path, #958 item 2) --------
-//
-// Mirrors clients/review-graph/persist-worker.ts's parent plumbing: a monotonic
-// per-cwd `generation`, a worker that stringifies+gzips a per-generation stage
-// file, and generation-gated promotion (rename stage → canonical) so a slow
-// write for generation N can never clobber a newer generation N+1 already on
-// disk. When the worker is unavailable/dies, the pending body falls back to a
-// synchronous main-thread gzip write (the degraded path only — the #950 review
-// measured a naïve sync gzip as the DEFAULT save path regressing host memory by
-// +656MB, which is exactly why the worker exists).
 
 interface PendingSnapshotBody {
   key: string;
@@ -563,8 +417,6 @@ interface PendingSnapshotBody {
 const _snapshotGenerations = new Map<string, number>();
 const _snapshotWorkerRequests = new Map<number, PendingSnapshotBody>();
 let _snapshotPersistWorker: Worker | undefined;
-// Workers retired because the request queue drained. Their asynchronous
-// `exit` must not treat requests posted to a successor worker as stranded.
 const _retiredSnapshotPersistWorkers = new WeakSet<Worker>();
 let _snapshotWorkerRequestId = 0;
 let _snapshotWorkerDisabled = false;
@@ -573,19 +425,11 @@ let _snapshotPromotionSeamForTests: (() => Promise<void>) | undefined;
 let _lastSnapshotPersistErrorForTests: string | undefined;
 
 function snapshotWorkerEnabled(): boolean {
-  // The synchronous fallback writer is a legitimate degraded mode (hosts that
-  // can't spawn a worker); tests also force it so a save→load is fully
-  // synchronous. Production defaults to the worker.
   const raw = process.env.CHOCO_PI_LSP_SNAPSHOT_PERSIST_SYNC;
   return !(raw === "1" || raw === "true");
 }
 
 function recordSnapshotPersistFailure(cwd: string, error: string): void {
-  // Honesty (#533): a failed async body write must be surfaced, never left to
-  // masquerade as a saved snapshot. The meta gate is already self-healing (an
-  // old body under a newer-seq meta is rejected on the body's own embedded
-  // seq), and dropping the authoritative entry means the next load reflects
-  // what is ACTUALLY on disk rather than the object we failed to persist.
   _lastSnapshotPersistErrorForTests = error;
   deleteAuthoritativeSnapshot(normalizeMapKey(cwd));
   logLatency({
@@ -595,8 +439,6 @@ function recordSnapshotPersistFailure(cwd: string, error: string): void {
     durationMs: 0,
     metadata: { error },
   });
-  // #1333: the logLatency call above already carries this failure to
-  // latency.log — the console.error was a duplicate RAW write into pi's frame.
 }
 
 function logSnapshotPersistSuccess(
@@ -618,22 +460,9 @@ function logSnapshotPersistSuccess(
   });
 }
 
-/**
- * Reconcile the authoritative in-process entry with a body that just landed on
- * disk: update its `knownMtime` so a subsequent load keeps serving our own
- * object without re-parsing, and DROP oversized bodies (their post-promotion
- * disk read is the pre-#947 behavior — we won't pin hundreds of MB of heap).
- */
 function reconcileAuthoritativeAfterWrite(pending: PendingSnapshotBody, rawBytes: number): void {
   const entry = authoritativeSnapshots.get(pending.key);
-  // Only reconcile the entry that still belongs to THIS (latest) generation —
-  // a superseding save already replaced it with a newer object.
   if (!entry || entry.snapshot !== pending.snapshot) return;
-  // The worker needs the serialized snapshot until promotion completes, but
-  // retaining it afterward duplicates the mutable warm index's postings. A
-  // shared reference is unsafe: ProjectSnapshot stores serialized arrays while
-  // WordIndex owns mutable Map/PathKeyedMap state. Drop the authoritative copy
-  // after publication; later merge-writers rehydrate the canonical disk body.
   if (pending.snapshot.wordIndex) {
     try {
       const stat = fs.statSync(pending.gzPath);
@@ -642,9 +471,7 @@ function reconcileAuthoritativeAfterWrite(pending: PendingSnapshotBody, rawBytes
         size: stat.size,
         snapshot: withoutWordIndex(pending.snapshot),
       });
-    } catch {
-      // A cache miss is safe: the first metadata consumer reconstructs it.
-    }
+    } catch {}
     deleteAuthoritativeSnapshot(pending.key);
     logLatency({
       type: "phase",
@@ -656,8 +483,6 @@ function reconcileAuthoritativeAfterWrite(pending: PendingSnapshotBody, rawBytes
     return;
   }
   if (rawBytes > SNAPSHOT_PARSE_CACHE_MAX_BYTES) {
-    // Benign but invisible otherwise: the next load will re-parse this body
-    // from disk instead of serving the in-process object.
     logLatency({
       type: "phase",
       phase: "project_snapshot_authoritative_dropped_oversized",
@@ -670,20 +495,11 @@ function reconcileAuthoritativeAfterWrite(pending: PendingSnapshotBody, rawBytes
   }
   try {
     entry.knownMtime = fs.statSync(pending.gzPath).mtimeMs;
-  } catch {
-    // If we can't stat our own write, leave knownMtime as-is; the worst case
-    // is one extra disk re-parse on the next load.
-  }
+  } catch {}
 }
 
 function writeSnapshotBodyOnMainThread(pending: PendingSnapshotBody, reason?: string): void {
   if (reason) {
-    // We took the synchronous main-thread gzip path (the +656MB-risk path,
-    // #950) instead of the worker. Surface it rather than burying it in an
-    // `offloaded:false` success line below. `degraded` distinguishes a REAL
-    // degradation (worker died/unavailable/promote-failed) from the benign
-    // `exit_hook` teardown flush, so an operator triaging worker health isn't
-    // misled by normal process-exit flushes.
     logLatency({
       type: "phase",
       phase: "project_snapshot_worker_fallback",
@@ -720,12 +536,6 @@ function writeSnapshotBodyOnMainThread(pending: PendingSnapshotBody, reason?: st
   }
 }
 
-/**
- * The ForTests promotion seam covers worker-message and every main-thread
- * fallback promotion. It stays sync and seam-free in production, identical to
- * calling the writer directly. The process-exit hook is deliberately the sole
- * direct write because an exit handler cannot await this asynchronous seam.
- */
 function dispatchMainThreadWriteThroughSeam(
   pending: PendingSnapshotBody,
   reason: string | undefined,
@@ -757,14 +567,10 @@ function handleSnapshotWorkerResult(result: ProjectSnapshotPersistWorkerResult):
     dispatchMainThreadWriteThroughSeam(pending, result.error ?? "invalid worker result");
     return;
   }
-  // Generation gate: a newer save already superseded this one — discard the
-  // stale stage file rather than promote it over the fresher body.
   if (
     _snapshotGenerationGateEnabledForTests &&
     _snapshotGenerations.get(pending.key) !== result.generation
   ) {
-    // The stale stage is part of the promotion transaction: remove it before
-    // returning so a superseded save cannot leave an orphan behind.
     fs.rm(result.stagePath, { force: true }, () => {});
     return;
   }
@@ -794,12 +600,6 @@ function handleSnapshotWorkerDeath(reason: string): void {
 }
 
 function resolveSnapshotPersistWorkerPath(): string | undefined {
-  // esbuild does NOT rewrite new URL(...) asset refs, so from the bundled
-  // dist/index.js a sibling ./project-snapshot-persist-worker.js resolves
-  // beside the BUNDLE where nothing exists. Try the compiled-sibling layout
-  // first (source checkout / unbundled dist/clients tree), then the dist-tree
-  // path relative to the bundle entry — same shape as the review graph's
-  // resolvePersistWorkerPath (#950 review F1).
   const candidates = [
     new URL("./project-snapshot-persist-worker.js", import.meta.url),
     new URL("./clients/project-snapshot-persist-worker.js", import.meta.url),
@@ -808,9 +608,7 @@ function resolveSnapshotPersistWorkerPath(): string | undefined {
     try {
       const resolved = fileURLToPath(url);
       if (fs.existsSync(resolved)) return resolved;
-    } catch {
-      /* try next layout */
-    }
+    } catch {}
   }
   return undefined;
 }
@@ -825,10 +623,6 @@ function getSnapshotPersistWorker(): Worker | undefined {
       return undefined;
     }
     const worker = new Worker(workerPath);
-    // The ForTests promotion seam wraps ONLY when set — the production path
-    // binds the sync handler directly, so scheduling is byte-identical when
-    // no test seam is installed (the async-handler variant of this shifted
-    // promotion timing under full-suite load and flaked the round-trip test).
     worker.on("message", (result: ProjectSnapshotPersistWorkerResult) => {
       if (_snapshotPromotionSeamForTests) {
         void _snapshotPromotionSeamForTests().then(() => {
@@ -846,15 +640,8 @@ function getSnapshotPersistWorker(): Worker | undefined {
       settleSnapshotPersistQueue();
     });
     worker.on("exit", (code) => {
-      // A drained worker retired by settleSnapshotPersistQueue owns no
-      // requests; anything queued now belongs to its successor.
       if (_retiredSnapshotPersistWorkers.has(worker)) return;
       if (_snapshotPersistWorker === worker) _snapshotPersistWorker = undefined;
-      // Any body still queued when the worker exits was abandoned mid-flight
-      // (a crash, a `terminate()`, or host recycling) — it will never be
-      // promoted by this worker, so fall it back to the sync writer rather
-      // than let it vanish (honesty, #533). `terminate()` can report a 0
-      // exit code on some platforms, so this cannot key off `code !== 0`.
       const stranded = [..._snapshotWorkerRequests.values()];
       if (stranded.length > 0) {
         _snapshotWorkerRequests.clear();
@@ -862,13 +649,9 @@ function getSnapshotPersistWorker(): Worker | undefined {
           dispatchMainThreadWriteThroughSeam(pending, `persist worker exited with code ${code}`);
         }
       }
-      // Only an ABNORMAL exit disables respawning; a clean idle exit (nothing
-      // stranded) just drops the reference so the next persist respawns.
       if (code !== 0) _snapshotWorkerDisabled = true;
       settleSnapshotPersistQueue();
     });
-    // #1148: adding a message listener refs the Worker's public MessagePort.
-    // Unref only after every listener is installed so it stays background-only.
     worker.unref();
     _snapshotPersistWorker = worker;
     return worker;
@@ -878,10 +661,6 @@ function getSnapshotPersistWorker(): Worker | undefined {
   }
 }
 
-// #950 review F3: a process that dies between a worker's staged write and its
-// promotion leaves project-snapshot.json.gz.stage-<pid>-<gen> (and the worker's
-// .tmp-<pid>) behind forever. Sweep leftovers from PRIOR processes once per
-// cache dir; our own live stage files carry this pid and are skipped.
 const _sweptSnapshotStageDirs = new Set<string>();
 function sweepStaleSnapshotStageFiles(cacheDir: string): void {
   if (_sweptSnapshotStageDirs.has(cacheDir)) return;
@@ -897,25 +676,12 @@ function sweepStaleSnapshotStageFiles(cacheDir: string): void {
   });
 }
 
-// Flush any in-flight worker writes synchronously at process teardown so a body
-// whose worker hasn't promoted yet isn't lost. Sync writes only (no child
-// spawn — the teardown libuv hazard); best-effort. The synchronous gzip/write
-// is deliberate: an `exit` listener cannot await.
-//
-// Lifetime: Pi may evaluate this module more than once per process (in-process
-// sessions with another cwd re-evaluate extensions without a module cache). A
-// permanently installed listener pinned every evaluation's module graph, so the
-// listener is registered only while this evaluation has in-flight worker
-// requests and is removed as soon as the queue drains. Drained workers are
-// terminated for the same reason: a live worker's listeners pin the module.
 let _snapshotExitHookRegistered = false;
 function flushSnapshotPersistsAtExit(): void {
   _snapshotExitHookRegistered = false;
   const requests = [..._snapshotWorkerRequests.values()];
   _snapshotWorkerRequests.clear();
   for (const pending of requests) {
-    // Only the newest generation per key still matters; older ones are
-    // superseded and their stage files are swept on next launch.
     if (_snapshotGenerations.get(pending.key) !== pending.generation) continue;
     writeSnapshotBodyOnMainThread(pending, "exit_hook");
   }
@@ -928,7 +694,6 @@ function registerSnapshotPersistExitHook(): void {
   process.once("exit", flushSnapshotPersistsAtExit);
 }
 
-/** Drop the exit hook and the worker once no worker request is in flight. */
 function settleSnapshotPersistQueue(): void {
   if (_snapshotWorkerRequests.size > 0) return;
   if (_snapshotExitHookRegistered) {
@@ -950,24 +715,6 @@ export function saveProjectSnapshot(cwd: string, snapshot: ProjectSnapshot): voi
   const key = normalizeMapKey(cwd);
   fs.mkdirSync(cacheDir, { recursive: true });
 
-  // #958: meta is written FIRST, body SECOND — the reverse of the original
-  // order. A crash/failure between the two writes can now only produce
-  // "meta already claims the new seq, body hasn't caught up yet" (the meta
-  // races ahead). The meta-first gate (isProjectSnapshotMetaStale) reads
-  // that as *fresh* and falls through to parsing the body, whose own
-  // embedded `seq` is still the old one, so `isProjectSnapshotFresh`
-  // correctly rejects it as stale on the body's own merits — one wasted
-  // parse, self-healing, no data lost. The OLD body-then-meta order could
-  // instead leave an old-seq meta sitting over a freshly written body,
-  // which the meta-first gate discards WITHOUT ever reading it — throwing
-  // away a genuinely fresh snapshot. That direction is not recoverable
-  // until the next save, so it's the one this reorder eliminates.
-  //
-  // The meta write is still SYNCHRONOUS (it is tiny) and uses
-  // `bestEffort: false`: if it fails, the body persist below is skipped
-  // entirely — the save is simply lost this round (fail-open, caught by
-  // `saveRuntimeProjectSnapshot`'s own try/catch) rather than leaving a
-  // stale meta in place while the body writer stampedes ahead.
   writeFileAtomic(
     metaPath,
     JSON.stringify(
@@ -980,17 +727,6 @@ export function saveProjectSnapshot(cwd: string, snapshot: ProjectSnapshot): voi
     { bestEffort: false },
   );
 
-  // Record the authoritative in-process write BEFORE handing the body off, so
-  // a merge-read between now and the worker's promotion sees our own object
-  // (the on-disk body still holds the previous generation until promotion). The
-  // pre-write mtime is our baseline: while disk stays at it (or below), our
-  // object wins; a promotion or an external write moves past it. Baseline off
-  // the CURRENTLY-RESOLVED body — which is the legacy uncompressed
-  // `project-snapshot.json` in the one-release upgrade window before the first
-  // gz promotion — not gz-only: statting only gzPath there would leave the
-  // baseline at -Infinity, so the load gate (which resolves the legacy body's
-  // real, positive mtime) would reject our own fresh write and serve the stale
-  // legacy body to a merge-consumer, silently dropping this snapshot's fields.
   const priorBody = resolveSnapshotBodyPath(cwd);
   const knownMtime = priorBody ? priorBody.mtimeMs : Number.NEGATIVE_INFINITY;
   const authoritativeEntry: AuthoritativeSnapshotEntry = {
@@ -1001,8 +737,6 @@ export function saveProjectSnapshot(cwd: string, snapshot: ProjectSnapshot): voi
   authoritativeSnapshots.set(key, authoritativeEntry);
   scheduleAuthoritativeSnapshotEviction(key, authoritativeEntry);
   enforceAuthoritativeSnapshotCap();
-  // A stale disk-parse-cache entry for this path must not out-vote the fresh
-  // authoritative write once the latter is dropped (oversized bodies).
   snapshotParseCache.delete(gzPath);
 
   const generation = (_snapshotGenerations.get(key) ?? 0) + 1;
@@ -1044,16 +778,12 @@ export function saveProjectSnapshot(cwd: string, snapshot: ProjectSnapshot): voi
   worker.postMessage(request);
 }
 
-// --- Test hooks for the worker persist path ---------------------------------
-
-/** Test-only: wait until worker requests have either landed or degraded. */
 export async function waitForProjectSnapshotPersistsForTests(): Promise<void> {
   for (let attempts = 0; attempts < 200 && _snapshotWorkerRequests.size > 0; attempts++) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
 
-/** Test-only: force any in-flight worker body write to the sync main-thread path. */
 export function flushProjectSnapshotPersistsForTests(): void {
   const requests = [..._snapshotWorkerRequests.values()];
   _snapshotWorkerRequests.clear();
@@ -1064,13 +794,11 @@ export function flushProjectSnapshotPersistsForTests(): void {
   settleSnapshotPersistQueue();
 }
 
-/** Test-only: exercise the degraded worker-death path. */
 export async function terminateProjectSnapshotPersistWorkerForTests(): Promise<void> {
   const worker = _snapshotPersistWorker;
   if (worker) await worker.terminate();
 }
 
-/** Test-only: observe this evaluation's persist lifetime resources. */
 export function getProjectSnapshotPersistLifetimeForTests() {
   return {
     workerAlive: _snapshotPersistWorker !== undefined,
@@ -1079,13 +807,11 @@ export function getProjectSnapshotPersistLifetimeForTests() {
   };
 }
 
-/** Test-only: run this evaluation's process-exit flush without exiting. */
 export function flushProjectSnapshotPersistsAtExitForTests(): void {
   if (_snapshotExitHookRegistered) process.off("exit", flushSnapshotPersistsAtExit);
   flushSnapshotPersistsAtExit();
 }
 
-/** Test-only: restore worker creation + clear generation state after a deliberate death. */
 export function resetProjectSnapshotPersistWorkerForTests(): void {
   _snapshotWorkerDisabled = false;
   _snapshotGenerationGateEnabledForTests = true;
@@ -1096,12 +822,10 @@ export function resetProjectSnapshotPersistWorkerForTests(): void {
   _lastSnapshotPersistErrorForTests = undefined;
 }
 
-/** Test-only mutation switch for proving the supersession invariant. */
 export function setProjectSnapshotGenerationGateForTests(enabled: boolean): void {
   _snapshotGenerationGateEnabledForTests = enabled;
 }
 
-/** Test-only seam immediately before generation-gated promotion. */
 export function setProjectSnapshotPromotionSeamForTests(
   seam: (() => Promise<void>) | undefined,
 ): void {
@@ -1130,11 +854,6 @@ export function buildProjectSnapshotFromRuntime(args: {
     cachedExports: [...args.runtime.cachedExports.entries()].sort((a, b) =>
       a[0].localeCompare(b[0]),
     ),
-    // #1019: capture the runtime's live sequence index AT this seq. The runtime
-    // is seeded from the change log at session start and bumped in lockstep with
-    // every append, so `getFileSeqEntries()` IS the fold of the log up to
-    // `projectSeq` — and its keys are already `normalizeMapKey(path.resolve())`,
-    // the exact form the change-log replay produces.
     sequenceIndex: {
       projectSeq: args.runtime.projectSeq,
       fileSeqByPath: args.runtime.getFileSeqEntries(),
@@ -1190,14 +909,6 @@ export function saveRuntimeProjectSnapshot(args: {
       snapshot.files = existing.files ?? {};
       snapshot.symbols = existing.symbols ?? {};
       snapshot.reverseDeps = existing.reverseDeps ?? {};
-      // The word index is built by its own session task, which may not have
-      // finished when another task triggers a save — keep the prior index
-      // rather than clobbering it with undefined. #348: only carry it forward
-      // when `existing` was built AT THIS SAME seq — otherwise a stale
-      // snapshot's leftover index (already correctly rejected as stale by
-      // isProjectSnapshotFresh on load, seq mismatch) would get silently
-      // re-stamped with the CURRENT seq by this save, "laundering" a stale
-      // index into looking fresh before the word-index task even runs.
       if (!snapshot.wordIndex && existing.wordIndex && existing.seq === snapshot.seq) {
         snapshot.wordIndex = existing.wordIndex;
       }

@@ -1,9 +1,3 @@
-/**
- * Every compaction this extension answers records what started it:
- * `details.trigger` on the checkpoint, `trigger` on the lane record of a
- * native attempt that gave way. The field is optional so older session files
- * parse unchanged.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -68,7 +62,6 @@ test("lane records accept the optional trigger and still accept records without 
   assert.ok(!isLaneRecord({ ...base, trigger: "auto" }), "only the vocabulary");
 });
 
-/** The full extension, background off, answering the host's own compactions. */
 function extension(pi: ExtensionAPI): void {
   registerCompaction(pi, {
     retryPolicy: RETRY,
@@ -133,7 +126,6 @@ test(
       extensions: [extension],
       contextWindow: 100_000,
       compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 1_000 },
-      // A completed response that exceeded the configured window: overflow without retry.
       respond: async (index) => reply(`R${index}`, { usageInput: index === 0 ? 10 : 120_000 }),
     });
     try {

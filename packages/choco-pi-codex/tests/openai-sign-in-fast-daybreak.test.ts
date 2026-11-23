@@ -59,7 +59,6 @@ const codex: Model<Api> = {
 };
 const oauth = { isUsingOAuth: () => true };
 const apiKeyRegistry = { isUsingOAuth: () => false };
-// ChatGPT sign-in token shape without chatgpt_account_id.
 const signInToken = `e30.${Buffer.from(JSON.stringify({ sub: "user" })).toString("base64url")}.sig`;
 
 function installClaimingBridge(sessionId: string, revision: { value: number }): () => void {
@@ -184,7 +183,6 @@ test("openai sign-in Daybreak is unavailable with a reason and performs zero fet
       formatDaybreakStatus(snapshot),
       `Daybreak unavailable (${OPENAI_SIGN_IN_DAYBREAK_REASON})`,
     );
-    // Without sign-in evidence the legacy snapshot is unchanged.
     assert.equal(snapshotCodexDaybreakDecision(sessionId, openai).reason, undefined);
     const ticket = beginCodexDaybreakRequest({
       sessionId,

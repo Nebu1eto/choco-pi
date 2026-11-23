@@ -30,6 +30,4 @@ function runtime(): NativeRuntime {
   return value;
 }
 
-// Pi extension loading and deferred native imports can instantiate a module separately.
-// Share only owned state, never replace Pi methods or prototypes.
 export const nativeRuntime = runtime();

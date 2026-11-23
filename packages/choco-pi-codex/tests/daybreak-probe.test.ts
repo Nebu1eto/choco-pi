@@ -144,10 +144,10 @@ test("missing credentials use the decision pipeline's auth-not-eligible outcome"
 });
 
 test("real SDK session-start and model-select events run the eager probe", async (t) => {
-  fixture(t); // Install strict lookup-only fetch I/O.
+  fixture(t);
   const bridge = getDaybreakBridge();
   const sdk = await createSdkFixture(model, [
-    registerCodexDaybreakProbe, // Probe registration deliberately precedes the controller factory.
+    registerCodexDaybreakProbe,
     bridge.createExtension({
       owner: {},
       generation: 0,

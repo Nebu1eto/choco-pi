@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import { arr, compile, map, obj, opt, str } from "@earendil-works/pi-schema";
 import type { ModelIdentity } from "./model-gate.ts";
 
-// Open objects, as TypeBox's were: unrelated tiers/keys are tolerated.
 const isFallbacks = compile(
   obj(
     { tiers: obj({ flagship: obj({ primary: arr(str()) }, { open: true }) }, { open: true }) },
@@ -18,7 +17,6 @@ function parseIdentity(entry: string): ModelIdentity | undefined {
   return { provider: entry.slice(0, slash), id: entry.slice(slash + 1) };
 }
 
-/** packages/choco-pi-advisor/src -> profile/model-fallbacks.json (package-relative, like choco-pi-subagents/src/model-tiers.ts). */
 export function defaultFallbacksPath(): string {
   return join(
     dirname(fileURLToPath(import.meta.url)),
@@ -30,7 +28,6 @@ export function defaultFallbacksPath(): string {
   );
 }
 
-/** Flagship-tier primaries from the package-relative model-fallbacks.json; fails open to an empty list. */
 export async function loadFlagshipPrimaries(
   path: string = defaultFallbacksPath(),
 ): Promise<ModelIdentity[]> {
@@ -50,10 +47,6 @@ export async function loadFlagshipPrimaries(
 
 const hasVariants = compile(obj({ preferWhenAvailable: opt(map(str())) }, { open: true })).check;
 
-/**
- * `preferWhenAvailable` from the same table: `provider/id` -> the same model behind an access
- * program (Fable -> Mythos). Fails open to no variants.
- */
 export async function loadPreferredVariants(
   path: string = defaultFallbacksPath(),
 ): Promise<ReadonlyMap<string, string>> {

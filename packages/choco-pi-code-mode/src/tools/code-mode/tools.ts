@@ -14,8 +14,6 @@ import { registerPublicCodeModeTools } from "./public-tools.ts";
 import { SharedCodeModeRuntime, type CodeModeToolProvider } from "./shared-runtime.ts";
 import { registerCodeModeEvents } from "./tool-events.ts";
 
-// Providers in one extension instance share a process-lifetime host runtime.
-// Pi replaces ExtensionAPI registrations on reload, so each API binds its own surface.
 const REGISTRATION_KEY = Symbol.for("@howaboua/pi-codex-conversion.code-mode");
 
 interface CodeModeProcessState {
@@ -161,7 +159,6 @@ function isProcessState(value: BoundaryValue): value is CodeModeProcessState {
 }
 
 async function replaceLegacyState(legacy: BoundaryValue): Promise<CodeModeProcessState> {
-  // 2.2.0 stored the runtime directly and retained stale providers across reloads.
   if (isSharedRuntime(legacy)) await legacy.shutdownHost();
   return { runtime: new SharedCodeModeRuntime(), boundApis: new WeakSet() };
 }

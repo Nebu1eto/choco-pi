@@ -135,9 +135,6 @@ test("renders compact agent_message routes and queued delivery", () => {
     },
   );
   assert.equal(parseSubagentMessageNotification({ from: "planner" }), undefined);
-  // A steered root message must not claim to be queued: the screenshot route
-  // that motivated this case rendered "(queued)" for an envelope the root
-  // session's steering queue had already accepted.
   assert.equal(
     renderAgentMessageNotification(
       {
@@ -165,7 +162,6 @@ test("renders compact agent_message routes and queued delivery", () => {
 });
 
 test("carries the agent role badge, falling back to a generic label", () => {
-  // The badge comes from the agent registry, exactly as the launch row resolves it.
   registerAgents(
     new Map([
       [

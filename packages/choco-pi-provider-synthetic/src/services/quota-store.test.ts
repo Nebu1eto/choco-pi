@@ -41,11 +41,9 @@ describe("QuotaStore", () => {
       const store = new QuotaStore();
       store.ingest(sampleQuotas, "header");
 
-      // Within throttle window — should be dropped
       const result = store.ingest(sampleQuotas, "header");
       expect(result).toBe(false);
 
-      // Advance past throttle
       vi.advanceTimersByTime(store.headerThrottleMs + 1);
       const result2 = store.ingest(sampleQuotas, "header");
       expect(result2).toBe(true);
@@ -55,7 +53,6 @@ describe("QuotaStore", () => {
       const store = new QuotaStore();
       store.ingest(sampleQuotas, "api");
 
-      // API is never throttled
       const result = store.ingest(sampleQuotas, "api");
       expect(result).toBe(true);
     });
@@ -64,7 +61,6 @@ describe("QuotaStore", () => {
       const store = new QuotaStore();
       store.ingest(sampleQuotas, "api");
 
-      // Header 1ms after API should not be blocked
       vi.advanceTimersByTime(1);
       const result = store.ingest(sampleQuotas, "header");
       expect(result).toBe(true);
@@ -104,7 +100,7 @@ describe("QuotaStore", () => {
       store.subscribe((snap) => calls.push(snap.quotas));
 
       store.ingest(sampleQuotas, "header");
-      store.ingest(sampleQuotas, "header"); // throttled
+      store.ingest(sampleQuotas, "header");
 
       expect(calls).toHaveLength(1);
     });
@@ -153,15 +149,12 @@ describe("QuotaStore", () => {
       const first = new Promise<QuotasResponse>((r) => (resolveFirst = r));
       const fetcher = vi.fn().mockImplementation(() => first);
 
-      // Start two concurrent refreshes
       const p1 = store.refreshFromApi(fetcher);
       const p2 = store.refreshFromApi(fetcher);
 
-      // Only one fetcher call
       expect(fetcher).toHaveBeenCalledOnce();
       expect(store.isRefreshing).toBe(true);
 
-      // Resolve the fetch
       resolveFirst(sampleQuotas);
       await p1;
       await p2;

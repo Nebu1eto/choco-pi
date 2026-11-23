@@ -11,12 +11,9 @@ import {
 } from "../packages/choco-pi-goal/src/stale-queued-work-reducer.ts";
 import { CUSTOM_ENTRY_TYPE } from "../packages/choco-pi-goal/src/types.ts";
 
-// Fixed seed and run count keep the suite deterministic; fast-check prints the
-// seed, path, and shrunk counterexample when a property fails.
 const RUNS = { seed: 0x60a1_d0e5, numRuns: 2000 };
 
 const goalId = fc.constantFrom("g1", "g2");
-// A small index range makes turn_end events often match a pending abort.
 const turnIndex = fc.constantFrom<number | null>(null, 0, 1);
 
 function queuedGoalMessage(id: string): AgentEndMessage {
@@ -35,8 +32,6 @@ const agentEndMessage: fc.Arbitrary<AgentEndMessage> = fc.oneof(
   fc.constant({ role: "user", content: "hello" }),
 );
 
-// Start and abort events are weighted up so most sequences reach the
-// abortingTurn and awaitingTerminalCleanup lifecycles.
 const event: fc.Arbitrary<StaleQueuedWorkEvent> = fc.oneof(
   { weight: 2, arbitrary: fc.constant({ type: "runnableWorkStarted" as const }) },
   {
@@ -75,8 +70,6 @@ const event: fc.Arbitrary<StaleQueuedWorkEvent> = fc.oneof(
   { weight: 1, arbitrary: fc.constant({ type: "sessionShutdown" as const }) },
 );
 
-// A stale start followed by its context abort is the only way into
-// abortingTurn, so sequences also draw that pair as one block.
 const staleAbortBlock = fc.tuple(goalId, turnIndex).map(([id, index]): StaleQueuedWorkEvent[] => [
   { type: "staleWorkStarted", goalId: id },
   { type: "contextAbort", currentTurnIndex: index },
@@ -130,7 +123,6 @@ function hasPendingCleanup(state: StaleQueuedWorkState): boolean {
   );
 }
 
-/** Replays events from idle, calling visit with every (before, event, after) step. */
 function replay(
   sequence: readonly StaleQueuedWorkEvent[],
   visit: (

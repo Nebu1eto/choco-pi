@@ -3,7 +3,6 @@ import test from "node:test";
 
 import { BridgeResponseRouter } from "../src/tools/exec/bridge-client.ts";
 
-/** What one registered request was settled with, if anything. */
 interface Settled {
   response?: unknown;
   error?: Error;
@@ -26,7 +25,7 @@ test("a response split across chunks, even inside a multi-byte character, settle
   const router = new BridgeResponseRouter();
   const one = pending(router, 1);
   const line = Buffer.from('{"request_id":1,"ok":true,"result":"\u00e9t\u00e9"}\n');
-  const split = line.indexOf(0xc3) + 1; // inside the two-byte é
+  const split = line.indexOf(0xc3) + 1;
   router.push(line.subarray(0, split));
   assert.deepEqual(one, {});
   assert.equal(router.responded, false);

@@ -1,73 +1,24 @@
 import { propertiesWhen } from "../../lib/runtime-values.ts";
 import { isObject, isString, type RuntimeValue } from "../../lib/runtime-values.ts";
-/**
- * Side-chat transport for the interactive review view (`/review-assist`).
- *
- * The founding constraint of `/review-assist` is that the diff never enters the main
- * session's model context. Letting the reviewer ask questions must not undo
- * that, so this module runs the chat on an independent agent session with its
- * own context. Nothing from the main session reaches it, and nothing it sends
- * reaches the main session.
- *
- * Three rules follow from that constraint:
- *
- * 1. Only the location slice in `ReviewChatContext` is ever sent. No field on
- *    that type can carry diff text beyond the single focused line, and
- *    `buildReviewChatPrompt` reads nothing else.
- * 2. The prompt sends where the hunk is — file, hunk header, focused line —
- *    never the hunk body. The agent explores the repository with its own
- *    tools from that location, exactly as it would at the main prompt.
- * 3. The session carries the main agent's full toolset and harness. Question
- *    turns still instruct the model that a review answer changes nothing; a
- *    crippled tool allowlist proved worse, because harness extensions inject
- *    the main system prompt and the model faked the missing tools in text.
- *
- * Failures are transcript messages, not exceptions. A missing model, a provider
- * error, or a cancelled request must not tear down a review that may hold an
- * hour of unsent comments.
- */
 
 import type { DiffSide } from "./types.ts";
 import type { HiddenPaths } from "./chat-guard.ts";
 import { agentStringLiteral, escapeForAgent } from "../../lib/changes/terminal-text.ts";
 
-/** Prefix on every transcript entry that reports a failure instead of an answer. */
 export const REVIEW_CHAT_FAILURE_PREFIX = "Review chat error: ";
 
-/* --------------------------------------------------------------- contracts */
-
-/**
- * The location slice of a review a single question may carry.
- *
- * Deliberately no diff body: the agent gets where the reviewer is looking —
- * file, hunk header, focused line — and explores the repository with its own
- * tools. `reviewRoot` is the worktree or repository root the chat may read;
- * for a pull request review that is the pull request worktree, which is
- * exactly the tree the reviewer is looking at.
- */
 export type ReviewChatContext = {
   path: string;
   side: DiffSide;
   line: number;
-  /** Source text of the focused row without its diff prefix. */
   focusedLineText: string;
-  /** The hunk's `@@ -old,+new @@` header, locating the change in both revisions. */
   hunkHeader: string;
-  /** Worktree or repository root the chat may read. */
   reviewRoot: string;
-  /** Sensitive files whose contents the reviewer has not opened; named, never quoted. */
   hiddenPaths?: readonly string[];
 };
 
 export type ReviewChatTextMessage = { role: "user" | "assistant"; text: string };
 
-/**
- * One tool call the chat's agent made, kept in transcript order.
- *
- * `result` holds the raw tool result — partial while `done` is false — in the
- * exact shape the session reported, so the view can hand it to the same
- * component the main agent renders tool calls with.
- */
 export type ReviewChatToolCall = {
   role: "tool";
   toolCallId: string;
@@ -80,7 +31,6 @@ export type ReviewChatToolCall = {
 
 export type ReviewChatMessage = ReviewChatTextMessage | ReviewChatToolCall;
 
-/** Thinking levels Pi accepts, used to validate `/effort` before a session exists. */
 export const REVIEW_CHAT_THINKING_LEVELS = [
   "off",
   "minimal",
@@ -92,72 +42,32 @@ export const REVIEW_CHAT_THINKING_LEVELS = [
 ] as const;
 export type ReviewChatThinkingLevel = (typeof REVIEW_CHAT_THINKING_LEVELS)[number];
 
-/** Model and effort the chat currently targets, as shown in the pane heading. */
 export type ReviewChatStatus = {
-  /** `provider/id`, or undefined when Pi's default model applies. */
   model?: string;
   thinkingLevel?: string;
 };
 
-/** A slash command the chat's own session can run. */
 export type ReviewChatCommandInfo = {
   name: string;
   description?: string;
 };
 
-/**
- * The view-facing chat.
- *
- * `ask` resolves when the turn settles and never rejects; a failure arrives as
- * an assistant message. `messages` is live, so `onUpdate` listeners re-read it
- * rather than receiving a payload.
- */
 export type ReviewChat = {
   ask(question: string, context: ReviewChatContext): Promise<void>;
   readonly messages: readonly ReviewChatMessage[];
-  /** Fires as the reply streams in. Returns an unsubscribe function. */
   onUpdate(listener: () => void): () => void;
   readonly pending: boolean;
-  /** Live model and effort; falls back to the requested values before the session exists. */
   readonly status: ReviewChatStatus;
-  /** Apply a model query; resolves to the applied `provider/id` or rejects with the reason. */
   setModel(query: string): Promise<string>;
-  /** Apply a thinking level; resolves to the level in effect or rejects with the reason. */
   setThinkingLevel(level: string): Promise<string>;
-  /**
-   * Reload the session's resources — extensions, skills, prompts, and
-   * context files — exactly like the main agent's `/reload`. The transcript
-   * is kept. Rejects while a reply is still streaming.
-   */
   reload(): Promise<void>;
-  /** Create the underlying session eagerly so commands and status are available before the first question. */
   prepare(reviewRoot: string): Promise<void>;
-  /** Slash commands the chat's session can run, once it exists. */
   commands(): ReviewChatCommandInfo[];
-  /**
-   * The session's registered tool definition for a tool name, once the
-   * session exists. The main transcript hands this to its tool component so
-   * extension and MCP tools render with their own renderers; the review
-   * chat does the same.
-   */
   toolDefinition(name: string): RuntimeValue;
-  /**
-   * Run a slash command through the session's own command surface: an
-   * extension command executes, and a skill or prompt template expands into
-   * a real turn that streams into the transcript.
-   */
   runCommand(text: string, reviewRoot: string): Promise<void>;
   dispose(): void;
 };
 
-/* -------------------------------------------------------------- session seam */
-
-/**
- * The subset of an agent session event this module reads.
- *
- * Pi's `AgentSessionEvent` union is structurally assignable to this, so the
- * default factory can forward events unchanged while tests emit plain objects.
- */
 export type ReviewChatSessionEvent = {
   readonly type: string;
   readonly message?: unknown;
@@ -169,29 +79,17 @@ export type ReviewChatSessionEvent = {
   readonly isError?: boolean;
 };
 
-/**
- * The subset of an agent session this module drives.
- *
- * Kept narrow so tests can inject a fake and never reach a provider.
- */
 export type ReviewChatSession = {
   sendUserMessage(content: string): Promise<void>;
   subscribe(listener: (event: ReviewChatSessionEvent) => void): () => void;
   abort(): Promise<void>;
   dispose(): void;
-  /** Live model and effort of the underlying session, when the transport exposes them. */
   describeModel?(): ReviewChatStatus;
-  /** Resolve and apply a model query, returning the applied `provider/id`. */
   setModel?(query: string): Promise<string>;
-  /** Apply a thinking level, returning the level in effect after clamping. */
   setThinkingLevel?(level: string): string;
-  /** Reload the session's extensions, skills, prompts, and context files. */
   reload?(): Promise<void>;
-  /** Run text through the session's prompt path with command and template expansion. */
   runCommand?(text: string): Promise<void>;
-  /** Slash commands registered in the session: extension commands, prompts, and skills. */
   listCommands?(): ReviewChatCommandInfo[];
-  /** Registered tool definition lookup, forwarded to the tool renderer. */
   getToolDefinition?(name: string): RuntimeValue;
 };
 
@@ -199,12 +97,7 @@ export type ReviewChatSessionRequest = {
   cwd: string;
   model?: string;
   thinkingLevel?: ReviewChatThinkingLevel;
-  /** Root the session's tools operate under. */
   reviewRoot: string;
-  /**
-   * Files the review keeps hidden right now, relative to `reviewRoot`. The
-   * default session refuses tool calls that target them (chat-guard.ts).
-   */
   hiddenPaths?: HiddenPaths;
 };
 
@@ -216,28 +109,16 @@ export type ReviewChatOptions = {
   cwd: string;
   model?: string;
   thinkingLevel?: string;
-  /** Files the open review keeps hidden, read at each tool call; see chat-guard.ts. */
   hiddenPaths?: HiddenPaths;
-  /** Injection seam for tests. Defaults to an independent Pi session with the main toolset. */
   createSession?: ReviewChatSessionFactory;
 };
 
-/* -------------------------------------------------------------------- prompt */
-
-/**
- * Build the text sent for one question.
- *
- * Everything the model sees about the review is assembled here, from
- * `ReviewChatContext` alone — a location, not diff text, so the agent
- * investigates the repository itself instead of trusting a pasted snippet.
- */
 export function buildReviewChatPrompt(question: string, context: ReviewChatContext): string {
   const side = context.side === "LEFT" ? "LEFT (base revision)" : "RIGHT (head revision)";
   const lines = [
     "A human reviewer is reading one hunk of a local code review and has a question about it.",
     "",
     "Review context (location only — the diff body is deliberately not included):",
-    // Repository text is escaped: a control character in a name or line must not reach the model raw.
     `- file: ${escapeForAgent(context.path)}`,
     `- hunk: ${escapeForAgent(context.hunkHeader, true)}`,
     `- side: ${side}`,
@@ -265,18 +146,6 @@ export function buildReviewChatPrompt(question: string, context: ReviewChatConte
   return lines.join("\n");
 }
 
-/* ---------------------------------------------------------------- transport */
-
-/**
- * Create a review side chat.
- *
- * The session is created lazily on the first question and reused for every
- * later one, so follow-ups work without re-sending earlier context. It is
- * rooted at the first question's `reviewRoot`; a later question against a
- * different root still reports that root in its prompt, but the tools
- * stay where the chat started. A review does not change worktrees mid-session,
- * so that trade keeps one conversation instead of silently dropping history.
- */
 export function createReviewChat(options: ReviewChatOptions): ReviewChat {
   const createSession = options.createSession ?? createDefaultReviewSession;
   const messages: ReviewChatMessage[] = [];
@@ -288,17 +157,12 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
   let pendingCount = 0;
   let disposed = false;
   let queue: Promise<void> = Promise.resolve();
-  /* model and effort requested for the session; live session values win once it exists */
   let desiredModel = options.model;
   let desiredThinking = parseThinkingLevel(options.thinkingLevel);
 
-  /* per-turn streaming state */
   let activeAssistant: number | undefined;
-  /** The entry of the assistant message that ended last; a retry of that message reuses it. */
   let endedAssistant: number | undefined;
-  /** Set by `auto_retry_start`: the next assistant message replaces this partial answer. */
   let retryEntry: number | undefined;
-  /** The current assistant message reuses a retried entry and has not streamed text yet. */
   let retryUnfilled = false;
   let turnProducedText = false;
   let turnFailure: string | undefined;
@@ -307,9 +171,7 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
     for (const listener of Array.from(listeners)) {
       try {
         listener();
-      } catch {
-        /* A broken view listener must not take the review down with it. */
-      }
+      } catch {}
     }
   }
 
@@ -326,11 +188,6 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
     return undefined;
   }
 
-  /**
-   * Mirror tool executions into the transcript in event order. The session
-   * emits them between assistant messages, so interleaving text and tool
-   * rows here reproduces the main agent's transcript order.
-   */
   function handleToolEvent(event: ReviewChatSessionEvent): boolean {
     if (!isString(event.toolCallId)) return false;
     if (event.type === "tool_execution_start") {
@@ -370,18 +227,11 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
     if (disposed) return;
     if (handleToolEvent(event)) return;
     if (event.type === "auto_retry_start") {
-      // Pi retries a cut-off answer as a fresh assistant message and leaves the
-      // failed attempt out of the model's context, so the transcript keeps one
-      // answer per question: the retry replaces the partial text in place. A
-      // final failure ends without another retry and is reported once, after
-      // the turn, from the last attempt's message.
       retryEntry = endedAssistant;
       turnFailure = undefined;
       return;
     }
     if (event.type === "message_start") {
-      // A new message begins, so streamed text starts a new transcript entry.
-      // A retried assistant message continues in the entry of the attempt it replaces.
       const retrying = retryEntry !== undefined && isAssistantMessage(event.message);
       activeAssistant = retrying ? retryEntry : undefined;
       retryUnfilled = retrying;
@@ -399,7 +249,6 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
         notify();
       } else {
         const existing = messages[activeAssistant];
-        // `message_end` repeats the text already streamed; do not repaint for it.
         if (!(existing?.role === "assistant" && existing.text === text)) {
           messages[activeAssistant] = { role: "assistant", text };
           notify();
@@ -414,7 +263,6 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
         activeAssistant !== undefined &&
         activeAssistant === messages.length - 1
       ) {
-        // The retry produced no text (for example only tool calls): drop the stale partial.
         messages.pop();
         activeAssistant = undefined;
         notify();
@@ -439,7 +287,6 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
           }),
         )
         .catch((error: RuntimeValue) => {
-          // Do not cache the failure: a later question should retry.
           sessionPromise = undefined;
           throw error;
         });
@@ -474,12 +321,7 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
       if (turnFailure) push("assistant", `${REVIEW_CHAT_FAILURE_PREFIX}${turnFailure}`);
       else if (!turnProducedText) {
         push("assistant", `${REVIEW_CHAT_FAILURE_PREFIX}the model returned no answer.`);
-      }
-      // Preamble text ("Let me check…") before a tool call satisfies
-      // turnProducedText, so a turn whose transcript ends on a tool row
-      // still finished without answering. Silence here reads as a hang to
-      // the reviewer; name it instead.
-      else if (messages.at(-1)?.role === "tool") {
+      } else if (messages.at(-1)?.role === "tool") {
         push(
           "assistant",
           `${REVIEW_CHAT_FAILURE_PREFIX}the model ended its turn after a tool call without a final answer. Ask again to continue.`,
@@ -500,18 +342,10 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
       .then(() => {
         try {
           active.dispose();
-        } catch {
-          /* Already gone; disposal must not throw at the view. */
-        }
+        } catch {}
       });
   }
 
-  /**
-   * One command sent through the session's own prompt path. Unlike a
-   * question, a command may legitimately settle without producing text — an
-   * extension command runs immediately and returns — so no "no answer"
-   * failure is synthesized here.
-   */
   async function runCommandTurn(text: string, reviewRoot: string): Promise<void> {
     try {
       if (disposed) return;
@@ -546,8 +380,6 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
       pendingCount += 1;
       notify();
 
-      // Serialize turns: an independent session rejects a second prompt while
-      // the first is still running.
       const run = queue.then(() => runTurn(trimmed, context));
       queue = run.then(
         () => undefined,
@@ -589,7 +421,6 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
         if (!session.setModel) throw new Error("This chat session cannot switch models.");
         desiredModel = await session.setModel(trimmed);
       } else {
-        // Applied and validated when the session is created on the next question.
         desiredModel = trimmed;
       }
       notify();
@@ -617,8 +448,6 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
       if (pendingCount > 0) {
         throw new Error("Wait for the current reply to finish before reloading the chat.");
       }
-      // Before a session exists there is nothing loaded; the first
-      // question reads every resource fresh anyway.
       if (!session) return;
       if (!session.reload) throw new Error("This chat session cannot reload resources.");
       await session.reload();
@@ -661,26 +490,11 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
       listeners.clear();
       const active = session;
       session = undefined;
-      // A session still being created is disposed by the awaiting turn, which
-      // observes `disposed` when it resumes.
       if (active) closeSession(active);
     },
   };
 }
 
-/* ------------------------------------------------------------ default factory */
-
-/**
- * Default session factory: an independent Pi session with the main agent's
- * default toolset and harness extensions, so the chat behaves exactly like
- * the main prompt while its conversation stays out of the main context.
- *
- * The session is in-memory: a review side chat is ephemeral, and an in-memory
- * session manager cannot restore messages from any earlier session.
- *
- * Imported dynamically so `core/ask.ts` stays loadable, and testable, without
- * pulling in the agent SDK.
- */
 async function createDefaultReviewSession(
   request: ReviewChatSessionRequest,
 ): Promise<ReviewChatSession> {
@@ -691,21 +505,11 @@ async function createDefaultReviewSession(
 
   const root = request.reviewRoot || request.cwd;
   const modelRuntime = await ModelRuntime.create();
-  // Default discovery plus Pi's built-in `tool_search`, which SDK sessions do
-  // not load on their own, so deferred tools stay discoverable as in the main
-  // session, plus the guard that refuses tool calls on files the review keeps
-  // hidden. The shared loader loads the guard last, so its `tool_call` handler
-  // sees every call, including tools found through `tool_search`. The guard is
-  // defence in depth, not a sandbox: chat-guard.ts lists what it does not stop.
   const hiddenPaths = request.hiddenPaths;
   const resourceLoader = await createToolSearchResourceLoader(root, {
     extensionFactories: hiddenPaths ? [chatToolGuard(root, hiddenPaths)] : [],
   });
 
-  // Extension-registered providers (for example a proxy the main session's
-  // model lives on) only enter `modelRuntime` during `bindExtensions`, so a
-  // model that fails static resolution here is retried after binding
-  // instead of failing the chat outright.
   let model: Awaited<ReturnType<typeof resolveCliModel>>["model"];
   let deferredModelQuery: string | undefined;
   if (request.model) {
@@ -719,10 +523,6 @@ async function createDefaultReviewSession(
     model,
     modelRuntime,
     ...propertiesWhen(request.thinkingLevel, () => ({ thinkingLevel: request.thinkingLevel })),
-    // The full default toolset, exactly like the main session. A tool
-    // allowlist here is worse than none: extensions still inject the main
-    // harness system prompt, and a model told about tools it cannot call
-    // starts writing fake tool transcripts with fabricated results.
     sessionManager: SessionManager.inMemory(root),
     resourceLoader,
   });
@@ -781,16 +581,12 @@ async function createDefaultReviewSession(
           ...propertiesWhen(info.description, () => ({ description: info.description })),
         }));
       } catch {
-        // The runtime rejects reads until initialization; an empty
-        // catalog only disables completion, never the commands.
         return [];
       }
     },
     getToolDefinition: (name) => session.getToolDefinition(name),
   };
 }
-
-/* ------------------------------------------------------------------- helpers */
 
 function parseThinkingLevel(level: string | undefined): ReviewChatThinkingLevel | undefined {
   return REVIEW_CHAT_THINKING_LEVELS.find((candidate) => candidate === level);
@@ -804,7 +600,6 @@ function isAssistantMessage(message: RuntimeValue): boolean {
   return isRecord(message) && message.role === "assistant";
 }
 
-/** Concatenated text content of an assistant message, ignoring thinking and tool calls. */
 function assistantText(message: RuntimeValue): string {
   if (!isRecord(message) || message.role !== "assistant") return "";
   const content = message.content;
@@ -817,12 +612,6 @@ function assistantText(message: RuntimeValue): string {
   return text;
 }
 
-/**
- * Failure recorded on a finished assistant message.
- *
- * Provider failures do not reject the prompt call; they arrive as a final
- * assistant message with `stopReason` `error` or `aborted`.
- */
 function messageFailure(message: RuntimeValue): string | undefined {
   if (!isRecord(message) || message.role !== "assistant") return undefined;
   if (message.stopReason === "error") {

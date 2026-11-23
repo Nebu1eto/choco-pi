@@ -54,7 +54,6 @@ import type {
   TerminalBrowserActionDetails,
 } from "./types.ts";
 
-/** The backend node a prepared browser action targets, if any. */
 export function browserActionNode(action: BrowserPreparedAction): number | undefined {
   if (action.action === "click")
     return "backendNodeId" in action.target ? action.target.backendNodeId : undefined;
@@ -62,7 +61,6 @@ export function browserActionNode(action: BrowserPreparedAction): number | undef
   return action.backendNodeId;
 }
 
-/** The backend node id of an actionable ref in the base state. */
 export function browserRefNode(
   base: BrowserBase,
   operation: string,
@@ -86,7 +84,6 @@ export function browserRefNode(
   return target.backendNodeId;
 }
 
-/** A finite point inside the viewport recorded with the base state (unchecked when none was recorded). */
 export function browserPoint(
   base: BrowserBase,
   x: number | undefined,
@@ -184,7 +181,6 @@ export function prepareBrowserAction(action: UiAction, base: BrowserBase): Brows
   }
 }
 
-/** Prepares every browser action before anything is sent (see prepareDesktopTransaction). */
 export function prepareBrowserTransaction(
   actions: UiAction[],
   base: BrowserBase,
@@ -199,11 +195,6 @@ export function prepareBrowserTransaction(
   });
 }
 
-/**
- * Read-only check before the write lock, so a refusal keeps the base state
- * valid: the page target still exists and every targeted node still resolves.
- * It holds the resource at the base epoch; a newer write makes it stale.
- */
 export async function preflightBrowserTransaction(
   prepared: BrowserPreparedAction[],
   actions: UiAction[],
@@ -247,7 +238,6 @@ export async function preflightBrowserTransaction(
     );
 }
 
-/** Sends one prepared action; false when the page target was gone before any input of it was sent. */
 export async function deliverBrowserAction(
   action: BrowserPreparedAction,
   contextId: string,
@@ -274,12 +264,10 @@ export async function deliverBrowserAction(
           clicked = await cdpClickForContext(contextId, node, signal);
         } catch (error) {
           if (count === 0 || signal?.aborted || !(error instanceof CdpActionError)) throw error;
-          // An earlier click of this action was sent, so it may have taken effect.
           throw new CdpActionError(error.message, error.code, true, { cause: error });
         }
         if (clicked) continue;
         if (count === 0) return false;
-        // An earlier click of this action was sent.
         throw new CdpActionError(
           "The browser page is no longer available.",
           "browser_page_unavailable",
@@ -319,10 +307,6 @@ export async function deliverBrowserAction(
   }
 }
 
-/**
- * Sends the prepared actions in order and stops at the first failure, keeping
- * the record of the delivered ones. Caller aborts keep propagating.
- */
 export async function dispatchBrowserTransaction(
   prepared: BrowserPreparedAction[],
   contextId: string,
@@ -356,7 +340,6 @@ export async function dispatchBrowserTransaction(
   return { steps };
 }
 
-/** The failed browser action's step: the error and whether it may have landed. */
 export function failedBrowserStepTrace(error: Error): ExecutionTrace {
   const effectPossible = errorEffectPossible(error);
   return executionTrace("cdp_act", "default", {
@@ -369,7 +352,6 @@ export function failedBrowserStepTrace(error: Error): ExecutionTrace {
   });
 }
 
-/** Polls the page until the postcondition holds or times out; records it like the desktop path. */
 export async function verifyBrowserCondition(
   contextId: string,
   condition: ReturnType<typeof validateCondition>,
@@ -409,9 +391,7 @@ export async function terminalBrowserActionResult(
   let pageAvailable: boolean | undefined;
   try {
     pageAvailable = (await listCdpPageContexts()).some((page) => page.contextId === contextId);
-  } catch {
-    // A failed page listing cannot prove that the page closed.
-  }
+  } catch {}
   const targetClosed = pageAvailable === false;
   if (targetClosed && condition && !stopped) {
     const status = condition.gone ? "verified" : "failed";
@@ -484,14 +464,11 @@ export async function performBrowserTransaction(
   };
   const condition = params.expect ? validateCondition(params.expect) : undefined;
   if (condition) conditionScopeNode(base.outline, condition);
-  // Every refusal before the write lock sends nothing and keeps the base state
-  // valid: per-action validation first, then the read-only page check.
   const prepared = prepareBrowserTransaction(actions, base);
   await preflightBrowserTransaction(prepared, actions, base, contextId, signal);
   return await withBrowserWrite(contextId, async () => {
     throwIfAborted(signal);
     const { steps, failure } = await dispatchBrowserTransaction(prepared, contextId, signal);
-    // Nothing earlier was delivered: the failure is reported as it always was.
     if (failure?.index === 0) throw failure.error;
     const failedStep = failure ? failedBrowserStepTrace(failure.error) : undefined;
     const allSteps = failedStep ? [...steps, failedStep] : steps;
@@ -509,8 +486,6 @@ export async function performBrowserTransaction(
     try {
       if (condition && !failure)
         await verifyBrowserCondition(contextId, condition, base.outline, execution, signal);
-      // A partial result leads with the stopped summary in place of the
-      // "completed" header, as on the desktop path.
       const result = await refreshBrowserSnapshot(
         contextId,
         "act_ui",

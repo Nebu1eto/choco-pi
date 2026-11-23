@@ -4,17 +4,6 @@ import type { ExecRunner } from "../types.ts";
 import type { DiffClock } from "./clock.ts";
 import type { DiffLimits } from "./limits.ts";
 
-/**
- * Global options placed before every git subcommand the pane runs.
- *
- * - `--no-optional-locks` keeps `status` from refreshing and rewriting the
- *   index, so the pane never takes `index.lock` and never blocks, or is
- *   blocked by, the agent's own git commands.
- * - `--literal-pathspecs` makes a file named `*.ts` or `:(glob)x` mean itself.
- * - The `-c` pins neutralise user configuration that would change output
- *   (quoted paths, colour, missing prefixes, cwd-relative paths) or start
- *   extra processes (fsmonitor).
- */
 export const PINNED_GIT_OPTIONS: readonly string[] = [
   "--no-optional-locks",
   "--no-pager",
@@ -31,7 +20,6 @@ export const PINNED_GIT_OPTIONS: readonly string[] = [
   "diff.relative=false",
 ];
 
-/** Options for every `git diff` the pane runs. */
 export const PINNED_DIFF_OPTIONS: readonly string[] = [
   "--no-ext-diff",
   "--no-textconv",
@@ -47,21 +35,15 @@ export class DiffGitError extends Error {
   }
 }
 
-/** Options for {@link execFileCapture}; every field maps onto `execFile` unchanged. */
 export type CapturedExecOptions = {
   cwd?: string;
-  /** Child environment; `undefined` inherits `process.env`. */
   env?: NodeJS.ProcessEnv;
-  /** Written to stdin, which is closed either way so no reader waits for end-of-file. */
   input?: string;
-  /** Deadline after which `killSignal` is sent; omitted means no deadline. */
   timeoutMs?: number;
   killSignal?: NodeJS.Signals;
-  /** Per-stream byte cap; exceeding it kills the child and reports an error. */
   maxBuffer: number;
 };
 
-/** Raw `execFile` outcome; `error` is set for spawn failures, non-zero exits, signals, and overflow. */
 export type CapturedExec<Output> = {
   stdout: Output;
   stderr: Output;
@@ -78,13 +60,6 @@ function captureOptions(options: CapturedExecOptions) {
   };
 }
 
-/**
- * Shared async `execFile` core for the review and checkpoint git helpers.
- *
- * It always settles (never rejects) so each caller keeps its own error policy,
- * and it always ends stdin: a child that exits before reading turns the write
- * into EPIPE, which is not a command failure.
- */
 export function execFileCapture(
   cmd: string,
   args: readonly string[],
@@ -102,7 +77,6 @@ export function execFileCapture(
   });
 }
 
-/** {@link execFileCapture} for binary output such as NUL-separated listings or blobs. */
 export function execFileCaptureBuffer(
   cmd: string,
   args: readonly string[],
@@ -120,7 +94,6 @@ export function execFileCaptureBuffer(
   });
 }
 
-/** True when `execFile` failed before the child started, such as ENOENT or EACCES. */
 export function isSpawnFailure(error: ExecFileException): boolean {
   return isString(error.code) && error.syscall?.startsWith("spawn") === true;
 }
@@ -141,7 +114,6 @@ function firstLine(text: string): string {
   return line.length > 200 ? `${line.slice(0, 199)}…` : line;
 }
 
-/** Short, single-line message for a store error state. */
 export function shortErrorMessage(error: Error | string): string {
   return firstLine(error instanceof Error ? error.message : error) || "Unknown error";
 }
@@ -158,11 +130,6 @@ function subcommandOf(args: readonly string[]): string {
   return "git";
 }
 
-/**
- * Default process runner for the pane: no shell, closed stdin, a hard
- * deadline that kills the child, and a stdout cap that kills the child
- * instead of buffering without bound.
- */
 export function createGitExecRunner(
   limits: Pick<DiffLimits, "timeoutMs" | "maxOutputBytes">,
   signal?: AbortSignal,
@@ -198,7 +165,6 @@ export function createGitExecRunner(
         signal?.removeEventListener("abort", abort);
         action();
       };
-      // Aborting kills the child at once instead of letting it run to its deadline.
       const abort = () =>
         finish(() => {
           child.kill("SIGKILL");
@@ -249,17 +215,10 @@ export function createGitExecRunner(
 }
 
 export type PinnedGitRunner = {
-  /** Runs git with pinned options, a clock deadline, and an output cap. */
   run: ExecRunner;
-  /** Rejects every call in flight and every later call, clearing all deadline timers. */
   cancelAll(): void;
 };
 
-/**
- * Wrap any runner (including an injected test runner) with the pane's git
- * pins and limits. The deadline uses the injected clock so tests can drive
- * it, and `cancelAll` lets dispose leave no timers behind.
- */
 export function createPinnedGitRunner(
   exec: ExecRunner,
   clock: DiffClock,
@@ -286,7 +245,6 @@ export function createPinnedGitRunner(
         );
       }, limits.timeoutMs);
       inFlight.add(cancel);
-      // A runner that throws synchronously still settles through the same path.
       new Promise<Awaited<ReturnType<ExecRunner>>>((start) =>
         start(exec(cmd, pinnedArgs, opts)),
       ).then(
@@ -310,13 +268,11 @@ export function createPinnedGitRunner(
     run,
     cancelAll() {
       closed = true;
-      // Deleting the visited entry during Set iteration is safe.
       for (const cancel of inFlight) cancel(new DiffDisposedError());
     },
   };
 }
 
-/** Run git and require one of `allowedCodes`, raising a short error otherwise. */
 export async function runGit(
   runner: ExecRunner,
   cwd: string,

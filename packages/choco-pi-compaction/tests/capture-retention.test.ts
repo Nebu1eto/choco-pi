@@ -1,13 +1,3 @@
-/**
- * Capture retention across rebinds (D8) through a real `createAgentSession`
- * (captured Anthropic and xAI provider streams, fake transports, no network):
- * replacing the main owner for the SAME session (model change and back, an
- * Anthropic or xAI mode round trip whose off state installs no replay binding
- * because no checkpoint exists) keeps the session's wire captures, so the
- * native lane still finds a scope-matched capture; a session start for a
- * DIFFERENT session releases the previous session's captures, and shutdown
- * releases the current one's.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -133,20 +123,17 @@ interface Rig {
   readonly session: AgentSession;
   readonly manager: SessionManager;
   readonly lane: { count: number };
-  /** Requests the captured xAI provider sent. */
   readonly xaiSent: { count: number };
   readonly ctx: () => ExtensionContext;
   dispose(): Promise<void>;
 }
 
 interface RigOptions {
-  /** The sidecar's `anthropicNative` lane; off, a mode switch off leaves no Anthropic binding. */
   readonly anthropicNative?: boolean;
 }
 
 async function createRig(options: RigOptions = {}): Promise<Rig> {
   const dir = await mkdtemp(join(tmpdir(), "choco-pi-capture-retention-"));
-  // Mode switches write their files under the agent directory: keep them in the temp dir.
   const previousAgentDir = process.env[AGENT_DIR_ENV];
   process.env[AGENT_DIR_ENV] = dir;
   const sidecar = join(dir, "background-compaction.json");
@@ -155,7 +142,6 @@ async function createRig(options: RigOptions = {}): Promise<Rig> {
     sidecar,
     JSON.stringify({
       enabled: true,
-      // Some lane keeps the owner attached, so every mode switch replaces it.
       text: !anthropicNative,
       anthropicNative,
       prepareAt: 0.99,
@@ -218,8 +204,6 @@ async function createRig(options: RigOptions = {}): Promise<Rig> {
       compactionPolicy: () => ({ keepRecentTokens: 1, reserveTokens: 16_384 }),
       background: {
         settingsPaths: () => [sidecar],
-        // The real mode files under the temp agent dir (default server-side), so a
-        // Preferences mode switch is what the next session start reads.
         anthropic: {
           fetch: laneFetch,
           capture: { fetch: foregroundFetch },
@@ -288,7 +272,6 @@ async function waitFor(label: string, predicate: () => boolean): Promise<void> {
   }
 }
 
-/** Change a Preferences row and wait until the main owner was replaced. */
 async function changeRow(rig: Rig, id: string, value: string): Promise<void> {
   const provider: unknown = Object.getOwnPropertyDescriptor(
     globalThis,
@@ -302,7 +285,6 @@ async function changeRow(rig: Rig, id: string, value: string): Promise<void> {
   await waitFor(`${id}=${value} to replace the owner`, () => ownerGeneration(rig) > before);
 }
 
-/** A native preparation on the current owner finds a scope-matched capture. */
 async function prepareNative(rig: Rig): Promise<void> {
   const coordinator = getCoordinator(mainOwnerKey(rig.manager.getSessionId()));
   assert.ok(coordinator);
@@ -355,7 +337,6 @@ test(
   "an Anthropic mode round trip without a checkpoint keeps the session's captures",
   { timeout: 60_000 },
   async () => {
-    // No anthropic-native lane: mode off and no checkpoint installs no Anthropic binding.
     const rig = await createRig({ anthropicNative: false });
     try {
       for (let turn = 0; turn < 3; turn++) await rig.session.prompt(`RETENTION-${turn} ${PADDING}`);
@@ -388,13 +369,11 @@ test(
     const rig = await createRig();
     try {
       const sessionId = rig.manager.getSessionId();
-      // xAI server-side is the default mode: the session is bound and its xAI request captured.
       await rig.session.setModel(XAI_MODEL);
       await rig.session.prompt(`RETENTION-XAI ${PADDING}`);
       assert.equal(rig.xaiSent.count, 1, "the captured xAI provider sent the prompt");
       const captured = xaiCapturesFor(sessionId).map((capture) => capture.sequence);
       assert.equal(captured.length, 1);
-      // Back on the Anthropic model, whose owner every mode switch replaces.
       await rig.session.setModel(MODEL);
       assert.deepEqual(
         xaiCapturesFor(sessionId).map((capture) => capture.sequence),
@@ -434,7 +413,6 @@ test(
       rig.manager.newSession();
       const newId = rig.manager.getSessionId();
       assert.notEqual(newId, oldId);
-      // The runtime's session replacement re-creates the agent; this harness only renames its requests.
       rig.session.agent.sessionId = newId;
       await rig.session.extensionRunner.emit({ type: "session_start", reason: "new" });
       assert.equal(capturesFor(oldId).length, 0, "the previous session's captures are released");

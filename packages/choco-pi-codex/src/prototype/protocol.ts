@@ -15,7 +15,6 @@ export interface PrototypeTransport {
 }
 export type PrototypeMode = "steering" | "async";
 
-/** Single-turn experiment: owns only a synthetic tool, never Pi's tool registry. */
 export class PrototypeTurn {
   readonly trace: string[] = [];
   readonly steeringInputs: string[] = [];
@@ -98,7 +97,6 @@ export class PrototypeTurn {
         const response = event.response;
         const id = response?.id ?? "";
         if (type === "error" || type === "response.failed" || type === "response.steer.failed") {
-          // Never report arbitrary response bodies, request headers, or credential-bearing errors.
           const code = event.error?.code ?? "";
           throw new Error(
             `prototype_remote_failure:${type}:${/^[a-z_]{1,80}$/.test(code) ? code : "unspecified"}`,
@@ -119,7 +117,6 @@ export class PrototypeTurn {
           this.steeringAccepted = true;
           this.trace.push("steer_accepted");
         } else if (type === "response.steer.pending") {
-          // Steering experiment advertises no tools. Do not fake approval or tool outputs.
           throw new Error("prototype_unexpected_required_input");
         } else if (type === "response.output_text.delta") {
           const delta = event.delta ?? "";
@@ -158,7 +155,6 @@ export class PrototypeTurn {
               this.jobFinished = true;
               return output;
             });
-            // Attach immediately: cancellation may happen while still consuming model output.
             void this.job.catch(() => {});
           }
         } else if (type === "response.incomplete" || type === "response.completed") {

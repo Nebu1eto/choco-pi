@@ -127,7 +127,6 @@ export async function executeAgentBrowserTool(
   onUpdate: AgentBrowserOnUpdate,
   ctx: AgentBrowserExecuteContext,
 ): Promise<AgentBrowserToolResult> {
-  // The executable-resolution re-entry below inherits this turn through async context.
   const admission = getCurrentToolCallAdmission();
   const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
   const outputPath =
@@ -319,8 +318,6 @@ export async function executeAgentBrowserTool(
       }),
     );
   if (resolvedInput.kind === "script") {
-    // Script calls use their own isolated session and take their own turns, so this
-    // outer call must not hold its turn while they wait behind it.
     admission?.release();
     if (!ctx.sessionManager.getSessionFile()) {
       return buildValidationFailureResult({
@@ -403,7 +400,6 @@ export async function executeAgentBrowserTool(
       });
       run = await pendingRun;
     } catch {
-      // Script runner failures surface through the initialized fallback run result.
     } finally {
       state.activeScriptControllers.delete(scriptController);
       signal?.removeEventListener("abort", abortScript);
@@ -418,9 +414,7 @@ export async function executeAgentBrowserTool(
           cleanupError = "The isolated script session cleanup operation failed.";
           try {
             appendScriptSessionLease(state.pi, sessionName, "failed");
-          } catch {
-            // Best-effort durable lease update during cleanup failure.
-          }
+          } catch {}
         }
       }
       state.activeScriptExecutions.delete(scriptExecution);
@@ -554,8 +548,6 @@ export async function executeAgentBrowserTool(
     if (compiledElectron) admission?.release();
     return pending;
   };
-  // Preflight above may finish out of call order; wait until every earlier call has
-  // entered its queue so this call reads and queues behind their session state.
   if (admission) await admission.ready;
   const electronHostResult =
     compiledElectron?.action === "cleanup"
@@ -676,7 +668,6 @@ export async function executeAgentBrowserTool(
   const runBrowserCommand = async () => {
     const branchRestoreGenerationAtStart = state.branchRestoreGeneration;
     const generationAtStart = state.branchStateGeneration;
-    // Implicit calls read the managed session inside the queue, after earlier calls ran.
     const sessionPageStateUpdate = state.sessionPageState.beginUpdate(
       explicitSessionName
         ? webMcpSessionKey

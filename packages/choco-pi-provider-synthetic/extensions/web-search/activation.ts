@@ -16,7 +16,6 @@ export interface WebSearchActivationHost {
 
 function isPrefixLocked(): boolean {
   const prefixLock = Object.getOwnPropertyDescriptor(globalThis, PREFIX_LOCK_SYMBOL)?.value;
-  // The lock is a live object carrying a callback, not JSON: plain predicate.
   return (
     hasPrefixLock(prefixLock) &&
     prefixLock.isLocked instanceof Function &&

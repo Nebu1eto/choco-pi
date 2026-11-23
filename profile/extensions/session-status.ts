@@ -35,7 +35,6 @@ function warmingDuration(nextWarmAt: number | undefined, now: number): string {
   return parts.join(" ");
 }
 
-/** Deterministic display over Pi's public cache-warming status model. */
 export function formatCacheWarming(
   warming: CacheWarmingInfo | undefined,
   now = Date.now(),
@@ -99,7 +98,6 @@ function readJsonFile(filePath: string): RuntimeValue | undefined {
 
 async function readMcpConfig(filePath: string): Promise<RuntimeValue | undefined> {
   try {
-    // Pi 1.4.0 accepts a leading UTF-8 BOM, which Windows PowerShell 5.1 writes.
     return JSON.parse((await readFile(filePath, "utf8")).replace(/^\uFEFF/, ""));
   } catch {
     return undefined;
@@ -116,7 +114,6 @@ async function mcpEnabled(cwd: string, registeredNames: readonly string[]): Prom
   const agentServers = isRecord(agent) && isRecord(agent.mcpServers) ? agent.mcpServers : {};
   const projectServers =
     isRecord(project) && isRecord(project.mcpServers) ? project.mcpServers : {};
-  // File configuration takes precedence over extension registrations in Pi.
   const registrations = Object.fromEntries(registeredNames.map((name) => [name, {}]));
   const merged = { ...registrations, ...agentServers, ...projectServers };
   return new Set(
@@ -174,18 +171,12 @@ function modelDisplay(
   return name && name !== id ? `${name} (${id})` : id;
 }
 
-/** How a signed-in provider authenticates, named without any credential. */
 const OAUTH_LABELS: ReadonlyMap<string, string> = new Map([
   ["openai", "ChatGPT sign-in"],
   ["openai-codex", "ChatGPT sign-in, legacy"],
   ["anthropic", "Claude sign-in"],
 ]);
 
-/**
- * Provider row: the provider id, a non-default base URL, and for an OAuth
- * sign-in the account kind. `oauth` comes from the host's credential type, so
- * the row never says "API key" for a subscription sign-in.
- */
 export function providerDisplay(
   provider: string,
   record: ModelRecord | undefined,
@@ -200,7 +191,6 @@ export function providerDisplay(
 }
 
 function isDefaultProviderUrl(provider: string, rawBaseUrl: string): boolean {
-  // `https://api.openai.com/v1` is the stock openai-responses endpoint.
   const baseUrl = rawBaseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
   if (provider === "openai-codex") {
     return (
@@ -211,7 +201,6 @@ function isDefaultProviderUrl(provider: string, rawBaseUrl: string): boolean {
   return baseUrl === `https://api.${provider}.com`;
 }
 
-/** The host's credential type for `model`; `undefined` when it cannot say. Reads no token. */
 function usesOAuth(
   modelRegistry: Pick<ExtensionCommandContext["modelRegistry"], "isUsingOAuth">,
   model: NonNullable<ExtensionCommandContext["model"]>,
@@ -230,8 +219,6 @@ export function contextWindowLabel(
   model: { provider?: string; id?: string; contextWindow?: number } | undefined,
 ): string | undefined {
   if (!model || model.contextWindow === undefined) return undefined;
-  // The cap records the native window on the model object; the registry entry
-  // is only a fallback, since the cap writes to that object as well.
   const registryModel =
     model.provider && model.id ? modelRegistry.find(model.provider, model.id) : undefined;
   const native = readNativeContextWindow(model) ?? registryModel?.contextWindow;
@@ -243,11 +230,6 @@ export function contextWindowLabel(
 
 type AgentFrontmatter = { model?: string; thinking?: string };
 
-/**
- * Reads a role's declared `model:`/`thinking:`. The deprecated
- * `default_model:`/`default_thinking:` aliases still apply for one release
- * when the current key is absent.
- */
 export function parseAgentFrontmatter(content: string): AgentFrontmatter {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return {};
@@ -475,11 +457,6 @@ export function normalizePackageKey(specifier: string): string {
   return scope + (rest.split("@")[0] ?? rest);
 }
 
-/**
- * The concise Status tab: every row keeps its headline and drops the indented
- * inventory beneath it, so a row such as `Skills` reports `12 loaded` and the
- * names wait for the expanded view.
- */
 export function condenseStatusRows(rows: StatusRow[]): StatusRow[] {
   return rows.map((row) => {
     const newline = row.value.indexOf("\n");
@@ -576,6 +553,4 @@ export function formatStatus(rows: StatusRow[], style?: StatusStyle): string {
     .join("\n");
 }
 
-// Command registration lives in status-commands.ts; this module only builds
-// the Status tab body.
 export default function sessionStatus(): void {}

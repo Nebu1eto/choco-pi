@@ -1,16 +1,3 @@
-/**
- * The process-wide coordinator registry across code versions.
- *
- * A pi process keeps its registry slot on `globalThis` across `/reload`, so
- * newer code can meet a slot written by older code. The registry key is
- * versioned: a slot under the earlier key is never read, written or deleted,
- * and a slot under the current key that fails validation turns the background
- * feature off for the process (one notice, host compaction only) instead of
- * failing the extension load.
- *
- * Every test runs the real extension registration through the real SDK host
- * and plant their slot before the host is created.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -88,7 +75,6 @@ function summarizer(model: ReturnType<typeof fakeModel>, onCall: () => void): Te
   };
 }
 
-/** Records UI notices from session_start on, before the compaction extension starts. */
 function recordNotices(notices: string[]): ExtensionFactory {
   return (pi) => {
     pi.on("session_start", (_event, ctx) => {
@@ -121,7 +107,6 @@ async function withSidecar(run: (file: string) => Promise<void>): Promise<void> 
   }
 }
 
-/** Restore a global slot to exactly the descriptor it had before the test. */
 function restoreSlot(symbol: symbol, previous: PropertyDescriptor | undefined): void {
   if (previous === undefined) Reflect.deleteProperty(globalThis, symbol);
   else Object.defineProperty(globalThis, symbol, previous);
@@ -133,7 +118,6 @@ test(
   async () => {
     const previousV1 = Object.getOwnPropertyDescriptor(globalThis, V1_SYMBOL);
     const previousV2 = Object.getOwnPropertyDescriptor(globalThis, V2_SYMBOL);
-    // The shape a process started before the `delivered` ledger existed holds.
     const v1Factories = new Map([["text", () => undefined]]);
     const v1Coordinators = new Map();
     const v1 = { schemaVersion: 1, backendFactories: v1Factories, coordinators: v1Coordinators };
@@ -229,10 +213,8 @@ test(
               false,
               `${name}: children stay on the host path`,
             );
-            // Past the prepare threshold: the threshold path stays inert.
             await host.session.prompt("GO");
             assert.equal(getCoordinator(ownerKey), undefined, `${name}: still no coordinator`);
-            // The programmatic (RPC) compact bridge declines and runs the host's compaction.
             const hostEvents: string[] = [];
             const unsubscribe = host.session.subscribe((event) => {
               if (event.type === "compaction_start" || event.type === "compaction_end") {

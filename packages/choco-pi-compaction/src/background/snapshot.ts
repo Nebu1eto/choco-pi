@@ -1,23 +1,3 @@
-/**
- * Owned frozen-prefix snapshots for background compaction.
- *
- * A snapshot captures the committed branch up to a legal cut `C` so a backend
- * can summarize `A..C` while the session keeps appending `D/E`. Everything here
- * is pure and synchronous: no host object is awaited or retained, and every
- * captured entry is a detached, deeply frozen copy.
- *
- * Cut legality (all on the committed branch, never on stream buffers):
- * - a tool call and its result are never on opposite sides of the cut, which
- *   also keeps every parallel batch and every reasoning-plus-tool bundle whole
- *   (one assistant entry carries the reasoning and all calls of a batch);
- * - a batch still waiting for results at the cut is never summarized;
- * - a context edit appended after the cut never targets a summarized entry;
- * - at least one entry is retained, so the draft's `firstKeptEntryId` is a real
- *   branch entry and never null (the host requires a string retention ID).
- * A complete user-turn boundary is preferred. When keeping the whole current
- * turn would exceed `maxKeepTokens`, the cut lands inside the autonomous turn
- * after a complete tool group and carries the governing user request.
- */
 import { createHash } from "node:crypto";
 
 import {
@@ -44,35 +24,19 @@ import type {
 } from "./contract.ts";
 import { estimatePromptTokens, usageCalibration } from "./token-estimate.ts";
 
-/** Longest governing request kept verbatim in a checkpoint. */
 const GOVERNING_REQUEST_MAX_CHARS = 8000;
 
-/** Inputs the owner snapshots before calling {@link freezeSnapshot}. */
 export interface FreezeOptions {
   readonly ownerKey: string;
   readonly ownerGeneration: number;
   readonly providerScope: ProviderScope;
-  /** Recent context the cut keeps at least, as the host's `keepRecentTokens`. */
   readonly keepRecentTokens: number;
-  /**
-   * Largest retained suffix accepted to keep a whole user turn instead of
-   * splitting it. Defaults to twice `keepRecentTokens`.
-   */
   readonly maxKeepTokens?: number;
-  /** Capture time supplied by the caller; the function reads no clock. */
   readonly capturedAt: number;
 }
 
-/** Inputs of {@link freezeSnapshotAt}: an exact cut takes no retention window. */
 export type ExactFreezeOptions = Omit<FreezeOptions, "keepRecentTokens" | "maxKeepTokens">;
 
-/**
- * Frozen snapshot produced here.
- *
- * The neutral contract identifies the last summarized entry (`cutEntryId`) but
- * not the first retained one, which the text draft needs. It is carried as an
- * additive member; {@link readFirstKeptEntryId} validates it on the way back.
- */
 export interface PrefixSnapshot extends FrozenSnapshot {
   readonly firstKeptEntryId: string;
   readonly promptTokenEstimate: number;
@@ -90,7 +54,6 @@ type SnapshotRefusalDetail =
   | "cut-not-reproducible"
   | "split-turn-without-governing-request";
 
-/** Typed refusal; history is untouched and nothing was captured. */
 export interface SnapshotRefusal extends PrepareFailure {
   readonly detail: SnapshotRefusalDetail;
 }
@@ -102,27 +65,19 @@ export function isSnapshotRefusal(
 }
 
 function refuse(reason: FailureReason, detail: SnapshotRefusalDetail): SnapshotRefusal {
-  // More committed entries can make a later attempt succeed; a malformed
-  // branch or a turn without a governing request cannot heal by waiting.
   const retryable = detail === "nothing-to-summarize" || detail === "no-legal-cut";
   return { ok: false, reason, retryable, detail };
 }
 
-/** One model-visible message of the summarized range, tagged with its entry. */
 export interface TaggedMessage {
   readonly entryId: string;
   readonly message: CompactionMessage;
 }
 
-/** Governing request carried by a split-turn snapshot. */
 interface GoverningRequest {
   readonly entryId: string;
   readonly content: string;
 }
-
-// ---------------------------------------------------------------------------
-// Entry-level helpers
-// ---------------------------------------------------------------------------
 
 function isTurnStartRole(message: CompactionMessage): boolean {
   switch (message.role) {
@@ -182,7 +137,6 @@ function compactionCount(entries: readonly SessionEntry[]): number {
   return entries.filter((entry) => entry.type === "compaction").length;
 }
 
-/** First raw index still model-visible after the latest compaction. */
 function keptStartIndex(entries: readonly SessionEntry[], compactionIndex: number): number {
   const compaction = entries[compactionIndex];
   if (compaction?.type !== "compaction") {
@@ -192,7 +146,6 @@ function keptStartIndex(entries: readonly SessionEntry[], compactionIndex: numbe
   return kept >= 0 && kept < compactionIndex ? kept : compactionIndex + 1;
 }
 
-/** Model-visible messages per entry ID, after context edits, for the given leaf. */
 function visibleMessages(
   entries: readonly SessionEntry[],
   leafId: string,
@@ -208,7 +161,6 @@ function visibleMessages(
   return visible;
 }
 
-/** Stable SHA-256 over every prefix entry's ID and persisted JSON. */
 export function fingerprintEntries(entries: readonly SessionEntry[]): string {
   const hash = createHash("sha256");
   for (const entry of entries) {
@@ -220,17 +172,6 @@ export function fingerprintEntries(entries: readonly SessionEntry[]): string {
   return `sha256:${hash.digest("hex")}`;
 }
 
-/**
- * Stable SHA-256 of the cut a lane would search over (`cutFingerprint` on lane
- * records and the no-progress suppression key). The cut search is a pure
- * function of the ordered branch, the keep policy and, for the Anthropic lane,
- * the wire capture it must replay; so the fingerprint covers exactly those:
- * the ordered entry IDs (IDs are unique per branch, so any new, removed or
- * reordered entry, including a new checkpoint, changes it) plus `salt`, a
- * caller-supplied string for the non-branch inputs (lane, keep tokens, latest
- * capture sequence). Entry bodies are not hashed: this runs on every trigger,
- * and an entry's body never changes once appended. Same inputs, same hash.
- */
 export function cutFingerprint(entries: readonly SessionEntry[], salt: string): string {
   const hash = createHash("sha256");
   for (const entry of entries) {
@@ -271,14 +212,12 @@ interface FileOpCall {
   readonly arguments?: { readonly path?: unknown };
 }
 
-/** Tool calls that may touch files: nested calls of a result, direct calls of an assistant. */
 function fileOpCalls(message: CompactionMessage): readonly FileOpCall[] {
   if (message.role === "toolResult") return message.nestedCalls?.calls ?? [];
   if (message.role !== "assistant") return [];
   return message.content.flatMap((block) => (block.type === "toolCall" ? [block] : []));
 }
 
-/** Same extraction rule as the host's private `extractFileOpsFromMessage`. */
 function collectFileOps(messages: readonly CompactionMessage[]): CompactionFileOperations {
   const fileOps: CompactionFileOperations = {
     read: new Set<string>(),
@@ -291,13 +230,11 @@ function collectFileOps(messages: readonly CompactionMessage[]): CompactionFileO
   return fileOps;
 }
 
-/** Tool-call IDs requested by one assistant message; empty for every other role. */
 function toolCallIds(message: CompactionMessage): string[] {
   if (message.role !== "assistant") return [];
   return message.content.flatMap((part) => (part.type === "toolCall" ? [part.id] : []));
 }
 
-/** What a later entry must not reference once a prefix is summarized. */
 interface PrefixReferences {
   readonly entryIds: ReadonlySet<string>;
   readonly toolCallIds: ReadonlySet<string>;
@@ -312,16 +249,6 @@ export function prefixReferences(prefix: readonly SessionEntry[]): PrefixReferen
   };
 }
 
-/**
- * A predicate over the entries after a cut, fed in branch order: whether the
- * entry edits a summarized entry or carries a late result for a summarized
- * tool call; either would split a group on replay.
- *
- * Tool-call IDs are unique only within one provider context, not per session:
- * some providers number calls by a counter that restarts once a checkpoint
- * shortens the context. A result is therefore attributed to the most recent
- * call with its ID, and a call re-issued after the cut owns its later results.
- */
 export function prefixTouchScan(prefix: PrefixReferences): (entry: SessionEntry) => boolean {
   const reissued = new Set<string>();
   return (entry) => {
@@ -340,19 +267,13 @@ function messageTokens(messages: readonly CompactionMessage[]): number {
   return messages.reduce((sum, message) => sum + estimateTokens(message), 0);
 }
 
-// ---------------------------------------------------------------------------
-// Branch analysis
-// ---------------------------------------------------------------------------
-
 interface BranchAnalysis {
   readonly compactionIndex: number;
   readonly keptStart: number;
   readonly visible: Map<string, CompactionMessage[]>;
-  /** `blocked[c]` > 0 when a cut after raw index c splits a group or edit. */
   readonly blocked: readonly number[];
 }
 
-/** Difference array of blocked cut intervals; `runningTotals` yields `blocked[c]`. */
 class BlockedIntervals {
   private readonly diff: number[];
 
@@ -377,7 +298,6 @@ class BlockedIntervals {
   }
 }
 
-/** Where each tool call, its last result, and every assistant message sit on the branch. */
 interface ToolGroupScan {
   readonly callAt: Map<string, number>;
   readonly lastResultAt: Map<string, number>;
@@ -397,7 +317,6 @@ function recordToolGroupMessage(
   }
 }
 
-/** Scan visible entries, blocking every context edit against its target as it goes. */
 function scanToolGroups(
   entries: readonly SessionEntry[],
   keptStart: number,
@@ -420,7 +339,6 @@ function scanToolGroups(
   return scan;
 }
 
-/** Block each call up to its last result, or up to the next assistant message when it has none. */
 function blockToolGroups(scan: ToolGroupScan, intervals: BlockedIntervals, end: number): void {
   for (const [id, callIndex] of scan.callAt) {
     const resultIndex = scan.lastResultAt.get(id);
@@ -429,17 +347,6 @@ function blockToolGroups(scan: ToolGroupScan, intervals: BlockedIntervals, end: 
   }
 }
 
-/**
- * Intervals [from, to) of raw cut positions that would separate a tool call
- * from its result, or a context edit from its target.
- *
- * A call is blocked up to its last result, wherever that result lands, even
- * past an interleaved user or custom message. A call with no result on the
- * branch is abandoned only once a later assistant message exists (the agent
- * loop moved on and the provider transform synthesizes its result); without
- * one it stays open to the end, so a still-running batch at the leaf is never
- * split, even when a steering or custom message arrived mid-batch.
- */
 function analyzeBranch(entries: readonly SessionEntry[]): BranchAnalysis {
   const compactionIndex = latestCompactionIndex(entries);
   const keptStart = keptStartIndex(entries, compactionIndex);
@@ -452,7 +359,6 @@ function analyzeBranch(entries: readonly SessionEntry[]): BranchAnalysis {
 }
 
 interface CutCandidate {
-  /** Raw index of the last summarized entry. */
   readonly cut: number;
   readonly turnBoundary: boolean;
 }
@@ -495,8 +401,6 @@ function isTurnBoundary(
   if (next) {
     return isTurnStartRole(next);
   }
-  // Nothing visible is retained yet: the turn is still running unless the
-  // prefix ends with an assistant reply that requested no tools.
   const last = lastVisibleAtOrBefore(entries, analysis, cut);
   return last?.role === "assistant" && last.stopReason !== "toolUse";
 }
@@ -515,7 +419,6 @@ function hasSummarizableContent(
   return false;
 }
 
-/** The legal cut at raw index `cut`, or undefined when cutting there is illegal. */
 function legalCutAt(
   entries: readonly SessionEntry[],
   analysis: BranchAnalysis,
@@ -549,18 +452,12 @@ function retainedTokens(
   return total;
 }
 
-/** One legal cut of a branch: summarize through `cutEntryId`, keep from `firstKeptEntryId`. */
 interface LegalCut {
   readonly cutEntryId: string;
   readonly firstKeptEntryId: string;
-  /** True when the retained range starts a new user turn. */
   readonly turnBoundary: boolean;
 }
 
-/**
- * Every legal cut of a branch, oldest first, before any keep-window or
- * turn-preference selection. A malformed branch has none.
- */
 export function listLegalCuts(entries: readonly SessionEntry[]): readonly LegalCut[] {
   if (entries.length === 0 || chainProblem(entries)) {
     return [];
@@ -588,14 +485,6 @@ function governingFromDetails(entry: SessionEntry | undefined): GoverningRequest
   return carried ? { entryId: carried.entryId, content: carried.content } : null;
 }
 
-/**
- * The user request governing the turn that contains `cut`.
- *
- * Inside one turn no user message follows the turn start, so the latest
- * user-role message at or before the cut is that turn's request. When it was
- * already summarized by a checkpoint this package wrote, the checkpoint's
- * carried request is used instead.
- */
 function resolveGoverningRequest(
   entries: readonly SessionEntry[],
   analysis: BranchAnalysis,
@@ -615,15 +504,6 @@ function resolveGoverningRequest(
   return governingFromDetails(entries[analysis.compactionIndex]);
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/**
- * Freeze the committed branch at a legal cut, or refuse with a typed reason.
- *
- * `entries` is the current branch, root first (`sessionManager.getBranch()`).
- */
 export function freezeSnapshot(
   entries: readonly SessionEntry[],
   options: FreezeOptions,
@@ -676,15 +556,6 @@ export function freezeSnapshot(
   return buildSnapshot(entries, analysis, chosen, governing, options);
 }
 
-/**
- * Freeze the committed branch exactly at `cutEntryId` (the last summarized
- * entry), or refuse. For a cut chosen elsewhere, such as a provider-native
- * lane's replay-legal cut: no retention window moves it, and it is legal only
- * under the same rules {@link freezeSnapshot} applies to its own choice.
- *
- * `entries` is the whole current branch, so the retained side (turn boundary,
- * metadata entries after the cut) is judged as it really is.
- */
 export function freezeSnapshotAt(
   entries: readonly SessionEntry[],
   cutEntryId: string,
@@ -716,7 +587,6 @@ export function freezeSnapshotAt(
   return buildSnapshot(entries, analysis, chosen, governing, options);
 }
 
-/** Build the frozen snapshot of a cut already judged legal. */
 function buildSnapshot(
   entries: readonly SessionEntry[],
   analysis: BranchAnalysis,
@@ -768,16 +638,11 @@ function buildSnapshot(
   return Object.freeze(snapshot);
 }
 
-/** System prompt and single-pass prompt text the text backend sends for a snapshot. */
 export interface RenderedPrefixPrompt {
   readonly system: string;
   readonly promptText: string;
 }
 
-/**
- * Render the complete single-pass prompt over a frozen prefix, without user
- * focus instructions. This is what admission sizes and a token counter counts.
- */
 export function renderFrozenPrefixPrompt(snapshot: FrozenSnapshot): RenderedPrefixPrompt {
   const evidence = collectPrefixEvidence(snapshot);
   const governing = snapshot.splitTurn ? snapshot.governingUserRequest : null;
@@ -809,7 +674,6 @@ function collectRange(
   return tagged;
 }
 
-/** The validated first retained entry ID of a snapshot, if it carries one. */
 export function readFirstKeptEntryId(snapshot: FrozenSnapshot): string | undefined {
   if (!("firstKeptEntryId" in snapshot)) {
     return undefined;
@@ -818,25 +682,15 @@ export function readFirstKeptEntryId(snapshot: FrozenSnapshot): string | undefin
   return isNonEmptyString(value) ? value : undefined;
 }
 
-/** Summarizer inputs derived from the frozen prefix only. */
 export interface PrefixEvidence {
   readonly previousSummary: string | undefined;
-  /** Summarized messages before the governing turn (all of them for a complete-turn cut). */
   readonly history: readonly TaggedMessage[];
-  /** Split-turn only: messages from the turn start up to the cut. */
   readonly turnPrefix: readonly TaggedMessage[];
-  /** Entry IDs of the frozen prefix; nothing else may reach a prompt. */
   readonly prefixEntryIds: ReadonlySet<string>;
   readonly previousCheckpoint: CompactionEntry | undefined;
   readonly summarizedEntryIds: EntryIdRange | null;
 }
 
-/**
- * Split the frozen prefix into the summarizer's inputs.
- *
- * The projection is rebuilt from `snapshot.entries` with the cut as leaf, so
- * no retained or later entry can contribute a message.
- */
 export function collectPrefixEvidence(snapshot: FrozenSnapshot): PrefixEvidence {
   const entries = snapshot.entries;
   const compactionIndex = latestCompactionIndex(entries);
@@ -868,7 +722,6 @@ export function collectPrefixEvidence(snapshot: FrozenSnapshot): PrefixEvidence 
   };
 }
 
-/** Open tool calls at the end of a prefix (closed by a result or a later assistant message). */
 function openCallsAtEnd(snapshot: FrozenSnapshot): number {
   const entries = snapshot.entries;
   const compactionIndex = latestCompactionIndex(entries);
@@ -876,19 +729,12 @@ function openCallsAtEnd(snapshot: FrozenSnapshot): number {
   const visible = visibleMessages(entries, snapshot.cutEntryId);
   let open = new Set<string>();
   for (const { message } of collectRange(entries, keptStart, visible)) {
-    // A later assistant message closes every call it did not repeat.
     if (message.role === "assistant") open = new Set(toolCallIds(message));
     else if (message.role === "toolResult") open.delete(message.toolCallId);
   }
   return open.size;
 }
 
-/**
- * Re-check a snapshot against the rules it was frozen under.
- *
- * Never edits captured entries to manufacture legality; a snapshot that fails
- * here is refused, not repaired.
- */
 export function checkSnapshotLegality(snapshot: FrozenSnapshot): LegalityVerdict {
   const entries = snapshot.entries;
   if (entries.length === 0 || entries.at(-1)?.id !== snapshot.cutEntryId) {
@@ -922,13 +768,6 @@ export function checkSnapshotLegality(snapshot: FrozenSnapshot): LegalityVerdict
   return { legal: true };
 }
 
-/**
- * Whether the current branch still matches the frozen prefix.
- *
- * Returns null when adoption may proceed, otherwise the invalidation reason:
- * the prefix changed or moved, the retained entry is gone, a later context
- * edit rewrites a summarized entry, or a newer checkpoint landed after the cut.
- */
 export function findPrefixInvalidation(
   snapshot: FrozenSnapshot,
   branch: readonly SessionEntry[],
@@ -951,13 +790,11 @@ export function findPrefixInvalidation(
   return null;
 }
 
-/** Governing request text as persisted in checkpoint details. */
 export interface CappedGoverningContent {
   readonly content: string;
   readonly truncated: boolean;
 }
 
-/** Text of a user request, capped for persistence in checkpoint details. */
 export function capGoverningContent(content: string): CappedGoverningContent {
   if (content.length <= GOVERNING_REQUEST_MAX_CHARS) {
     return { content, truncated: false };

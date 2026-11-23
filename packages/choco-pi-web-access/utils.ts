@@ -4,11 +4,6 @@ import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import { legacyPiFallbacks, piAgentDir } from "@choco-pi/shared/pi-paths";
 
-/**
- * Directory holding web-search.json: PI_CODING_AGENT_DIR, else (legacy mode
- * only) XDG_CONFIG_HOME/pi or ~/.pi. Standalone choco-pi falls back to its own
- * agent directory and never to XDG or ~/.pi.
- */
 export function getWebSearchConfigDir(
   env: Readonly<Record<string, string | undefined>> = process.env,
   home: string = homedir(),
@@ -130,7 +125,6 @@ export async function fetchWithCredentialRedirects(
 }
 
 export interface CuratorNetworkConfig {
-  /** Whether remote access was opted into via curatorRemote. */
   enabled: boolean;
   host: string;
   bind: string;
@@ -148,7 +142,6 @@ function trimmedString(value: ConfigValue | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-/** Resolves the curator server bind address and URL host from `curatorRemote`. */
 export function resolveCuratorNetworkConfig(): CuratorNetworkConfig {
   const configPath = getWebSearchConfigPath();
   if (!existsSync(configPath)) return LOCAL_CURATOR_NETWORK_DEFAULTS;

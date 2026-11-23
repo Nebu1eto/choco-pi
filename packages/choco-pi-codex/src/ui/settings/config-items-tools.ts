@@ -9,7 +9,6 @@ import {
 import { getCodexConversionConfigPath } from "../../adapter/activation/config-store.ts";
 import { type ConfigSetting, setting, toggle } from "./config-items-shared.ts";
 
-/** Provider whose credential the OpenAI tools resolve first; `openai-codex` is the legacy route. */
 export type WebSearchCredentialProvider = "openai" | "openai-codex";
 
 const WEB_SEARCH_MODEL_PREFIX = /^(?:openai-codex|openai)\//;
@@ -37,7 +36,6 @@ export function buildToolsSettings(
     setting(
       {
         id: "webSearchModel",
-        // api.openai.com has no web_run search route; the model applies only on openai-codex (legacy).
         label:
           credentialProvider === "openai"
             ? "Web search model (openai-codex legacy only)"
@@ -46,7 +44,6 @@ export function buildToolsSettings(
         submenu: (current, done) =>
           modelPickerSubmenu({
             choices: WEB_SEARCH_MODELS.map((id) => ({ provider: credentialProvider, id })),
-            // The host's done callback applies the ConfigSetting update and persists it.
             onPick: done,
           })(current, (value) => {
             if (value === undefined) done();
@@ -57,7 +54,6 @@ export function buildToolsSettings(
         openai: {
           ...current.openai,
           webSearchModel:
-            // Stored value stays the bare model id regardless of the displayed provider prefix.
             normalizeWebSearchModel(value.replace(WEB_SEARCH_MODEL_PREFIX, "")) ??
             DEFAULT_CODEX_CONVERSION_CONFIG.openai.webSearchModel,
         },

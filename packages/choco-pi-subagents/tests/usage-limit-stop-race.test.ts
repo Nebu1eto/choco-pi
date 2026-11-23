@@ -1,11 +1,3 @@
-/**
- * A user stop that lands while a usage-limit evaluation is settling must win:
- * the run ends stopped, is never parked for a reset, never revives, and
- * reports exactly one completion. The stop is swept across every microtask
- * offset after the held corroboration resolves, so the interleaving between
- * the evaluation's last eligibility check and the caller's park is covered
- * without guessing its exact tick.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -24,7 +16,6 @@ import {
 const HOUR = 3_600_000;
 const LIMIT = "Codex usage limit reached (plus plan). Resets in ~60m.";
 const background = { description: "usage limit stop race", isBackground: true, isolated: true };
-/** Far past the park: the evaluation needs well under this many microtasks. */
 const MAX_OFFSET = 24;
 
 async function microtasks(count: number): Promise<void> {
@@ -44,8 +35,6 @@ test("a stop at any microtask during usage-limit evaluation is never parked or r
     const state = policyState({
       preference: "auto-resume",
       classification: { kind: "quota", confidence: "parsed", resetAt },
-      // Settle-time check confirms exhaustion; any later wake reports capacity,
-      // so a wrongly parked run would revive.
       corroborate: (count) =>
         count === 1 ? { ready: false, evidence: "confirmed" } : { ready: true },
     });
@@ -96,6 +85,5 @@ test("a stop at any microtask during usage-limit evaluation is never parked or r
       cleanupProviders();
     }
   }
-  // The sweep reached past the park, so the post-park stop path was covered too.
   assert.ok(parkedOffsets.length > 0, "sweep reaches the parked state");
 });

@@ -37,7 +37,6 @@ function payload(
 ): string {
   return `${NATIVE_DIFF_NOTIFY_PREFIX}${JSON.stringify({
     title: "/diff: uncommitted changes on main (2 files, +1 -1)",
-    // The extension always sends the change kind; the adapter withholds old text without it.
     files: files.map((file) => ({
       ...file,
       status: file.status ?? (file.oldText === null ? "added" : "modified"),
@@ -89,7 +88,6 @@ test("a /diff notification becomes one completed, display-only tool call with na
     proc,
     payload(
       [
-        // Ordinary code mentions words the credential-prompt guard looks for.
         {
           path: "/repo/a.txt",
           displayPath: "a.txt",
@@ -109,7 +107,6 @@ test("a /diff notification becomes one completed, display-only tool call with na
   assert.equal(call.status, "completed");
   assert.equal(call.kind, "read");
   assert.match(call.toolCallId, /^choco-pi-diff-/u);
-  // Zed draws a diff block without its file name: a name line precedes each block.
   assert.deepEqual(call.content?.slice(1), [
     { type: "content", content: { type: "text", text: "File 1 of 2: ` a.txt ` — modified" } },
     {
@@ -173,7 +170,6 @@ test("the adapter re-enforces the caps and the sensitive-file rule on any payloa
   assert.ok(!JSON.stringify(conn.updates).includes(SECRET), "no sensitive contents are sent");
 });
 
-/** A payload whose file entries are not checked here, so malformed ones can be sent. */
 function rawPayload(
   files: readonly object[],
   title = "/diff: t",
@@ -190,7 +186,6 @@ function textItems(call: ToolCallUpdate): string[] {
   return texts;
 }
 
-/** C0 other than newline, DEL, C1, and bidirectional controls. */
 function hasUnsafe(text: string): boolean {
   for (const character of text) {
     const code = character.codePointAt(0) ?? 0;
@@ -265,7 +260,6 @@ test("file names are listed in diff order with status and counts, sanitised and 
   assert.ok(
     lines.includes(`- ${fence} \`\`skip\`\` [x](http://y) ${fence}: binary \\*file\\* \\<b\\>`),
   );
-  // The name line before each diff block says the same.
   assert.deepEqual(
     textItems(call).slice(1),
     names.map((name, index) => `File ${index + 1} of 4: ${name}`),
@@ -304,7 +298,6 @@ test("status and line counts are optional but strictly typed", async () => {
 
 type Outcome = { shown: string[]; skipped: string[]; leaked: boolean; malformed: boolean };
 
-/** Send one payload of raw file entries and report what the adapter did with them. */
 async function outcome(files: readonly object[]): Promise<Outcome> {
   const { proc, conn } = setup();
   notify(proc, rawPayload(files));
@@ -348,13 +341,11 @@ test("a rename or copy is judged on both validated paths, never on the display l
     ]);
     assert.equal(secretDirectory.leaked, false, status);
   }
-  // A label claiming an innocent name does not hide a sensitive path, and is not shown as its name.
   const lying = await outcome([
     { path: "/repo/keys/id_rsa", displayPath: "notes.txt", status: "modified", ...secretOld },
   ]);
   assert.equal(lying.leaked, false);
   assert.deepEqual(lying.skipped, ["- ` /repo/keys/id_rsa `: sensitive file\\; contents not sent"]);
-  // An ordinary rename is shown with the adapter's own label.
   const plain = await outcome([
     {
       path: "/repo/src/new.ts",
@@ -369,7 +360,6 @@ test("a rename or copy is judged on both validated paths, never on the display l
 });
 
 test("contents are withheld unless both sides are known", async () => {
-  // An older extension: a rename without its previous path.
   const unknownSource = await outcome([
     {
       path: "/repo/public.txt",
@@ -382,11 +372,9 @@ test("contents are withheld unless both sides are known", async () => {
   assert.deepEqual(unknownSource.skipped, [
     "- ` /repo/public.txt `: previous path unknown\\; contents not sent",
   ]);
-  // No change kind at all: old text may be another file's.
   const noKind = await outcome([{ path: "/repo/a.txt", displayPath: "a.txt", ...secretOld }]);
   assert.equal(noKind.leaked, false);
   assert.deepEqual(noKind.skipped, ["- ` a.txt `: change kind unknown\\; contents not sent"]);
-  // No change kind and no old text: only the file itself is shown.
   const newOnly = await outcome([
     { path: "/repo/n.txt", displayPath: "n.txt", oldText: null, newText: "n\n" },
   ]);

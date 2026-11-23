@@ -1,7 +1,3 @@
-/**
- * worktree-lifecycle.ts — Internal AgentManager module extracted from agent-manager.ts.
- */
-
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentRecord } from "../types.ts";
 import { cleanupWorktree, type WorktreeDisposition } from "../worktree.ts";
@@ -14,10 +10,6 @@ import {
 } from "./state.ts";
 import { recordsVerdict, recordRunVerdict } from "./verdict-recording.ts";
 
-/**
- * Point a revived record at its original worktree (no new one is created);
- * returns the working path inside it. Idempotent.
- */
 export function applyAdoptedWorktree(
   mgr: ManagerState,
   record: AgentRecord,
@@ -36,7 +28,6 @@ export function applyAdoptedWorktree(
   return workPath;
 }
 
-/** Take the worktree cleanup a parked spawn deferred, exactly once. */
 export function takeDeferredWorktree(
   mgr: ManagerState,
   record: AgentRecord,
@@ -47,7 +38,6 @@ export function takeDeferredWorktree(
   return finish;
 }
 
-/** Run the deferred worktree cleanup, if any; never rejects (like the spawn settle path). */
 export async function finishDeferredWorktree(
   mgr: ManagerState,
   record: AgentRecord,
@@ -56,21 +46,9 @@ export async function finishDeferredWorktree(
   if (finish === undefined) return;
   try {
     await finish();
-  } catch {
-    /* ignore cleanup errors, like the spawn settle path */
-  }
+  } catch {}
 }
 
-/**
- * For settle paths that never reach a runner (stopped while queued or
- * parked, refused at admission, failed to start): run `publish` immediately
- * when nothing is owed, otherwise after the deferred worktree cleanup (which
- * may append the branch note to `record.result`) and, for a verdict-role
- * run not yet recorded, after its verdict record (whose line is appended to
- * `record.result`). A record awaiting publication stays terminal-unpublished
- * meanwhile, which `resumeBlockedByRun` already treats as busy. `publish`
- * runs exactly once.
- */
 export function finishDeferredWorktreeThen(
   mgr: ManagerState,
   record: AgentRecord,
@@ -93,7 +71,6 @@ export function finishDeferredWorktreeThen(
         generation,
         undefined,
         record.status,
-        // A queued stop sets only the cancellation; its reason is the error.
         record.error ?? cancellationForGeneration(record, generation)?.reason,
       );
       if (line !== undefined) {
@@ -109,11 +86,6 @@ export function finishDeferredWorktreeThen(
   void settle();
 }
 
-/**
- * Worktree cleanup for a spawn's final outcome. Awaited before the result
- * is published; hook-managed removal completes in the background, as it
- * reports no branch.
- */
 export async function cleanupRecordWorktree(
   mgr: ManagerState,
   pi: ExtensionAPI,
@@ -149,10 +121,6 @@ export async function cleanupRecordWorktree(
   }
 }
 
-/**
- * A cancelled run (any cause but suspend) keeps its worktree untouched; every
- * other settle commits changes to a branch and removes it.
- */
 export function worktreeDispositionFor(
   mgr: ManagerState,
   record: AgentRecord,

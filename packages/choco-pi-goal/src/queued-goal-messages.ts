@@ -3,7 +3,6 @@ import { compile, lit, obj, oneOf, str } from "@earendil-works/pi-schema";
 import { isFiniteNumber, isString } from "@choco-pi/shared/value-guards";
 import { CUSTOM_ENTRY_TYPE } from "./types.ts";
 
-// Both objects are open, as the previous TypeBox objects were: extra keys are accepted.
 const isQueuedGoalTextPart = compile(obj({ type: lit("text"), text: str() }, { open: true })).check;
 const activeGoalQueuedDetailsSchema = obj(
   {
@@ -28,7 +27,6 @@ export interface QueuedGoalTextPart {
 
 export type QueuedGoalUserContent = QueuedGoalTextPart[];
 
-/** External provider-context message shape before normalization. */
 export interface QueuedGoalContextInput {
   role: string;
   customType?: string;
@@ -38,7 +36,6 @@ export interface QueuedGoalContextInput {
   timestamp?: number;
 }
 
-/** Normalized provider-context carrier with required runtime fields. */
 export interface QueuedGoalContextCarrier {
   role: string;
   timestamp: number;
@@ -62,7 +59,6 @@ export interface QueuedGoalUserMessage extends QueuedGoalContextCarrier {
 
 export type QueuedGoalWorkSourceMessage = QueuedGoalCustomMessage | QueuedGoalUserMessage;
 
-/** Role/customType only — does not prove normalized content or display. */
 interface QueuedGoalCustomRoleCarrier {
   role: "custom";
   customType: typeof CUSTOM_ENTRY_TYPE;
@@ -101,7 +97,6 @@ function customContentFromUnknown(
   return normalized.length > 0 ? normalized : "";
 }
 
-/** Copies provider-context fields into a carrier with the runtime-required timestamp. */
 export function toQueuedGoalContextCarrier(
   message: QueuedGoalContextInput,
 ): QueuedGoalContextCarrier | null {
@@ -128,7 +123,6 @@ export function toQueuedGoalContextCarrier(
   return carrier;
 }
 
-/** Narrows a carrier to queued-goal user/custom work and normalizes its content. */
 export function toQueuedGoalWorkSource(
   message: QueuedGoalContextCarrier,
 ): QueuedGoalWorkSourceMessage | null {

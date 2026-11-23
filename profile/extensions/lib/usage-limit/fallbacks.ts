@@ -87,7 +87,6 @@ export async function loadModelFallbacks(
 
 type ModelRef = { provider: string; id: string };
 
-/** Splits `provider/id` at the first slash; ids such as `hf:org/model` keep theirs. */
 export function parseModelRef(ref: string): ModelRef | undefined {
   const slash = ref.indexOf("/");
   if (slash <= 0 || slash === ref.length - 1) return undefined;

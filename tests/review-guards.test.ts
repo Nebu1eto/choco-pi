@@ -19,12 +19,10 @@ const REAL_AGENT = join(userInfo().homedir, ".pi", "agent");
 
 test("a test cannot resolve or use a review directory in the real ~/.pi", async () => {
   assert.throws(() => resolveReviewDirectory(REAL_AGENT), /real review directory/);
-  // A store given the real path refuses before touching the filesystem.
   const store = createReviewStore(join(REAL_AGENT, "choco-pi", "reviews"), undefined, {
     cleanup: false,
   });
   await assert.rejects(store.list("repo-key"), /real review directory/);
-  // A scratch agent directory is fine.
   assert.equal(resolveReviewDirectory("/scratch/agent"), "/scratch/agent/choco-pi/reviews");
 });
 
@@ -58,7 +56,6 @@ test("session_shutdown stops the record clean-up, and a failing stop does not br
 });
 
 test("stopping when no pass was ever scheduled is a no-op that touches no directory", () => {
-  // No store was used in this process, so no pass exists; stop must not resolve a directory.
   assert.doesNotThrow(() => stopReviewRecordCleanup());
   assert.doesNotThrow(() => registerWith().get("session_shutdown")?.({}, {}));
 });

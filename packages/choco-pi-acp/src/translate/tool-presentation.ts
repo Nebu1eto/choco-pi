@@ -146,8 +146,6 @@ function reconstructUpdate(lines: string[]): ReconstructedUpdate | undefined {
   const newText = joinedPatchLines(newLines);
   if (oldText.length > MAX_PATCH_DIFF_TEXT || newText.length > MAX_PATCH_DIFF_TEXT)
     return firstChangedLine ? { line: firstChangedLine } : {};
-  // Absolute hunk anchors win; a bare @@ treats the reconstructed region as
-  // starting at line 1, then advances past leading unchanged context.
   const reconstructed: ReconstructedUpdate = { oldText, newText };
   if (firstChangedLine) reconstructed.line = firstChangedLine;
   return reconstructed;
@@ -252,9 +250,7 @@ function parseExtractedPatch(region: string, cwd: string): ParsedPatchFile[] | u
     const decoded: BoundaryValue = JSON.parse(`"${region}"`);
     if (isString(decoded) && decoded.length <= MAX_PATCH_INPUT)
       return parseApplyPatch(decoded, cwd);
-  } catch {
-    // A non-JSON JavaScript string can still use escaped line endings.
-  }
+  } catch {}
   const decodedLines = region.replaceAll("\\r\\n", "\n").replaceAll("\\n", "\n");
   return decodedLines.length <= MAX_PATCH_INPUT ? parseApplyPatch(decodedLines, cwd) : undefined;
 }

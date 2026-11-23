@@ -40,7 +40,6 @@ initTheme("dark", false);
 const BRIDGE_SYMBOL = Symbol.for("choco-pi.native-settings-bridge");
 const SECTION_PREFIX = "section:";
 
-/** Built-in choco-ui rows the layout names explicitly; the panel test proves they render. */
 const ZENTUI_EXPLICIT_ROWS = new Set([
   "iconMode",
   "selectorBordersEnabled",
@@ -50,17 +49,12 @@ const ZENTUI_EXPLICIT_ROWS = new Set([
 
 type PrototypeRecord = Record<PropertyKey, RuntimeValue>;
 
-/** Every explicit row id in the layout, once per occurrence. */
 function explicitEntries(): string[] {
   return PREFERENCES_LAYOUT.flatMap((tab) =>
     tab.groups.flatMap((group) => group.rows.filter((row) => !row.startsWith(SECTION_PREFIX))),
   );
 }
 
-/**
- * Pi 1.0.4's own settings selector, built for real with image support on, so
- * every row it can show is present.
- */
 function realPiSelector(): RuntimeValue {
   const callbacks = new Proxy({}, { get: () => () => {} });
   return new SettingsSelectorComponent(
@@ -109,14 +103,9 @@ function realPiSelector(): RuntimeValue {
 interface Providers {
   ctx: ExtensionCommandContext;
   sections: PreferencesExtraSection[];
-  /** Ids of every row each provider builds, keyed by provider. */
   rows: Map<string, string[]>;
 }
 
-/**
- * Builds every provider the profile hosts, with real row builders, inside a
- * throwaway agent directory and with Pi's real selector behind the bridge.
- */
 async function withProviders(run: (providers: Providers) => Promise<void>): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), "preferences-layout-"));
   const agentDir = path.join(root, "agent");
@@ -141,8 +130,6 @@ async function withProviders(run: (providers: Providers) => Promise<void>): Prom
   const unpublish = publishBackgroundCompactionPreferences({
     enabled: () => false,
     setEnabled: async () => {},
-    // The Anthropic and xAI rows exist only with a mode switch; build both so
-    // the layout's placement of them is checked against real rows.
     anthropic: { mode: () => "server-side", set: async () => {} },
     xai: { mode: () => "server-side", set: async () => {} },
   });
@@ -259,18 +246,14 @@ test("every provider row is placed in exactly one group or explicitly hidden", a
         );
       }
     }
-    // Every explicit entry names a row someone builds, so the layout holds no
-    // stale ids that would silently stop matching.
     const known = new Set([...providerIds, ...ZENTUI_EXPLICIT_ROWS]);
     assert.deepEqual(
       [...entries, ...PREFERENCES_HIDDEN_ROWS].filter((id) => !known.has(id)),
       [],
     );
-    // The retired read-only Context cap row is gone; the presets configure it.
     assert.ok(!rows.has("contextCapPolicy"));
     assert.ok(!providerIds.includes("contextCap"));
     assert.ok(!entries.includes("contextCap"));
-    // The background compaction rows use their own ids.
     assert.deepEqual(rows.get("backgroundCompaction"), [
       "backgroundCompaction.enabled",
       "compactionAnthropic",
@@ -305,7 +288,6 @@ test("the Model tab's Defaults group holds only the model thinking default", () 
 test("with the installed Pi's rows nothing falls back to the Pi tab", async () => {
   await withProviders(async ({ rows }) => {
     const pi = rows.get("pi") ?? [];
-    // The real selector, not a fixture: these ids come from the installed Pi (1.3.0 adds share-destination).
     for (const id of [
       "cache-warming-mode",
       "fullscreen-copy-on-select",
@@ -414,7 +396,6 @@ function openPanel(
 
 const WIDTH = 160;
 
-/** The focused row's text, without the cursor marker. */
 function cursorRow(panel: PanelHandle): string {
   const row = panel.render(WIDTH).find((line) => line.startsWith("> "));
   assert.ok(row, "a row holds the cursor");
@@ -442,8 +423,6 @@ test(
         assert.equal(panel.getActiveSection(), "agent");
         const body = panel.render(WIDTH).join("\n");
         assert.match(body, /^ {2}Behavior/m, "groups open with a heading row");
-        // The heading is never focused: the cursor starts on the first row
-        // and moving past a group boundary skips its heading.
         assert.match(cursorRow(panel), /^Agent language/);
         panel.handleInput("\x1b[B");
         panel.handleInput("\x1b[B");
@@ -452,14 +431,11 @@ test(
         assert.match(cursorRow(panel), /^On usage limit/);
         panel.handleInput("\x1b[A");
         assert.match(cursorRow(panel), /^Agent persona/);
-        // Up from the first row wraps to the last row, not to a heading.
         panel.handleInput("\x1b[A");
         panel.handleInput("\x1b[A");
         panel.handleInput("\x1b[A");
         assert.match(cursorRow(panel), /^Remember agents/);
 
-        // Statusline gathers the former Footer, Segments, Git, Working line,
-        // and Extensions tabs, and the extension statuses left Appearance.
         for (let step = 0; step < 5; step += 1) panel.handleInput("\x1b[C");
         assert.equal(panel.getActiveSection(), "statusline");
         const statusline = panel.render(WIDTH).join("\n");
@@ -489,8 +465,6 @@ test(
         assert.match(panel.render(WIDTH).join("\n"), /Advanced: Proxy Responses Lite/);
         panel.handleInput("\x1b");
 
-        // The filter is fuzzy, so other rows may match; the hidden row itself
-        // must never be a result.
         for (const label of [
           "TUI mode",
           "Fullscreen exit output",
@@ -511,7 +485,6 @@ test(
           );
           panel.handleInput("\x1b");
         }
-        // Hidden rows are absent from every tab as well.
         for (let step = 0; step < 9; step += 1) {
           const shown = panel.render(400).join("\n");
           assert.doesNotMatch(shown, /TUI mode|Execution mode|Transport\s{2}/);

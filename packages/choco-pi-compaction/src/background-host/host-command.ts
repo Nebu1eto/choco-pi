@@ -1,26 +1,12 @@
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
 import { hasMethods, isRecord, isString, readProperty } from "../guards.ts";
 
-// ---------------------------------------------------------------------------
-// TUI /compact bridge
-// ---------------------------------------------------------------------------
-//
-// Pi matches `/compact` by text before extension commands and before the
-// `input` event, and the only hook it offers, `session_before_compact`, can
-// only end the host compaction with `cancel`, which prints "Compaction
-// cancelled". Taking over the interactive mode's own command handler (the way
-// the settings dialog takes over `/settings`) is the only way for a plain
-// `/compact` to continue in the background without that line and without
-// aborting a running agent.
-
 const BRIDGE_SYMBOL: unique symbol = Symbol.for("choco-pi:compaction-compact-command-bridge");
 
-/** The interactive-mode fields the bridge reaches for. */
 export interface CompactCommandHost {
   readonly session: { readonly sessionId: string };
 }
 
-/** Decides whether a `/compact` typed in `host` (with optional instructions) was taken over. */
 export type CompactCommandDefer = (
   host: CompactCommandHost,
   customInstructions?: string,
@@ -29,18 +15,10 @@ export type CompactCommandDefer = (
 type OriginalHandler = (this: CompactCommandHost, customInstructions?: string) => Promise<void>;
 
 interface CompactCommandBridge {
-  /** Pi's own handler, kept for custom instructions and every refused request. */
   readonly original: OriginalHandler;
-  /**
-   * One entry per live registration (root and child sessions share the
-   * process). A typed command is offered to each in registration order; the
-   * first that owns the host's session takes it. A departing registration
-   * removes only its own entry.
-   */
   readonly defers: Set<CompactCommandDefer>;
 }
 
-/** The host prototype as this module reaches it: one private method it swaps. */
 interface CompactCommandPrototype {
   handleCompactCommand: (this: CompactCommandHost, customInstructions?: string) => Promise<void>;
 }
@@ -65,10 +43,6 @@ function readBridge(): CompactCommandBridge | undefined {
   return isBridge(found) ? found : undefined;
 }
 
-/**
- * Install the prototype patch once per process and add `defer` for this
- * registration. Later installs (after `/reload`, or a child session) only add.
- */
 export function installCompactCommandBridge(defer: CompactCommandDefer): void {
   const existing = readBridge();
   if (existing !== undefined) {
@@ -90,7 +64,6 @@ export function installCompactCommandBridge(defer: CompactCommandDefer): void {
     customInstructions?: string,
   ): Promise<void> {
     if (isCompactCommandHost(this)) {
-      // A registration released before its turn is skipped; Set iteration tolerates deletes.
       for (const current of bridge.defers) {
         let handled = false;
         try {
@@ -105,17 +78,14 @@ export function installCompactCommandBridge(defer: CompactCommandDefer): void {
   };
 }
 
-/** Remove this registration's `defer`; other live registrations keep theirs. */
 export function releaseCompactCommandBridge(defer: CompactCommandDefer): void {
   readBridge()?.defers.delete(defer);
 }
 
-/** Whether the prototype patch is installed in this process. */
 export function compactCommandBridgeInstalled(): boolean {
   return readBridge() !== undefined;
 }
 
-/** Number of registrations currently offered a typed command (test seam). */
 export function liveCompactCommandDefers(): number {
   return readBridge()?.defers.size ?? 0;
 }

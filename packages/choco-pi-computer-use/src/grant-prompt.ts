@@ -32,7 +32,6 @@ export const GRANT_OPTION_SESSION = "Allow for this session";
 export const GRANT_OPTION_ALWAYS = "Always allow (saves to user config)";
 export const GRANT_OPTION_DENY = "Not now";
 
-/** Target identity resolved by the helper; never the model's label. */
 export interface GrantPromptTarget {
   bundleId?: string;
   appName: string;
@@ -41,11 +40,9 @@ export interface GrantPromptTarget {
 export interface GrantPromptRefusal {
   action: string;
   capability: string;
-  /** The helper already posted the input in the background and observed no change. */
   pidPointerAttempted?: boolean;
 }
 
-/** Shows a notice unless the host reports a stale context; any other failure propagates. */
 export function notifyUnlessStale(
   ui: ExtensionContext["ui"],
   message: string,
@@ -67,7 +64,6 @@ export type GrantPromptSkipReason =
   | "aborted"
   | "stale_session";
 
-/** Result of writing one key into the user config file. */
 export type PersistOutcome =
   | { persisted: true; path: string; shadowedBy?: string[] }
   | { persisted: false; path: string; error: string };
@@ -76,7 +72,6 @@ export type GrantPromptOutcome =
   | { decision: "skipped"; reason: GrantPromptSkipReason }
   | { decision: "denied" }
   | { decision: "session" }
-  /** `foreground_prompt: "always"`: granted for the session without a dialog. */
   | { decision: "auto" }
   | ({ decision: "always" } & PersistOutcome);
 
@@ -86,16 +81,13 @@ export function grantPromptGranted(outcome: GrantPromptOutcome): boolean {
   );
 }
 
-/** One prompt per session generation and bundle id; concurrent callers share it. */
 const pendingPrompts = new Map<string, Promise<GrantPromptOutcome>>();
-/** Serializes read-merge-write of the user config file. */
 let persistChain: Promise<void> = Promise.resolve();
 
 function skipped(reason: GrantPromptSkipReason): GrantPromptOutcome {
   return { decision: "skipped", reason };
 }
 
-/** Resolves with the shared outcome, or `aborted` as soon as this caller's signal aborts. */
 async function untilAborted(
   shared: Promise<GrantPromptOutcome>,
   signal: AbortSignal | undefined,
@@ -114,18 +106,6 @@ async function untilAborted(
   }
 }
 
-/**
- * Decides a foreground grant for one app after a refusal that proved nothing
- * was delivered, or after a background pid pointer attempt that showed no
- * change (the caller then defers the foreground retry to the next call). Only the user decides: through the `foreground_prompt` setting
- * or `/computer-use grant`, or by answering the host dialog. No tool parameter
- * reaches this decision.
- *
- * - `always`: grants the app for this session without a dialog, in any host
- *   mode, overriding an earlier "Not now".
- * - `ask`: asks once per app per session in an interactive TUI session.
- * - `off`: never prompts.
- */
 export async function promptForegroundGrant(
   ctx: ExtensionContext | undefined,
   target: GrantPromptTarget,
@@ -167,7 +147,6 @@ async function askOnce(
   generation: number,
   signal: AbortSignal | undefined,
 ): Promise<GrantPromptOutcome> {
-  // Snapshot the host UI before awaiting; the context may go stale afterwards.
   const ui = ctx.ui;
   const lines = [
     `Allow pi to bring ${appName} (${bundleId}) to the front and send keyboard and mouse input?`,
@@ -192,7 +171,6 @@ async function askOnce(
   if (choice === GRANT_OPTION_ALWAYS) {
     grantForSession(bundleId);
     const persisted = await persistUserGrant(bundleId);
-    // The session may have ended while saving; its UI must not be touched then.
     if (!persisted.persisted && sessionGrantGeneration() === generation)
       notifyUnlessStale(
         ui,
@@ -201,16 +179,10 @@ async function askOnce(
       );
     return { decision: "always", ...persisted };
   }
-  // "Not now" or a dismissed dialog: do not ask again for this app this session.
   denyForSession(bundleId);
   return { decision: "denied" };
 }
 
-/**
- * Read-merge-write of the user config file: applies `mutate` to the object that
- * loading reads (the nested `computer_use` object when present) and preserves
- * every other key. Never overwrites an unreadable or malformed file.
- */
 export async function updateUserConfig(
   mutate: (config: JsonObject) => string | undefined,
 ): Promise<PersistOutcome> {
@@ -258,13 +230,6 @@ async function writeUserConfig(
   return { persisted: true, path: filePath };
 }
 
-/**
- * Writes a temp sibling and renames it over the destination, so a failed write
- * never truncates the existing file. A symlinked destination is resolved first
- * and replaced at its real path, keeping the link; a dangling symlink is
- * written at its link target so the link survives. Returns an error message, or
- * undefined on success.
- */
 async function replaceFileAtomically(
   filePath: string,
   content: string,
@@ -292,11 +257,6 @@ async function replaceFileAtomically(
   }
 }
 
-/**
- * Resolves a dangling symlink at `filePath` to its (absolute) target path, or
- * undefined when `filePath` is absent or not a symlink. The caller has already
- * learned the path does not resolve, so a failed `lstat` means absent.
- */
 async function danglingSymlinkTarget(filePath: string): Promise<string | undefined> {
   try {
     const info = await lstat(filePath);
@@ -324,7 +284,6 @@ function mergedGrant(existing: JsonValue | undefined, bundleId: string): JsonVal
   return entries;
 }
 
-/** Appends a bundle id to `foreground_grant` in the user config. */
 export async function persistUserGrant(bundleId: string): Promise<PersistOutcome> {
   const outcome = await updateUserConfig((config) => {
     const merged = mergedGrant(config.foreground_grant, bundleId);
@@ -335,7 +294,6 @@ export async function persistUserGrant(bundleId: string): Promise<PersistOutcome
   return withShadows(outcome, "foreground_grant");
 }
 
-/** Sets the session prompt mode at once and saves it as `foreground_prompt` in the user config. */
 export async function setForegroundPromptMode(mode: ForegroundPromptMode): Promise<PersistOutcome> {
   setSessionForegroundPromptMode(mode);
   const outcome = await updateUserConfig((config) => {
@@ -350,7 +308,6 @@ const ENV_NAMES = {
   foreground_prompt: "PI_COMPUTER_USE_FOREGROUND_PROMPT",
 } satisfies Record<"foreground_grant" | "foreground_prompt", string>;
 
-/** Later layers (project file, env) replace a user-file key wholesale in later sessions. */
 function withShadows(
   outcome: PersistOutcome,
   key: keyof Pick<ComputerUseConfig, "foreground_grant" | "foreground_prompt">,
@@ -364,7 +321,6 @@ function withShadows(
   return shadowedBy.length > 0 ? { ...outcome, shadowedBy } : outcome;
 }
 
-/** One-line description of a persistence result for user notices. */
 export function describePersist(outcome: PersistOutcome): string {
   if (!outcome.persisted) return `not saved to ${outcome.path}: ${outcome.error}`;
   return outcome.shadowedBy

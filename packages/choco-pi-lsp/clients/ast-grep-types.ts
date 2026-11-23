@@ -1,27 +1,11 @@
-/**
- * Shared types for ast-grep client, parser, and rule manager.
- *
- * Extracted to prevent circular dependencies between:
- * - ast-grep-client.ts
- * - ast-grep-rule-manager.ts
- */
-
-// =============================================================================
-// RULE DESCRIPTIONS
-// =============================================================================
-
 export interface RuleDescription {
   id: string;
   message: string;
   note?: string;
-  fix?: string; // Suggested fix from rule
+  fix?: string;
   severity: "error" | "warning" | "info" | "hint";
   grade?: number;
 }
-
-// =============================================================================
-// MATCHES (from sg-runner)
-// =============================================================================
 
 export interface SgMatch {
   file: string;
@@ -37,10 +21,6 @@ export interface SgResult {
   matches: SgMatch[];
   error?: string;
 }
-
-// =============================================================================
-// DIAGNOSTICS
-// =============================================================================
 
 interface AstGrepMetaVarNode {
   text: string;
@@ -87,10 +67,6 @@ export interface AstGrepDiagnostic {
   note?: string;
 }
 
-// =============================================================================
-// JSON FORMAT (ast-grep CLI output)
-// =============================================================================
-
 export interface AstGrepJsonDiagnostic {
   ruleId: string;
   severity: string;
@@ -105,7 +81,6 @@ export interface AstGrepJsonDiagnostic {
     file?: string;
     style: string;
   }>;
-  // Legacy format support
   Message?: { text: string };
   Severity?: string;
   spans?: Array<{

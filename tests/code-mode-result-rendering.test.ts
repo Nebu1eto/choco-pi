@@ -76,7 +76,6 @@ test("collapsed nested calls show ordered labels while expansion reveals inputs 
           input: { cmd: "npm run test -- --watch=false" },
           status: "done" as const,
           result: {
-            // Persisted host traces may carry string content at this boundary.
             content: "nested command output",
           },
         },

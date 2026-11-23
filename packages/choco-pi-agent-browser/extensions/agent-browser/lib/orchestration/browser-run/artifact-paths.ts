@@ -96,9 +96,7 @@ function canonicalizeArtifactPath(
       try {
         const stats = statSync(canonicalPath, { bigint: true });
         if (stats.ino > 0n) return `inode:${stats.dev}:${stats.ino}`;
-      } catch {
-        // The destination does not exist yet; canonical ancestry still catches aliases.
-      }
+      } catch {}
       return foldArtifactPath(canonicalPath, platform);
     } catch {
       let symlinkTarget: string | undefined;

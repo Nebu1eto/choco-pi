@@ -1,19 +1,3 @@
-/**
- * Verdict records for runs that end stopped. The durable agent record
- * (<scratch>/verdicts/<work_task>/<agentId>.json) describes the latest
- * settled run of that agent under that work task, and the parent-visible
- * "Verdict record:" line agrees with it:
- *
- * - a stop that lands while a recording is in flight wins: the line is not
- *   "parsed" and the record is not parsed-clean;
- * - every terminal path of a verdict-role run records an outcome, including
- *   runs that never reach a runner (stopped while queued, parked then stopped).
- *
- * Ordering is forced with the runner's deferred promises. A stop "during the
- * recording" is issued in the microtask turn after recording began
- * (verdictRecordedGeneration is set before its first await) and before any
- * filesystem callback can run. No assertion compares a record object.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -84,7 +68,6 @@ async function ticket(
   return result.ticket;
 }
 
-/** The record's status on disk ("parsed NO_FINDINGS", "missing", "record missing"). */
 async function onDisk(scratch: string, id: string, workTask = WORK_TASK): Promise<string> {
   const read = await readAgentParseRecord(verdictRecordsDirectory(scratch, workTask), id);
   if (read.status !== "valid") return "record " + read.status;
@@ -99,7 +82,6 @@ function verdictLines(record: AgentRecord | undefined): string[] {
     .map((line) => line.replace(/ -> .*$/, ""));
 }
 
-/** Microtask turns until the record's current generation started recording. */
 async function untilRecordingStarted(record: AgentRecord): Promise<void> {
   for (let turn = 0; turn < 200; turn++) {
     if (record.verdictRecordedGeneration === record.resultGeneration) return;
@@ -150,7 +132,6 @@ test("stopping a queued resume replaces the previous clean record", async (t) =>
   await first;
   assert.equal(await onDisk(s.scratch, id), "parsed NO_FINDINGS");
 
-  // Fill the only slot, then resume the reviewer: it queues.
   s.h.manager.spawn(s.env.pi, s.env.context(), "implementer", "busy", {
     ...background,
     description: "busy",
@@ -270,7 +251,6 @@ test("a resume under another work task records there and keeps the first task's 
   assert.equal(await onDisk(s.scratch, id), "parsed NO_FINDINGS", "records are per work task");
 });
 
-/** An outcome that reads "completed" until its nth read, then "stopped". */
 function stopsOnRead(n: number): NonNullable<VerdictRecordInput["outcome"]> {
   let reads = 0;
   return () => {
@@ -287,7 +267,6 @@ async function scratchDir(t: TestContext): Promise<string> {
   return join(dir, "scratch");
 }
 
-// Reads of outcome: the initial parse, one before the record write, and one after it.
 test("a clean review stopped during its record write is rewritten as missing", async (t) => {
   const scratch = await scratchDir(t);
   const outcome = await recordVerdict({

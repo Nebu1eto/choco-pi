@@ -26,11 +26,9 @@ import {
   type ThreadGoal,
 } from "../src/types.ts";
 
-/** Host-owned value as recorded by the fakes; mirrors the repository `RuntimeValue` alias. */
 type RuntimeValue = {} | null | undefined;
 
 interface Recorded {
-  /** Each appended entry, serialized so assertions read it without reinterpreting its type. */
   entries: { customType: string; json: string }[];
   events: { channel: string; data: RuntimeValue }[];
 }
@@ -145,7 +143,6 @@ test("runtime usage flushes and budget limits emit the persisted goal", () => {
 
   const used = applyUsage(goal, 400, 5).goal;
   assert.ok(used);
-  // Deferred accounting changes memory only; the event waits for the persisted entry.
   controller.applyGoalTransition({ kind: "runtime_accounting", nextGoal: used }, null);
   assert.equal(goalChanges(recorded).length, 1);
   assert.equal(controller.flushGoalPersistence("runtime"), true);
@@ -309,7 +306,6 @@ test("disposed or replaced runtime access stops acting and keeps other owners", 
   const accessB = publisherB.install("session-b");
   assert.ok(staleA);
 
-  // A new session generation replaces the previous owner's entry.
   const accessC = publisherA.install("session-c");
   assert.equal(readRegistry()?.has("session-a"), false);
   assert.equal(readRegistry()?.get("session-c"), accessC);
@@ -343,7 +339,6 @@ test("runtime access never clobbers a foreign slot value", () => {
   }
 });
 
-/** Reinterprets a deliberate partial host fixture as the full host type it stands in for. */
 function hostFixture<Target>(value: RuntimeValue): Target {
   // SAFETY: Callers pass partial fixtures covering every member the code under test reads.
   return value as Target;
@@ -358,14 +353,12 @@ function controllerContext(sessionId: string): ExtensionContext {
     hasPendingMessages: () => false,
     getContextUsage: () => undefined,
   };
-  // Session start/shutdown with no goal reads only this context subset.
   return hostFixture<ExtensionContext>(context);
 }
 
 test("a pending shutdown leaves the next session's runtime access installed", async () => {
   const recorded: Recorded = { entries: [], events: [] };
   const pi = { ...fakePi(recorded), sendMessage: () => {}, sendUserMessage: () => {} };
-  // The controller uses only entry, event, and message APIs in this no-goal fixture.
   const controller = createGoalRuntimeController(hostFixture<ExtensionAPI>(pi));
   // SAFETY: The handlers read only the start reason and ignore shutdown event fields.
   const startEvent = { type: "session_start", reason: "startup" } as SessionStartEvent;
@@ -377,7 +370,6 @@ test("a pending shutdown leaves the next session's runtime access installed", as
     assert.ok(oldAccess);
 
     const shutdown = controller.onSessionShutdown(shutdownEvent, controllerContext("session-old"));
-    // Shutdown invalidates the old access before its first await.
     assert.equal(readRegistry()?.has("session-old") ?? false, false);
 
     await controller.onSessionStart(startEvent, controllerContext("session-new"));

@@ -78,7 +78,6 @@ const model: Model<"openai-codex-responses"> = {
   maxTokens: 2048,
 };
 const account = "synthetic-account-not-a-credential";
-// Synthetic unsigned token shape only, never read from a credential store.
 const token = `fixture.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: account } })).toString("base64url")}.fixture`;
 const scope: ProviderScope = {
   provider: model.provider,
@@ -160,7 +159,6 @@ function sse(
     headers: { "content-type": "text/event-stream" },
   });
 }
-/** A started SSE response that never completes; it errors only when the request aborts. */
 function pendingSse(signal: AbortSignal | null | undefined, started: () => void): Response {
   const created = `data: ${JSON.stringify({ type: "response.created", response: { id: "pending" } })}\n\n`;
   const body = new ReadableStream<Uint8Array>({
@@ -172,7 +170,6 @@ function pendingSse(signal: AbortSignal | null | undefined, started: () => void)
   });
   return new Response(body, { headers: { "content-type": "text/event-stream" } });
 }
-/** Applies a post-hook payload rewrite after the provider's own payload hook. */
 function withPostPayload(
   options: SimpleStreamOptions | undefined,
   postPayload: ((payload: ResponsesBody) => ResponsesBody) | undefined,
@@ -274,8 +271,6 @@ test("isolated SSE lane freezes request before auth await, persists exact native
   assert.notEqual(requests[0]?.sessionId, "foreground-session");
   assert.ok(requests[0]?.sessionId.startsWith("foreground-session:background-compaction:"));
   assert.deepEqual(requests[0]?.body.input, [...before.input, { type: "compaction_trigger" }]);
-  // Independent of the capture object: the four frozen prefix items, written out, then the
-  // trigger this test builds; the mutated tail never reaches the lane.
   const sentInput = requests[0]?.body.input ?? [];
   assert.equal(sentInput.length, 5, "four frozen prefix items plus the trigger");
   assert.deepEqual(sentInput.slice(0, 4), [
@@ -411,7 +406,6 @@ function unexpectedDaybreakCall(name: string): () => never {
     throw new Error(`unexpected Daybreak ${name}`);
   };
 }
-/** Read-only Daybreak controller that counts reads and rejects every mutation. */
 function countingDaybreakController(
   sessionId: string,
   state: () => DaybreakState,
@@ -906,10 +900,6 @@ test("model/account change during preparation invalidates; committed checkpoint 
   const legacy = { ...checkpoint.details, strategy: "openai-native-compact-v1" };
   assert.ok(isNativeCompactionDetails(legacy));
   assert.equal(isBackgroundNativeCompactionDetails(legacy), false);
-  // The websocket stream copies its continuation decision into the usage
-  // diagnostic; a native-steering request produced "native_steering_full",
-  // which the validator once rejected, hiding a real checkpoint (live probe
-  // sol-server-side-1792063683).
   const steered = {
     ...checkpoint.details,
     usage: {

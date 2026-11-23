@@ -1,13 +1,3 @@
-/**
- * Read a whole change set at once, every body included, for callers that
- * need all hunks up front (the interactive review orders files by risk
- * before it draws anything). The pane keeps loading bodies lazily.
- *
- * The same store, git pins and limits as the pane: nothing touches the index,
- * every git call has a deadline, and a body over the byte limit, an
- * unreadable body, and files over the file limit are reported, never dropped
- * silently.
- */
 import type { DiffFile, DiffModel, DiffNotice, ExecRunner, TurnTreeProvider } from "../types.ts";
 import { createGitExecRunner, DiffDisposedError, DiffGitError } from "./exec.ts";
 import { diffKind } from "./file-body.ts";
@@ -20,31 +10,16 @@ export type LoadDiffModelOptions = {
   cwd: string;
   source: DiffSource;
   limits?: Partial<DiffLimits>;
-  /** Resolves a "since-checkpoint" source. */
   turns?: TurnTreeProvider;
-  /** Replaces the default git process runner, for tests. */
   exec?: ExecRunner;
-  /**
-   * Checked before and after every await and polled while git runs; once it
-   * returns false the load stops, kills its git processes and rejects with
-   * `DiffLoadCancelledError`.
-   */
   isCurrent: () => boolean;
-  /**
-   * Files whose contents must not be read (sensitive files): they are listed
-   * by name with empty hunks and named in `DiffModel.hidden`.
-   */
   skipContents?: (file: { path: string; oldPath?: string }) => boolean;
-  /** Read only this listed file, for example one the user asked to reveal. */
   onlyPath?: string;
 };
 
 export type LoadedDiffModel = {
-  /** Carries `notices` and `omittedFiles` too, when there are any. */
   model: DiffModel;
-  /** Files listed without hunks, with the reason shown to the user. */
   notices: DiffNotice[];
-  /** Changed files beyond the file limit. */
   omittedFiles: number;
 };
 
@@ -55,9 +30,7 @@ export class DiffLoadCancelledError extends Error {
   }
 }
 
-/** Bodies read at a time. */
 const BODY_CONCURRENCY = 4;
-/** How often ownership is polled while a git call runs. */
 const OWNERSHIP_POLL_MS = 100;
 
 export function formatBytes(bytes: number): string {
@@ -69,7 +42,6 @@ export function formatBytes(bytes: number): string {
   return `${bytes} bytes`;
 }
 
-/** The sentence shown for a file whose body is not shown; undefined when it is shown. */
 export function noticeForBody(body: FileBody): string | undefined {
   switch (body.kind) {
     case "text":
@@ -102,7 +74,6 @@ function fileFor(summary: FileSummary, body: FileBody): DiffFile {
   return emptyFile(summary, diffKind(summary), true);
 }
 
-/** Load the listed files of `source` with every body. */
 export async function loadDiffModel(options: LoadDiffModelOptions): Promise<LoadedDiffModel> {
   const isCurrent = options.isCurrent;
   const limits = resolveDiffLimits(options.limits);

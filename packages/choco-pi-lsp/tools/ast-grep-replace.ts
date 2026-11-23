@@ -1,10 +1,5 @@
 import type { ProtocolDictionary } from "./runtime-values.ts";
 import type { RuntimeValue } from "./runtime-values.ts";
-/**
- * ast_grep_replace tool definition
- *
- * Extracted from index.ts for maintainability.
- */
 
 import { arr, bool, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import { hostParams } from "./schema-bridge.ts";
@@ -18,12 +13,6 @@ import {
 import { hasStructuralIntent, synthesizeReplaceRule } from "../clients/ast-grep-yaml-synth.ts";
 import { compactRenderResult } from "./render-compact.ts";
 
-/**
- * Build the agent-facing error text, appending a remediation hint derived from
- * the same classification we log. Curated spawn errors return null from the
- * hint map (their message already carries guidance), so this only adds value
- * for the raw-stderr categories.
- */
 function errorTextWithHint(raw: string): string {
   const hint = astGrepRemediationHint(classifyAstGrepError(raw));
   return hint ? `Error: ${raw}\n\n${hint}` : `Error: ${raw}`;
@@ -184,9 +173,7 @@ export function createAstGrepReplaceTool(astGrepClient: AstGrepClient) {
             truncated: details.truncated ?? false,
             durationMs: Date.now() - startedAt,
           });
-        } catch {
-          // Telemetry must never break the tool path.
-        }
+        } catch {}
       }
 
       if (!(await astGrepClient.ensureAvailable())) {
@@ -204,7 +191,6 @@ export function createAstGrepReplaceTool(astGrepClient: AstGrepClient) {
       }
       const searchPaths = paths?.length ? paths : [ctx.cwd || "."];
 
-      // Phase 3: structural-intent params → synthesize YAML with fix: field
       if (hasStructuralIntent({ insideKind, hasKind, hasDescendantKind, follows, precedes })) {
         let ruleYaml: string;
         try {
@@ -286,11 +272,7 @@ export function createAstGrepReplaceTool(astGrepClient: AstGrepClient) {
       }
 
       const isDryRun = !applyFlag;
-      const output = astGrepClient.formatMatches(
-        result.matches,
-        isDryRun,
-        true, // showModeIndicator
-      );
+      const output = astGrepClient.formatMatches(result.matches, isDryRun, true);
 
       logOutcome(result.matches.length === 0 ? "no_matches" : "success", {
         matchCount: result.matches.length,

@@ -1,9 +1,3 @@
-/**
- * Rust clippy runner for dispatch system
- *
- * Runs `cargo clippy` for Rust files to catch common mistakes.
- */
-
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { findNearestContaining } from "../../path-utils.ts";
 import { RustClient } from "../../rust-client.ts";
@@ -17,18 +11,6 @@ import { createCwdCachedProbe } from "./utils/runner-helpers.ts";
 
 const rustClient = new RustClient();
 
-// Cached per-cwd `cargo clippy --version` probe (#120). Before this, the
-// probe fired on every Rust file save in a project where clippy was already
-// installed.
-//
-// `tryLazyInstall("rust-clippy", cwd)` mutates installed state, so on a
-// false initial result the runner needs a way to bust the cache and re-probe
-// after install. We can't `delete` a Promise mid-flight, so the safe path
-// is: if the cached probe resolves false AND the install just succeeded,
-// fall back to a one-shot fresh probe rather than reusing the cached false.
-//
-// The verdict is governed by the shared availability policy (#1494): a probe
-// timeout expires on a cooldown, so only a genuinely absent clippy latches.
 const CLIPPY_PROBE_BUDGET_MS = 8000;
 
 const makeClippyProbe = (cargoExe: string) =>
@@ -46,7 +28,6 @@ function getClippyProbe(cargoExe: string) {
   return clippyAvailabilityByCargo.get(cargoExe) ?? refreshClippyProbe(cargoExe);
 }
 
-/** Replace the cached probe so a post-install state is observed. */
 function refreshClippyProbe(cargoExe: string) {
   const created = makeClippyProbe(cargoExe);
   clippyAvailabilityByCargo.set(cargoExe, created);
@@ -61,7 +42,6 @@ const rustClippyRunner: RunnerDefinition = {
   timeoutMs: 90_000,
 
   async run(ctx: DispatchContext): Promise<RunnerResult> {
-    // Resolve cargo path using platform-aware lookup (handles ~/.cargo/bin on Windows)
     const cargoExe = await rustClient.findCargoPathAsync();
     if (!cargoExe) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
@@ -69,24 +49,12 @@ const rustClippyRunner: RunnerDefinition = {
 
     const clippyProbe = getClippyProbe(cargoExe);
     if (!(await clippyProbe(ctx.cwd))) {
-      // A timed-out probe is not evidence that clippy is missing, so it must
-      // not drive an install. Skip this turn and let the policy re-probe once
-      // its cooldown expires (#1494).
       if (clippyProbe.getVerdict(ctx.cwd).outcome === "transient") {
         return { status: "skipped", diagnostics: [], semantic: "none" };
       }
       await tryLazyInstall("rust-clippy", ctx.cwd);
-      // Bust the cwd-keyed cache so the post-install state is observed. Held in
-      // a local: `refreshClippyProbe` REPLACES the cached probe, so calling it
-      // again to read the verdict would spend a second probe.
       const refreshedProbe = refreshClippyProbe(cargoExe);
       if (!(await refreshedProbe(ctx.cwd))) {
-        // #1537: clippy is still absent, and the interesting question is WHY —
-        // "we tried `rustup component add` and the network failed" is a
-        // different fact from "this machine has no rustup", and until now the
-        // lazy installers recorded neither. Put the attempt beside the verdict
-        // it produced (#1500), so a reader does not have to infer the install
-        // from a runner that silently skipped.
         const verdict = refreshedProbe.getVerdict(ctx.cwd);
         logAvailabilityDecision({
           tool: "rust-clippy",
@@ -102,13 +70,11 @@ const rustClippyRunner: RunnerDefinition = {
       }
     }
 
-    // Find the package root (where Cargo.toml is)
     const cargoToml = findCargoToml(ctx.filePath);
     if (!cargoToml) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
 
-    // Run cargo clippy on the package
     const result = await safeSpawnAsync(cargoExe, ["clippy", "--message-format=json", "-q"], {
       timeout: 60000,
       cwd: cargoToml.replace("Cargo.toml", ""),
@@ -120,13 +86,10 @@ const rustClippyRunner: RunnerDefinition = {
       return { status: "succeeded", diagnostics: [], semantic: "none" };
     }
 
-    // Parse JSON output. span.file is relative to the package root, so pass
-    // the cargo dir to resolve diagnostics to absolute paths for filtering.
     const cargoDir = cargoToml.replace("Cargo.toml", "");
     const allDiagnostics = parseClippyOutput(raw, ctx.filePath, cargoDir);
 
     if (allDiagnostics.length === 0) {
-      // Non-parseable output
       return {
         status: "failed",
         diagnostics: [],
@@ -135,10 +98,6 @@ const rustClippyRunner: RunnerDefinition = {
       };
     }
 
-    // Lint-style policy (#265 B1): `cargo clippy` compiles the whole crate, so
-    // a crate-mate's pre-existing diagnostic must NOT fail the edited file's
-    // turn. Filter to the edited file like golangci-lint — if the edited file
-    // is clean, this turn succeeds even when siblings carry warnings/errors.
     const absEdited = resolve(ctx.filePath);
     const diagnostics = allDiagnostics.filter((d) => resolve(d.filePath) === absEdited);
 
@@ -176,15 +135,6 @@ interface ClippyMessage {
   spans?: ClippySpan[];
 }
 
-/**
- * Find a machine-applicable suggested replacement across the message's spans.
- * Clippy emits one diagnostic per warning but can attach the auto-fix to a
- * span other than the primary one (e.g. a fix that rewrites a use-site AND
- * removes the now-unused import). We treat the diagnostic as fixable if any
- * span carries a MachineApplicable suggestion — that's the applicability
- * level clippy promises is safe for `cargo clippy --fix` to apply without
- * human review.
- */
 function findMachineApplicableSpan(spans: ClippySpan[]): ClippySpan | undefined {
   return spans.find(
     (s) =>
@@ -208,15 +158,12 @@ export function parseClippyOutput(
       const message: ClippyMessage | undefined = msg.message;
       if (!message) continue;
 
-      // Only include messages for this file or project-wide
       const spans = message.spans ?? [];
       const span = spans[0];
       if (!span) continue;
 
       const fixableSpan = findMachineApplicableSpan(spans);
 
-      // span.file is relative to the package root; resolve to absolute when
-      // the cargo dir is known so callers can filter by edited file (#265 B1).
       const rawFile = span.file || span.file_name;
       const filePath = rawFile
         ? cargoDir && !isAbsolute(rawFile)
@@ -238,9 +185,7 @@ export function parseClippyOutput(
         fixable: fixableSpan !== undefined,
         fixSuggestion: fixableSpan?.suggested_replacement,
       });
-    } catch {
-      // Not a JSON line, skip
-    }
+    } catch {}
   }
 
   return diagnostics;

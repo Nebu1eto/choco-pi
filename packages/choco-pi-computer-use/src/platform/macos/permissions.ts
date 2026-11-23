@@ -83,17 +83,10 @@ async function checkPermissions(signal?: AbortSignal): Promise<PermissionStatus>
   const rawSource = result?.source;
   return {
     accessibility: toBoolean(result?.accessibility),
-    // Authoritative: the helper's live ScreenCaptureKit probe.
     screenRecording: toBoolean(result?.screenRecordingCapturable),
-    // Keep the preflight value separate: disagreement means stale per-process
-    // TCC cache or a grant row belonging to another app identity.
     screenRecordingPreflight: toBoolean(result?.screenRecordingPreflight),
     source: rawSource
       ? {
-          // macOS attributes Accessibility / Screen Recording grants to the
-          // responsible process at the top of the launch chain. "helper-app"
-          // is the canonical installed app via LaunchServices; "caller" means
-          // grants would attach to the launching app instead.
           attribution: rawSource.attribution === "helper-app" ? "helper-app" : "caller",
           pid: Math.trunc(toFiniteNumber(rawSource.pid, 0)) || undefined,
           parentPid: Math.trunc(toFiniteNumber(rawSource.parentPid, 0)) || undefined,
@@ -106,15 +99,11 @@ async function checkPermissions(signal?: AbortSignal): Promise<PermissionStatus>
   };
 }
 
-/** Releases helper ownership held by this process's session (session shutdown). */
 export async function releaseMacosOwnership(signal?: AbortSignal): Promise<boolean> {
   return await macosHelper.release(signal);
 }
 
 async function registerPermissions(signal?: AbortSignal): Promise<void> {
-  // Raises the Accessibility prompt and performs a real ScreenCaptureKit
-  // capture attempt so pi-computer-use.app is pre-listed in both Settings
-  // panes; the user only flips toggles, no "+" path picking.
   await macosHelper.command("registerPermissions", {}, { signal, timeoutMs: 15_000 });
 }
 
@@ -131,9 +120,6 @@ export async function ensureMacosReady(
   }
   const helperDiagnostics = await macosHelper.ensureProtocol(signal);
   assertPlatformArchitecture("macOS", helperDiagnostics);
-  // Protocol 7 ownership: a refused claim surfaces owned_by_other_session.
-  // Before the first act no session is known; the helper then makes the
-  // first act's session the owner.
   await macosHelper.claim(signal);
 
   const now = Date.now();
@@ -150,8 +136,6 @@ export async function ensureMacosReady(
   let lastPermissionCheckAt = now;
 
   if (!permissionStatus.accessibility || !permissionStatus.screenRecording) {
-    // Attribution "caller" means the helper is not running as the
-    // canonical installed app — grants would attach to the wrong identity.
     const attributionHint =
       permissionStatus.source?.attribution === "caller"
         ? `Warning: the helper is not running as the installed pi-computer-use.app (executable: ${permissionStatus.source?.executablePath ?? "unknown"}). Grants made now would attach to the launching app instead. Restart Pi so the canonical helper is used.`

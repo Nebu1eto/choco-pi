@@ -121,16 +121,12 @@ export async function activateQuotaWarnings(
     enabled = data.config.quotaWarnings;
     dependencies.publishConfig(data.config);
 
-    // Only reset alert state when the feature itself is toggled, so unrelated
-    // config changes do not re-trigger one-time warnings.
     if (wasEnabled !== enabled) {
       notifier.clearAlertState();
       if (enabled) historyReady = history.initialize();
     }
   });
 
-  // Alert transitions and quota history are account-wide, so neither is reset
-  // on session/model changes. The user can toggle warnings to reset alerts.
   pi.on("session_start", (_event, ctx) => {
     startSession();
     evaluateFromStoreOrRefresh(ctx);

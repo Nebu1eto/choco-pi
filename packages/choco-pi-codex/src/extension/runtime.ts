@@ -63,7 +63,6 @@ export interface CodexExtensionRuntime {
   state: AdapterState;
   tracker: ReturnType<typeof createExecCommandTracker>;
   sessions: ExecSessionManager;
-  /** Codex implementations of the provider-neutral Code Mode ports. */
   codeMode: CodeModePorts;
   execEnv(config?: CodexConversionConfig): NodeJS.ProcessEnv;
   codexSystemPrompt(
@@ -113,8 +112,6 @@ export function captureSessionOwnedKeepaliveRequest(
 }
 
 function activeToolContext(pi: ExtensionAPI): NonNullable<Context["tools"]> {
-  // Pi ToolInfo omits constrainedSampling; restore our owned exec contract so
-  // prewarm and the real Code Mode turn serialize the same provider tools.
   return getActiveToolsInActiveOrder(pi, true);
 }
 

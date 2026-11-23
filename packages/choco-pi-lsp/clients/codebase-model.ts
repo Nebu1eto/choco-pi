@@ -1,16 +1,3 @@
-/**
- * Codebase mental model — issue #155.
- *
- * Builds a compact structural summary of the codebase from the call graph:
- * top-N symbols by in-degree centrality, each with signature, calls, and
- * calledBy lists. Persisted to cache; never injected into agent context
- * until validated across several real sessions.
- *
- * This is intentionally internal-only. The one agent-facing surface is a
- * single dbg log line at session-start so quality can be assessed via
- * ~/.choco-pi-lsp/sessionstart.log before any agent exposure.
- */
-
 import { finite } from "./runtime-guards.ts";
 import { arr, compile, lit, obj, oneOf, str } from "@earendil-works/pi-schema";
 import * as fs from "node:fs";
@@ -24,28 +11,18 @@ import { isExternalOrVendorFile } from "./path-utils.ts";
 import { isBuildArtifact } from "./source-filter.ts";
 import type { FunctionCallGraph, SymbolKey } from "./call-graph.ts";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 export interface ModelEntry {
-  /** Relative file path. */
   file: string;
-  /** Symbol name. */
   name: string;
-  /** Approximate structural kind inferred from the symbol key. */
   kind: "function" | "method" | "class" | "unknown";
-  /** Outgoing call names — top 10 by frequency. */
   calls: string[];
-  /** Incoming caller names — top 10 by frequency. */
   calledBy: string[];
-  /** Weighted in-degree (from call graph). */
   inDegree: number;
-  /** Estimated token cost of this entry (~chars / 4). */
   tokens: number;
 }
 
 export interface CodebaseModel {
   version: typeof CODEBASE_MODEL_VERSION;
-  /** Canonical review graph identity of the call graph this model projects. */
   reviewGraphVersion: string;
   reviewGraphSignature: string;
   generatedAt: string;
@@ -55,13 +32,10 @@ export interface CodebaseModel {
   totalTokens: number;
 }
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-
 export const DEFAULT_CODEBASE_MODEL_TOKEN_BUDGET = 1500;
 const MAX_CALLS_PER_SYMBOL = 10;
-const MIN_IN_DEGREE = 0.5; // skip symbols with low centrality (avoids noise)
+const MIN_IN_DEGREE = 0.5;
 
-/** Persisted model schema version. Bump when the persisted shape changes. */
 export const CODEBASE_MODEL_VERSION = 1;
 
 const CodebaseModelSchema = obj(
@@ -92,8 +66,6 @@ const CodebaseModelSchema = obj(
 );
 const isCodebaseModel = compile(CodebaseModelSchema).check;
 
-// ── Builder ───────────────────────────────────────────────────────────────────
-
 function inferKind(symbolKey: SymbolKey): ModelEntry["kind"] {
   const parsed = parseSymbolKey(symbolKey);
   if (parsed.kind === "class") return "class";
@@ -103,34 +75,19 @@ function inferKind(symbolKey: SymbolKey): ModelEntry["kind"] {
 
 function estimateTokens(entry: Omit<ModelEntry, "tokens">): number {
   const text = [entry.name, entry.file, entry.calls.join(","), entry.calledBy.join(",")].join(" ");
-  return Math.ceil(text.length / 4) + 5; // +5 for structural overhead
+  return Math.ceil(text.length / 4) + 5;
 }
 
-/**
- * Build a codebase mental model from a function-level call graph.
- *
- * Selection: rank all symbols by weighted in-degree, then fill a token budget
- * from the top. Symbols below MIN_IN_DEGREE are skipped to avoid noise.
- *
- * @param graph   The session's FunctionCallGraph (must have inDegree populated).
- * @param cwd     Project root — used to compute relative file paths.
- * @param budget  Maximum total token budget (default 1500).
- */
 export function buildCodebaseModel(
   graph: FunctionCallGraph,
   cwd: string,
   budget = DEFAULT_CODEBASE_MODEL_TOKEN_BUDGET,
   identity?: CallGraphCacheIdentity,
 ): CodebaseModel {
-  // Standalone callers may build an unpersisted projection without the
-  // review-graph coordinator. Persisted/session models pass the canonical
-  // review-graph identity explicitly; this fallback is only a local call-graph
-  // identity for builder-only use.
   const modelIdentity = identity ?? {
     reviewGraphVersion: graph.builtAt || "call-graph-unknown",
     reviewGraphSignature: graph.builtAt || "call-graph-unknown",
   };
-  // Sort all callee keys by in-degree descending
   const ranked = [...graph.inDegree.entries()]
     .filter(([, score]) => score >= MIN_IN_DEGREE)
     .sort(([, a], [, b]) => b - a);
@@ -146,10 +103,6 @@ export function buildCodebaseModel(
     const name = parsedCallee.symbolName ?? calleeKey;
     const filePath = parsedCallee.filePath;
 
-    // Keep this projection aligned with the shared file-role policy. The
-    // call graph is derived from the canonical review graph, so the model
-    // carries that graph's identity rather than inventing a second freshness
-    // policy.
     const fileRole = detectFileRole(filePath);
     if (
       fileRole === "test" ||
@@ -160,7 +113,6 @@ export function buildCodebaseModel(
       continue;
     }
 
-    // Deduplicate by name when the same function appears in multiple files
     if (seenNames.has(name)) continue;
     seenNames.add(name);
 
@@ -210,8 +162,6 @@ export function buildCodebaseModel(
   };
 }
 
-// ── Persistence ───────────────────────────────────────────────────────────────
-
 function cacheFilePath(cwd: string): string {
   return path.join(getProjectDataDir(cwd), "cache", "codebase-model.json");
 }
@@ -233,12 +183,9 @@ export function saveCodebaseModel(cwd: string, model: CodebaseModel): void {
         totalTokens: model.totalTokens,
       }),
     );
-  } catch {
-    // Non-fatal — next session rebuilds.
-  }
+  } catch {}
 }
 
-/** Load only a model matching the canonical identity it was derived from. */
 export function loadCodebaseModel(
   cwd: string,
   expectedIdentity: CallGraphCacheIdentity,

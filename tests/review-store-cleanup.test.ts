@@ -62,7 +62,6 @@ async function age(path: string, ageMs: number): Promise<void> {
   await utimes(path, seconds, seconds);
 }
 
-/** Write a store-shaped record whose file mtime is `ageMs` before NOW. */
 async function writeRecord(
   base: string,
   repository: string,
@@ -156,7 +155,6 @@ test("a record modified or replaced after listing is kept", async (t) => {
       const text = await nodeReviewCleanupFileSystem.readFile(path);
       if (path === touched) await age(touched, 0);
       if (path === replaced) {
-        // Another session's atomic save: new inode, then an old mtime again.
         await writeFile(`${replaced}.tmp`, text);
         await rename(`${replaced}.tmp`, replaced);
         await age(replaced, 8 * DAY);
@@ -172,7 +170,6 @@ test("a record modified or replaced after listing is kept", async (t) => {
   const result = await run(base, { fileSystem });
   assert.equal(result.removed, 0);
   assert.equal(result.changed, 2);
-  // The re-check stops before the file is even moved aside.
   assert.equal(moves, 0);
   assert.equal(await exists(touched), true);
   assert.equal(await exists(replaced), true);
@@ -184,7 +181,6 @@ test("a save that lands between the re-check and the removal is put back", async
   const fileSystem = hooked({
     async rename(from, to) {
       if (from === path) {
-        // Another session's atomic save wins the race; its mtime even looks old.
         await writeFile(`${path}.tmp`, "saved by another session");
         await rename(`${path}.tmp`, path);
         await age(path, 8 * DAY);
@@ -290,7 +286,6 @@ test("record-named files that are not records of this store are left alone", asy
   const foreignJson = join(directory, `${targetKey({ kind: "pr", number: 7 })}.json`);
   await writeFile(foreignJson, JSON.stringify({ hello: "world" }));
   await age(foreignJson, 8 * DAY);
-  // A valid record stored under another repository's directory.
   const misplaced = join(base, OTHER, name);
   await mkdir(join(base, OTHER));
   await writeFile(misplaced, JSON.stringify(record(REPO, target, "2026-01-01T00:00:00.000Z")));
@@ -331,7 +326,6 @@ test("unknown names, nested directories and temporary files are left alone", asy
   await mkdir(unknownDirectory);
   const result = await run(base);
   assert.equal(result.removed, 1);
-  // notes, temporary, worktrees, record-named directory, README, not-a-repo-key
   assert.equal(result.foreign, 6);
   assert.equal(result.removedDirectories, 0);
   for (const path of [
@@ -348,7 +342,6 @@ test("unknown names, nested directories and temporary files are left alone", asy
 
 test("a symlink in place of a record is neither followed nor removed", async (t) => {
   const base = await sandbox(t);
-  // A valid, old record of the same repository, outside the base.
   const outside = await writeRecord(join(base, "..", "outside-base"), REPO, "main", 8 * DAY);
   const directory = join(base, REPO);
   await mkdir(directory);
@@ -419,7 +412,6 @@ test("an emptied repository directory is removed; a non-empty one and the base a
   assert.equal(result.removedDirectories, 1);
   assert.equal(await exists(join(base, REPO)), false);
   assert.equal(await exists(kept), true);
-  // Only directories this pass emptied are removed.
   assert.equal(await exists(alreadyEmpty), true);
   assert.equal(await exists(base), true);
 });
@@ -429,7 +421,6 @@ test("two sessions cleaning the same directory at once neither fail nor over-rem
   const old: string[] = [];
   for (const name of ["a", "b", "c", "d"]) old.push(await writeRecord(base, REPO, name, 8 * DAY));
   const young = await writeRecord(base, REPO, "young", DAY);
-  // The same visiting order makes the two passes contend for every record.
   const [left, right] = await Promise.all([
     run(base, { random: () => 0 }),
     run(base, { random: () => 0 }),
@@ -474,7 +465,6 @@ test("filesystem errors are contained per entry and never thrown", async (t) => 
       return nodeReviewCleanupFileSystem.readFile(path);
     },
     async unlink(path) {
-      // The first delete of that record fails; the restore that follows succeeds.
       if (path.includes(basename(unlinkFails)) && !unlinkFailed) {
         unlinkFailed = true;
         throw failure("EPERM");
@@ -489,7 +479,6 @@ test("filesystem errors are contained per entry and never thrown", async (t) => 
   assert.equal(await exists(statFails), true);
   assert.equal(await exists(readFails), true);
   assert.equal(await exists(unlinkFails), true);
-  // The failed delete was rolled back: no private (hidden) name is left over.
   assert.equal((await readdir(join(base, REPO))).length, 3);
 
   const listing = await run(base, {
@@ -515,7 +504,6 @@ test("a record protected while the pass moves it aside is put back, not removed"
   let opened = false;
   const fileSystem = hooked({
     async rename(from, to) {
-      // The review opens the record while the rename to the quarantine name is pending.
       if (from === path) opened = true;
       return nodeReviewCleanupFileSystem.rename(from, to);
     },

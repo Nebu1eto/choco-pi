@@ -127,7 +127,6 @@ function formatLimitUsage(
   return `${label}: ${parts.join(", ")}.`;
 }
 
-/** Structured usage-limit data parsed alongside the friendly message; epoch milliseconds. */
 export type CodexUsageLimitDetails = {
   resetAt?: number;
   planType?: string;
@@ -198,7 +197,6 @@ export function formatCodexUsageLimitError<T>(value: T): string | undefined {
 
 const usageLimitDetailsByError = new WeakMap<Error, CodexUsageLimitDetails>();
 
-/** Attach parsed usage-limit data to an error whose message is already the friendly text. */
 export function attachCodexUsageLimitDetails<E extends Error>(
   error: E,
   details: CodexUsageLimitDetails | undefined,
@@ -207,11 +205,6 @@ export function attachCodexUsageLimitDetails<E extends Error>(
   return error;
 }
 
-/**
- * Resolve structured usage-limit data for a provider error: attached HTTP details first, then a
- * WebSocket event payload (`error` or `response.failed`), then JSON embedded in the message.
- * Returns undefined unless the error is a terminal usage-limit error.
- */
 export function resolveCodexUsageLimitDetails<T>(error: T): CodexUsageLimitDetails | undefined {
   if (error instanceof Error) {
     const attached = usageLimitDetailsByError.get(error);
@@ -312,9 +305,7 @@ export async function parseErrorResponse(response: Response): Promise<ParsedErro
       }
       message = friendlyMessage || err.message || message;
     }
-  } catch {
-    // ignore malformed error bodies
-  }
+  } catch {}
 
   const result: ParsedErrorResponse = { message, friendlyMessage };
   if (code) result.code = code;

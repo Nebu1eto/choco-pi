@@ -16,7 +16,6 @@ import { registerCodeModePreflightBroker } from "@choco-pi/code-mode/tools/code-
 import { createSdkFixture } from "./sdk-fixture.ts";
 import { createToolContextFixture } from "./tool-context-fixture.ts";
 
-// Run free of the ambient lineage: a Pi session running these tests exports its own scratch root.
 const SCRATCH_ENV_KEYS = ["PI_ROOT_SESSION_ID", "PI_SCRATCH_DIR", "PI_PREVIOUS_SCRATCH_DIR"];
 const ambientScratchEnv = new Map<string, string>();
 before(() => {

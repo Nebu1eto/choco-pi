@@ -1,20 +1,3 @@
-/**
- * Architecture boundary regression tests.
- *
- * The repository is one workspace of first-party buckets: each `packages/<name>`
- * directory and the `profile/` tree. These tests scan every non-test source file
- * in those buckets, resolve its module specifiers (static `import` and
- * `export ... from`, dynamic `import()` and `require()`, including multi-line
- * forms) to buckets, and pin the resulting package-level dependency graph:
- *
- * - every package-level import cycle must be listed in KNOWN_LEGACY_CYCLES, and
- *   every listed cycle must still exist, so a fixed cycle leaves the baseline
- *   and cannot silently return;
- * - relative imports from a package into `profile/`, out of `choco-pi-ui`, or
- *   outside every scanned bucket are ratcheted the same way.
- *
- * The scan uses only asynchronous node:fs/promises APIs.
- */
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -24,43 +7,21 @@ import { compile, obj, opt, str } from "@earendil-works/pi-schema";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
-/**
- * Package-level import cycles that predate the architecture cleanup, each in
- * import direction starting from its lexicographically smallest bucket.
- * The four-bucket entry is the composition of the codex/compaction/subagents
- * chain with the profile back edge. Wave 2 (U2) removes them; the target is an
- * empty list.
- * Never add an entry: a new cycle is a regression to fix, not to baseline.
- */
 const KNOWN_LEGACY_CYCLES: readonly (readonly string[])[] = [];
 
-/**
- * Package buckets that import `profile/` (as "importer -> profile").
- * Packages are meant to load without the profile tree; this list only shrinks.
- */
 const KNOWN_PACKAGE_TO_PROFILE_EDGES: readonly string[] = [
   "packages/choco-pi-subagents -> profile",
 ];
 
-/**
- * First-party buckets that `packages/choco-pi-ui` imports. The UI package is a
- * shared rendering leaf, so this list only shrinks.
- */
 const KNOWN_UI_PACKAGE_DEPENDENCIES: readonly string[] = [];
 
-/**
- * Relative imports (as "bucket -> repo-relative target") that resolve outside
- * every scanned bucket, for example into `tests/` or `scripts/`. Only shrinks.
- */
 const KNOWN_OUT_OF_BUCKET_IMPORTS: readonly string[] = [];
 
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".mjs", ".cjs", ".js"];
 const SKIPPED_DIRECTORIES = new Set(["node_modules", "tests", "fixtures", ".git"]);
 const TEST_FILE_PATTERN = /\.test\.[cm]?[jt]sx?$/;
-/** Minified build output, not authored source (see oxlint.config.ts). */
 const BUNDLE_FILE_PATTERN = /\.bundle\.js$/;
 
-/** The `from "x"` tail of any static import or re-export, whatever its clause spans. */
 const FROM_SPECIFIER = /\bfrom\s*["']([^"'\n]+)["']/g;
 const SIDE_EFFECT_SPECIFIER = /\bimport\s*["']([^"'\n]+)["']/g;
 const DYNAMIC_SPECIFIER = /\b(?:import|require)\s*\(\s*["']([^"'\n]+)["']\s*\)/g;
@@ -122,7 +83,6 @@ async function packageBuckets(): Promise<string[]> {
     .sort();
 }
 
-/** Workspace package names (for example "@choco-pi/ui") mapped to their buckets. */
 async function workspaceNames(buckets: readonly string[]): Promise<Map<string, string>> {
   const names = new Map<string, string>();
   for (const bucket of buckets) {
@@ -222,7 +182,6 @@ function graphNodes(graph: ReadonlyMap<string, ReadonlySet<string>>): string[] {
   return [...nodes].sort();
 }
 
-/** Rotates a cycle so its smallest bucket comes first, preserving import direction. */
 function canonicalCycle(cycle: readonly string[]): string[] {
   let start = 0;
   cycle.forEach((node, index) => {
@@ -236,10 +195,6 @@ function cycleKey(cycle: readonly string[]): string {
   return [...ordered, ordered[0] ?? ""].join(" -> ");
 }
 
-/**
- * Enumerates every elementary cycle. Each cycle is reported once, from its
- * smallest node, by only extending paths through nodes greater than the start.
- */
 function simpleCycles(graph: ReadonlyMap<string, ReadonlySet<string>>): string[][] {
   const cycles: string[][] = [];
   for (const start of graphNodes(graph)) {
@@ -263,7 +218,6 @@ function simpleCycles(graph: ReadonlyMap<string, ReadonlySet<string>>): string[]
   return cycles;
 }
 
-/** Tarjan's strongly connected components with two or more buckets. */
 function stronglyConnectedComponents(graph: ReadonlyMap<string, ReadonlySet<string>>): string[][] {
   const index = new Map<string, number>();
   const low = new Map<string, number>();

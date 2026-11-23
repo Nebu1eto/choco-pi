@@ -203,9 +203,7 @@ async function* readJsonLines(
           try {
             const value: JsonValue = JSON.parse(buffered.toString("utf8"));
             if (isRecord(value)) yield { value, start: lineStart, end: position };
-          } catch {
-            // Malformed external JSONL is intentionally ignored.
-          }
+          } catch {}
         }
         buffered = Buffer.alloc(0);
         discarding = false;
@@ -217,9 +215,7 @@ async function* readJsonLines(
       try {
         const value: JsonValue = JSON.parse(buffered.toString("utf8"));
         if (isRecord(value)) yield { value, start: lineStart, end: position };
-      } catch {
-        // A partial final line is ignored until a later audit sees it complete.
-      }
+      } catch {}
     }
   } catch {
     return;

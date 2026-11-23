@@ -19,10 +19,6 @@ import {
 } from "./lib/agent-preferences.ts";
 import { getDaybreakBridge } from "./lib/daybreak-state.ts";
 
-/**
- * Applies a changed global Daybreak default to one session. Only a
- * default-source request follows it; explicit and inherited choices win.
- */
 export function reseedDaybreakDefault(sessionId: string, value: DaybreakPreference): void {
   const controller = getDaybreakBridge().get(sessionId);
   const state = controller?.getState();
@@ -30,13 +26,6 @@ export function reseedDaybreakDefault(sessionId: string, value: DaybreakPreferen
   controller.set(value, "default");
 }
 
-/**
- * Injects the user's configured agent language and agent style into the
- * system prompt on every turn. Settings live only in the global
- * `~/.pi/agent/settings.json`; the file is re-read each turn so changes from
- * the `/preferences` dialog apply immediately. Any read failure degrades to
- * no injection.
- */
 export default function runtimeAgentPreferences(pi: ExtensionAPI): void {
   let unsubscribeDaybreak: (() => void) | undefined;
   const readPreferences = (): Partial<AgentPreferences> => {
@@ -74,8 +63,6 @@ export default function runtimeAgentPreferences(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (event, ctx) => {
     const preferences = readPreferences();
     const configured = preferences.persona ?? DEFAULT_PERSONA;
-    // Runs started by an extension's custom message carry no user directive, and
-    // the persona announcement from the user's run is still in context.
     const resolved =
       event.messageType === "user"
         ? resolvePersona({
@@ -108,10 +95,6 @@ export default function runtimeAgentPreferences(pi: ExtensionAPI): void {
     return message ? { systemPrompt, message } : { systemPrompt };
   });
 
-  // Pi collects one message per handler, so the language reminder needs its
-  // own handler. It runs for every run, including extension-triggered ones,
-  // because autonomous continuations also reply to the user; the system-prompt
-  // directive alone loses to accumulated history in another language.
   pi.on("before_agent_start", () => {
     const language = readPreferences().language;
     if (!language) return undefined;

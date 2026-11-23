@@ -1,9 +1,3 @@
-/**
- * Synthetic prompt counter for background compaction admission: the
- * Anthropic-compatible `/anthropic/v1/messages/count_tokens` endpoint on the
- * origin of the model's (or registry's) base URL. An invalid base URL throws,
- * which compaction reports as `count-tokens: error`.
- */
 import type { CountTokensResult } from "../client/count-tokens.ts";
 import {
   type CompactionTokenCounter,
@@ -11,7 +5,6 @@ import {
   registerCompactionTokenCounter,
 } from "@choco-pi/shared/compaction-token-counter-slot";
 
-/** The Pi provider id the provider entry registers. */
 const SYNTHETIC_PROVIDER_ID = "synthetic";
 
 function toOutcome(result: CountTokensResult): CompactionTokenCountOutcome {
@@ -23,7 +16,6 @@ function toOutcome(result: CountTokensResult): CompactionTokenCountOutcome {
 
 export const syntheticCompactionTokenCounter: CompactionTokenCounter = {
   async countTokens(request) {
-    // Loaded on first count so provider activation stays as light as before.
     const { countSyntheticTokens } = await import("../client/count-tokens.ts");
     return toOutcome(
       await countSyntheticTokens({
@@ -40,7 +32,6 @@ export const syntheticCompactionTokenCounter: CompactionTokenCounter = {
   },
 };
 
-/** Offer the counter for `synthetic` owner models; returns its unregister. */
 export function registerSyntheticCompactionTokenCounter(): () => void {
   return registerCompactionTokenCounter(SYNTHETIC_PROVIDER_ID, syntheticCompactionTokenCounter);
 }

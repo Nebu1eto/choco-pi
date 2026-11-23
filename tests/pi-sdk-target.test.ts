@@ -41,7 +41,6 @@ test("every direct Pi SDK contract declares the harness patch range", async () =
       }
     }
     if (path === "") {
-      // Pi and its schema library are runtime dependencies of the root; the rest are dev-only.
       for (const name of SDK_NAMES) {
         const declared =
           manifest.dependencies?.[`@earendil-works/${name}`] ??
@@ -66,8 +65,6 @@ test("every frozen lock resolves only supported SDK releases", async () => {
         /@earendil-works\/(?:pi-ai|pi-agent-core|pi-codemode|pi-coding-agent|pi-mcp|pi-tui|pi-telemetry|chord)@([^\s'"():]+)/g,
       ),
     ];
-    // A package without a direct SDK dependency, such as the standalone ACP adapter,
-    // need not lock the SDK; any SDK reference its lock does carry is still checked.
     const manifest: PackageManifest = JSON.parse(
       await readFile(new URL(`${path}package.json`, ROOT), "utf8"),
     );

@@ -4,8 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-// The store reads the agent directory and HOME; both point into a sandbox
-// before the module loads, so no run of this file can reach the real home.
 const sandbox = await mkdtemp(join(tmpdir(), "review-store-directory-"));
 const home = join(sandbox, "home");
 const agentDirectory = join(sandbox, "agent");
@@ -75,7 +73,6 @@ test("the agent directory is resolved when the store is used, not when it loads"
 test("the default agent directory keeps today's review path byte for byte", () => {
   delete process.env.PI_CODING_AGENT_DIR;
   try {
-    // HOME is the sandbox, so this only computes a path; nothing is written.
     assert.equal(store.resolveReviewDirectory(), join(home, ".pi", "agent", "choco-pi", "reviews"));
   } finally {
     process.env.PI_CODING_AGENT_DIR = agentDirectory;

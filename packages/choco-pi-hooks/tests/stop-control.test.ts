@@ -145,7 +145,6 @@ test("a closed session skips the Stop hook and notifies once per epoch", async (
     await hooks.end();
     assert.equal(hooks.notices.length, 2);
 
-    // Reopened admission restores the continuation, with a fresh block budget.
     current = { epoch: 4, closed: false };
     await hooks.end();
     assert.deepEqual(hooks.messages, ["blocked continuation"]);
@@ -169,7 +168,6 @@ test("a stop that lands during the awaited Stop dispatch suppresses the continua
     assert.equal(inputs.length, 1);
     assert.deepEqual(hooks.messages, []);
     assert.deepEqual(hooks.notices, ["Stop hook continuation skipped: session work is stopped."]);
-    // The active flag was reset, so the next run starts a fresh continuation sequence.
     current = { epoch: 2, closed: false };
     await hooks.end();
     assert.equal(inputs.at(-1)?.stop_hook_active, false);

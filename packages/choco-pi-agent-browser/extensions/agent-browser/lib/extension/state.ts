@@ -441,9 +441,7 @@ export async function closeScriptSessionLeaseWithinQueue(
   if (closeError) {
     try {
       appendScriptSessionLease(state.pi, sessionName, "failed");
-    } catch {
-      // Best-effort durable lease update during script cleanup failure.
-    }
+    } catch {}
     return redactSensitiveText(closeError);
   }
   try {

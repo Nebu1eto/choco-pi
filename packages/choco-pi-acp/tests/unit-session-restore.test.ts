@@ -113,7 +113,6 @@ class RestorableFakeProcess implements PiRpcProcessLike {
     hooks: PiPromptHooks = {},
   ): Promise<PiPromptDisposition> {
     this.promptCalls.push(message);
-    // Pi's response frame precedes the run's agent_settled on stdout.
     hooks.onResponseFrame?.();
     queueMicrotask(() => this.eventHandler?.({ type: "agent_settled" }));
     return "started";
@@ -176,7 +175,6 @@ test("PiAcpAgent: prompt auto-restores a missing session from SessionStore", asy
       },
       delete() {},
     };
-    // The injected fakes implement the session-manager and store operations used by restore.
     Object.assign(agent, { sessions, store } satisfies AgentState<FakeSessions>);
 
     const result = await agent.prompt({
@@ -240,7 +238,6 @@ test("PiAcpAgent: prompt transparently respawns a session after idle reaping", a
     upsert() {},
     delete() {},
   };
-  // The real manager and complete fake store are injected to reproduce idle restoration.
   Object.assign(agent, { sessions: manager, store } satisfies AgentState<SessionManager>);
 
   try {
@@ -336,7 +333,6 @@ test("PiAcpAgent: setSessionConfigOption auto-restores via pi session discovery 
       },
       delete() {},
     };
-    // The injected fakes implement the session-manager and store operations used by fallback restore.
     Object.assign(agent, { sessions, store } satisfies AgentState<FakeSessions>);
 
     const result = await agent.setSessionConfigOption({
@@ -409,7 +405,6 @@ test("PiAcpAgent: cancel ignores stale session IDs without spawning a restore pr
       upsert() {},
       delete() {},
     };
-    // The injected fakes implement the session-manager and store operations used by stale cancel.
     Object.assign(agent, { sessions, store } satisfies AgentState<FakeSessions>);
 
     await agent.cancel({ sessionId: "stale-session" });

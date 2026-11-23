@@ -76,7 +76,6 @@ const loadLocalVersionWarning = memoizedImport(() => import("../adapter/local-ve
 const loadPromptBuilder = memoizedImport(() => import("../prompt/build-system-prompt.ts"));
 const loadProviderRequest = memoizedImport(() => import("../adapter/provider-request.ts"));
 
-/** The API the Codex transport serves; its prepared-payload hook enforces recorded refusals. */
 const CODEX_TRANSPORT_API = "openai-codex-responses";
 
 function formatCompactionUsage(usage: NativeCompactionUsage): string {
@@ -148,8 +147,6 @@ export function registerSessionReplacementEvents(
   pi: ExtensionAPI,
   runtime: Pick<CodexExtensionRuntime, "cancelCacheKeepalive">,
 ): void {
-  // A later handler may cancel the replacement, or it may fail before teardown; session_shutdown
-  // owns background teardown so a surviving instance keeps its current generation.
   pi.on("session_before_switch", (_event, ctx) => {
     runtime.cancelCacheKeepalive();
     resetRegisteredToolCapture(ctx);
@@ -188,7 +185,6 @@ export function registerCodexEvents(
 ): void {
   registerCodexDaybreakProbe(pi);
   const { state, tracker, sessions } = runtime;
-  // The host settings gate excludes this registry entry while native background compaction is off.
   registerCodexBackgroundFactory(true);
   const elisionStates = new Map<string, CodexBackgroundElisionState>();
   const elisionFor = (sessionId: string): CodexBackgroundElisionState => {
@@ -207,7 +203,6 @@ export function registerCodexEvents(
     userMessageRetentionTokens: () => state.config.compaction.v2UserMessageRetention * 1_000,
     append: (customType, data) => pi.appendEntry(customType, data),
   });
-  // The derived default lanes read the OpenAI row: re-resolve after it changed.
   eligibility?.onChange(() => background.invalidateSettings());
   const restoreElision = (ctx: ExtensionContext): void => {
     const elision = elisionFor(ctx.sessionManager.getSessionId());
@@ -228,11 +223,6 @@ export function registerCodexEvents(
   };
   sessions.onSessionExit((sessionId) => tracker.recordSessionFinished(sessionId));
   registerSessionReplacementEvents(pi, runtime);
-  /**
-   * Maintain the opaque-checkpoint guard after a rebind (no notice): a model
-   * outside the Codex transport gets the cross-provider block before its
-   * first request; the Codex transport is refused per request.
-   */
   const guardOpaqueCheckpoint = async (
     ctx: ExtensionContext,
     ownerGeneration: number,
@@ -247,7 +237,6 @@ export function registerCodexEvents(
       site: "bind",
     });
   };
-  /** Rebind background compaction for the generation begin() returned; false once superseded. */
   const refreshBackground = async (
     ctx: ExtensionContext,
     ownerGeneration: number,
@@ -257,7 +246,6 @@ export function registerCodexEvents(
     await guardOpaqueCheckpoint(ctx, ownerGeneration);
     return background.isGenerationCurrent(ownerGeneration);
   };
-  /** Shared activation tail; false when voice-only or superseded, so no host prep follows. */
   const activateAdapter = async (
     ctx: ExtensionContext,
     ownerGeneration: number,
@@ -348,7 +336,6 @@ export function registerCodexEvents(
       tracker.resetExplorationGroup();
   });
   pi.on("tool_execution_start", async (event) => {
-    // Calls a tool makes through ctx.executeTool() run inside the caller's group.
     if (event.parentToolCallId !== undefined) return;
     if (event.toolName !== "exec_command") {
       tracker.resetExplorationGroup();
@@ -362,7 +349,6 @@ export function registerCodexEvents(
   });
   pi.on("message_end", (event, ctx) => {
     if (!isCodexErrorAssistantMessage(event.message)) return;
-    // The host passes `sessionManager.getSessionId()` as the provider's stream `sessionId`.
     const entry = takeCodexUsageLimitEntry(event.message, ctx.sessionManager.getSessionId());
     if (entry) pi.appendEntry<CodexUsageLimitEntry>(CODEX_USAGE_LIMIT_ENTRY, entry);
   });
@@ -419,7 +405,6 @@ export function registerCodexEvents(
   pi.on("agent_start", async () => {
     runtime.cancelCacheKeepalive();
   });
-  // After the canonical-alias preflight settled this turn's trust: the first request's guard.
   pi.on("before_agent_start", async (_event, ctx) => {
     const fence = background.fence(ctx.sessionManager.getSessionId());
     if (!background.isGenerationCurrent(fence.generation)) return;
@@ -449,9 +434,7 @@ export function registerCodexEvents(
     const fence = background.fence(sessionId);
     const codexTransport = ctx.model?.api === CODEX_TRANSPORT_API;
     state.cwd = ctx.cwd;
-    // Each request decides afresh; a refusal is enforced by the Codex transport.
     recordCodexRequestDecision(sessionId, undefined);
-    // Picks up a canonical-alias trust the endpoint preflight settled.
     eligibility?.refresh();
     if (!isBoundaryValue(event.payload)) return undefined;
     await background.refresh(ctx, fence.generation);
@@ -465,8 +448,6 @@ export function registerCodexEvents(
       await loadProviderRequest();
     if (background.isStale(fence)) return undefined;
     const requestState = background.requestState(state, sessionId);
-    // Before any eligibility exit: an opaque Codex checkpoint the replay will not
-    // rewrite for this model is refused (or blocked), never sent as its placeholder.
     const opaqueRefusal = background.opaqueRefusal(ctx, sessionId, {
       served: codexNativeReplayApplies(ctx, requestState),
       codexTransport,
@@ -498,7 +479,6 @@ export function registerCodexEvents(
     const fence = background.fence(sessionId);
     state.cwd = ctx.cwd;
     if (!resolveCodexRuntimePlanForState(ctx, state).nativeCompaction) {
-      // Codex does not compact natively here: an opaque Codex checkpoint must not be summarized.
       return background.opaqueCompactionCancel(ctx, event) === undefined
         ? undefined
         : { cancel: true };
@@ -510,7 +490,6 @@ export function registerCodexEvents(
       ctx.ui.notify(refusal, "error");
       return { cancel: true };
     }
-    // Loss authorized: the host path compacts without the checkpoint's history.
     if (background.requestState(state, sessionId) !== state) return undefined;
     const { handleCodexSessionBeforeCompact } = await loadCompaction();
     if (background.isStale(fence)) return undefined;
@@ -534,7 +513,6 @@ export function registerCodexEvents(
     ) {
       const details = compactionEntry.details;
       nativeCompaction = true;
-      // Presentation entries persist and render without entering Pi's turn queue or LLM context.
       pi.appendEntry<NativeCompactionDisplayEntry>(NATIVE_COMPACTION_DISPLAY_MESSAGE_TYPE, {
         content: NATIVE_COMPACTION_DISPLAY_TEXT,
         compactionEntryId: compactionEntry.id,

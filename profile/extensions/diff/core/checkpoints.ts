@@ -1,12 +1,3 @@
-/**
- * Turn checkpoints for the "since a turn" source.
- *
- * choco-pi's file-checkpoints extension appends one checkpoint entry before
- * each user turn; `turnCheckpointsFromEntries` reads them from the active
- * branch. The store resolves a `since-checkpoint` source by the checkpoint's
- * worktree tree, which is unique per captured state (a reused snapshot appends
- * no entry), so the tree is the checkpoint id.
- */
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { sessionTurnsFromEntries } from "../../checkpoints/turns.ts";
 import type { DiffSource } from "../../lib/changes/git/model.ts";
@@ -18,22 +9,11 @@ export {
   sessionBaselineOf,
 } from "../../lib/changes/session-baseline.ts";
 
-/** One user turn that has a checkpoint, oldest first. */
 export type TurnCheckpointInfo = {
-  /** 1-based position among the user turns of the active branch, as in the checkpoint picker. */
   turn: number;
-  /** Worktree tree captured before the turn started. */
   tree: string;
-  /** The checkpoint's own turn index, as recorded by file-checkpoints. */
   checkpointTurnIndex: number;
-  /** One-line prompt summary. */
   prompt: string;
-  /**
-   * The last later turn that has no checkpoint of its own, when there is one.
-   * No checkpoint is recorded for a prompt that starts from unchanged files
-   * (or when the capture fails), so what changed between this checkpoint and
-   * the next belongs to these turns together.
-   */
   through?: { turn: number; prompt: string };
 };
 
@@ -55,7 +35,6 @@ export function turnCheckpointsOf(entries: readonly SessionEntry[]): TurnCheckpo
   return turns;
 }
 
-/** The provider the store uses to resolve a checkpoint id to its tree and the session baseline. */
 export function createTurnCheckpointProvider(
   turns: () => readonly TurnCheckpointInfo[],
   baseline?: () => SessionBaselineChoice,
@@ -72,7 +51,6 @@ export function createTurnCheckpointProvider(
   return provider;
 }
 
-/** `{ kind: "since-checkpoint" }` for one turn; the label names the turn and its prompt. */
 export function turnSource(turn: TurnCheckpointInfo): DiffSource {
   return {
     kind: "since-checkpoint",
@@ -81,18 +59,12 @@ export function turnSource(turn: TurnCheckpointInfo): DiffSource {
   };
 }
 
-/**
- * What the turns of `turns[index]` changed and nothing later: its checkpoint
- * against the next one, or against the working tree for the newest. Undefined
- * when there is no such turn.
- */
 export function turnOnlySource(
   turns: readonly TurnCheckpointInfo[],
   index: number,
 ): DiffSource | undefined {
   const turn = turns[index];
   if (!turn) return undefined;
-  // With unchanged files before each later prompt, the last prompt made the changes.
   const label = turn.through
     ? `turns ${turn.turn}–${turn.through.turn} (${shortPrompt(turn.through.prompt)})`
     : `turn ${turn.turn} (${shortPrompt(turn.prompt)})`;
@@ -106,7 +78,6 @@ export type TurnChoice =
   | { kind: "found"; turn: TurnCheckpointInfo }
   | { kind: "none"; message: string };
 
-/** The requested turn, or the latest one with a checkpoint when `turn` is omitted. */
 export function chooseTurn(
   turns: readonly TurnCheckpointInfo[],
   turn: number | undefined,

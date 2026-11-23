@@ -24,9 +24,6 @@ const loadWebRunBackend = memoizedImport(() => import("./backend.ts"));
 export const WEB_SEARCH_UNSUPPORTED_MESSAGE =
   "web_run/imagegen requires an OpenAI Responses provider or /login openai (Sign in with ChatGPT)";
 
-// Codex sends the recent visible turn in SearchRequest.input. Controlled
-// alpha/search comparisons showed no meaningful output benefit, so Pi keeps
-// the compatible builder dormant rather than disclose conversation context.
 const SEND_NATIVE_WEB_SEARCH_HISTORY = false;
 
 const SearchQueryParameters = obj(
@@ -94,7 +91,6 @@ export interface WebSearchToolOptions {
   model?: string | (() => string | undefined) | undefined;
   allowConfiguredProvider?: ((model: ExtensionContext["model"]) => boolean) | undefined;
   allowCodexProviderFallback?: boolean | undefined;
-  /** Explicit owner id for adapter callers. Takes precedence over ctx.sessionManager. */
   sessionIdOverride?: boolean | undefined;
   isSessionCurrent?: (() => boolean) | undefined;
   customRendering?: boolean | undefined;
@@ -107,7 +103,6 @@ function supportsExecutableWebSearch(
 ): boolean {
   return (
     supportsNativeWebSearch(model) ||
-    // Resolution reports the precise api.openai.com limitation instead of a generic refusal.
     isOpenAIPlatformModel(model) ||
     Boolean(options.allowConfiguredProvider?.(model)) ||
     options.allowCodexProviderFallback === true
@@ -185,8 +180,6 @@ export function createWebSearchTool(
     ...options,
     sessionIdOverride: options.sessionId !== undefined,
   };
-  // No prepareArguments shim: non-object input must fail schema validation instead of
-  // silently running an empty search.
   const tool: ToolDefinition<typeof WEB_SEARCH_PARAMETERS> = {
     name,
     label: name,

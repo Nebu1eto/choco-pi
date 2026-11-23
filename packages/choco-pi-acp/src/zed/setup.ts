@@ -353,7 +353,6 @@ function stripJsonComments(source: string): string {
   return result.replace(/,\s*([}\]])/gu, "$1");
 }
 
-/** Parse JSON text at the file boundary, converting parser failures into a named error. */
 function parseJsonText(text: string, what: string): BoundaryValue {
   try {
     const value: BoundaryValue = JSON.parse(text);
@@ -432,11 +431,6 @@ function removeProperty(source: string, object: ObjectRange, range: PropertyRang
   return source.slice(0, start) + source.slice(range.valueEnd);
 }
 
-/**
- * How Zed starts choco-pi. Legacy mode runs `<node> <adapter>` and `pi` from PATH. Standalone
- * mode (the `choco-pi` launcher's env contract) routes every entry point through the launcher,
- * so each one runs with the launcher's state directories and pinned Pi.
- */
 type ZedLaunch =
   | Readonly<{ kind: "legacy"; commandPath: string; adapterPath: string }>
   | Readonly<{ kind: "standalone"; launcherPath: string; nodePath: string; adapterPath: string }>;
@@ -482,8 +476,6 @@ function editorContextCliPath(adapterPath: string): string {
 
 function desiredTasks(launch: ZedLaunch): ZedTask[] {
   const contextCliPath = editorContextCliPath(launch.adapterPath);
-  // The editor-context CLI reads Pi's agent directory, so standalone mode runs it under the
-  // launcher's contract: `choco-pi self exec <node> <cli> ...`.
   const commandPath = launch.kind === "standalone" ? launch.launcherPath : launch.commandPath;
   const cliPrefix =
     launch.kind === "standalone"

@@ -214,7 +214,7 @@ describe("QuotaWarningNotifier", () => {
       expect(msg).toContain("Credits / week");
       expect(msg).toContain("Requests / 5h");
       const lines = msg.split("\n");
-      expect(lines).toHaveLength(3); // header + 2 windows
+      expect(lines).toHaveLength(3);
     });
 
     it("includes severity label for non-none severities", () => {
@@ -293,7 +293,6 @@ describe("QuotaWarningNotifier", () => {
       const calls: Array<[string, string]> = [];
       const notify: NotifyFn = (msg, lvl) => calls.push([msg, lvl]);
 
-      // 85% used (no pace) → warning severity.
       const warningQuotas: QuotasResponse = {
         ...baseQuotas,
         rollingFiveHourLimit: {
@@ -319,7 +318,6 @@ describe("QuotaWarningNotifier", () => {
       const calls: Array<[string, string]> = [];
       const notify: NotifyFn = (msg, lvl) => calls.push([msg, lvl]);
 
-      // 92% used (no pace) → high severity
       const highQuotas: QuotasResponse = {
         ...baseQuotas,
         rollingFiveHourLimit: {
@@ -337,7 +335,6 @@ describe("QuotaWarningNotifier", () => {
       notifier.evaluate(highQuotas, notify);
       expect(calls).toHaveLength(1);
 
-      // Escalate to critical (limited): fires again.
       const criticalQuotas: QuotasResponse = {
         ...baseQuotas,
         rollingFiveHourLimit: {
@@ -395,8 +392,6 @@ describe("QuotaWarningNotifier", () => {
     }
 
     it("suppresses the imminent-tick bounce (raw high, projection none)", () => {
-      // Raw 92% used would be `high`, but the refill-aware projection says the
-      // quota is recovering -> severity none -> no notification.
       const notifier = new QuotaWarningNotifier();
       const calls: Array<[string, string]> = [];
       const notify: NotifyFn = (msg, lvl) => calls.push([msg, lvl]);
@@ -407,7 +402,6 @@ describe("QuotaWarningNotifier", () => {
     });
 
     it("does not warn when projected usage drops below the threshold", () => {
-      // Raw 82% would warn, but the projection says usage will be 79% -> none.
       const notifier = new QuotaWarningNotifier();
       const calls: Array<[string, string]> = [];
       const notify: NotifyFn = (msg, lvl) => calls.push([msg, lvl]);
@@ -451,7 +445,6 @@ describe("QuotaWarningNotifier", () => {
       const calls: Array<[string, string]> = [];
       const notify: NotifyFn = (msg, lvl) => calls.push([msg, lvl]);
 
-      // No projections map -> raw 92% -> high -> notified.
       notifier.evaluate(quotasAt(92), notify);
       expect(calls).toHaveLength(1);
     });

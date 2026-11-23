@@ -60,7 +60,6 @@ export interface LensTurnFindingsPayload {
 
 const liveEmitter = createLiveBusEmitter();
 
-/** Keep deferred deliveries on the live extension activation. */
 export function initLensEventsGetter(getter: BusEmitGetter | undefined): void {
   liveEmitter.wireGetter(getter);
 }
@@ -84,19 +83,10 @@ function normalizeDiagnostics(diagnostics: Diagnostic[]): Diagnostic[] {
   return diagnostics.map(normalizeDiagnostic);
 }
 
-// Dropped-emit observability (#1128 review): drops are legitimate (no bus
-// during startup/replacement windows) but must not be invisible. One line per
-// process — enough to notice a permanently-missing bus without spamming.
 let _droppedEmitLogged = false;
 
-// Emit-failure gating (H1, #1415 review): occurrence-scoped, matching every
-// other producer's `hasLoggedFailure` guard (see clients/bus-publish.ts) and
-// AGENTS.md's "one bus-stale degradation per occurrence" invariant. A success
-// re-arms it, so a later failure records a fresh degradation rather than
-// being silently absorbed by an earlier one.
 let hasLoggedFailure = false;
 
-/** Test-only: reset module state between test files. */
 export function _resetForTests(): void {
   liveEmitter.reset();
   _droppedEmitLogged = false;
@@ -107,9 +97,6 @@ function emitLensEvent(eventName: LensEventName, payload: LspBoundaryValue): voi
   setImmediate(() => {
     // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
     const rawCwd = (payload as { cwd?: string }).cwd ?? process.cwd();
-    // M1: normalizeFilePath is a sync realpathSync.native on Windows — build
-    // the resolveLiveBusEmitter log entry lazily so the ready-path (the
-    // common case) never pays it. Only the stale-session branch needs it.
     const resolution = resolveLiveBusEmitter(liveEmitter, () => ({
       event: eventName,
       cwd: normalizeFilePath(rawCwd),
@@ -144,8 +131,6 @@ function emitLensEvent(eventName: LensEventName, payload: LspBoundaryValue): voi
         hasLoggedFailure = true;
         recordStaleBusFailure(eventName, err);
       }
-      // Inter-extension events are observational. A listener must never break
-      // the choco-pi-lsp hook path or delay agent progress.
     }
   });
 }

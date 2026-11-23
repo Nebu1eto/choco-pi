@@ -110,8 +110,6 @@ interface ConvertResponsesToolsOptions {
 }
 
 export const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
-// Any JSON value passes, as the former union of JSON kinds accepted; parse output is typed
-// structurally by the caller.
 const responsesInputItemValidator = compile({
   anyOf: [
     { type: "object" },
@@ -136,9 +134,6 @@ export function splitDeferredTools(
   context: TranscriptContext,
   enabled: boolean,
 ): DeferredToolPlacement {
-  // Additions are deferred only while the transcript is purely additive: the initial
-  // tools stay top-level and later ones load in place. Any removal or redeclaration
-  // sends the whole current tool list top-level instead.
   const anchorsAdditions = enabled && !hasNonAdditiveToolChanges(context.messages);
   const immediate = anchorsAdditions
     ? (getInitialSystemMessage(context.messages)?.toolsAdded ?? [])
@@ -239,7 +234,6 @@ export function convertResponsesMessages<TApi extends Api>(
             tools: convertResponsesTools(deferredTools, options.toolOptions),
           };
           // SAFETY: additional_tools is a Codex Responses extension whose nested tools are
-          // produced by the same validated converter as top-level Responses tools.
           messages.push(additionalTools as ResponseInputItem);
         } else if (deferredTools.length > 0 && options?.deferredToolsMode === "tool-search") {
           const names = deferredTools.map((tool) => tool.name);
@@ -288,7 +282,6 @@ export function convertResponsesMessages<TApi extends Api>(
       const isDifferentModel = isSameProviderAndApi && msg.model !== model.id;
       let textBlockIndex = 0;
       // SAFETY: Provider assistant history may include the native image-generation and web-search
-      // blocks in InternalAssistantContent; their discriminator guards parse them before wire use.
       for (const block of msg.content as InternalAssistantContent[]) {
         if (isImageGenerationCallBlock(block)) {
           const imageGenerationCall = sanitizeImageGenerationCallItem(block.item);
@@ -301,7 +294,6 @@ export function convertResponsesMessages<TApi extends Api>(
           if (webSearchCall) {
             const parsedWebSearchCall: unknown = webSearchCall;
             // SAFETY: sanitizeWebSearchCallItem validates the discriminator and required item id;
-            // action/results remain the original provider payload fields.
             output.push(parsedWebSearchCall as ResponseInput[number]);
           }
         } else if (block.type === "thinking") {
@@ -379,7 +371,6 @@ export function convertResponsesMessages<TApi extends Api>(
               customCall.namespace = block.namespace;
             }
             // SAFETY: The custom tool item uses Codex's Responses extension fields and preserves the
-            // standard call discriminator, id, name, and input representation.
             output.push(customCall as ResponseInput[number]);
           }
         }
@@ -418,7 +409,6 @@ export function convertResponsesMessages<TApi extends Api>(
         output,
       };
       // SAFETY: output is constructed from the documented string, input content, or encrypted
-      // content representations accepted by Responses tool-call output items.
       messages.push(outputItem as ResponseInput[number]);
     }
     msgIndex++;
@@ -462,7 +452,6 @@ export function convertResponsesTools(
       };
       if (options?.deferLoading) grammarTool.defer_loading = true;
       // SAFETY: resolveGrammarConstrainedSampling validates the grammar format and definition;
-      // custom grammar is a Codex extension to the upstream Responses tool union.
       return grammarTool as OpenAITool;
     }
     const constrainedStrict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
@@ -481,7 +470,6 @@ export function convertResponsesTools(
     if (options?.deferLoading) functionTool.defer_loading = true;
     if (supportsStrictMode) functionTool.strict = strict;
     // SAFETY: The parameters schema check and controlled construction establish a Responses
-    // function tool; strict is intentionally omitted for endpoints that do not support it.
     return functionTool as OpenAITool;
   });
 }

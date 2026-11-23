@@ -116,7 +116,6 @@ test(
       buffered = lines.pop() ?? "";
       for (const line of lines) {
         if (!line.trim()) continue;
-        // Malformed output is not an event; it only feeds the bounded failure summary.
         const event = decodeProbeEventLine(line);
         if (event === undefined) continue;
         if (event.kind === "agentEnd") rootEnd = event.event;
@@ -140,12 +139,9 @@ test(
     );
     let cleanupError: string | undefined;
     let forcedTermination = false;
-    /** Retain the first cleanup failure without ever skipping a later cleanup attempt. */
     const recordCleanupError = (message: string | undefined): void => {
       if (message !== undefined) cleanupError ??= message;
     };
-    // The probe owns a detached process group: kill it even if the test is aborted or times out,
-    // when the async body below may never resume.
     const onAbort = (): void => {
       if (child.exitCode === null && child.pid !== undefined) {
         forcedTermination = true;
@@ -239,7 +235,6 @@ test(
       const childMessages: ProbeMessage[] = [];
       for (const line of (await readFile(outputPath, "utf8")).split("\n")) {
         if (!line.trim()) continue;
-        // A non-JSON transcript line carries no message contract; skip it.
         const message = decodeTranscriptLine(line);
         if (message !== undefined) childMessages.push(message);
       }

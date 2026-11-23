@@ -13,7 +13,6 @@ interface IdleRefs {
   preparedRef: number;
 }
 
-/** Codex rides choco-pi-codex's WebSocket, outside the fetch ledger: the built context is the observable request. */
 function providerOwnedRequestObservation(host: Host): Observation | undefined {
   const last = host.session.messages.findLast((message) => message.role === "assistant");
   if (host.mode !== "live" || last?.role !== "assistant" || last.api === "anthropic-messages")

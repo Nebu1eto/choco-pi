@@ -17,9 +17,7 @@ import runtimeAgentPreferences from "../profile/extensions/runtime-agent-prefere
 type Handler = (event: RuntimeValue, ctx: RuntimeValue) => RuntimeValue;
 
 interface ApiFixture {
-  /** The first handler registered per event: the persona and prompt handler for `before_agent_start`. */
   handlers: Map<string, Handler>;
-  /** Every handler registered per event, in registration order. */
   allHandlers: Map<string, Handler[]>;
   api: RuntimeValue;
 }
@@ -43,7 +41,6 @@ function registerExtension(api: RuntimeValue): void {
   runtimeAgentPreferences(api as never);
 }
 
-/** Minimal stand-in for the host extension API, capturing registered handlers. */
 function createApi(): ApiFixture {
   const handlers = new Map<string, Handler>();
   const allHandlers = new Map<string, Handler[]>();
@@ -307,7 +304,6 @@ test(
     const projectDir = path.join(agentDir, "project");
     const agentFile = path.join(projectDir, ".pi", "agents", "reviewer.md");
     mkdirSync(path.dirname(agentFile), { recursive: true });
-    // The frontmatter differs from the default so the override is observable.
     writeFileSync(agentFile, "---\npersona: critical\n---\n\nReview the change.\n");
 
     const { handlers, api } = createApi();

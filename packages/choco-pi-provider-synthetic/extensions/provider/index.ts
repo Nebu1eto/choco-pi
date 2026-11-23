@@ -58,6 +58,5 @@ export function registerSyntheticProvider(pi: ExtensionAPI): void {
 export default async function (pi: ExtensionAPI): Promise<void> {
   const runtime = await loadRuntime();
   await runtime.activateSyntheticProvider(pi, registerSyntheticProvider);
-  // Background compaction sizes synthetic prompts with this counter.
   bindCompactionTokenCounter(pi, registerSyntheticCompactionTokenCounter);
 }

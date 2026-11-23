@@ -44,8 +44,6 @@ function decodeStoredSession(value: BoundaryValue): StoredSession | null {
 function loadFile(path: string): SessionMapFile {
   try {
     const raw = readFileSync(path, "utf-8");
-    // `parseJsonLine` reports malformed map files as undefined, which fails the record
-    // check below and yields the same empty map as the legacy throw path.
     const parsed = parseJsonLine(raw);
     if (!isBoundaryRecord(parsed) || parsed.version !== 1) return emptySessionMap();
     const rawSessions = parsed.sessions;

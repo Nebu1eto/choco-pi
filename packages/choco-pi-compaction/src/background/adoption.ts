@@ -11,7 +11,6 @@ export interface CommittedCandidate {
   readonly fingerprint: string;
 }
 
-/** The adapter must append a model-invisible custom entry and return its real branch ID. */
 export function firstRetainedEntry(
   entries: readonly SessionEntry[],
   cutEntryId: string,
@@ -45,15 +44,8 @@ export function adoptionDraft(
   };
 }
 
-/** Delivered consumer IDs per adoption ID; shareable across coordinator instances of one owner. */
 export type DeliveredAdoptions = Map<string, Set<string>>;
 
-/**
- * Delivery IDs are marked before invoking user code, including throws and
- * late callbacks. A caller that replaces the coordinator in-process (reload)
- * passes its `delivered` ledger on so recovery of the already-committed record
- * does not deliver the same adoption to re-registered consumers again.
- */
 export class AdoptionDelivery {
   private readonly delivered: DeliveredAdoptions;
   readonly associations = new Map<string, string>();

@@ -12,16 +12,12 @@ import {
   type ReviewChatSessionRequest,
 } from "../profile/extensions/review/core/ask.ts";
 
-/* ------------------------------------------------------------------ fixtures */
-
-/** Text of a user or assistant entry; a tool entry has none and returns "". */
 function textOf(message: ReviewChatMessage | undefined): string {
   return message && message.role !== "tool" ? message.text : "";
 }
 
 const HUNK_HEADER = "@@ -12,6 +12,9 @@ export function resolveTarget(input: string) {";
 
-/** Content from elsewhere in the same review that must never reach the chat. */
 const OTHER_FILE_HUNK = [
   "@@ -1,4 +1,4 @@ package secrets",
   "-const ROTATION_TOKEN = 'old-token-value';",
@@ -53,10 +49,6 @@ type FakeSession = {
   readonly abortCalls: number;
 };
 
-/**
- * A session that never reaches a provider. `respond` receives the sent prompt
- * and an emitter for the events a real agent session would stream.
- */
 function fakeSession(
   respond: (emit: (event: ReviewChatSessionEvent) => void, prompt: string) => Promise<void> | void,
 ): FakeSession {
@@ -100,7 +92,6 @@ function fakeSession(
   };
 }
 
-/** Stream one assistant reply in chunks, the way a real turn arrives. */
 function streamed(chunks: string[]) {
   return async (emit: (event: ReviewChatSessionEvent) => void): Promise<void> => {
     emit({ type: "message_start", message: assistantMessage("") });
@@ -118,8 +109,6 @@ function settle(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-/* ------------------------------------------------------------------- bounding */
-
 test("only the bounded context reaches the model, and the rest of the diff cannot", async () => {
   const fake = fakeSession(streamed(["It throws on empty input."]));
   let requested: ReviewChatSessionRequest | undefined;
@@ -136,7 +125,6 @@ test("only the bounded context reaches the model, and the rest of the diff canno
   assert.equal(fake.sent.length, 1);
   const prompt = fake.sent[0] ?? "";
 
-  // The location the reviewer is looking at, and the question, are present.
   assert.ok(prompt.includes(HUNK_HEADER), "the hunk header is sent");
   assert.ok(prompt.includes("Why does this throw now?"), "the question is sent");
   assert.ok(prompt.includes("src/target.ts"), "the file path is sent");
@@ -144,11 +132,9 @@ test("only the bounded context reaches the model, and the rest of the diff canno
   assert.ok(prompt.includes("15"), "the line is sent");
   assert.ok(prompt.includes("/tmp/review-worktree"), "the readable root is sent");
 
-  // Nothing else from the review can be: there is no channel for it.
   assert.ok(!prompt.includes(OTHER_FILE_HUNK), "other hunks are not sent");
   assert.ok(!prompt.includes("ROTATION_TOKEN"), "content from other files is not sent");
 
-  // The session is rooted at the review worktree, not the host cwd.
   assert.equal(requested?.reviewRoot, "/tmp/review-worktree");
   assert.equal(requested?.cwd, "/repo");
 
@@ -207,7 +193,6 @@ test("reload reloads the session's resources and keeps the transcript", async ()
     }),
   });
 
-  // Before a session exists there is nothing loaded; reload is a no-op.
   await chat.reload();
   assert.equal(reloads, 0);
 
@@ -340,7 +325,6 @@ test("a turn that ends on a tool call without a final answer is named, not silen
       result: { content: [{ type: "text", text: "src/a.ts:1:resolveTarget()" }] },
       isError: false,
     });
-    // The model never sends a follow-up message with text.
   });
   const chat = createReviewChat({ cwd: "/repo", createSession: async () => fake.session });
   await chat.ask("Who calls this?", context());
@@ -397,8 +381,6 @@ test("the prompt sends the location — file, hunk header, focused line — and 
   );
   assert.ok(!prompt.includes(OTHER_FILE_HUNK));
 });
-
-/* -------------------------------------------------------------------- history */
 
 test("tool executions enter the transcript between assistant messages, in event order", async () => {
   const fake = fakeSession((emit) => {
@@ -484,8 +466,6 @@ test("history accumulates across questions on one reused session", async () => {
   chat.dispose();
 });
 
-/* ------------------------------------------------------------------ streaming */
-
 test("the reply streams: onUpdate fires repeatedly and the transcript grows", async () => {
   const fake = fakeSession(streamed(["The guard ", "rejects empty ", "input."]));
   const chat = createReviewChat({ cwd: "/repo", createSession: async () => fake.session });
@@ -495,7 +475,6 @@ test("the reply streams: onUpdate fires repeatedly and the transcript grows", as
   chat.onUpdate(() => {
     updates += 1;
     const last = chat.messages[chat.messages.length - 1];
-    // The final notification flips `pending`, so drop the repeated tail.
     if (last?.role === "assistant" && assistantSnapshots.at(-1) !== last.text) {
       assistantSnapshots.push(last.text);
     }
@@ -534,8 +513,6 @@ test("onUpdate returns an unsubscribe that stops further notifications", async (
   chat.dispose();
 });
 
-/* -------------------------------------------------------------------- failure */
-
 test("a rejected request becomes a transcript message rather than a throw", async () => {
   const fake = fakeSession(() => {
     throw new Error("provider is unreachable");
@@ -568,7 +545,6 @@ test("a provider error carried on the final message becomes a transcript message
   chat.dispose();
 });
 
-/** One attempt that streams `text` and is cut off with `error`, as Pi reports a dropped stream. */
 function cutAttempt(emit: (event: ReviewChatSessionEvent) => void, text: string): void {
   emit({ type: "message_start", message: assistantMessage("") });
   emit({ type: "message_update", message: assistantMessage(text) });
@@ -700,8 +676,6 @@ test("a silent turn reports that no answer arrived instead of leaving the pane e
   chat.dispose();
 });
 
-/* -------------------------------------------------------------------- disposal */
-
 test("dispose releases listeners, unsubscribes from the session, and stops it", async () => {
   let release: (() => void) | undefined;
   const fake = fakeSession(
@@ -726,7 +700,6 @@ test("dispose releases listeners, unsubscribes from the session, and stops it", 
 
   assert.equal(fake.listenerCount(), 0, "the session subscription is removed");
 
-  // Events the session still emits reach nothing.
   fake.emit({ type: "message_update", message: assistantMessage("late text") });
   assert.equal(updates, updatesBeforeDispose, "released listeners are not called");
   assert.ok(
@@ -741,7 +714,6 @@ test("dispose releases listeners, unsubscribes from the session, and stops it", 
   assert.equal(fake.abortCalls, 1, "the session is aborted");
   assert.equal(fake.disposeCalls, 1, "the session is disposed");
 
-  // Disposal is idempotent and later questions are inert.
   chat.dispose();
   await chat.ask("Still there?", context());
   assert.equal(fake.sent.length, 1);

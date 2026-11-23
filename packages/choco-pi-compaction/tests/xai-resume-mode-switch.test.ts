@@ -1,12 +1,3 @@
-/**
- * A committed xAI checkpoint across registrations, mode switches and model
- * switches: a new registration over the same session replays it in either
- * mode (the binding follows the committed checkpoint), journals the resume,
- * and guards `/compact` until a turn is captured; a provider rejection that
- * resolves after a model switch rebound the session is stale and never
- * disables server-side, while a fresh one on the new binding does; the
- * disabled checkpoint is then refused locally until the loss is authorized.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -31,7 +22,6 @@ for (const mode of ["server-side", "choco-pi"] as const satisfies readonly XaiCo
     `new registration in ${mode} mode: guard before a captured turn, then the checkpoint is replayed`,
     { timeout: 30_000 },
     async () => {
-      // Under choco-pi mode the binding depends on U-ANTH (bind when the branch's newest compaction is xAI).
       const foreground = textForeground();
       const lane = recordingFetch(() => compactResponse());
       const first = await createXaiRig({ foreground, lane });
@@ -40,7 +30,6 @@ for (const mode of ["server-side", "choco-pi"] as const satisfies readonly XaiCo
       const latest = compactionsOf(first.manager).at(-1);
       assert.ok(latest && isXaiDetails(latest.details));
       const checkpointId = latest.id;
-      // One more turn, captured by the first registration only.
       await first.session.prompt("XR-AFTER");
       await first.dispose({ keepDir: true });
 

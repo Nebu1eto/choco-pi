@@ -1,11 +1,3 @@
-/**
- * Cross-package usage-limit slots:
- * - `choco-pi.usage-limit-policy`: root usage-limit extensions write owner policies; root and
- *   subagent consumers read them.
- * - `choco-pi-goal:recovery`: choco-pi-goal writes recovery ownership; the root policy reads it.
- * - `pi-subagents:manager`: choco-pi-subagents writes child-session probes; the root policy reads
- *   them. Every reader validates the host-owned value before using it.
- */
 import { arr, bool, compile, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import { finiteNum } from "./finite-number.ts";
 import {
@@ -43,22 +35,9 @@ export function parseOnUsageLimit(value: RuntimeValue): OnUsageLimit | undefined
 export type UsageLimitKind = "quota" | "billing" | "transient";
 export type UsageLimitConfidence = "structured" | "parsed" | "inferred";
 
-/**
- * Models a usage limit covers when it is narrower than the provider account,
- * such as Anthropic's Fable weekly limit, which covers the Fable and Mythos
- * series only. `name` is the lower-case name of the provider's model-scoped
- * quota window. A model id is covered when it equals a stem in `models` or
- * starts with that stem followed by `-`. A limit without a scope covers every
- * model on the provider account.
- */
 export type UsageLimitScope = {
   name: string;
   models: string[];
-  /**
-   * The limit covers exactly the ids in `models`, not their `-` suffixed
-   * descendants: a scoped window of unknown coverage closes only the model
-   * whose request failed.
-   */
   exact?: boolean;
 };
 
@@ -67,31 +46,20 @@ export const UsageLimitScopeSchema = obj(
   { open: true },
 );
 
-/** Whether a limit with `scope` covers `modelId`; a provider-wide limit covers every model. */
 export function scopeCoversModel(scope: UsageLimitScope | undefined, modelId: string): boolean {
   if (scope === undefined) return true;
   if (scope.exact === true) return scope.models.includes(modelId);
   return scope.models.some((stem) => modelId === stem || modelId.startsWith(`${stem}-`));
 }
 
-/** Identity of a scope within one provider account; `""` is the provider-wide limit. */
 export function scopeKey(scope: UsageLimitScope | undefined): string {
   if (scope === undefined) return "";
   const kind = scope.exact === true ? "=" : "*";
   return `${scope.name}\u0001${kind}\u0001${[...scope.models].sort().join("\u0001")}`;
 }
 
-/** Scope name of a limit that live evidence did not confirm. */
 export const UNCONFIRMED_SCOPE_NAME = "unconfirmed";
 
-/**
- * The scope a quota limit closes. Only a limit the evidence confirms keeps
- * its corroborated scope; with no scope that means the whole account. A limit
- * nothing confirmed (no live usage data, a stale reading, a failed read)
- * closes only the model whose request failed. Missing data never closes the
- * account's other models; each one is closed by its own failure. Billing
- * limits are explicit account-level provider errors and keep their scope.
- */
 export function closureScopeFor(
   classification: UsageLimitClassification,
   confirmed: boolean,
@@ -101,11 +69,6 @@ export function closureScopeFor(
   return { name: UNCONFIRMED_SCOPE_NAME, models: [classification.modelId], exact: true };
 }
 
-/**
- * User- and model-facing note on what a scoped limit covers, such as
- * `" (claude-fable*, claude-mythos* only; other models stay available)"`;
- * empty for a provider-wide limit.
- */
 export function scopeNote(scope: UsageLimitScope | undefined): string {
   if (scope === undefined || scope.models.length === 0) return "";
   const suffix = scope.exact === true ? "" : "*";
@@ -120,15 +83,7 @@ export type UsageLimitClassification = {
   accountId?: string;
   resetAt?: number;
   confidence: UsageLimitConfidence;
-  /**
-   * Session whose run hit the limit. A policy consults its own branch's
-   * provider entries only when this is absent or names the policy owner.
-   */
   sessionId?: string;
-  /**
-   * Models the limit covers, set by corroboration when live usage data shows
-   * only a model-scoped window blocking `modelId`. Absent: the whole account.
-   */
   scope?: UsageLimitScope;
 };
 
@@ -152,44 +107,22 @@ export type UsageLimitClassifyInput = {
   errorMessage: string;
 };
 
-/**
- * What live account data proved about a limit:
- * - `confirmed`: a quota reading, or the provider's structured limit entry, shows the limit in force.
- * - `capacity`: a reading taken at or after the failure shows capacity, so the limit is not in force.
- * - `unavailable`: no reading could prove either (missing, stale, or unreadable data).
- */
 export type UsageLimitEvidence = "confirmed" | "capacity" | "unavailable";
 
 export type FallbackCandidateContext = {
   available: readonly { provider: string; id: string }[];
   scoped: readonly string[];
-  /** `modelId` names the candidate, so a model-scoped closure blocks only the models it covers. */
   isClosed(providerKey: string, accountId: string, modelId?: string): boolean;
 };
 
-/**
- * Answer of `UsageLimitPolicy.recheck`. `open` means current evidence no longer
- * shows the limit in force: a request succeeded after the closure, a reading
- * taken after it shows capacity, or no live reading exists. A closed answer
- * carries the updated end of the closure when the reading names one.
- */
 export type UsageLimitRecheck = {
   open: boolean;
   until?: number;
-  /** Short reason for refusal text, such as the exhausted window names. */
   detail?: string;
-  /** Models the limit still in force covers; absent on a closed answer means the whole account. */
   scope?: UsageLimitScope;
-  /**
-   * On a closed answer, each closure still in force among those checked: the
-   * provider-wide one (no `scope`) and each scoped one, with its end when
-   * known. A checked closure missing from the list was reopened. Readers that
-   * mirror closures reconcile each one against this list.
-   */
   inForce?: UsageLimitClosureState[];
 };
 
-/** One closure a re-check found still in force. */
 export type UsageLimitClosureState = {
   scope?: UsageLimitScope;
   until?: number;
@@ -203,48 +136,26 @@ export type UsageLimitPolicy = {
   corroborate(classification: UsageLimitClassification): Promise<{
     ready: boolean;
     classification: UsageLimitClassification;
-    /** Absent from policies that predate it; readers treat absence as `unavailable`. */
     evidence?: UsageLimitEvidence;
   }>;
   pickFallback(
     current: { provider: string; id: string },
     context: FallbackCandidateContext,
   ): { provider: string; id: string } | undefined;
-  /** Closes the account, or only the models `scope` covers when it is given. */
   closeProvider(
     providerKey: string,
     accountId: string,
     untilMs: number,
     scope?: UsageLimitScope,
   ): void;
-  /**
-   * Whether a closure blocks the account. Without `modelId` only a
-   * provider-wide closure counts; with it, so does a scoped closure covering it.
-   */
   isClosed(providerKey: string, accountId: string, now?: number, modelId?: string): boolean;
-  /**
-   * Re-checks the closures blocking `modelId` (the provider-wide closure when
-   * it is absent) against live evidence and reopens the owner's own closures
-   * when the limit is gone. `since` is when the caller's closure was written;
-   * evidence older than it proves nothing. Absent from policies that predate
-   * it; readers then keep the stored closure.
-   */
   recheck?(
     providerKey: string,
     accountId: string,
     since?: number,
     modelId?: string,
   ): Promise<UsageLimitRecheck>;
-  /**
-   * Reopens the closure after a request that started at `at` succeeded; a
-   * success that started before the closure was written changes nothing. A
-   * success on `modelId` also reopens the scoped closures that cover it.
-   */
   reopen?(providerKey: string, accountId: string, at?: number, modelId?: string): void;
-  /**
-   * Account id the owner keys `provider`'s closures under (`"default"` when unknown).
-   * Absent from policies that predate it; readers then use `"default"`.
-   */
   accountId?(provider: string): string;
 };
 
@@ -311,7 +222,6 @@ export type UsageLimitPendingEntry = {
   accountId: string;
   attempts: number;
   branchEntryId?: string;
-  /** Root session that wrote the entry; a fork or clone carrying a copy does not replay it. */
   sessionId?: string;
 };
 export const UsageLimitPendingEntrySchema = obj(
@@ -390,7 +300,6 @@ export type SubagentUsageLimit = {
   resetAt?: number;
   suggestedModel?: string;
   status: "reported" | "waiting_for_reset" | "resumed" | "exhausted";
-  /** Models the limit covers; absent: every model on the provider account. */
   scope?: UsageLimitScope;
 };
 export const SubagentUsageLimitSchema = obj(
@@ -423,7 +332,6 @@ export type GoalRecoveryOwnership = {
   goalId: string;
   status: "active" | "paused";
   providerLimitResumeScheduled: boolean;
-  /** Session id of the goal runtime that owns recovery; absent from entries that predate it. */
   owner?: string;
 };
 
@@ -438,12 +346,6 @@ const GoalRecoveryOwnershipSchema = obj(
 );
 const isGoalRecoveryOwnership = compile(GoalRecoveryOwnershipSchema).check;
 
-/**
- * Reads goal recovery ownership. With `owner` (a root session id) the slot's
- * `recoveryOwnership(owner)` is asked for that session only, and a result that
- * names another owner is rejected. A result without an `owner` field comes from
- * a goal package that predates the argument and is accepted as-is.
- */
 export function readGoalRecoveryOwnership(owner?: string): GoalRecoveryOwnership | undefined {
   try {
     const slots = reinterpretHostValue<Record<PropertyKey, RuntimeValue>>(globalThis);

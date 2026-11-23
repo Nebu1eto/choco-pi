@@ -1,26 +1,12 @@
-/**
- * Tree-sitter–based read expansion for the read-before-edit guard.
- *
- * When an agent reads a small slice of a file, this module uses the tree-sitter
- * AST to expand the read to cover the entire enclosing symbol (function, method,
- * class). This gives the read guard accurate symbol-level coverage so edits
- * within the symbol pass without requiring the agent to have read every line.
- */
-
 import * as fs from "node:fs";
 import { withBudget } from "./deadline-utils.ts";
 import type { TreeSitterClient } from "./tree-sitter-client.ts";
 
-/** Only expand reads smaller than this (lines). Larger reads don't benefit. */
 export const EXPANSION_LIMIT_LINES = 100;
 
-/** Don't expand to a symbol larger than this. */
 const EXPANDED_SIZE_CAP_LINES = 300;
 
-/** Async budget for tree-sitter parse + walk. */
 export const EXPANSION_BUDGET_MS = 200;
-
-/** File extensions we can parse — mirrors tree-sitter runner. */
 
 interface EXTTOLANGValues extends Record<string, string> {}
 const EXT_TO_LANG: EXTTOLANGValues = {
@@ -63,15 +49,7 @@ const EXT_TO_LANG: EXTTOLANGValues = {
   ".bash": "bash",
 };
 
-/**
- * Canonical set of source-code file extensions choco-pi-lsp understands, derived
- * from the same {@link EXT_TO_LANG} map the read-coverage path uses. Exported as
- * the single source of truth so language-spanning scanners cover every
- * supported language instead of a hardcoded subset (#262).
- */
 export const CODE_FILE_EXTENSIONS: readonly string[] = Object.keys(EXT_TO_LANG);
-
-/** AST node types considered "enclosing symbols" for coverage purposes. */
 
 interface ENCLOSINGTYPESValues extends Record<string, string[]> {}
 const ENCLOSING_TYPES: ENCLOSINGTYPESValues = {
@@ -142,16 +120,10 @@ export interface ExpandedRead {
     startLine: number;
     endLine: number;
   };
-  /**
-   * Ancestor symbols from outermost to innermost, not including
-   * enclosingSymbol itself. Example: [ClassDecl, MethodDecl] when
-   * the immediate enclosing symbol is an arrow function inside a method.
-   */
   ancestry?: AncestorSymbol[];
   durationMs: number;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: tree-sitter AST node
 function findEnclosingNodeForRange(
   node: any,
   startRow: number,
@@ -159,14 +131,12 @@ function findEnclosingNodeForRange(
   types: string[],
 ): any {
   const nodeStartRow: number = node.startPosition?.row ?? 0;
-  // biome-ignore lint/suspicious/noExplicitAny: endPosition not declared in local interface
 
   // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
   const nodeEndRow: number = (node as any).endPosition?.row ?? nodeStartRow;
 
   if (endRow < nodeStartRow || startRow > nodeEndRow) return undefined;
 
-  // Prefer deepest overlapping match — check children first.
   for (const child of node.children ?? []) {
     const match = findEnclosingNodeForRange(child, startRow, endRow, types);
     if (match) return match;
@@ -175,7 +145,6 @@ function findEnclosingNodeForRange(
   return types.includes(node.type) ? node : undefined;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: tree-sitter AST node
 function getSymbolName(node: any): string {
   for (const child of node.children ?? []) {
     if (
@@ -192,14 +161,8 @@ function getSymbolName(node: any): string {
   return node.type as string;
 }
 
-/**
- * Walk parent nodes from `node` upward, collecting every ancestor that is
- * one of the enclosing symbol types. Returns them outermost-first.
- */
-// biome-ignore lint/suspicious/noExplicitAny: tree-sitter AST node
 function buildAncestryChain(node: any, types: string[]): AncestorSymbol[] {
   const chain: AncestorSymbol[] = [];
-  // biome-ignore lint/suspicious/noExplicitAny: tree-sitter parent node
   let current: any = node.parent;
   while (current) {
     // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
@@ -214,7 +177,7 @@ function buildAncestryChain(node: any, types: string[]): AncestorSymbol[] {
     }
     current = current.parent;
   }
-  return chain.reverse(); // outermost first
+  return chain.reverse();
 }
 
 function tryExpandMarkdownSection(
@@ -226,7 +189,6 @@ function tryExpandMarkdownSection(
   const lines = content.split(/\r?\n/);
   const lastRow = totalLines - 1;
 
-  // Find heading at or before the requested start row
   let headingLevel = 7;
   let sectionStartRow = 0;
   let headingText = "";
@@ -241,7 +203,6 @@ function tryExpandMarkdownSection(
     }
   }
 
-  // Find end: next heading of same or higher level (smaller or equal number)
   let sectionEndRow = lastRow;
   for (let i = sectionStartRow + 1; i <= lastRow; i++) {
     const match = lines[i]?.match(/^(#{1,6})\s+/);
@@ -270,16 +231,6 @@ function tryExpandMarkdownSection(
   };
 }
 
-/**
- * Attempt to expand a partial read to its enclosing symbol using tree-sitter.
- *
- * Returns undefined when:
- * - The file extension has no grammar
- * - The read is large (> EXPANSION_LIMIT_LINES) — already covers enough
- * - No enclosing symbol overlaps the requested read span
- * - The enclosing symbol is larger than EXPANDED_SIZE_CAP_LINES
- * - Tree-sitter init/parse exceeds EXPANSION_BUDGET_MS
- */
 export async function tryExpandRead(
   filePath: string,
   requestedOffset: number,
@@ -296,7 +247,6 @@ export async function tryExpandRead(
   try {
     const content = fs.readFileSync(filePath, "utf8");
 
-    // Fast path: Markdown section expansion (no tree-sitter needed)
     if (ext === ".md" || ext === ".mdx") {
       const requestedStartRow = requestedOffset - 1;
       const result = tryExpandMarkdownSection(
@@ -318,14 +268,10 @@ export async function tryExpandRead(
     if (!initOk) return undefined;
 
     const remaining = Math.max(0, EXPANSION_BUDGET_MS - (Date.now() - startedAt));
-    // tree-sitter rows are 0-indexed; offsets are 1-indexed
     const requestedStartRow = requestedOffset - 1;
     const requestedEndRow = Math.min(totalLines - 1, requestedOffset + requestedLimit - 2);
-    // Resolve the enclosing node INSIDE the cache-safe callback: a tree handed
-    // back across an await can be retired by another consumer's eviction (#417).
     const parsed = await withBudget(
       tsClient.withParsedTree(filePath, languageId, content, (tree) => {
-        // biome-ignore lint/suspicious/noExplicitAny: tree-sitter root node
         const node = findEnclosingNodeForRange(
           // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
           tree.rootNode as any,
@@ -340,7 +286,6 @@ export async function tryExpandRead(
           // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
           kind: node.type as string,
           startRow: node.startPosition.row,
-          // biome-ignore lint/suspicious/noExplicitAny: endPosition not in local interface
 
           // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
           endRow: (node as any).endPosition?.row ?? node.startPosition.row,

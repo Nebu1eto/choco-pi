@@ -223,18 +223,14 @@ async function findGlimpseMjs(): Promise<string | null> {
   try {
     const req = createRequire(import.meta.url);
     return req.resolve("glimpseui");
-  } catch {
-    // Optional dependency.
-  }
+  } catch {}
   try {
     const { stdout } = await execFileAsync("npm", ["root", "-g"], { encoding: "utf-8" });
     const globalRoot = stdout.trim();
     const entry = join(globalRoot, "glimpseui", "src", "glimpse.mjs");
     await access(entry);
     return entry;
-  } catch {
-    // npm may be unavailable, or the global glimpseui entry may be absent.
-  }
+  } catch {}
   return null;
 }
 
@@ -293,12 +289,10 @@ export function handleSessionChange(ctx: ExtensionContext, reason: ResultsResetR
   clearCloneCache();
   sessionActive = true;
   restoreFromSession(ctx, reason);
-  // Unsubscribe before clear() to avoid callback with stale ctx
   widgetUnsubscribe?.();
   widgetUnsubscribe = null;
   activityMonitor.clear();
   if (widgetVisible) {
-    // Re-subscribe with new ctx
     widgetUnsubscribe = activityMonitor.onUpdate(() => updateWidget(ctx));
     updateWidget(ctx);
   }
@@ -618,7 +612,6 @@ export function createSearchRuntime(pi: ExtensionAPI, _toolNames: ToolNames, cur
       { provider: "anthropic", id: "claude-haiku-4-5" },
       { provider: "openai", id: "gpt-5.6-luna" },
       { provider: "openai", id: "gpt-6.1-terra" },
-      // Legacy ChatGPT-backend subscription provider.
       { provider: "openai-codex", id: "gpt-5.6-luna" },
       { provider: "openai-codex", id: "gpt-6.1-terra" },
       { provider: "google", id: "gemini-3.6-flash" },

@@ -1,4 +1,3 @@
-/** Recorded review findings, file change times and review comments shown in the pane, each read so a stale result is dropped. */
 import { join } from "node:path";
 import {
   summarizeFindings,
@@ -44,11 +43,6 @@ export async function changeTimesFor(
   return times;
 }
 
-/**
- * A review-record read or change-time scan threw: keep the findings last read and
- * add the failure to the summary's read errors, which the header counts and
- * the findings list shows. Never throws.
- */
 export function recordedFailed(
   pane: DiffPaneController,
   session: Session,
@@ -69,10 +63,6 @@ export function recordedFailed(
   }
 }
 
-/**
- * Re-read the review records (first use, manual refresh, subagent completion). Never
- * polls and never rejects: a failure is shown with the summary's read errors.
- */
 export async function reloadRecorded(pane: DiffPaneController, session: Session): Promise<void> {
   const read = pane.deps.readRecords;
   if (!read || !session.view) return;
@@ -101,7 +91,6 @@ export async function reloadRecorded(pane: DiffPaneController, session: Session)
   }
 }
 
-/** The working tree changed: re-check which findings predate their file's last change. Never rejects. */
 export async function refreshChangeTimes(
   pane: DiffPaneController,
   session: Session,
@@ -135,11 +124,6 @@ export function manualRefresh(pane: DiffPaneController, session: Session): void 
   void reloadComments(pane, session);
 }
 
-/**
- * Re-read the `/review-assist` comments for the snapshot shown (first use, each new
- * snapshot, manual refresh, subagent completion). Never rejects: a failure is shown
- * in the pane's message line and the comments last read stay.
- */
 export async function reloadComments(pane: DiffPaneController, session: Session): Promise<void> {
   const read = pane.deps.readComments;
   const view = session.view;
@@ -164,5 +148,3 @@ export async function reloadComments(pane: DiffPaneController, session: Session)
     reportFailure(pane, session, `Cannot read the review comments: ${errorText(error)}`, error);
   }
 }
-
-/* ---------------------------------------------------------- sources */

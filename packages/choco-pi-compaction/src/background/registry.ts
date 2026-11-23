@@ -8,34 +8,15 @@ import {
 } from "../guards.ts";
 import type { BackendFactory, CoordinatorApi } from "./contract.ts";
 
-/**
- * Process-wide slot that keeps backend factories, coordinators and delivery
- * ledgers alive across `/reload` (a reload re-imports this module, so module
- * state alone would be lost).
- *
- * The key is versioned. A process started with older code may still hold an
- * earlier slot shape under an earlier key (`choco-pi:compaction-coordinator`,
- * schema 1); that slot is never read, written or deleted. Any future shape
- * change must bump both the key suffix and `schemaVersion`.
- *
- * A slot under this key that fails validation (written by foreign or
- * incompatible code) makes the registry unavailable for this process: nothing
- * here throws, the slot is left untouched, and every operation degrades (see
- * `registryAvailability`). The host turns background compaction off and asks
- * for a restart.
- */
 const REGISTRY_SYMBOL = Symbol.for("choco-pi:compaction-coordinator:v2");
 export interface CoordinatorRegistry {
   readonly schemaVersion: 2;
   readonly backendFactories: Map<string, BackendFactory>;
   readonly coordinators: Map<string, CoordinatorApi>;
-  /** Per owner key: consumer IDs already given each adoption ID in this process (survives reload). */
   readonly delivered: Map<string, Map<string, Set<string>>>;
 }
-/** Whether the process-wide registry can be used, and the registry when it can. */
 export type RegistryAvailability =
   | { readonly status: "available"; readonly registry: CoordinatorRegistry }
-  /** The global slot holds a value this code cannot validate; it is left untouched. */
   | { readonly status: "conflict" };
 const COORDINATOR_METHODS = [
   "requestPreparation",
@@ -47,7 +28,6 @@ const COORDINATOR_METHODS = [
   "registerParticipant",
   "dispose",
 ] as const;
-/** Validate callable presence; factories/coordinators themselves own their domain behavior. */
 function isCoordinator<T>(value: T): value is T & CoordinatorApi {
   return (
     hasMethods(value, COORDINATOR_METHODS) &&
@@ -89,16 +69,9 @@ function emptyRegistry(): CoordinatorRegistry {
     delivered: new Map(),
   };
 }
-/**
- * Probe the process-wide registry, creating it when the slot is absent.
- * Never throws and never replaces or repairs an existing slot.
- */
 export function registryAvailability(): RegistryAvailability {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, REGISTRY_SYMBOL);
   if (descriptor !== undefined) {
-    // An accessor slot has no `value` and fails validation like any foreign value.
-    // A foreign value whose own getters throw is a conflict too: validation
-    // must not fail the extension load.
     const found: unknown = descriptor.value;
     try {
       if (isRegistry(found)) return { status: "available", registry: found };
@@ -111,33 +84,16 @@ export function registryAvailability(): RegistryAvailability {
   try {
     Object.defineProperty(globalThis, REGISTRY_SYMBOL, { value: registry, configurable: true });
   } catch {
-    // A non-extensible global cannot hold the slot; nothing can be shared.
     return { status: "conflict" };
   }
   return { status: "available", registry };
 }
-/**
- * Share factory availability, not one global active session. While the slot
- * is in conflict this returns a fresh registry that is not stored anywhere, so
- * reads see nothing and writes are discarded; use `registryAvailability` to
- * tell the two apart.
- */
 export function getRegistry(): CoordinatorRegistry {
   const availability = registryAvailability();
   return availability.status === "available" ? availability.registry : emptyRegistry();
 }
-/**
- * Delivery ledgers kept for owners that no longer have a coordinator. A
- * reload releases the owner before its replacement registers, so a ledger
- * must outlive its owner briefly; one that is never reclaimed is dropped
- * once this many newer departed owners exist.
- */
 const DEPARTED_LEDGERS = 16;
 
-/**
- * The in-process delivery ledger for one owner key, created on first use.
- * Detached (not retained across reload) while the registry is in conflict.
- */
 export function deliveredAdoptionsFor(ownerKey: string): Map<string, Set<string>> {
   const availability = registryAvailability();
   if (availability.status !== "available") return new Map();
@@ -146,23 +102,17 @@ export function deliveredAdoptionsFor(ownerKey: string): Map<string, Set<string>
   if (owned === undefined) {
     owned = new Map();
   }
-  // Re-insert so the map's order tracks most recent use.
   ledger.delete(ownerKey);
   ledger.set(ownerKey, owned);
   return owned;
 }
 
-/** Drop the oldest departed owners' ledgers beyond the retention window. */
 function pruneDepartedLedgers(registry: CoordinatorRegistry): void {
   const departed = [...registry.delivered.keys()].filter((key) => !registry.coordinators.has(key));
   for (const key of departed.slice(0, Math.max(0, departed.length - DEPARTED_LEDGERS))) {
     registry.delivered.delete(key);
   }
 }
-/**
- * First registration wins, including repeated imports in either extension load
- * order. While the registry is in conflict the factory is returned unstored.
- */
 export function registerBackendFactory(id: string, factory: BackendFactory): BackendFactory {
   if (id.length === 0) throw new Error("Backend id must not be empty");
   const availability = registryAvailability();
@@ -173,7 +123,6 @@ export function registerBackendFactory(id: string, factory: BackendFactory): Bac
   factories.set(id, factory);
   return factory;
 }
-/** The registered coordinator; undefined while the registry is in conflict. */
 export function getCoordinator(
   ownerKey: string,
   ownerGeneration?: number,
@@ -185,12 +134,6 @@ export function getCoordinator(
     ? coordinator
     : undefined;
 }
-/**
- * Callers dispose their old attachment before replacing it; stale writers
- * cannot replace a newer generation (that and an invalid coordinator throw).
- * Returns false without storing while the registry is in conflict; the caller
- * must then treat the coordinator as unregistered.
- */
 export function setCoordinator(ownerKey: string, coordinator: CoordinatorApi): boolean {
   if (!isCoordinator(coordinator) || ownerKey !== coordinator.ownerKey)
     throw new Error("Invalid coordinator owner");
@@ -207,10 +150,6 @@ export function setCoordinator(ownerKey: string, coordinator: CoordinatorApi): b
   coordinators.set(ownerKey, coordinator);
   return true;
 }
-/**
- * Expected generation/instance protects a replacement owner against late
- * cleanup. False while the registry is in conflict.
- */
 export function release(
   ownerKey: string,
   ownerGeneration: number,
@@ -227,8 +166,6 @@ export function release(
   )
     return false;
   const removed = registry.coordinators.delete(ownerKey);
-  // The departing owner's ledger becomes the newest departed entry so the
-  // retention window starts at departure (a reload re-acquires it next).
   const ledger = registry.delivered.get(ownerKey);
   if (ledger !== undefined) {
     registry.delivered.delete(ownerKey);

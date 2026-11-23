@@ -1,9 +1,4 @@
 #!/usr/bin/env node
-/**
- * Purpose: Manage choco-pi-agent-browser package config under Pi-scoped config paths.
- * Responsibilities: Thin CLI argument parsing and config-file mutation around the shared config policy; preserve safe permissions and avoid echoing secrets.
- * Scope: Maintainer/user setup CLI only; canonical config validation, merge, provider descriptors, and status projection live in extensions/agent-browser/lib/config-policy.ts.
- */
 
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -36,7 +31,6 @@ import {
   type RuntimeValue,
 } from "../extensions/agent-browser/lib/parsing.ts";
 
-/** A config file's JSON object; unknown keys are preserved on rewrite. */
 type ConfigDocument = RuntimeRecord<RuntimeValue>;
 type ConfigWriteScope = "global" | "project";
 type WebSearchProviderSelection = WebSearchProvider | "all";
@@ -169,18 +163,14 @@ async function writeConfig(path: string, config: ConfigDocument): Promise<void> 
   try {
     await chmod(dirname(path), 0o700);
     await chmod(path, 0o600);
-  } catch {
-    // Best effort on platforms/filesystems that do not support POSIX modes.
-  }
+  } catch {}
 }
 
-/** Copy one top-level config section; a missing or non-object section starts empty. */
 function copySection(config: ConfigDocument, key: string): ConfigDocument {
   const section = config[key];
   return isRecord(section) ? copyRecord(section) : {};
 }
 
-/** Remove one field from an existing object section, leaving other sections untouched. */
 function deleteSectionField(config: ConfigDocument, sectionKey: string, field: string): void {
   const section = config[sectionKey];
   if (isRecord(section)) delete section[field];

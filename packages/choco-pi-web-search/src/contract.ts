@@ -60,7 +60,6 @@ export type SearchCapability =
 
 const SEARCH_PROVIDER_FAMILY_PATTERN = /^[a-z][a-z0-9-]*$/;
 
-/** True when `value` is a valid non-empty lowercase provider family id (excluding `auto`/`all`). */
 export function isValidSearchProviderFamily<Value>(
   value: Value,
 ): value is Value & SearchProviderFamily {
@@ -108,7 +107,6 @@ export interface SearchRequest {
   searchContextSize?: "low" | "medium" | "high";
   provider?: SearchProviderSelection;
   requiredCapabilities?: SearchCapability[];
-  /** Namespaced per-backend options bag (e.g. `{ exa: { searchType: "deep" } }`). */
   providerOptions?: Readonly<Record<string, JsonRecord>>;
 }
 

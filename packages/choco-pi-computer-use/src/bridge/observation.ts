@@ -222,8 +222,6 @@ export async function buildToolResult(
     imageReason: fallbackReason?.reason,
   };
 
-  // Console piggyback: when a CDP connection is active for this browser
-  // window, surface console output collected since the last tool result.
   let consoleText = "";
   if (currentPlatformBackend.isChromeFamilyApp(result.target.appName, result.target.bundleId)) {
     const tab = await cdpTabForWindow(result.target.windowTitle, result.target.framePoints);
@@ -235,8 +233,6 @@ export async function buildToolResult(
   }
 
   const noteText = renderedNote ? `\n\n${renderedNote}` : "";
-  // The model must echo capture.stateId into follow-up tools. Exposing only the
-  // helper-internal lookId here makes a plausible but invalid stateId easy to use.
   const renderedChanges = useDiff ? renderChanges(transition!.changes) : "";
   const outlineText = useDiff
     ? `\n\nChanges (${transition!.changedNodeCount}, ${base!.stateId} → ${result.capture.stateId}):\n${renderedChanges || "(no element changes)"}\nUse state_id ${result.capture.stateId} for subsequent actions and queries.`
@@ -264,7 +260,6 @@ export function normalizeImageMode(value: ImageMode): ImageMode {
   return value === "always" || value === "never" ? value : "auto";
 }
 
-/** Side effects: captures/updates current target, capture state, look, and parsed outline. */
 export async function performObserve(
   params: ObserveParams,
   signal?: AbortSignal,
@@ -313,9 +308,6 @@ export async function performObserve(
     );
   });
   const captureResult = scheduled.value;
-  // Model @r refs are re-minted on re-resolution, so ref string equality
-  // alone false-positives as drift for the same root; compare stable
-  // identity against the resolved request too.
   if (
     !matchesObserveSelection(captureResult.target, selection) &&
     !sameRootIdentity(captureResult.target, requestedTarget)
@@ -350,7 +342,6 @@ export function shouldEscalateSearchOCR(matches: OutlineSearchMatch[], _text?: s
   return matches.every(matchIsNonActionableStatic);
 }
 
-/** Pure outline query unless a window selector is supplied, in which case current target selection may change. */
 export async function performSearchUi(
   params: SearchUiParams,
   signal?: AbortSignal,
@@ -378,10 +369,6 @@ export async function performSearchUi(
   ) {
     state.lastSearchOcrEscalatedLookId = look.lookId;
     const currentTarget = await ensureTargetWindowId(await resolveCurrentTarget(signal), signal);
-    // captureCurrentTarget adopts the new look/outline/capture into
-    // runtimeState, so refs in these matches stay actable. Keep the image
-    // payload: OCR-only matches are clicked by coordinate, and coordinate
-    // acts require the current look to be image-bearing.
     if (!state.resourceKey || state.epoch === undefined)
       throw new Error("The observation has no live resource identity. Observe again.");
     const captureResult = (
@@ -432,7 +419,6 @@ export async function performSearchUi(
   };
 }
 
-/** Reads cached outline; truncated refs trigger a scoped look. */
 export async function performExpandUi(
   params: ExpandUiParams,
   signal?: AbortSignal,
@@ -507,7 +493,6 @@ export async function performExpandUi(
   };
 }
 
-/** Pure cached-outline inspection. */
 export async function performInspectUi(
   params: InspectUiParams,
 ): Promise<AgentToolResult<OutlineToolDetails>> {

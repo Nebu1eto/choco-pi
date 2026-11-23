@@ -1,4 +1,3 @@
-// oxlint anti-slop/no-runtime-typeof forbids typeof here, so these guards use identity, instanceof and a pi-schema string check.
 import { compile, str } from "@earendil-works/pi-schema";
 
 const stringCheck = compile(str()).check;

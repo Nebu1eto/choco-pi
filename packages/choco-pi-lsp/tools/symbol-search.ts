@@ -1,12 +1,5 @@
 import { includePropertiesWhen } from "../clients/optional-properties.ts";
 import type { RuntimeValue } from "./runtime-values.ts";
-/**
- * symbol_search pi tool (#348) — the entry point of the discovery funnel:
- * symbol_search finds ranked candidate files by identifier, module_report
- * explains one, read_symbol reads the exact body. Thin wrapper over the
- * existing symbolSearch() engine seam (clients/lsp-engine.ts), mirroring the
- * MCP pilens_symbol_search tool with the same #517-slimmed payload.
- */
 
 import * as path from "node:path";
 import { arr, num, obj, opt, str } from "@earendil-works/pi-schema";
@@ -15,13 +8,6 @@ import { symbolSearch, type SymbolSearchResult } from "../clients/lsp-engine.ts"
 import { baseName, compactRenderResult } from "./render-compact.ts";
 import { stringifySnakeCase } from "./output-keys.ts";
 
-/**
- * Machine-actionable follow-up hint (#771) — mirrors ast-grep-search.ts's
- * `suggestedDump` pattern. Cheap enough to attach per hit rather than only the
- * top one: it's a pure derivation of `relPath`, no extra computation. Points
- * the discovery funnel's next step (module_report explains the file; from
- * there read_symbol reads a body).
- */
 function suggestedNext(relPath: string) {
   return { tool: "module_report", path: relPath };
 }
@@ -145,10 +131,6 @@ export function createSymbolSearchTool(getProjectRoot: () => string) {
             ]
           : []),
       ];
-      // Compact (unindented) JSON payload, matching module_report/read_symbol
-      // (#517): path relative-to-cwd once per hit, no per-hit `read` block —
-      // start_line/end_line already derive offset/limit for a one-line peek.
-      // Built camelCase like the engine result; keys become snake_case at serialization.
       const payload = {
         available: true,
         query: result.query,
@@ -181,6 +163,4 @@ export function createSymbolSearchTool(getProjectRoot: () => string) {
   };
 }
 
-// Re-exported so tests importing from this module can reach baseName without
-// a second import path.
 export { baseName };

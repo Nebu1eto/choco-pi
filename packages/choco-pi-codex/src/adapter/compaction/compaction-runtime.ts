@@ -206,8 +206,6 @@ export async function resolveNativeCompactionEnvironment(
       ...descriptor,
     };
   }
-  // api.openai.com rejects compaction_trigger and /responses/compact for ChatGPT sign-in
-  // credentials; resolve before credentials so no auth lookup or request is made.
   if (isOpenAISubscriptionSignInModel(currentModel, ctx.modelRegistry)) {
     return {
       ok: false,

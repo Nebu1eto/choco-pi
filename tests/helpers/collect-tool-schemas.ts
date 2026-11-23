@@ -1,14 +1,3 @@
-/**
- * Child-process collector for "tests/tool-io-naming.test.ts".
- *
- * Loads every repository extension entry (each "packages/<name>/package.json"
- * "pi.extensions" entry plus the profile's "profile/extensions" entries) with
- * Pi's own extension loader and prints the parameter schema of every tool
- * registered during load. Run it with PI_CODING_AGENT_DIR and HOME pointing at
- * an empty scratch directory so nothing under ~/.pi is read.
- *
- * Output: one stdout line "TOOL_SCHEMAS_JSON:{tools,failures}", then exit 0.
- */
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -26,13 +15,10 @@ export const OUTPUT_PREFIX = "TOOL_SCHEMAS_JSON:";
 export type CollectedTool = { source: string; parameters: unknown };
 export type CollectedSchemas = {
   tools: Record<string, CollectedTool>;
-  /** Entries Pi's loader could not load, with its error. */
   failures: Record<string, string>;
-  /** For each failed entry: "loaded" when a plain Node import with a stub API registered its tools, else why not. */
   fallback: Record<string, string>;
 };
 
-/** The part of a package manifest Pi reads for extension entries. */
 const packageManifest = compile(
   obj({ pi: opt(obj({ extensions: opt(arr(str())) }, { open: true })) }, { open: true }),
 );
@@ -47,7 +33,6 @@ async function kind(target: string): Promise<"file" | "dir" | undefined> {
   }
 }
 
-/** Pi's one-level directory discovery: "*.ts" files and "<dir>/index.ts". */
 async function entriesInDirectory(dir: string): Promise<string[]> {
   const found: string[] = [];
   for (const name of (await readdir(dir)).sort()) {
@@ -61,7 +46,6 @@ async function entriesInDirectory(dir: string): Promise<string[]> {
   return found;
 }
 
-/** Every "pi.extensions" entry of the repository's packages, expanded to files. */
 export async function packageExtensionEntries(root: string): Promise<string[]> {
   const packagesDir = path.join(root, "packages");
   const entries: string[] = [];
@@ -80,11 +64,6 @@ export async function packageExtensionEntries(root: string): Promise<string[]> {
   return entries;
 }
 
-/**
- * Second chance for an entry Pi's loader rejected (its jiti alias table cannot
- * resolve some host subpaths outside a real Pi process): import it natively and
- * run its factory against a stub API that only records registerTool calls.
- */
 async function registerWithStubApi(
   entry: string,
   onTool: (tool: ToolDefinition) => void,
@@ -118,7 +97,6 @@ export async function collectToolSchemas(
   root: string,
   agentDir: string,
 ): Promise<CollectedSchemas> {
-  // The profile extension directory, which an install lists in settings.extensions.
   const configured = [
     path.join(root, "profile", "extensions"),
     ...(await packageExtensionEntries(root)),
@@ -159,7 +137,6 @@ async function main(): Promise<void> {
   }, 90_000);
   const collected = await collectToolSchemas(path.resolve(root), agentDir);
   clearTimeout(watchdog);
-  // Extensions may leave timers or sockets open; the JSON line is the whole result.
   process.stdout.write(`\n${OUTPUT_PREFIX}${JSON.stringify(collected)}\n`, () => process.exit(0));
 }
 

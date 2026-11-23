@@ -30,7 +30,6 @@ const LEFT = "\x1b[D";
 const SELECTED = "\x1b[7m";
 const UNSELECTED = "\x1b[27m";
 
-/** The inverted run of each drawn row that has one. */
 function selected(editor: FramedEditor, width = WIDTH): string[] {
   return editor.render(width).flatMap((row) => {
     const from = row.indexOf(SELECTED);
@@ -41,7 +40,6 @@ function selected(editor: FramedEditor, width = WIDTH): string[] {
   });
 }
 
-/** Press on the cell where `from` starts, drag to where `to` starts, and release there. */
 function drag(editor: FramedEditor, from: string, to: string, width = WIDTH): void {
   const press = editor.handleMouse(at(editor, from, "press", width));
   assert.deepEqual(press, { handled: true, capture: true, focus: true, render: true });
@@ -49,7 +47,6 @@ function drag(editor: FramedEditor, from: string, to: string, width = WIDTH): vo
   assert.equal(editor.handleMouse(at(editor, to, "release", width))?.handled, true);
 }
 
-/** zentui around Pi's own editor, which the test can also reach directly. */
 async function wrappedEditor(options: { paddingX?: number; text: string }) {
   const make = await zentui("opencode", "both");
   const inner = new Editor(TUI_FIXTURE, EDITOR_THEME, { paddingX: options.paddingX ?? 0 });
@@ -73,7 +70,6 @@ test(
         editor.focused = true;
         editor.setText(TEXT);
 
-        // Forwards, over the line break: the break is drawn as one cell after the line.
         drag(editor, "world", "line");
         assert.deepEqual(selected(editor), ["world ", "second "], where);
         assert.deepEqual(
@@ -86,7 +82,6 @@ test(
         assert.deepEqual(editor.getCursor(), { line: 0, col: 6 }, where);
         assert.deepEqual(selected(editor), [], where);
 
-        // Backwards: the cursor is at the selection's start, and a typed key replaces it.
         drag(editor, "line", "hello");
         assert.deepEqual(selected(editor), ["hello "], where);
         editor.handleInput("X");
@@ -129,13 +124,11 @@ test(
     );
     assert.equal(await after(LEFT), "one two three", "a cursor key keeps the text");
 
-    // After a cursor key the next Backspace is an ordinary one.
     const editor = await select();
     editor.handleInput(LEFT);
     editor.handleInput(BACKSPACE);
     assert.equal(editor.getText(), "one tw three", "one character left of the moved cursor");
 
-    // Pi sends key releases only to an editor that asks for them; one is not a key press.
     const make = await zentui("opencode", "both");
     const inner = new Editor(TUI_FIXTURE, EDITOR_THEME);
     const received: string[] = [];
@@ -159,7 +152,6 @@ test(
     assert.deepEqual(selected(wantsReleases), ["two "]);
     assert.equal(wantsReleases.getText(), "one two three");
 
-    // Escape drops the selection and goes no further: it would interrupt the agent.
     received.length = 0;
     wantsReleases.handleInput("\x1b");
     assert.deepEqual(selected(wantsReleases), []);
@@ -184,7 +176,6 @@ test(
         const cells = selected(editor, width);
         assert.ok(cells.length > 2, `${where}: several rows are selected`);
         assert.equal(editor.render(width).length, rows, `${where}: the frame keeps its rows`);
-        // Rows are consecutive slices of the line, so the runs join into the selected text.
         assert.equal(
           cells.join(""),
           text.slice(text.indexOf("world"), text.indexOf("ends")),
@@ -217,7 +208,6 @@ test(
         const first = frame.findIndex((row) => row.includes(text.slice(0, 4)));
         const event = at(editor, text.slice(0, 4), "press", width);
         editor.handleMouse(event);
-        // Drag far below and right of the text: the last cell of the last row.
         editor.handleMouse({ ...event, type: "drag", x: width + 40, y: first + 99 });
         editor.handleMouse({ ...event, type: "release", x: width + 40, y: first + 99 });
         assert.equal(
@@ -279,7 +269,6 @@ test(
     assert.equal(editor.getText().split("\n")[25], "row number 27");
     assert.equal(editor.getText().split("\n").length, 28);
 
-    // Above the first shown row the drag selects up to that row, not beyond it.
     const press = at(editor, "number 22", "press");
     editor.handleMouse(press);
     editor.handleMouse({ ...press, type: "drag", x: 0, y: -5 });
@@ -376,15 +365,12 @@ test(
   },
 );
 
-/* ------------------------------------------------ Shift and the arrow keys */
-
 const SHIFT_LEFT = "\x1b[1;2D";
 const SHIFT_RIGHT = "\x1b[1;2C";
 const SHIFT_UP = "\x1b[1;2A";
 const SHIFT_DOWN = "\x1b[1;2B";
 const RIGHT = "\x1b[C";
 const UP = "\x1b[A";
-/** Ctrl+E, the editor's key for the end of the line. */
 const LINE_END = "\x05";
 
 function cursorOf(editor: FramedEditor) {
@@ -395,7 +381,6 @@ function cursorOf(editor: FramedEditor) {
   return { line, col };
 }
 
-/** Send keys with a frame drawn after each, as the terminal UI does. */
 function press(editor: FramedEditor, keys: readonly string[], width = WIDTH): void {
   for (const key of keys) {
     editor.handleInput(key);
@@ -424,7 +409,6 @@ test(
         editor.handleInput(BACKSPACE);
         assert.equal(editor.getText(), "hello wo", where);
 
-        // Back over where the selection began, and on to the other side of it.
         press(editor, [LEFT, LEFT, LEFT, SHIFT_RIGHT, SHIFT_LEFT]);
         assert.deepEqual(selected(editor), [], `${where}: back at its start`);
         press(editor, [SHIFT_LEFT, SHIFT_LEFT]);
@@ -444,13 +428,11 @@ test(
     const text = "first line\nsecond line is here\nthird";
     const { editor } = await wrappedEditor({ text });
     editor.render(WIDTH);
-    // The cursor is at the end. Up one row keeps the column where the row is long enough.
     press(editor, [SHIFT_UP]);
     assert.deepEqual(editor.getCursor(), { line: 1, col: 5 });
     assert.deepEqual(selected(editor), ["d line is here ", "third"]);
     press(editor, [SHIFT_UP]);
     assert.deepEqual(selected(editor), [" line ", "second line is here ", "third"]);
-    // On the first row Up goes to the start of the text, and then there is nowhere to go.
     press(editor, [SHIFT_UP, SHIFT_UP]);
     assert.deepEqual(editor.getCursor(), { line: 0, col: 0 });
     assert.equal(selected(editor).join("").replaceAll(" ", ""), text.replaceAll(/\s/g, ""));
@@ -460,7 +442,6 @@ test(
     assert.deepEqual(editor.getCursor(), { line: 2, col: 5 });
     assert.deepEqual(selected(editor), [], "back where it began");
 
-    // From the middle of the last row, Down selects to the end of the text.
     press(editor, [LEFT, LEFT, LEFT, SHIFT_DOWN]);
     assert.deepEqual(selected(editor), ["ird"]);
     editor.handleInput(BACKSPACE);
@@ -502,14 +483,12 @@ test(
     inner.addToHistory("the last prompt");
     editor.setText("draft text");
     editor.render(WIDTH);
-    // At the start of the text a plain Up would open the history.
     press(editor, [SHIFT_UP, SHIFT_UP, SHIFT_UP]);
     assert.equal(editor.getText(), "draft text");
     assert.deepEqual(selected(editor), ["draft text"]);
     press(editor, [SHIFT_DOWN, SHIFT_DOWN]);
     assert.equal(editor.getText(), "draft text");
 
-    // While a recalled prompt is shown, plain Up and Down walk the history from any row.
     editor.setText("");
     press(editor, [UP]);
     assert.equal(editor.getText(), "the last prompt");
@@ -547,14 +526,12 @@ test(
     });
     editor.setText("draft");
     editor.render(WIDTH);
-    // At the end of the text Shift+Right is not a selection key: /diff's shortcut gets it.
     press(editor, [SHIFT_RIGHT]);
     assert.deepEqual(received, [SHIFT_RIGHT]);
     press(editor, [SHIFT_DOWN]);
     assert.deepEqual(received, [SHIFT_RIGHT, SHIFT_DOWN]);
     assert.deepEqual(selected(editor), []);
 
-    // Selecting and then taking it all back leaves nothing selected: the key is passed on again.
     received.length = 0;
     press(editor, [SHIFT_LEFT, SHIFT_LEFT, SHIFT_RIGHT, SHIFT_RIGHT, SHIFT_RIGHT]);
     assert.deepEqual(
@@ -562,7 +539,6 @@ test(
       [LEFT, LEFT, RIGHT, RIGHT, SHIFT_RIGHT],
       "the editor's own cursor keys, then the key that had nothing to select or move over",
     );
-    // With text selected, a key at the edge does nothing and the selection stays.
     press(editor, [LEFT, LEFT, LEFT, SHIFT_RIGHT]);
     assert.deepEqual(selected(editor), ["a"]);
     received.length = 0;
@@ -581,7 +557,6 @@ test(
     ]);
     assert.deepEqual(selected(editor), ["draft"], "past the start it stays whole");
 
-    // An empty editor has nothing to select, and an open autocomplete menu owns the arrows.
     editor.setText("");
     received.length = 0;
     press(editor, [SHIFT_LEFT, SHIFT_RIGHT, SHIFT_UP, SHIFT_DOWN]);
@@ -613,7 +588,6 @@ test(
       "hello wrld\nsecond line",
       "one character, as without a selection",
     );
-    // Ctrl+Shift with an arrow is Pi's own key and not a selection.
     press(editor, ["\x1b[1;6A", "\x1b[1;6D"]);
     assert.deepEqual(selected(editor), []);
   },
@@ -623,18 +597,13 @@ const CTRL_C = "\x03";
 const CTRL_X = "\x18";
 const CTRL_A = "\x01";
 const PAGE_DOWN = "\x1b[6~";
-/** Cmd+C from a terminal that passes it on in the Kitty keyboard protocol. */
 const SUPER_C = "\x1b[99;9u";
-/** Cmd+A and Cmd+X, as Rex and other Kitty-protocol terminals send them. */
 const SUPER_A = "\x1b[97;9u";
 const SUPER_X = "\x1b[120;9u";
-/** Ctrl+A and Ctrl+X as Rex sends them with a Korean input source: the key's Hangul, then its base key. */
 const REX_CTRL_A = "\x1b[12609::97;5u";
 const REX_CTRL_X = "\x1b[12620::120;5u";
-/** Ctrl+A in the Kitty keyboard protocol, which Rex's default Cmd+Left binding sends. */
 const KITTY_CTRL_A = "\x1b[97;5u";
 
-/** Run `body` as if on `platform`, which the select-all key depends on. */
 async function onPlatform(platform: NodeJS.Platform, body: () => Promise<void>): Promise<void> {
   const previous = Object.getOwnPropertyDescriptor(process, "platform");
   assert.ok(previous, "process.platform is an own property");
@@ -646,7 +615,6 @@ async function onPlatform(platform: NodeJS.Platform, body: () => Promise<void>):
   }
 }
 
-/** Run `body` with Pi's keybindings installed as pi-tui's, as Pi's interactive mode does. */
 async function withPiKeybindings(body: () => Promise<void>): Promise<void> {
   const previous = getKeybindings();
   setKeybindings(
@@ -666,12 +634,10 @@ async function withPiKeybindings(body: () => Promise<void>): Promise<void> {
   }
 }
 
-/** Let pending clipboard writes settle. */
 async function settled(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
-/** zentui around Pi's own editor through a base that records every key it is given. */
 async function recordedEditor(clipboard: ReturnType<typeof testClipboard>["clipboard"]) {
   const make = await zentui("opencode", "both");
   const inner = new Editor(TUI_FIXTURE, EDITOR_THEME);
@@ -731,12 +697,10 @@ test(
         await settled();
         assert.deepEqual(clipboard.reports, Array(2).fill({ copied: true }), name);
 
-        // The selection is still the editor's: Backspace removes what was copied.
         editor.handleInput(BACKSPACE);
         assert.equal(editor.getText(), "hello line", name);
       }
 
-      // A selection made with the keys copies the same way.
       const { editor } = recorded;
       editor.setText("draft text");
       press(editor, [SHIFT_LEFT, SHIFT_LEFT, SHIFT_LEFT, SHIFT_LEFT]);
@@ -778,7 +742,6 @@ test(
       assert.deepEqual(received, [CTRL_C, CTRL_X, SUPER_C, SUPER_X]);
       assert.equal(editor.getText(), TEXT, "a cut key without a selection removes nothing");
 
-      // A selection that a cursor key dropped no longer takes them either.
       drag(editor, "world", "line");
       editor.handleInput(LEFT);
       received.length = 0;
@@ -824,7 +787,6 @@ test(
       assert.equal(editor.getText(), TEXT);
       assert.deepEqual(selected(editor), ["world ", "second "]);
 
-      // A write that throws at once, and a report that throws, are contained too.
       const throwing = await recordedEditor({
         write: () => {
           throw new Error("thrown at once");
@@ -858,7 +820,6 @@ test(
     clipboard.setCopyOnSelect(true);
     drag(editor, "hello", "world");
     assert.deepEqual(clipboard.copied, ["hello "]);
-    // A press without a drag selects nothing and copies nothing.
     editor.handleMouse(at(editor, "second", "press"));
     editor.handleMouse(at(editor, "second", "release"));
     assert.deepEqual(clipboard.copied, ["hello "]);
@@ -869,9 +830,7 @@ test(
   "Cmd+A, or Ctrl+A outside macOS, selects the whole draft, and Ctrl+X or Cmd+X cuts it",
   { skip: SKIP_WITHOUT_ZENTUI },
   async () => {
-    // A first line that wraps over several rows, so reaching the end takes more than one Down.
     const WRAPPED = `${"word ".repeat(30)}end\nlast line`;
-    // Each select key is paired with a cut key; on macOS Ctrl+A is the line start, so Cmd+A selects.
     const cases = [
       {
         platform: "darwin",
@@ -919,7 +878,6 @@ test(
             for (const draft of [TEXT, WRAPPED]) {
               const where = `${name} on ${platform}, ${JSON.stringify(selectKey)} then ${JSON.stringify(cutKey)}`;
               editor.setText(draft);
-              // The cursor starts on the first line, away from the end.
               editor.handleMouse(at(editor, draft === TEXT ? "world" : "word"));
               received.length = 0;
               clipboard.copied.length = 0;
@@ -955,19 +913,16 @@ test(
             }
           }
 
-          // Nothing to select: the key is used up and the draft stays empty.
           editor.setText("");
           received.length = 0;
           editor.handleInput(SUPER_A);
           assert.equal(editor.getText(), "", name);
           assert.deepEqual(received, [], `${name}: an empty select-all goes no further`);
 
-          // Home moves to the line start on every platform.
           editor.setText(TEXT);
           editor.handleInput("\x1b[H");
           assert.deepEqual(editor.getCursor(), { line: 1, col: 0 }, `${name}: Home`);
 
-          // On macOS Ctrl+A, which Cmd+Left sends, reaches the line start and selects nothing.
           if (platform === "darwin") {
             for (const lineStart of [CTRL_A, KITTY_CTRL_A, REX_CTRL_A]) {
               const where = `${name} on darwin, ${JSON.stringify(lineStart)}`;
@@ -999,7 +954,6 @@ test(
       invalidate: () => inner.invalidate(),
       handleInput: (data: string) => {
         received.push(data);
-        // The menu owns Escape and the arrows while it is open, as pi-tui's does.
         if (menuOpen) {
           if (data === "\x1b" && escapeCloses) menuOpen = false;
           return;
@@ -1039,15 +993,12 @@ test(
     const { editor, received } = await recordedEditor(clipboard.clipboard);
     const draft = Array.from({ length: 50 }, (_, index) => `line ${index}`).join("\n");
     editor.setText(draft);
-    // To the start of the first line: setText leaves the cursor at the end. Home, not Ctrl+A,
-    // which selects all outside macOS.
     editor.handleInput("\x1b[H");
     for (let line = 0; line < 49; line += 1) editor.handleInput("\x1b[A");
     assert.deepEqual(editor.getCursor(), { line: 0, col: 0 });
     received.length = 0;
     editor.handleInput(SUPER_A);
     const pages = received.filter((key) => key === PAGE_DOWN).length;
-    // pi-tui's page is 30% of the 40-row fixture terminal: 12 rows.
     assert.equal(pages, Math.ceil(49 / 12), "one key per page of rows");
     assert.deepEqual(received.slice(pages), [LINE_END]);
     editor.handleInput(SUPER_C);

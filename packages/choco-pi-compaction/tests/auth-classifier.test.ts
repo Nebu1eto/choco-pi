@@ -1,4 +1,3 @@
-/** Shared bearer-credential classifier (D10): API key first, then an Authorization: Bearer header. */
 import assert from "node:assert/strict";
 import test from "node:test";
 

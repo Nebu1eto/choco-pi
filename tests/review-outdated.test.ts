@@ -4,12 +4,6 @@ import { buildCommentAnchor } from "../profile/extensions/review/core/anchor.ts"
 import type { DiffModel, ReviewComment } from "../profile/extensions/review/core/types.ts";
 import { baseRecord, changedFile, mount, NOW } from "./review-safety-fakes.ts";
 
-/**
- * Comments whose hunk is gone are drawn as outdated under their file, in the
- * pane's wording; comments on files that left the diff go to a "Not in this
- * diff" trailer. Nothing is relocated and the stored comment is unchanged.
- */
-
 function commentOn(file: ReturnType<typeof changedFile>, id: string, body: string): ReviewComment {
   const hunk = file.hunks[0];
   assert.ok(hunk);
@@ -49,7 +43,6 @@ test("an outdated comment is drawn under its file and counted; a removed file's 
   assert.match(screen, /2 comments \(2 outdated\)/);
   await view.press("q");
   await view.closed;
-  // Neither is moved or rewritten; each is saved marked outdated, keeping the lines it had.
   assert.deepEqual(
     view.savedRecords[0]?.comments,
     stored.map((entry) => ({ ...entry, stale: "outdated" })),
@@ -91,7 +84,6 @@ test("Finish puts every branch review in the editor; only the working tree is as
 });
 
 test("a hidden or removed sensitive file's comments show no source line anywhere", async () => {
-  // .env is hidden now; secrets.env left the diff. Both comments quote their line in the anchor.
   const removedSecret = changedFile("secrets.env", "a", "TOKEN=SECRET-LINE-2");
   const current: DiffModel = { ...model({ ...secretBefore, hunks: [] }, after), hidden: [".env"] };
   const record = baseRecord(current, {

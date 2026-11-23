@@ -1,11 +1,3 @@
-/**
- * Registration seams through a real host session: the replay-disable path
- * journals exactly one `disable` lane record with the notices unchanged, and
- * `/compaction-allow-loss` journals consent only for an opaque checkpoint.
- * Provider-supplied codes never reach the journal, a late rejection of a
- * request from an earlier binding is dropped, and shutdown withdraws the
- * registration's consent resolver.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -60,10 +52,8 @@ const BLOCK = {
   signature: "announce-synthetic-signature",
 };
 const DISABLE_PREFIX = "Anthropic server-side compaction";
-/** A provider-supplied code: shown in the notice, never journaled. */
 const PROVIDER_CODE = "compaction_private-payload";
 
-/** The replay-disable notice exactly as before the journal existed. */
 function disableNotice(code: string): string {
   return `${DISABLE_PREFIX}: the provider rejected the replayed checkpoint (${code}); server-side compaction is off for this session, its summary text is sent instead and later compactions are summarized locally.`;
 }
@@ -285,7 +275,6 @@ test(
         !JSON.stringify(records).includes(PROVIDER_CODE),
         "the provider code is not journaled",
       );
-      // The same single disable notice as before the journal existed, and no other notice.
       assert.deepEqual(rig.notices, [disableNotice(PROVIDER_CODE)]);
     } finally {
       await rig.dispose();
@@ -320,14 +309,12 @@ test(
       const checkpoint = rig.manager.getBranch().findLast((entry) => entry.type === "compaction");
       assert.ok(checkpoint !== undefined && isAnthropicDetails(checkpoint.details));
 
-      // The replayed request starts under the first binding; the model change rebinds.
       const started = Promise.withResolvers<void>();
       const release = Promise.withResolvers<void>();
       hold = { started: started.resolve, release: release.promise };
       reject = true;
       const stale = rig.session.prompt("AN-STALE");
       await started.promise;
-      // `setModel` emits nothing for an equal model; emit the host event the same way.
       await rig.session.extensionRunner.emit({
         type: "model_select",
         model: MODEL,
@@ -341,7 +328,6 @@ test(
       assert.deepEqual(laneRecordsOf(rig.manager.getBranch()), [], "no stale disable record");
       assert.deepEqual(rig.notices, [], "no stale notice");
 
-      // A fresh request under a later binding still journals and notifies normally.
       await rig.session.extensionRunner.emit({ type: "session_shutdown", reason: "reload" });
       await rig.session.extensionRunner.emit({ type: "session_start", reason: "reload" });
       reject = true;
@@ -394,8 +380,6 @@ test(
       assert.equal(lossAuthorizedFor(sessionId, checkpointId), false);
       await rig.session.prompt("/compaction-allow-loss");
       assert.deepEqual(rig.notices, [
-        // xAI mode is off but the branch's newest compaction is an xAI checkpoint:
-        // its replay binding is kept and announced once at session start (U-ANTH 3).
         `Background compaction: replay of checkpoint ${checkpointId} stays active until a local compaction replaces it`,
         `Background compaction: loss authorized for checkpoint ${checkpointId} (this session only)`,
       ]);
@@ -432,7 +416,6 @@ test(
   "shutdown withdraws the registration's consent resolver; a reactivation publishes it again",
   { timeout: 30_000 },
   async () => {
-    // A shape-compatible slot that records which resolvers are published and consulted.
     const resolvers = new Set<OpaqueConsentResolver>();
     let consulted = 0;
     const slot = {

@@ -1,9 +1,3 @@
-/**
- * Session toggle commands (/lens-toggle, /lsp, /lens-context-toggle, /lens-widget-toggle) and /lens-allow-edit.
- *
- * Extracted from `runtime-extension.ts` `activateExtension`; behavior is unchanged.
- */
-
 import { readExtensionMode, supportsTuiWidget } from "../clients/extension-mode.ts";
 import * as path from "node:path";
 import { getFailedLspServerIds, getSessionLanguages } from "../clients/widget-state.ts";
@@ -14,11 +8,9 @@ import type { ExtensionActivation } from "./activation.ts";
 import { dbg, normalizeCommandArgs, notifyUi } from "./shared.ts";
 import type { LspStatusTheme } from "./widget-status.ts";
 
-/** Register /lens-toggle, /lsp, /lens-context-toggle, and /lens-widget-toggle. */
 export function registerToggleCommands(activation: ExtensionActivation): void {
   const { pi, activationState, getLensFlag, updateLspStatus, mountLensWidget, unmountLensWidget } =
     activation;
-  // --- Commands ---
 
   pi.registerCommand("lens-toggle", {
     description: "Toggle choco-pi-lsp on/off for the current session. Usage: /lens-toggle",
@@ -34,12 +26,6 @@ export function registerToggleCommands(activation: ExtensionActivation): void {
     },
   });
 
-  // choco-pi fork: human-facing LSP usage toggle. Wires into the SAME
-  // machinery as the upstream `--no-lsp` flag (`lsp.enabled` config key):
-  // a runtime override makes every `getLensFlag("no-lsp")` consumer — the
-  // dispatch pipeline, runtime hooks, lsp_diagnostics/lsp_navigation tools,
-  // and the footer status — see the change immediately, and the persisted
-  // `lsp.enabled` key carries it into the next session.
   pi.registerCommand("lsp", {
     description:
       "Turn choco-pi-lsp LSP usage on or off at runtime, or show its state. Usage: /lsp on|off|status",
@@ -78,8 +64,6 @@ export function registerToggleCommands(activation: ExtensionActivation): void {
         case "off": {
           setRuntimeLensFlagOverride("no-lsp", true);
           const persisted = persistPiLensGlobalConfigKey("lsp.enabled", false);
-          // Actually release the running language servers, not just gate new
-          // touches — same teardown the idle timer uses.
           resetLSPService({ fast: true, reason: "user_lsp_off" });
           repaintLspStatus();
           notifyUi(
@@ -145,9 +129,6 @@ export function registerToggleCommands(activation: ExtensionActivation): void {
     handler: async (_args, ctx) => {
       const nextVisible = !activationState.lensWidgetVisible;
       const mode = readExtensionMode(ctx);
-      // #1334 S2: distinguish "this pi is too old" from "this run mode has
-      // no terminal to draw into" — the old single message blamed the pi
-      // version for what is really a mode constraint.
       if (nextVisible && !supportsTuiWidget(mode)) {
         notifyUi(
           ctx,
@@ -174,7 +155,6 @@ export function registerToggleCommands(activation: ExtensionActivation): void {
   });
 }
 
-/** Register /lens-allow-edit. */
 export function registerReadGuardCommands(activation: ExtensionActivation): void {
   const { pi, runtime } = activation;
   pi.registerCommand("lens-allow-edit", {

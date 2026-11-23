@@ -7,7 +7,6 @@ import type { Plan } from "./isolation.ts";
 import { launch } from "./launch.ts";
 import { KILL_GRACE_MS, WAIT_BOUND_MS } from "./process.ts";
 
-/** A Plan whose "Pi" is a dummy Node script; no Pi process is spawned. */
 function dummy(dir: string, script: string): Plan {
   return {
     executable: process.execPath,
@@ -32,7 +31,6 @@ async function scratch(): Promise<string> {
 test("launch returns after Pi exits even though stderr EOF preceded the exit (tier-A hang)", async () => {
   const dir = await scratch();
   try {
-    // Mirrors the hung S1 run: an early stderr warning, a large JSON event burst, clean exit.
     const script = [
       "process.stderr.write('Warning: No project session found\\n');",
       "setTimeout(()=>{",

@@ -1,25 +1,4 @@
-/**
- * Working-line labels for tools.
- *
- * Pi reports the registered tool name (`apply_patch`), which is an API
- * identifier rather than something to show a reader mid-turn. These labels
- * describe what the tool is doing instead, as `Category: Doing [Object]`:
- * a family prefix so a reader can tell delegation from file work at a
- * glance, then the present-participle voice the working line already uses
- * ("Delegation: Steering", "LSP: Analysing Module"). Every label stays
- * inside `MAX_WORKING_LINE_TOOL_CELLS` so the row never truncates it.
- *
- * A tool call outlives the work it describes, so each label also has a
- * completed form in the past tense Pi's own settled rows use ("Ran",
- * "Explored"): `Delegation: Steered`, `LSP: Analysed Module`. The working
- * line only ever shows a running tool and therefore reads the in-progress
- * table; a transcript row that has already settled reads the finished one.
- *
- * A name with no entry falls back to the registered name, so a newly
- * installed extension still shows something useful.
- */
 export const DEFAULT_TOOL_LABELS = {
-  // Files — Pi built-ins and choco-pi-codex's patch tool
   read: "File: Reading",
   write: "File: Writing",
   edit: "File: Editing",
@@ -28,7 +7,6 @@ export const DEFAULT_TOOL_LABELS = {
   find: "File: Finding Files",
   grep: "File: Searching",
 
-  // Shell — Pi built-ins and choco-pi-codex's exec session tools
   bash: "Shell: Running",
   exec: "Shell: Running",
   exec_command: "Shell: Running",
@@ -39,7 +17,6 @@ export const DEFAULT_TOOL_LABELS = {
   wait: "Shell: Waiting",
   write_stdin: "Shell: Sending Input",
 
-  // Web
   web_run: "Web: Browsing",
   web_search: "Web: Searching",
   source_check: "Web: Checking Sources",
@@ -48,40 +25,33 @@ export const DEFAULT_TOOL_LABELS = {
   synthetic_web_search: "Web: Searching",
   agent_browser: "Browser: Automating",
 
-  // Images
   imagegen: "Image: Generating",
   image_gen__imagegen: "Image: Generating",
   view_image: "Image: Viewing",
 
-  // Tool discovery and MCP
   tool_search: "Tools: Searching",
 
-  // Sub-agents
   Agent: "Delegation: Launching",
   advisor: "Delegation: Advising",
   get_subagent_result: "Delegation: Retrieving",
   steer_subagent: "Delegation: Steering",
   stop_subagent: "Delegation: Stopping",
 
-  // Sub-agent workflows
   workflow_run: "Workflow: Running",
   workflow_update: "Workflow: Updating",
   workflow_cancel: "Workflow: Ending",
   get_workflow_result: "Workflow: Retrieving",
 
-  // Sibling conversations
   session_create: "Session: Opening",
   session_send: "Session: Messaging",
   session_list: "Session: Listing",
   session_read: "Session: Reading",
   session_wait: "Session: Awaiting",
 
-  // Goals
   create_goal: "Goal: Creating",
   update_goal: "Goal: Updating",
   get_goal: "Goal: Reading",
 
-  // choco-pi-lsp
   lsp_diagnostics: "LSP: Diagnosing Files",
   diagnostics_report: "LSP: Reporting Issues",
   diagnostic_mark: "LSP: Marking Finding",
@@ -98,12 +68,9 @@ export const DEFAULT_TOOL_LABELS = {
   lsp_activate_tools: "LSP: Activating Tools",
 } satisfies Readonly<Record<string, string>>;
 
-/** Registered tool names this package ships a label for. */
 export type KnownToolName = keyof typeof DEFAULT_TOOL_LABELS;
 
-/** The same tools once their call has settled, in the past tense. */
 export const DEFAULT_FINISHED_TOOL_LABELS = {
-  // Files
   read: "File: Read",
   write: "File: Wrote",
   edit: "File: Edited",
@@ -112,7 +79,6 @@ export const DEFAULT_FINISHED_TOOL_LABELS = {
   find: "File: Found Files",
   grep: "File: Searched",
 
-  // Shell
   bash: "Shell: Ran",
   exec: "Shell: Ran",
   exec_command: "Shell: Ran",
@@ -123,7 +89,6 @@ export const DEFAULT_FINISHED_TOOL_LABELS = {
   wait: "Shell: Waited",
   write_stdin: "Shell: Sent Input",
 
-  // Web
   web_run: "Web: Browsed",
   web_search: "Web: Searched",
   source_check: "Web: Checked Sources",
@@ -132,40 +97,33 @@ export const DEFAULT_FINISHED_TOOL_LABELS = {
   synthetic_web_search: "Web: Searched",
   agent_browser: "Browser: Automated",
 
-  // Images
   imagegen: "Image: Generated",
   image_gen__imagegen: "Image: Generated",
   view_image: "Image: Viewed",
 
-  // Tool discovery and MCP
   tool_search: "Tools: Searched",
 
-  // Sub-agents
   Agent: "Delegation: Launched",
   advisor: "Delegation: Advised",
   get_subagent_result: "Delegation: Retrieved",
   steer_subagent: "Delegation: Steered",
   stop_subagent: "Delegation: Stopped",
 
-  // Sub-agent workflows
   workflow_run: "Workflow: Ran",
   workflow_update: "Workflow: Updated",
   workflow_cancel: "Workflow: Ended",
   get_workflow_result: "Workflow: Retrieved",
 
-  // Sibling conversations
   session_create: "Session: Opened",
   session_send: "Session: Messaged",
   session_list: "Session: Listed",
   session_read: "Session: Read",
   session_wait: "Session: Awaited",
 
-  // Goals
   create_goal: "Goal: Created",
   update_goal: "Goal: Updated",
   get_goal: "Goal: Read",
 
-  // choco-pi-lsp
   lsp_diagnostics: "LSP: Diagnosed Files",
   diagnostics_report: "LSP: Reported Issues",
   diagnostic_mark: "LSP: Marked Finding",
@@ -207,11 +165,6 @@ function resolve(
   return name;
 }
 
-/**
- * Resolves the label shown while a tool is running: a user override first,
- * then the built-in table, then a readable form of an `mcp__server__tool`
- * name, and finally the registered name itself.
- */
 export function resolveToolLabel(
   name: string,
   overrides?: Readonly<Record<string, string>>,
@@ -219,11 +172,6 @@ export function resolveToolLabel(
   return resolve(DEFAULT_TOOL_LABELS, name, overrides);
 }
 
-/**
- * Resolves the label for a tool whose call has settled, in the past tense.
- * An override wins here too: a reader who renamed a tool means that word in
- * both states.
- */
 export function resolveFinishedToolLabel(
   name: string,
   overrides?: Readonly<Record<string, string>>,

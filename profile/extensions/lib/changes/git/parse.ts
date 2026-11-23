@@ -1,11 +1,5 @@
-/**
- * Parsers for NUL-terminated git output. Every path arrives as a raw `-z`
- * field, so quoting, spaces, and newlines in names never need unescaping.
- */
-
 export type StatusEntry = {
   kind: "ordinary" | "renamed" | "unmerged" | "untracked";
-  /** Two-letter XY code; "??" for untracked entries. */
   xy: string;
   path: string;
   origPath?: string;
@@ -13,21 +7,17 @@ export type StatusEntry = {
 };
 
 export type StatusReport = {
-  /** Null in a repository without commits. */
   head: string | null;
-  /** Null when HEAD is detached. */
   branch: string | null;
   entries: StatusEntry[];
 };
 
-/** Split `-z` output into fields, dropping the terminator after the last record. */
 export function nulFields(output: string): string[] {
   const fields = output.split("\0");
   if (fields.at(-1) === "") fields.pop();
   return fields;
 }
 
-/** Return the remainder after `count` space-separated fields, or undefined. */
 function afterFields(
   record: string,
   count: number,
@@ -43,7 +33,6 @@ function afterFields(
   return { fields, rest: record.slice(offset) };
 }
 
-/** Parse `git status --porcelain=v2 --branch -z`. */
 export function parseStatusV2(output: string): StatusReport {
   const report: StatusReport = { head: null, branch: null, entries: [] };
   const fields = nulFields(output);
@@ -56,7 +45,6 @@ export function parseStatusV2(output: string): StatusReport {
       const head = record.slice("# branch.head ".length);
       report.branch = head === "(detached)" ? null : head;
     } else if (record.startsWith("1 ")) {
-      // 1 XY sub mH mI mW hH hI path
       const parsed = afterFields(record, 8);
       if (!parsed) continue;
       report.entries.push({
@@ -66,7 +54,6 @@ export function parseStatusV2(output: string): StatusReport {
         submodule: (parsed.fields[2] ?? "N").startsWith("S"),
       });
     } else if (record.startsWith("2 ")) {
-      // 2 XY sub mH mI mW hH hI Xscore path NUL origPath
       const parsed = afterFields(record, 9);
       index += 1;
       if (!parsed) continue;
@@ -78,7 +65,6 @@ export function parseStatusV2(output: string): StatusReport {
         submodule: (parsed.fields[2] ?? "N").startsWith("S"),
       });
     } else if (record.startsWith("u ")) {
-      // u XY sub m1 m2 m3 mW h1 h2 h3 path
       const parsed = afterFields(record, 10);
       if (!parsed) continue;
       report.entries.push({
@@ -95,19 +81,16 @@ export function parseStatusV2(output: string): StatusReport {
         submodule: false,
       });
     }
-    // "! " (ignored) records and other headers are not listed.
   }
   return report;
 }
 
 export type RawChange = {
-  /** Status letter: A, C, D, M, R, T, U, or X. */
   status: string;
   path: string;
   oldPath?: string;
   oldMode: string;
   newMode: string;
-  /** Object ids from the raw record; the new id is all zeros for a stat-dirty worktree file. */
   oldHash?: string;
   newHash?: string;
 };
@@ -149,11 +132,6 @@ function countOf(value: string): number | null {
   return Number.isInteger(count) && count >= 0 ? count : null;
 }
 
-/**
- * Parse `git diff --raw --numstat -z` output. Git prints every raw record
- * before the numstat records; records are consumed positionally, so a path
- * that starts with ":" or a digit is never mistaken for a record header.
- */
 export function parseRawNumstat(output: string): RawNumstat {
   const fields = nulFields(output);
   const changes: RawChange[] = [];
@@ -163,7 +141,6 @@ export function parseRawNumstat(output: string): RawNumstat {
     const record = fields[index] ?? "";
     index += 1;
     if (record.startsWith(":")) {
-      // :oldMode newMode oldHash newHash STATUS[score]
       const parts = record.slice(1).split(" ");
       const statusField = parts[4] ?? "";
       const status = statusField.slice(0, 1);
@@ -202,7 +179,6 @@ export function parseRawNumstat(output: string): RawNumstat {
     const binary = additions === null && deletions === null;
     let path = record.slice(secondTab + 1);
     if (path === "") {
-      // Renames and copies: "added\tdeleted\t" NUL oldPath NUL newPath.
       index += 1;
       path = fields[index] ?? "";
       index += 1;
@@ -212,7 +188,6 @@ export function parseRawNumstat(output: string): RawNumstat {
   return { changes, counts };
 }
 
-/** Code-unit path order, independent of locale. */
 export function comparePaths(left: string, right: string): number {
   if (left === right) return 0;
   return left < right ? -1 : 1;

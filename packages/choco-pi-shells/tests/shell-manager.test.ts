@@ -44,7 +44,6 @@ interface ManualTimer {
   fired: boolean;
 }
 
-/** Scheduler whose callbacks run only when a test fires them, so escalation order is explicit. */
 class ManualScheduler {
   readonly timers: ManualTimer[] = [];
 
@@ -70,7 +69,6 @@ class ManualScheduler {
     timer.callback();
   }
 
-  /** Runs pending callbacks, including any they schedule, so cleanup cannot wait forever. */
   drain(): void {
     for (let timer = this.nextPending(); timer; timer = this.nextPending()) {
       timer.fired = true;
@@ -85,7 +83,6 @@ class ManualScheduler {
 
 function escapedDescendantCommand(parentKeepsRunning: boolean): string {
   const descendant = "setInterval(() => {}, 1000)";
-  // Install the SIGTERM handler before printing readiness so a stop can never precede it.
   return [
     ...(parentKeepsRunning ? ['process.on("SIGTERM", () => {})'] : []),
     'const { spawn } = require("node:child_process")',
@@ -96,7 +93,6 @@ function escapedDescendantCommand(parentKeepsRunning: boolean): string {
   ].join(";");
 }
 
-/** SIGKILLs a fixture process and waits until it is gone so nothing outlives the run. */
 async function killFixture(pid: number | undefined): Promise<void> {
   if (pid === undefined) return;
   try {
@@ -398,7 +394,6 @@ const KILL_FINALIZE_MS = 2_000;
 const OUTPUT_DRAIN_MS = 3_000;
 
 function manualEscalationManager(scheduler: ManualScheduler): ShellManager {
-  // Distinct delays identify each stage; the manual scheduler never consults real time.
   return new ShellManager({
     shell: process.execPath,
     shellArgs: ["-e"],
@@ -441,7 +436,6 @@ test(
       );
       escapedPid = Number.parseInt(withPid.stdout.data, 10);
 
-      // stop() sends SIGTERM synchronously; the fixture ignores it, so only escalation remains.
       const stopping = manager.stop({
         requesterId: "owner",
         isAdmin: false,
@@ -451,8 +445,6 @@ test(
       scheduler.fire(STOP_GRACE_MS);
       assert.equal(scheduler.pending(KILL_FINALIZE_MS).length, 1);
 
-      // The exit listener is the only writer of signal, and close cannot fire while the
-      // escaped descendant holds the pipes; a recorded signal is the observed exit.
       const exited = await waitFor(
         () => readShell(manager, started.shellId).shell,
         (shell) => shell.signal !== undefined,
@@ -471,8 +463,6 @@ test(
       assert.equal(scheduler.pending(OUTPUT_DRAIN_MS).length, 0);
       assert.equal(processExists(escapedPid), true);
 
-      // Release the inherited pipes, then run every callback, cancelled or not, so any
-      // late close or timer would have to pass the finalized guard.
       await killFixture(escapedPid);
       for (const timer of scheduler.timers) timer.callback();
       const afterLateEvents = readShell(manager, started.shellId);
@@ -516,8 +506,6 @@ test(
         isAdmin: false,
         shellId: started.shellId,
       });
-      // Both stages run in one synchronous turn, so the SIGKILL exit cannot be delivered
-      // before force-finalization removes the child listeners.
       scheduler.fire(STOP_GRACE_MS);
       scheduler.fire(KILL_FINALIZE_MS);
       const stopped = await stopping;
@@ -526,7 +514,6 @@ test(
       assert.equal(stopped.exitCode, undefined);
       assert.equal(endEvents.length, 1);
 
-      // Once the parent is reaped, Node has delivered its exit; the record must not change.
       await waitFor(
         () => processExists(parentPid),
         (exists) => !exists,
@@ -680,7 +667,6 @@ test(
       const started = manager.start({
         ownerId: "owner",
         cwd,
-        // Reap the descendant before exiting so cleanup never targets an orphaned zombie group.
         command: [
           'const { spawn } = require("node:child_process")',
           'process.on("SIGTERM", () => {})',

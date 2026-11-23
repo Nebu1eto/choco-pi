@@ -9,7 +9,6 @@ import {
   antigravityErrorFromRpc,
 } from "../errors.ts";
 
-/** A JSON request body. */
 export type JsonValue =
   | string
   | number
@@ -18,33 +17,27 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-/** The subset of fetch this client uses; tests inject a fake. */
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 export const DEFAULT_V1INTERNAL_TIMEOUT_MS = 15_000;
 
-/** Status codes after which the next endpoint is tried instead of failing. */
 const FALLBACK_STATUSES: ReadonlySet<number> = new Set([404, 500, 502, 503, 504]);
 
 export interface PostV1InternalOptions<T> {
   token: string;
-  /** Validates the decoded 2xx body; a mismatch becomes a malformed_response error. */
   validator: Validator<T>;
   signal?: AbortSignal | undefined;
-  /** Per-endpoint attempt deadline. Defaults to 15 s. */
   timeoutMs?: number | undefined;
   fetch?: FetchLike | undefined;
   endpoints?: readonly string[] | undefined;
   userAgent?: string | undefined;
 }
 
-/** `<endpoint>/v1internal:<method>` plus an optional query string such as `alt=sse`. */
 export function v1InternalUrl(endpoint: string, method: string, query?: string): string {
   const base = `${endpoint.replace(/\/+$/u, "")}/v1internal:${method}`;
   return query ? `${base}?${query}` : base;
 }
 
-/** The only headers agy sends on Cloud Code Assist requests (besides transport headers). */
 export type AntigravityRequestHeaders = {
   Authorization: string;
   "Content-Type": "application/json";
@@ -98,7 +91,6 @@ async function attempt<T>(
   } catch {
     throw antigravityMalformedResponse("response body is not JSON");
   }
-  // A google.rpc error envelope is an error even when the open success schema would accept it.
   const rpc = parseRpcErrorBody(text);
   if (rpc && (rpc.code !== undefined || rpc.status !== undefined)) {
     throw antigravityErrorFromRpc(rpc);
@@ -108,11 +100,6 @@ async function attempt<T>(
   throw antigravityMalformedResponse("response body does not match the expected schema");
 }
 
-/**
- * POST a v1internal method, walking the endpoints in order. A transport failure, timeout or
- * 404/5xx moves to the next endpoint; any other error is thrown at once. Caller aborts reject
- * with the abort reason. No body, token or Authorization value ever enters an error message.
- */
 export async function postV1Internal<T>(
   method: string,
   body: JsonValue,

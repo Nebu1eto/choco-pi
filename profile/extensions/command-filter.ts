@@ -10,38 +10,22 @@ type FilterableRunnerPrototype = typeof ExtensionRunner.prototype & {
   __chocoPiCommandFilterApplied?: boolean;
 };
 
-/**
- * Built-in commands the prompt editor should not offer. Pi dispatches these by
- * name before extension commands, so they stay typeable; they are simply
- * reached through the settings dialog now.
- *
- * `session` is here because `/status` reports everything it did and more:
- * status-commands.ts redirects the built-in handler, and offering both names
- * would advertise two commands for one screen.
- */
 const HIDDEN_BUILTIN_COMMANDS = new Set(["scoped-models", "session"]);
 
 function isExcludedCommand(command: ResolvedCommand): boolean {
   return (
     command.name === "llama" ||
     command.name === "apex-refresh" ||
-    // Codex settings are reachable through /settings, so the raw command is
-    // kept executable but out of the prompt editor.
     command.name === "codex" ||
     command.name.startsWith("synthetic:") ||
     command.name.startsWith("lens-")
   );
 }
 
-/** True for the completion set Pi offers to a bare `/` prefix. */
 function isCommandSuggestion(suggestions: AutocompleteSuggestions): boolean {
   return suggestions.prefix.startsWith("/") && !suggestions.prefix.includes(" ");
 }
 
-/**
- * Drops hidden built-ins from the editor's completions. Built-in commands never
- * reach the extension runner, so the prototype filter above cannot see them.
- */
 function hideBuiltinCommands(current: AutocompleteProvider): AutocompleteProvider {
   const wrapped: AutocompleteProvider = {
     getSuggestions: async (lines, cursorLine, cursorCol, options) => {

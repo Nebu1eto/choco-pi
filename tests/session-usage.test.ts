@@ -130,7 +130,6 @@ test("summarizeMainUsage counts messages and attributes cost per response model"
       message: { role: "toolResult", usage: usage({ input: 7, costTotal: 0.25 }) },
     }),
     simpleEntry("message", { message: { role: "toolResult" } }),
-    // OpenRouter's `auto` resolves to a concrete model; the resolved one is billed.
     assistantEntry(
       "openrouter",
       "auto",
@@ -177,14 +176,12 @@ test("computeCacheWaste bills material full and partial cache collapse", () => {
   const prices = { find: () => ({ cost: { cacheRead: 0.3 } }) };
   const entries: SessionEntry[] = [
     assistantEntry("anthropic", "claude-fable-5", { cacheWrite: 150_000 }),
-    // 60,000 tokens of the reusable prompt were billed at $3/M instead of read at $0.30/M.
     assistantEntry("anthropic", "claude-fable-5", {
       input: 60_000,
       costInput: 0.18,
       cacheRead: 90_000,
       costCacheRead: 0.027,
     }),
-    // The next turn loses the cache entirely.
     assistantEntry("anthropic", "claude-fable-5", {
       input: 150_000,
       costInput: 0.45,
@@ -268,7 +265,6 @@ test("summarizeSubagentUsage totals every agent transcript under one root sessio
 
   const sessionId = "01a02297-90eb-765c-a0e4-bb28e8162b40";
   const base = path.join(root, `choco-pi-subagents-${process.getuid?.() ?? 0}`);
-  // A nested agent files under its own config root but the same root session id.
   const orchestrator = path.join(base, "Users-me-project", sessionId, "tasks");
   const nested = path.join(base, "Users-me-project-wt-1", sessionId, "tasks");
   const otherSession = path.join(base, "Users-me-project", "another-session", "tasks");

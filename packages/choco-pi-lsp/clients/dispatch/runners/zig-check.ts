@@ -4,8 +4,6 @@ import { createAvailabilityChecker } from "./utils/runner-helpers.ts";
 import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
 import { PRIORITY } from "../priorities.ts";
 
-// zig rejects `--version`; the version subcommand is `zig version`. Using the
-// default probe would make this runner skip on every machine.
 const zig = createAvailabilityChecker("zig", ".exe", ["version"]);
 
 function parseZigOutput(raw: string, filePath: string): Diagnostic[] {

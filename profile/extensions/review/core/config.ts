@@ -1,15 +1,4 @@
 import { isBoolean, isObject, isString, type RuntimeValue } from "../../lib/runtime-values.ts";
-/**
- * Loading and validation for `review.json`.
- *
- * Precedence: the project file `<cwd>/.pi/extensions/review.json` wins, then
- * `<agentDir>/extensions/review.json`, then the built-in defaults. The first
- * file that exists is used whole; files are not merged field by field.
- *
- * A missing file is not an error. Malformed JSON or a wrong field type is: it
- * names the offending file and field instead of silently falling back, so a
- * typo in a risk pattern does not quietly disable the setting.
- */
 import { access, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { delimiter, join } from "node:path";
@@ -21,7 +10,6 @@ export { DEFAULT_HIGHLIGHT };
 
 export const REVIEW_CONFIG_FILE = "review.json";
 
-/** Used when neither the config nor `VISUAL`/`EDITOR` names an editor. */
 export const DEFAULT_EDITOR: EditorConfig = {
   command: ["zed", "--wait", "{path}:{line}"],
   mode: "gui",
@@ -29,7 +17,6 @@ export const DEFAULT_EDITOR: EditorConfig = {
 
 export type ReviewConfigEnv = Record<string, string | undefined>;
 
-/** Probes whether an executable named `command` is available. Injected so `resolveEditor` stays pure. */
 export type EditorAvailabilityProbe = (command: string) => Promise<boolean>;
 
 async function executableOnPath(command: string): Promise<boolean> {
@@ -38,25 +25,18 @@ async function executableOnPath(command: string): Promise<boolean> {
     try {
       await access(join(dir, command), constants.X_OK);
       return true;
-    } catch {
-      // Not in this directory; keep searching the rest of PATH.
-    }
+    } catch {}
   }
   return false;
 }
 
-/** Real PATH lookup used when no probe is injected. */
 export const defaultEditorAvailabilityProbe: EditorAvailabilityProbe = (command) =>
   executableOnPath(command);
 
 export type LoadReviewConfigOptions = {
-  /** Project root searched for `.pi/extensions/review.json`. */
   cwd: string;
-  /** Defaults to Pi's agent directory; injected by tests. */
   agentDir?: string;
-  /** Defaults to `process.env`; injected by tests. */
   env?: ReviewConfigEnv;
-  /** Defaults to a real PATH lookup; injected by tests. */
   isEditorAvailable?: EditorAvailabilityProbe;
 };
 
@@ -111,7 +91,6 @@ function editorField(value: RuntimeValue, source: string): EditorConfig | undefi
   return { command, mode: editor.mode };
 }
 
-/** Parse and validate one `review.json`. `source` appears in every error. */
 export function parseReviewConfig(content: string, source: string): ReviewConfig {
   let parsed: unknown;
   try {
@@ -144,26 +123,6 @@ export function parseReviewConfig(content: string, source: string): ReviewConfig
   };
 }
 
-/**
- * Resolve the editor: an explicitly configured command wins; otherwise Zed in
- * `gui` mode when the `zed` executable is actually available; otherwise
- * `VISUAL` or `EDITOR` in `terminal` mode; otherwise the Zed default, even
- * though it is probably not installed.
- *
- * The view must always open: reading a diff does not require an editor, the
- * editor is only needed for the optional `e`/`E` keys, so this never throws.
- * If the last-resort Zed default is not actually runnable, `launchEditor`
- * surfaces that as a spawn failure only when the user presses `e`.
- *
- * `VISUAL` and `EDITOR` are terminal editors by convention, and they carry no
- * token template, so the file path is appended as `{path}`. Their value is
- * split on whitespace only; an editor path containing spaces needs an explicit
- * `editor.command`.
- *
- * Availability has to be probed, which is I/O, but `isEditorAvailable` is
- * injected so this function stays pure and testable and callers control when
- * the probe actually runs.
- */
 export async function resolveEditor(
   configured: EditorConfig | undefined,
   env: ReviewConfigEnv,
@@ -178,7 +137,6 @@ export async function resolveEditor(
   return { command: [...DEFAULT_EDITOR.command], mode: DEFAULT_EDITOR.mode };
 }
 
-/** Apply defaults to a validated config. Pure: the environment and editor probe are injected. */
 export async function resolveReviewConfig(
   config: ReviewConfig,
   env: ReviewConfigEnv,

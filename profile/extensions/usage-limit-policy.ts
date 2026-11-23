@@ -1,10 +1,3 @@
-/**
- * Root-session "On usage limit" controller. Classifies a run that settled on a
- * provider usage limit and, according to the `agentOnUsageLimit` preference,
- * notifies, switches to a fallback model and continues, or waits for the quota
- * window to reset and continues on the same model. Child sessions stay inert;
- * the subagents manager owns their recovery. Goal mode owns its own recovery.
- */
 import { randomUUID } from "node:crypto";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";

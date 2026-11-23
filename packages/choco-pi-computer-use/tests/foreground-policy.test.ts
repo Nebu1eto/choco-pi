@@ -116,7 +116,6 @@ function outlineRoot(): SerializedOutlineNode {
         canFocus: true,
         rect: { x: 20, y: 80, w: 120, h: 32 },
       }),
-      // A focusable custom view with no AX action: only pointer input can click it.
       node({
         ref: "@e4",
         wireRef: "wire-custom-1",
@@ -270,20 +269,14 @@ interface Scenario {
   grant?: string;
   deliveryPolicy?: string;
   configGrant?: string[];
-  /** Observations carry no image, like a semantic (outline-only) observation. */
   outlineOnly?: boolean;
-  /** Host UI for the tool context; omitted means no UI (`hasUI` false). */
   ui?: TestUiOptions;
   promptMode?: string;
   restoreFocus?: string;
-  /** Initial contents of the user-level config file in the temp agent dir. */
   userConfig?: JsonObject;
-  /** Make the user config directory read-only so writing the file fails. */
   readOnlyUserConfig?: boolean;
   restoreFails?: boolean;
-  /** Mutable frontmost app reported by getFrontmost; defaults to the target. */
   frontmost?: { pid: number };
-  /** Windows reported by listRoots; defaults to the single target window. */
   roots?: PlatformRoot[];
   headless?: boolean;
 }
@@ -431,7 +424,6 @@ test("click rejects missing, ambiguous, and partial targets before native delive
 interface Route {
   name: string;
   actions: UiAction[];
-  /** The refused action under test (earlier actions succeed). */
   subject: PlatformActRequest["action"];
   targetKind: "x" | "focus";
 }
@@ -969,7 +961,6 @@ test("keyboard input without ref is refused before delivery when another window 
       for (const actions of [
         [{ action: "keypress", keys: ["option", "right"] }],
         [{ action: "typeText", text: "hello" }],
-        // A button press establishes no focus, so the keypress is still ref-less input.
         [
           { action: "press", ref: "@e3" },
           { action: "keypress", keys: ["Enter"] },
@@ -1049,7 +1040,6 @@ test("keyboard actions reject x/y before delivery", async () => {
 });
 
 const customClick: UiAction[] = [{ action: "click", ref: "@e4" }];
-/** A click on the AXPress button: not pointer-only, so background first even under a grant. */
 const pressClick: UiAction[] = [{ action: "click", ref: "@e3" }];
 
 function noteRegions(details: JsonObject): JsonObject[] {
@@ -1197,11 +1187,8 @@ test("aggregated trace has no top-level delivery policy when steps differ", asyn
   );
 });
 
-// --- Session grants, the grant prompt, and focus restoration ---
-
 const USER_PID = 4141;
 
-/** Background refuses with proof of non-delivery; a granted foreground attempt works and takes focus. */
 const refuseUntilGranted: Responder = (request) => {
   if (request.policy === "background")
     throw new ForegroundRequiredFixtureError("background refused", false);
@@ -1383,7 +1370,6 @@ test("Always allow still grants for the session when saving fails and says so", 
   );
 });
 
-/** Links the user config to a real file in a separate directory and returns that file. */
 async function linkUserConfig(userConfigPath: string, content: JsonObject): Promise<string> {
   const realDir = path.join(path.dirname(path.dirname(userConfigPath)), "real-config");
   const realPath = path.join(realDir, "pi-computer-use.json");
@@ -1443,7 +1429,6 @@ async function assertFailedTempWriteKeepsOriginal(): Promise<void> {
     { ui: { select: selectStub(GRANT_OPTION_ALWAYS, calls) } },
     refuseUntilGranted,
     async (context) => {
-      // The real file stays writable, but its directory cannot take the temp sibling.
       const realPath = await linkUserConfig(context.userConfigPath, original);
       await chmod(path.dirname(realPath), 0o555);
       try {
@@ -1509,7 +1494,6 @@ test("/computer-use grant always persists, overrides an earlier Not now, and app
       assert.equal(granted.status, "ok");
       assert.equal(objectField(granted, "execution").escalationReason, "auto_grant");
 
-      // A new session drops the session choice and grants; the saved file still applies.
       await shutdownComputerUseSession();
       const afterRestart = await actOnce(context, refTypeText);
       assert.equal(objectField(afterRestart, "execution").escalationReason, "auto_grant");
@@ -1593,7 +1577,6 @@ test("focus is not restored when the user switches apps after the last granted s
   await withFixture(
     { grant: BUNDLE_ID, frontmost },
     () => {
-      // The click took focus; afterwards (as during a later wait) the user moves to a third app.
       frontmost.pid = 5151;
       return { outcome: "worked", frontmostBefore: USER_PID, frontmostAfter: root.pid };
     },
@@ -1638,8 +1621,6 @@ test("background-only acts never restore focus", async () => {
   });
 });
 
-// --- Background pid pointer attempt verified by the helper ---
-
 const NO_CHANGE_EVIDENCE: HelperRefusalEvidence = {
   deliveryUsed: "pid_pointer",
   pidPointerAttempted: true,
@@ -1648,7 +1629,6 @@ const NO_CHANGE_EVIDENCE: HelperRefusalEvidence = {
   pixelChange: false,
 };
 
-/** Background posts by pid and observes no change; a granted foreground attempt works. */
 const pidNoChangeUntilGranted: Responder = (request) => {
   if (request.policy === "background")
     throw new ForegroundRequiredFixtureError(
@@ -1717,7 +1697,6 @@ test("pid pointer attempt with no change: refusal carries the evidence and says 
   });
 });
 
-/** A deferred refusal: one background delivery, grant recorded, observe before acting again. */
 function assertDeferred(details: JsonObject, text: string, granted: boolean): void {
   assert.equal(details.status, "foreground_required");
   assert.equal(details.nextStep, "observe_then_retry");
@@ -1867,7 +1846,6 @@ test("a covering grant sends a pointer-only click to foreground with no backgrou
 });
 
 for (const variant of [
-  // AXPress ref: background first even under a grant, as the helper decides.
   { name: "a covering grant", scenario: { grant: BUNDLE_ID }, actions: pressClick },
   { name: "ask + TUI", scenario: { ui: { select: forbiddenSelect() } }, actions: customClick },
   { name: "foreground_prompt always", scenario: { promptMode: "always" }, actions: customClick },
@@ -1911,8 +1889,6 @@ test("a returned (batch-step style) no-change refusal under a covering grant is 
           }
         : { outcome: "worked" },
     async (context) => {
-      // The outline shows AXPress, so the bridge sends background first; the
-      // helper still reports a delivered pid attempt (stale outline).
       const { details, text } = await actOnceWithText(context, pressClick);
       assert.deepEqual(
         context.requests.map((request) => request.policy),
@@ -1923,9 +1899,6 @@ test("a returned (batch-step style) no-change refusal under a covering grant is 
   );
 });
 
-// ---- Batch failures: validate before delivery, report partial delivery ----
-
-/** A helper command failure that is not a refusal or an interruption. */
 class HelperFailureFixtureError extends PlatformCommandError {
   readonly effectPossible?: boolean;
 
@@ -1935,7 +1908,6 @@ class HelperFailureFixtureError extends PlatformCommandError {
   }
 }
 
-/** A transport error carrying a helper interruption, as the macOS client raises them. */
 class InterruptionFixtureError extends PlatformCommandError {
   readonly interruption: HelperInterruption;
 
@@ -1945,7 +1917,6 @@ class InterruptionFixtureError extends PlatformCommandError {
   }
 }
 
-/** Answers "worked" except for the 1-based \`failAt\` call, which throws \`error\`. */
 function failingResponder(
   failAt: number,
   error: () => Error,

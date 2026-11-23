@@ -1,6 +1,5 @@
 import type { Api, AssistantMessage, JsonObject, Model } from "@earendil-works/pi-ai";
 
-/** Deterministic Anthropic SSE fixtures served by the scoped fake transport only. */
 export const FAKE_MODEL: Model<"anthropic-messages"> = {
   id: "harness-fake",
   name: "Harness offline",
@@ -13,11 +12,6 @@ export const FAKE_MODEL: Model<"anthropic-messages"> = {
   contextWindow: 200000,
   maxTokens: 1000,
 };
-/**
- * Mirrors the installed catalog entry `anthropic/claude-opus-5-5` (managed effort:
- * adaptive thinking with `thinking.block_binding`), so strict binding is exercised
- * by the installed adapter. Cost is zeroed; transport is the scoped fake only.
- */
 export const FAKE_ANTHROPIC_MODEL: Model<"anthropic-messages"> = {
   id: "claude-opus-5-5",
   name: "Claude Opus 5.5 (offline mirror)",
@@ -47,21 +41,16 @@ export const FAKE_ANTHROPIC_MODEL: Model<"anthropic-messages"> = {
     supportsStrictTools: true,
   },
 };
-/** OAuth-shaped synthetic key; never a real credential. */
 export const FAKE_ANTHROPIC_KEY = "sk-ant-oat-harness-offline-placeholder";
 export const FAKE_OFFLINE_KEY = "harness-not-a-secret";
-/** The deterministic harness tool every launched session declares. */
 export const STEP_TOOL = "harness_step";
-/** Emitted only by the offline fake summarizer, so it marks the checkpoint message. */
 export const FAKE_CHECKPOINT_MARKER = "HARNESS-TEXT-CHECKPOINT";
 const TEXT_SUMMARY = `## Goal\n${FAKE_CHECKPOINT_MARKER}\n## Constraints & Preferences\n- Offline fixture\n## Progress\n### Done\n- Frozen prefix recorded\n### In Progress\n- None\n### Blocked\n- None\n## Key Decisions\n- Deterministic response\n## Next Steps\nNone; awaiting a new request\n## Critical Context\n- Prefix-only checkpoint`;
 
-/** Tool results never contain their call label, so marker mapping stays unambiguous. */
 export function stepResultText(label: string): string {
   return label.replace(/^HARNESS-/u, "HARNESS-RESULT-");
 }
 
-/** A summary whose checkpoint marker is unique to the summary request index. */
 export function fakeSummary(index: number): string {
   return TEXT_SUMMARY.replace(FAKE_CHECKPOINT_MARKER, `${FAKE_CHECKPOINT_MARKER}-${index}`);
 }
@@ -86,10 +75,8 @@ export function assistantMessage(text: string, model: Model<Api> = FAKE_MODEL): 
   };
 }
 
-/** One server-sent event frame of the Anthropic Messages stream. */
 export type SseFrame = JsonObject & { readonly type: string };
 
-/** Wire encoding at the fake HTTP boundary. */
 export function sseResponse(frames: readonly SseFrame[]): Response {
   const text = frames.map((frame) => `event: ${frame.type}\ndata: ${JSON.stringify(frame)}\n\n`);
   return new Response(text.join(""), { headers: { "content-type": "text/event-stream" } });
@@ -104,14 +91,11 @@ export function errorResponse(status: number, type: string, message: string): Re
 
 export interface FakeTurn {
   readonly index: number;
-  /** Foreground requests below this index answer with one step tool call. */
   readonly toolCycles: number;
   readonly childId?: string;
   readonly summaryText?: string;
-  /** Signed thinking emitted before the text block (thinking-enabled sessions). */
   readonly thinking?: { readonly text: string; readonly signature: string };
   readonly modelId: string;
-  /** `usage.input_tokens` the response reports (default 10). */
   readonly inputTokens?: number;
 }
 

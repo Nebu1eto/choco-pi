@@ -66,10 +66,8 @@ test("steps draw corners between levels and the higher series wins overlapping c
     ],
     { rows: 3, width: 15, gutter: 7, ticks: ["", "", "", ""], dim: id },
   );
-  // Series a: rises at column 1 to the top row, falls at column 3; it owns the cells it crosses.
   assert.match(lines[0] ?? "", /╭─+╮/, "rising and falling corners on the top row");
   assert.match(lines[2] ?? "", /^\s+0 ┤─+╯/, "the baseline run ends at the rise");
-  // Series b lives at the middle level and is drawn in its own style where it is the highest there.
   assert.match(lines[1] ?? "", /═/, "the second series keeps its own paint on its own cells");
   assert.ok(!/═/.test(lines[0] ?? ""), "the lower series never paints over the higher one");
   const samePaint: string[] = [];
@@ -113,8 +111,6 @@ test("every series stays connected: staggered verticals never share a column and
   const c = [30, 30, 0, 0, 40, 40];
   const tag = (mark: string) => (text: string) =>
     text.replace(/[─│╭╮╰╯┼━┃┏┓┗┛╂┿╋]/g, (g) => `${mark}${g}`);
-  // The heavy Total leads: never below a part, it owns every overlap, so a part
-  // coincident with it is drawn as the total. Total cells are passable for all.
   const total = a.map((_, i) => (a[i] ?? 0) + (b[i] ?? 0) + (c[i] ?? 0));
   const lines = lineChart(
     [
@@ -125,10 +121,8 @@ test("every series stays connected: staggered verticals never share a column and
     ],
     { rows: 7, width: 7 + 6 * 4, gutter: 7, ticks: Array(6).fill(""), dim: (t) => t },
   );
-  // Parse back into a per-series grid of occupied cells.
   const rows = lines.slice(0, -1).map((line) => line.slice(7));
   const cells = new Map<string, Array<[number, number]>>();
-  // Cells of other series that a line reads through: connectors crossing it and coincident horizontals.
   const crossings: Array<[number, number]> = [];
   rows.forEach((line, r) => {
     let col = 0;
@@ -136,8 +130,6 @@ test("every series stays connected: staggered verticals never share a column and
       const ch = line[i] ?? "";
       if (/[TABC]/.test(ch)) {
         (cells.get(ch) ?? cells.set(ch, []).get(ch))?.push([r, col]);
-        // Any cell of another series on this row is passable: a connector crossing the
-        // line, or a coincident horizontal where two series sit at the same level.
         crossings.push([r, col]);
         i += 1;
       }
@@ -148,8 +140,6 @@ test("every series stays connected: staggered verticals never share a column and
   const totalCells = cells.get("T") ?? [];
   for (const [series, owned] of cells) {
     const extra: Array<[number, number]> = series === "T" ? [] : [...totalCells];
-    // Walk each row: from an owned cell, foreign cells are passable until the series reappears on that row
-    // or its run ends inside the other line.
     const rowsOwned = new Set(owned.map(([r]) => r));
     for (const r of rowsOwned) {
       const ownedCols = new Set(owned.filter(([r1]) => r1 === r).map(([, c]) => c));
@@ -162,18 +152,14 @@ test("every series stays connected: staggered verticals never share a column and
         for (let c = from + 1; c < to; c += 1) if (!foreign.has(c)) passable = false;
         if (passable) for (let c = from + 1; c < to; c += 1) extra.push([r, c]);
       }
-      // A line that merges into another line's run (coincident values) continues through it.
       const last = cols[cols.length - 1] ?? 0;
       for (let c = last + 1; foreign.has(c); c += 1) extra.push([r, c]);
     }
     passThrough.set(series, extra);
   }
   for (const [series, owned] of cells) {
-    // Every column from the first owned column to the last must have at least one cell of the series,
-    // and consecutive occupied columns must be adjacent in row or joined by a vertical run.
     const byCol = new Map<number, number[]>();
     for (const [r, c] of owned) byCol.set(c, [...(byCol.get(c) ?? []), r]);
-    // Crossing cells of other series count for continuity along a row, not for vertical runs.
     const withCrossings = new Map(byCol);
     for (const [r, c] of passThrough.get(series) ?? [])
       withCrossings.set(c, [...(withCrossings.get(c) ?? []), r]);
@@ -198,7 +184,6 @@ test("every series stays connected: staggered verticals never share a column and
         );
     }
   }
-  // No two series place a vertical glyph in the same column.
   const verticalColumns = new Map<number, Set<string>>();
   rows.forEach((line) => {
     let col = 0;

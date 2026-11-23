@@ -48,9 +48,6 @@ export function parseHelmLintOutput(raw: string, chartRoot: string): Diagnostic[
   for (const line of raw.split(/\r?\n/)) {
     const match = line.trim().match(/^\[(INFO|WARNING|ERROR)\]\s*(.+)$/);
     if (!match) {
-      // helm indents multi-line diagnostic detail under its [LEVEL] header
-      // (#1342 review): fold continuation text into the open diagnostic
-      // instead of silently dropping it.
       const last = diagnostics[diagnostics.length - 1];
       if (last && /^\s+\S/.test(line)) {
         last.message += `

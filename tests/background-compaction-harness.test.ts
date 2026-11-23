@@ -163,7 +163,6 @@ test("lane-journal verdicts: one record per observed outcome, budget, schema, no
   assert.deepEqual(journalReasons([fallback], { events: ["cancel"] }), [
     "observed cancel has no lane record",
   ]);
-  // Observed events correlate by count: two fallbacks need two records.
   assert.deepEqual(journalReasons([fallback], { events: ["fallback", "fallback"] }), [
     "observed fallback outnumbers its lane records: 2 required, 1 recorded",
   ]);
@@ -184,7 +183,6 @@ test("lane-journal verdicts: one record per observed outcome, budget, schema, no
   assert.deepEqual(journalReasons(many, { below: MAX_LANE_RECORDS }), [
     `${MAX_LANE_RECORDS} lane records (expected fewer than ${MAX_LANE_RECORDS})`,
   ]);
-  // Own codes and lane ids are exempt by equality only; the pattern itself is the plain one.
   assert.equal(CREDENTIAL_TEXT.source, "Bearer |sk-|xai-|eyJ");
   const own = laneRecord({
     reason: "task-budget-remaining",
@@ -198,10 +196,8 @@ test("lane-journal verdicts: one record per observed outcome, budget, schema, no
     "sk-ant-oat-1",
     "xai-0123",
     "eyJhbGciOi",
-    // Embedded in a word: the old lookbehind pattern missed these.
     "requestxai-0123456789abcdef0123456789abcdef",
     "tokensk-0123456789",
-    // An owned code plus anything is no longer that code.
     "xai-native-0123",
     "task-budget-remaining sk-0123",
   ]) {
@@ -212,13 +208,11 @@ test("lane-journal verdicts: one record per observed outcome, budget, schema, no
       leaked,
     );
   }
-  // A record with provider text in a free field fails the schema and is still scanned.
   const invalid = { ...laneRecord(), reason: "Bearer secret-token" };
   assert.deepEqual(journalReasons([invalid]), [
     "lane record 0 fails the lane record schema",
     "lane record 0 field reason looks like a credential",
   ]);
-  // A closed field is exempt only for a value its schema admits.
   const offVocabulary = { ...laneRecord(), from: "xai-0123456789" };
   assert.deepEqual(journalReasons([offVocabulary]), [
     "lane record 0 fails the lane record schema",
@@ -309,8 +303,6 @@ test("RPC probe Q5: the switched frame and journal are judged against the frozen
   };
   assert.deepEqual(modelSwitchVerdict(good).failures, []);
   assert.equal(modelSwitchVerdict(good).verdict, "pass");
-  // Review false-pass: B replaced A during the switched prompt and only B's item
-  // reached the frame (B is the latest checkpoint when the status is read).
   const replaced = modelSwitchVerdict({
     ...good,
     frame: frame(itemsB),
@@ -325,7 +317,6 @@ test("RPC probe Q5: the switched frame and journal are judged against the frozen
     "replay fallback record names checkpoint entry-B, not entry-A",
     "checkpoint entry-B replaced entry-A during the switched turn",
   ]);
-  // The exact pre-fix false-pass: A's record is journaled, but only B's item is sent.
   const onlyB = modelSwitchVerdict({
     ...good,
     frame: frame(itemsB),
@@ -336,7 +327,6 @@ test("RPC probe Q5: the switched frame and journal are judged against the frozen
     "first target frame lacks an encrypted item of entry-A",
     "checkpoint entry-B replaced entry-A during the switched turn",
   ]);
-  // B's appearance alone fails even when A's item and record are present.
   const appeared = modelSwitchVerdict({
     ...good,
     frame: frame([...itemsA, ...itemsB]),
@@ -346,7 +336,6 @@ test("RPC probe Q5: the switched frame and journal are judged against the frozen
   assert.deepEqual(appeared.failures, [
     "checkpoint entry-B replaced entry-A during the switched turn",
   ]);
-  // A frozen checkpoint without encrypted items never matches a frame.
   const empty = modelSwitchVerdict({
     ...good,
     frozen: { entryId: "entry-A", digests: [] },
@@ -361,7 +350,6 @@ test("RPC probe auto case: an aborted follow-up compaction needs a cancel record
     wire({ type: "compaction_start", reason: "threshold" }),
     wire({ type: "compaction_end", reason: "threshold" }),
   ];
-  // The AFTER-AUTO follow-up aborts a compaction that also reports an error.
   const followUp = [
     wire({ type: "agent_start" }),
     wire({ type: "compaction_start", reason: "threshold" }),
@@ -410,8 +398,6 @@ test("RPC probe: xAI lane, text switch, approvals, manual-only models and cell b
   assert.equal(logicSwitches("choco-pi", true).compactionXai, "choco-pi");
   const xai = parse("--model", "xai/grok-4.7", "--background", "off");
   assert.equal(xai.text, true);
-  // grok-4.6 is the one approved switch-only target (never prompted); any
-  // other unlisted model is still refused.
   assert.deepEqual(
     SWITCH_ONLY_LIVE_MODELS,
     ["xai/grok-4.6"],
@@ -453,7 +439,6 @@ test("RPC probe: xAI lane, text switch, approvals, manual-only models and cell b
     () => parse("--model", "xai/grok-4.7", "--switch-model", "anthropic/claude-haiku-5-5"),
     /another xai model/u,
   );
-  // The switch-only model is never a live subject.
   assert.throws(() =>
     requireLiveRun("text-boundary-adoption", "xai/grok-4.6", {
       CHOCO_PI_LIVE_E2E: "1",
@@ -471,8 +456,6 @@ test("RPC probe: xAI lane, text switch, approvals, manual-only models and cell b
     assert.ok((LIVE_EXPECTATIONS[key]?.inputTokens ?? 0) > 0, key);
   }
   assert.equal(rpcProbeExpectationKey("anthropic/claude-fable-5-1", "auto"), undefined);
-  // Settings written for an xAI server-side launch: the xAI row and preserve are explicit,
-  // even over a source agent dir that chose allow-loss and choco-pi.
   const source = join(scratchRoot, "probe-source");
   await mkdir(source, { recursive: true });
   try {
@@ -553,7 +536,6 @@ test("live runs are opt-in and the ledger counts real SSE usage, stopping runawa
   const env = { CHOCO_PI_LIVE_E2E: "1" };
   const haiku = "anthropic/claude-haiku-5-5";
   assert.throws(() => requireLiveRun("text-boundary-adoption", haiku, {}));
-  // An id outside APPROVED_LIVE_MODELS (Opus 5.5 is approved for the RPC probe matrix).
   assert.throws(() => requireLiveRun("text-boundary-adoption", "anthropic/claude-opus-4-1", env));
   assert.throws(() => requireLiveRun("host-compaction-arbitration", haiku, env));
   assert.equal(requireLiveRun("text-boundary-adoption", haiku, env).requests, 7);
@@ -588,7 +570,6 @@ test("live runs are opt-in and the ledger counts real SSE usage, stopping runawa
   assert.throws(() => busy.reserve("summary", 1), /provider-unavailable/u);
 });
 
-/** Fake OpenAI-compatible chat-completions stream as Synthetic sends it (include_usage on). */
 function openAiSse(usage: string | null): string {
   const chunks = [
     '{"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"HARNESS"},"finish_reason":null}],"usage":null}',
@@ -609,7 +590,6 @@ test("the ledger counts OpenAI-compatible (Synthetic) usage from SSE and JSON bo
     output: 30,
     stopReason: "stop",
   });
-  // Kimi-style top-level cached_tokens.
   const kimi = usageFromSse(
     openAiSse('{"prompt_tokens":50,"completion_tokens":5,"cached_tokens":40}'),
   );
@@ -652,7 +632,6 @@ test("the ledger counts OpenAI-compatible (Synthetic) usage from SSE and JSON bo
   assert.equal(report.inputTokens, 1200, "cache reads are billed input");
   assert.equal(report.outputTokens, 30);
   assert.equal(report.unreported, 1);
-  // Guard: 1,200 reported + 500 estimated (unreported) + 100,000 > the 100,000 limit.
   assert.throws(() => ledger.reserve("other", 100_000), /runaway-guard/u);
   const limited = new LiveLedger(new Recorder(), {
     requests: 5,
@@ -684,7 +663,6 @@ test("GLM-5.3 is approved with a mirror and the large seed exceeds the pre-fix g
   assert.ok(MANUAL_LARGE_SEED.chars > RENDERED_TOOL_RESULT_CHARS * 5);
   assert.deepEqual(artifactLeaks(first), [], "seeded output is redaction-safe");
   assert.ok(new Set(first.split(/\s+/u)).size > 30, "varied prose, not one repeated token");
-  // Tool output alone already puts the raw chars/4 estimate past the old flat gate.
   const rawTokens = (MANUAL_LARGE_SEED.count * MANUAL_LARGE_SEED.chars) / 4;
   assert.ok(rawTokens > PRE_FIX_MAX_INPUT_TOKENS, `raw ${rawTokens} tokens`);
 });
@@ -714,7 +692,6 @@ function parseMessages(payload: RuntimeValue) {
   return payload;
 }
 
-/** Appends text to the last message after capture, as a late payload rewriter would. */
 function appendLateText(payload: ReturnType<typeof parseMessages>) {
   const last = payload.messages.at(-1);
   const content = last?.["content"];

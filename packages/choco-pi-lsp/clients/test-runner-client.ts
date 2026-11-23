@@ -1,16 +1,3 @@
-/**
- * Test Runner Client for choco-pi-lsp
- *
- * Detects test files and runs them on write/edit to provide
- * immediate test feedback to the AI agent.
- *
- * Supports: vitest, jest, pytest, go, cargo, dotnet, gradle, maven, rspec,
- * minitest, phpunit, mix (extensible to more)
- *
- * Design: File-level targeted testing — only runs tests for the
- * specific file being edited, not the entire suite.
- */
-
 import { isFiniteNumber, isString } from "./runtime-guards.ts";
 import { createSubsystemLogger } from "./extension-log.ts";
 import * as fs from "node:fs";
@@ -21,62 +8,33 @@ import { findGlobalBinary } from "./package-manager.ts";
 import { isMeasuredDuration, toMeasuredDurationMs } from "./run-duration.ts";
 import { safeSpawn, safeSpawnAsync } from "./safe-spawn.ts";
 
-// --- Types ---
-
 export interface TestResult {
-  file: string; // test file that was run
-  sourceFile: string; // the file the agent edited
-  runner: string; // "vitest", "jest", "pytest"
+  file: string;
+  sourceFile: string;
+  runner: string;
   passed: number;
   failed: number;
   skipped: number;
   failures: TestFailure[];
-  /**
-   * #1479: elapsed run time in ms, or `undefined` when this run was not
-   * measured at all.
-   *
-   * The two states are different facts and a reader must be able to tell
-   * them apart. A present `0` is a MEASUREMENT — pytest really does print
-   * `in 0.00s`, and a suite whose `startTime` equals its `endTime` really did
-   * run in under a millisecond. `undefined` means no runner-reported figure
-   * was found: no suite timestamps in the payload, an unrecognised summary
-   * line, a runner error, or nothing run at all.
-   *
-   * Producers must not substitute `0` for "did not measure". That is the
-   * defect #1452 removed from the JSON path and #1479 removes from the log.
-   *
-   * #1480: `run-duration.ts` holds this contract in executable form.
-   * `toMeasuredDurationMs` normalises a freshly parsed figure into it,
-   * `isMeasuredDuration` tests it, and `formatRunDurationMs` renders it, so
-   * a reader does not have to find this comment to get the rule right.
-   */
-  duration?: number; // ms; absent = not measured
-  error?: string; // if runner itself failed
+  duration?: number;
+  error?: string;
 }
 
 export interface TestFailure {
-  name: string; // test name
-  message: string; // failure message
-  location?: string; // "file.ts:42"
-  stack?: string; // abbreviated stack trace
+  name: string;
+  message: string;
+  location?: string;
+  stack?: string;
 }
 
-// Runner detection: config file → runner name
 export interface RunnerConfig {
   configFiles: string[];
   command: string;
-  // Name of the binary in node_modules/.bin (and every package manager's
-  // global bin dir) — defaults to the runner key. Must match the ACTUAL
-  // binary name resolution looks for (e.g. rspec's real binary is "bundle",
-  // not "rspec" — see the rspec entry below), because `stripWrapperArgs`
-  // only drops args()'s leading element(s) when they match this name (see
-  // its doc comment for the exact wrapper-convention rule it applies).
   binName?: string;
   args: (testFile: string, cwd: string) => string[];
   parseJson: boolean;
 }
 
-// Source file → test file patterns (reverse lookup)
 const SOURCE_TO_TEST_PATTERNS: Array<{
   ext: string;
   testExts: string[];
@@ -107,30 +65,15 @@ const SOURCE_TO_TEST_PATTERNS: Array<{
     testExts: ["test_*.py", "*_test.py"],
     dirs: ["tests", "test", ".", "."],
   },
-  { ext: ".go", testExts: ["_test.go"], dirs: [".", ".", ".", "."] }, // Go tests are co-located
-  { ext: ".rs", testExts: [".rs"], dirs: ["tests", "tests", "src", "."] }, // Rust: tests/ or #[test] in src
-  // PHPUnit convention: tests/ mirrors src/ with ClassNameTest.php naming
-  // (e.g. src/Foo/Bar.php -> tests/Foo/BarTest.php). Basename is already the
-  // class name (PHP files are named after their class), so no case transform
-  // is needed — the mirrored-directory search below handles the tests/ root.
+  { ext: ".go", testExts: ["_test.go"], dirs: [".", ".", ".", "."] },
+  { ext: ".rs", testExts: [".rs"], dirs: ["tests", "tests", "src", "."] },
   { ext: ".php", testExts: ["Test.php"], dirs: ["tests"] },
-  // ExUnit convention: test/ mirrors lib/ with a _test.exs suffix on the same
-  // basename (e.g. lib/accounts/user.ex -> test/accounts/user_test.exs).
   { ext: ".ex", testExts: ["_test.exs"], dirs: ["test"] },
 ];
 
-// Bound for walking up parent directories to find a hoisted node_modules
-// (monorepo workspaces) — deep enough for realistic nesting
-// (repo/packages/scope/pkg-name), never unbounded to the filesystem root.
 const MAX_NODE_MODULES_WALK_UP = 5;
 
-// Bound for recursive descent into a Python test directory when the exact
-// same-relative-subdir mirror doesn't match (e.g. tests/unit/ grouping by
-// test type rather than mirroring source layout) — capped depth, never an
-// unbounded walk of the whole tests tree.
 const MAX_PYTEST_RECURSE_DEPTH = 3;
-
-// --- Runner Detection ---
 
 interface RUNNERSValues extends Record<string, RunnerConfig> {}
 export const RUNNERS: RUNNERSValues = {
@@ -152,24 +95,23 @@ export const RUNNERS: RUNNERSValues = {
     configFiles: ["pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini"],
     command: "python",
     args: (testFile, _cwd) => ["-m", "pytest", testFile, "--tb=short", "-q"],
-    parseJson: false, // pytest JSON requires plugin, use text parsing
+    parseJson: false,
   },
   go: {
     configFiles: ["go.mod"],
     command: "go",
     args: (testFile, cwd) => {
-      // Convert file path to package path
       const relPath = path.relative(cwd, testFile);
       const pkgDir = path.dirname(relPath);
       return ["test", `-run`, ".", `./${pkgDir === "." ? "." : pkgDir}`];
     },
-    parseJson: false, // Go test output is text-based
+    parseJson: false,
   },
   cargo: {
     configFiles: ["Cargo.toml"],
     command: "cargo",
     args: (_testFile, _cwd) => ["test", "--no-fail-fast"],
-    parseJson: false, // cargo test output is text-based
+    parseJson: false,
   },
   dotnet: {
     configFiles: ["*.csproj", "*.sln"],
@@ -192,10 +134,6 @@ export const RUNNERS: RUNNERSValues = {
   rspec: {
     configFiles: [".rspec", "spec/spec_helper.rb"],
     command: "bundle",
-    // The real binary is "bundle" (the command runs `bundle exec rspec
-    // <file>`), NOT "rspec" — without this, binName defaulted to the
-    // runner key "rspec" and local/global resolution looked for the wrong
-    // binary name (#1098).
     binName: "bundle",
     args: (testFile, _cwd) => ["exec", "rspec", testFile],
     parseJson: false,
@@ -207,54 +145,29 @@ export const RUNNERS: RUNNERSValues = {
     parseJson: false,
   },
   phpunit: {
-    // phpunit.xml(.dist) is the strong signal; composer.json is checked for
-    // a require-dev dependency on phpunit/phpunit (see the special case in
-    // detectRunner's Priority-1 loop, mirroring the pytest/pyproject.toml
-    // handling above).
     configFiles: ["phpunit.xml", "phpunit.xml.dist", "composer.json"],
     command: "phpunit",
     args: (testFile, _cwd) => [testFile],
-    parseJson: false, // PHPUnit's default CLI output is text-based
+    parseJson: false,
   },
   mix: {
     configFiles: ["mix.exs"],
     command: "mix",
     args: (testFile, _cwd) => ["test", testFile],
-    parseJson: false, // mix test's default output is text-based
+    parseJson: false,
   },
 };
 
-/**
- * Drop the leading arg(s) of a runner's args() that merely NAME the binary
- * being invoked (the npx-wrapper convention: `npx vitest run …` → once
- * `vitest` becomes the resolved command itself, the leading "vitest" arg is
- * redundant). This must NOT strip a real subcommand.
- *
- * Two wrapper shapes are recognized:
- *   - `[binName, ...rest]` (vitest/jest-style: `npx <bin> ...`) → drop 1.
- *   - `["-m", binName, ...rest]` (pytest-style: `python -m <bin> ...`) → drop 2.
- * Anything else (cargo's `["test", "--no-fail-fast"]`, go's
- * `["test", "-run", …]`, rspec's `["exec", "rspec", file]` once binName is
- * "bundle", etc.) is a real subcommand/argv and is returned unchanged (#1098).
- */
 export function stripWrapperArgs(binName: string, args: string[]): string[] {
   if (args[0] === binName) return args.slice(1);
   if (args[0] === "-m" && args[1] === binName) return args.slice(2);
   return args;
 }
 
-// --- Client ---
-
 export class TestRunnerClient {
   private log: (msg: string) => void;
   private availableRunners: Map<string, boolean> = new Map();
   private failedTestsByRunner: Map<string, Set<string>> = new Map();
-  // Best-effort vitest config `test.include`/`test.exclude` globs, scraped as
-  // plain text (never executed) and cached per cwd so the config file is
-  // only read/parsed once, not on every edit. `null` means "no config found
-  // or it couldn't be parsed in the simple shape we look for" — callers
-  // treat that as "no additional signal" and fall back to naming-convention
-  // detection only.
   private vitestTestGlobsCache: Map<string, { include?: string[]; exclude?: string[] } | null> =
     new Map();
 
@@ -262,18 +175,10 @@ export class TestRunnerClient {
     this.log = verbose ? createSubsystemLogger("test-runner") : () => {};
   }
 
-  /**
-   * Check if a test runner is available in the project
-   * Detection order:
-   * 1. Config files (vitest.config.ts, jest.config.js, etc.)
-   * 2. package.json dependencies
-   * 3. node_modules presence
-   */
   detectRunner(
     cwd: string,
     sourceFilePath?: string,
   ): { runner: string; config: RunnerConfig } | null {
-    // Priority 1: Config files
     for (const [name, config] of Object.entries(RUNNERS)) {
       const cacheKey = `${cwd}:${name}:config`;
       if (this.availableRunners.has(cacheKey)) {
@@ -326,7 +231,6 @@ export class TestRunnerClient {
         ...pkg.devDependencies,
       };
 
-      // Check for vitest first (more specific than jest)
       if (allDeps.vitest) {
         this.log("Detected vitest in package.json");
         this.availableRunners.set(`${cwd}:vitest:config`, true);
@@ -344,16 +248,8 @@ export class TestRunnerClient {
       }
     } catch (err) {
       void err;
-      // package.json parse error or file not found
     }
 
-    // Priority 3: Check node_modules for installed packages, including a
-    // hoisted monorepo layout where cwd is a workspace package (e.g.
-    // packages/foo) but the runner only lives in node_modules at the
-    // workspace root (npm/yarn/pnpm workspace hoisting). Walk up a
-    // bounded number of parent directories looking for a node_modules
-    // containing the package — never an unbounded walk to the
-    // filesystem root.
     const hoistedVitest = this.findHoistedNodeModulesPackage(cwd, "vitest");
     if (hoistedVitest) {
       this.log(`Detected vitest in node_modules (${hoistedVitest})`);
@@ -368,7 +264,6 @@ export class TestRunnerClient {
     for (const name of ["go", "cargo", "dotnet", "gradle", "maven"]) {
       const config = RUNNERS[name];
       const found = config.configFiles.some((cf) => {
-        // Handle glob patterns like *.csproj
         if (cf.includes("*")) {
           try {
             const files = fs.readdirSync(cwd);
@@ -384,8 +279,6 @@ export class TestRunnerClient {
         return { runner: name, config };
       }
     }
-
-    // Priority 5: Check if pytest is available globally (Python files only)
 
     const isPythonSource = isString(sourceFilePath) && sourceFilePath.endsWith(".py");
     if (!isPythonSource) return null;
@@ -406,16 +299,6 @@ export class TestRunnerClient {
     return null;
   }
 
-  /**
-   * Walk up from `cwd` through parent directories looking for a
-   * `node_modules/<packageName>` — handles monorepo workspace hoisting
-   * (npm/yarn/pnpm), where a workspace package's own `node_modules` may
-   * not exist at all, with dependencies hoisted to the workspace root
-   * several directories up. Bounded by `MAX_NODE_MODULES_WALK_UP` levels
-   * and stops at the filesystem root — never an unbounded walk.
-   * Returns the `node_modules` directory where the package was found, or
-   * null if not found within the bound.
-   */
   private findHoistedNodeModulesPackage(cwd: string, packageName: string): string | null {
     let dir = path.resolve(cwd);
     for (let level = 0; level <= MAX_NODE_MODULES_WALK_UP; level++) {
@@ -424,23 +307,12 @@ export class TestRunnerClient {
         return nodeModulesPath;
       }
       const parent = path.dirname(dir);
-      if (parent === dir) break; // reached filesystem root
+      if (parent === dir) break;
       dir = parent;
     }
     return null;
   }
 
-  /**
-   * Depth-bounded breadth-first search under `rootDir` for a pytest-style
-   * test file matching `pattern` (exact, e.g. `test_foo.py`) or the
-   * looser `test_*<basename>*.py` convention. Used as a last-resort
-   * fallback when a Python test suite groups tests by kind
-   * (`tests/unit/`, `tests/integration/`) instead of mirroring the
-   * source directory layout, so the exact-mirror candidates in
-   * `findTestFile` don't match. Bounded by `maxDepth` levels below
-   * `rootDir` and skips hidden directories and `__pycache__` — never an
-   * unbounded walk of the whole tests tree.
-   */
   private findPytestMatchRecursive(
     rootDir: string,
     pattern: string,
@@ -482,13 +354,6 @@ export class TestRunnerClient {
     return null;
   }
 
-  /**
-   * Path of `dir` relative to `cwd`, using forward slashes, or null if `dir`
-   * is not inside `cwd` (e.g. resolves to `..` or an absolute path).
-   * Used to compute a mirrored test-tree subdirectory (e.g. `clients` for
-   * `clients/knip-client.ts`, so `tests/clients/knip-client.test.ts` is
-   * checked alongside the flat `tests/knip-client.test.ts` candidate).
-   */
   private relativeSourceDir(sourceFilePath: string, cwd: string): string | null {
     const dir = path.dirname(sourceFilePath);
     const relDir = path.relative(cwd, path.resolve(cwd, dir));
@@ -498,31 +363,11 @@ export class TestRunnerClient {
     return relDir;
   }
 
-  /**
-   * Best-effort, text-only scrape of a vitest config's `test.include` /
-   * `test.exclude` arrays. This deliberately does NOT execute the config
-   * file (that would mean loading arbitrary ESM/TS via Vite's config
-   * loader — too heavy for a per-edit hot path). It just looks for a
-   * simple `include: [ ... ]` / `exclude: [ ... ]` shape with string
-   * literals inside and pulls those out with a regex.
-   *
-   * Returns `null` (never throws) when there's no vitest config file, it
-   * can't be read, or the include/exclude shape isn't a plain array of
-   * string literals (e.g. it's built from a function call, spread, or
-   * template expression) — anything more dynamic than that is out of
-   * scope for this heuristic.
-   *
-   * Cached per `cwd` so the file is only read/parsed once per project,
-   * not on every edit.
-   */
   parseVitestTestGlobs(cwd: string): { include?: string[]; exclude?: string[] } | null {
     if (this.vitestTestGlobsCache.has(cwd)) {
       return this.vitestTestGlobsCache.get(cwd) ?? null;
     }
 
-    // .mts isn't in RUNNERS.vitest.configFiles (that list drives runner
-    // *detection* priority) but is a legal vitest config extension, so it's
-    // included here for the scrape even though detectRunner doesn't check it.
     const candidates = [...RUNNERS.vitest.configFiles, "vitest.config.mts"];
 
     let content: string | null = null;
@@ -550,14 +395,6 @@ export class TestRunnerClient {
     return result;
   }
 
-  /**
-   * Extract `<key>: [ 'a', "b", `c` ]` as a plain string array from raw
-   * config text. Returns undefined if the key isn't present, or if the
-   * array body contains anything besides string literals and commas/
-   * whitespace (a function call, spread, variable reference, etc.) —
-   * that's a sign the value is dynamic and this best-effort scrape can't
-   * safely interpret it.
-   */
   private extractGlobArrayLiteral(content: string, key: string): string[] | undefined {
     const arrayMatch = content.match(new RegExp(`\\b${key}\\s*:\\s*\\[([^\\]]*)\\]`));
     if (!arrayMatch) return undefined;
@@ -569,9 +406,6 @@ export class TestRunnerClient {
     let match: RegExpExecArray | null;
     while ((match = literalPattern.exec(body)) !== null) {
       const between = body.slice(lastEnd, match.index).trim();
-      // Only whitespace/commas may appear between literals — anything
-      // else (identifiers, parens, spreads) means the array isn't a
-      // plain list of string literals.
       if (between !== "" && !/^,$/.test(between)) return undefined;
       literals.push(match[1] ?? match[2] ?? match[3] ?? "");
       lastEnd = literalPattern.lastIndex;
@@ -582,33 +416,6 @@ export class TestRunnerClient {
     return literals.length > 0 ? literals : undefined;
   }
 
-  /**
-   * Whether `sourceFilePath` is itself a test file (as opposed to a source
-   * file whose *related* test file needs to be discovered).
-   *
-   * Primary signal: `detectFileRole` (naming convention: `.test.`/`.spec.`
-   * basenames, `test_`/`spec_` prefixes, `__tests__/`/`tests/`/`spec/`
-   * directories — shared with the rest of the codebase, not a second
-   * parallel detector).
-   *
-   * Secondary signal (vitest only): the project's own `test.include` /
-   * `test.exclude` globs, best-effort scraped by `parseVitestTestGlobs`.
-   * This can correct the naming-convention answer in both directions —
-   * an `exclude` glob can rule out a path that looks like a test by name,
-   * and an `include` glob can catch a project that puts tests somewhere
-   * unconventional. When no config is found or it can't be parsed, this
-   * is a no-op and behavior is unchanged.
-   *
-   * #628: a positive `include` override is only trusted when the glob is a
-   * *narrow* test signal (see `isNarrowTestGlob`) — a bare "any file with
-   * this extension" include (e.g. `src/**\/*.ts`) is common in real vitest
-   * configs and matches ordinary source files, so treating any match as
-   * "this is a test" produced vacuous `0p/0f` self-runs on plain source
-   * files (background-review.ts, index.ts, …). The `exclude` direction is
-   * left as a plain match: over-excluding only causes discovery to run on a
-   * file that's actually a test (falls back to `findTestFile`, not a false
-   * "self" positive), which is the safe failure mode.
-   */
   private isTestFile(sourceFilePath: string, cwd: string, runner: string): boolean {
     let result = detectFileRole(sourceFilePath) === "test";
 
@@ -630,25 +437,6 @@ export class TestRunnerClient {
     return result;
   }
 
-  /**
-   * Whether an `include` glob is a specific enough signal to override a
-   * plain "this is source, not a test" naming-convention verdict (#628).
-   *
-   * Trusted when either:
-   *  - a literal (non-wildcard) path segment before the first wildcard
-   *    names a conventional test location (`tests/`, `test/`, `spec/`,
-   *    `specs/`, `__tests__/`) — the real case this override exists for:
-   *    a project whose test files live in such a directory without a
-   *    `.test.`/`.spec.` name (e.g. `tests/**\/*.ts`).
-   *  - the static suffix after the last wildcard encodes more than the
-   *    bare language extension (e.g. `.check.ts`, `.flow.ts`) — an explicit
-   *    project-specific naming convention, not "any file with this
-   *    extension" (e.g. `**\/*.check.ts`).
-   *
-   * Rejected for a bare extension glob with no test-ish directory (e.g.
-   * `src/**\/*.ts`, `**\/*.ts`) — that shape matches every source file in
-   * the tree and is exactly what produced vacuous self-runs in practice.
-   */
   private isNarrowTestGlob(glob: string): boolean {
     const testDirPattern = /^(tests?|specs?|__tests__)$/i;
     for (const segment of glob.split("/")) {
@@ -662,10 +450,6 @@ export class TestRunnerClient {
     return dotSegments.length >= 2;
   }
 
-  /**
-   * Find test file for a given source file
-   * Returns the test file path if it exists, null otherwise
-   */
   findTestFile(
     sourceFilePath: string,
     cwd: string,
@@ -682,19 +466,12 @@ export class TestRunnerClient {
       : this.detectRunner(cwd, sourceFilePath);
     if (!detected) return null;
 
-    // Relative subdirectory of the source file, used to check a mirrored
-    // test-tree layout (tests/<same-subdir>/<basename><testExt>), on top of
-    // the flat tests/<basename><testExt> layout already checked below.
-    // Null when the source file sits at the project root (dir === ".") or
-    // falls outside cwd — in that case there is no subdir to mirror.
     const relDir = this.relativeSourceDir(sourceFilePath, cwd);
 
-    // Check each potential test file location
     for (let i = 0; i < patterns.testExts.length; i++) {
       const testExt = patterns.testExts[i];
       const testDir = patterns.dirs[i];
 
-      // Handle glob patterns (pytest style: test_*.py)
       if (testExt.includes("*")) {
         const pattern = testExt.replace(/\*/g, basename);
         const searchDirs =
@@ -724,13 +501,6 @@ export class TestRunnerClient {
           }
         }
 
-        // None of the exact-mirror candidates matched. Python test
-        // suites commonly group tests by kind (tests/unit/,
-        // tests/integration/) rather than mirroring the source tree,
-        // so do a depth-bounded recursive search under the test
-        // root as a last resort before falling back to import
-        // scanning — bounded so a large repo can't turn this into
-        // an unbounded directory walk.
         if (testDir !== ".") {
           const recursiveMatch = this.findPytestMatchRecursive(
             path.join(cwd, testDir),
@@ -744,25 +514,18 @@ export class TestRunnerClient {
           }
         }
       } else {
-        // Exact pattern match (jest/vitest style)
         const testFilename = basename + testExt;
         const searchPaths = [
-          path.join(dir, testFilename), // same directory
-          path.join(dir, "__tests__", testFilename), // __tests__ subdirectory
+          path.join(dir, testFilename),
+          path.join(dir, "__tests__", testFilename),
           ...(relDir
             ? [
-                path.join(cwd, "tests", relDir, testFilename), // mirrored tests/<subdir>/
-                path.join(cwd, "__tests__", relDir, testFilename), // mirrored __tests__/<subdir>/
+                path.join(cwd, "tests", relDir, testFilename),
+                path.join(cwd, "__tests__", relDir, testFilename),
               ]
             : []),
-          path.join(cwd, "tests", testFilename), // top-level tests/
-          path.join(cwd, "__tests__", testFilename), // top-level __tests__/
-          // PHP/Elixir-style source-root mirroring (e.g. src/Foo/Bar.php ->
-          // tests/Foo/BarTest.php, lib/accounts/user.ex ->
-          // test/accounts/user_test.exs): strips a conventional source-root
-          // segment and mirrors under this pattern's OWN configured test
-          // root (testDir), not the hardcoded "tests"/"__tests__" above —
-          // ExUnit's root is "test" (singular), which those don't cover.
+          path.join(cwd, "tests", testFilename),
+          path.join(cwd, "__tests__", testFilename),
           ...this.sourceRootMirroredCandidates(dir, cwd, testDir, testFilename),
         ];
 
@@ -775,7 +538,6 @@ export class TestRunnerClient {
       }
     }
 
-    // Basename lookup found nothing — try import scanning as a fallback.
     const importMatch = this.findTestFileByImport(sourceFilePath, cwd);
     if (importMatch) {
       return { testFile: importMatch, runner: detected.runner };
@@ -784,13 +546,6 @@ export class TestRunnerClient {
     return null;
   }
 
-  /**
-   * Select the most useful test target for this edit.
-   *
-   * Strategy:
-   * 1) If there are known failing tests, rerun those first (fast feedback loop).
-   * 2) Otherwise run related tests for the edited file.
-   */
   getTestRunTarget(
     sourceFilePath: string,
     cwd: string,
@@ -806,10 +561,6 @@ export class TestRunnerClient {
     const key = this.failedKey(cwd, detected.runner);
     const failedSet = this.failedTestsByRunner.get(key);
 
-    // If the edited file is itself a test file, there's no "related test"
-    // to discover — running findTestFile on it would strip its own
-    // extension and search for nonsense like foo.test.test.ts. Skip
-    // discovery entirely and treat the file as its own target.
     const selfIsTest = this.isTestFile(sourceFilePath, cwd, detected.runner);
     const related = selfIsTest ? null : this.findTestFile(sourceFilePath, cwd, detected.runner);
 
@@ -865,11 +616,6 @@ export class TestRunnerClient {
     };
   }
 
-  /**
-   * Run tests for a specific file without blocking the event loop, so LSP
-   * messages, other file writes, and all async operations continue while
-   * tests run.
-   */
   async runTestFileAsync(
     testFile: string,
     cwd: string,
@@ -958,17 +704,10 @@ export class TestRunnerClient {
     }
   }
 
-  /**
-   * Check if a source file has corresponding tests (without running them)
-   */
   hasTestFile(sourceFilePath: string, cwd: string): boolean {
     return this.findTestFile(sourceFilePath, cwd) !== null;
   }
 
-  /**
-   * Suggest test files for a list of source files.
-   * Returns deduplicated test file paths with their corresponding source file.
-   */
   suggestTestFiles(
     sourceFiles: string[],
     cwd: string,
@@ -990,8 +729,6 @@ export class TestRunnerClient {
     return results;
   }
 
-  // --- Shared JSON test output parser (Vitest + Jest share the same structure) ---
-
   private parseJsonTestOutput(
     stdout: string,
     stderr: string,
@@ -1002,11 +739,6 @@ export class TestRunnerClient {
     interface JsonResult {
       numPassedTests: number;
       numFailedTests: number;
-      // #1452: neither reporter emits `numSkippedTests`. Measured against
-      // vitest 4.1.10 and jest 30.4.2: a `test.skip` lands in
-      // `numPendingTests`, and `test.todo` in `numTodoTests`. Kept in the
-      // shape (and still read first) because older reporter versions did
-      // emit it and reading a present field costs nothing.
       numSkippedTests?: number;
       numPendingTests?: number;
       numTodoTests?: number;
@@ -1014,9 +746,6 @@ export class TestRunnerClient {
         name: string;
         status: string;
         message?: string;
-        // #1452: per-suite wall clock, epoch ms. Present in BOTH reporters
-        // (vitest emits `endTime` as a float). NOT `perfStats` — see
-        // `jsonRunDurationMs`.
         startTime?: number;
         endTime?: number;
         assertionResults?: Array<{
@@ -1056,14 +785,6 @@ export class TestRunnerClient {
         runner,
         passed: json.numPassedTests || 0,
         failed: json.numFailedTests || 0,
-        // #1452: `numSkippedTests` is absent from both reporters' JSON, so
-        // this read was always 0. `numPendingTests` is where a `test.skip`
-        // actually lands; `numTodoTests` is counted with it because the
-        // text parsers (pytest `N skipped`, mix `N excluded` + `N skipped`)
-        // also fold every not-run test into one `skipped` figure.
-        // `??` would accept a present 0, so a reporter that emits
-        // `numSkippedTests: 0` beside a real `numPendingTests` would
-        // reproduce the very defect this removes. Take the larger reading.
         skipped: Math.max(
           json.numSkippedTests ?? 0,
           (json.numPendingTests || 0) + (json.numTodoTests || 0),
@@ -1083,40 +804,6 @@ export class TestRunnerClient {
     }
   }
 
-  /**
-   * #1452: real run duration in ms from a vitest/jest `--json` payload.
-   *
-   * NOT `testResults[].perfStats`. That field exists on jest's INTERNAL
-   * `TestResult`, but the JSON reporter's `formatTestResults` projects it to
-   * per-suite `startTime`/`endTime` and drops it — measured absent from both
-   * vitest 4.1.10 and jest 30.4.2 output, so reading it would have left this
-   * at 0. The per-suite epoch pair is what both reporters actually emit.
-   *
-   * Wall-clock SPAN across suites (max end - min start), not a sum: suites in
-   * one payload may have run in parallel workers, and summing would report
-   * more elapsed time than the run took. With the single suite choco-pi-lsp
-   * actually produces (one test file per invocation) the two agree.
-   *
-   * The span excludes the runner's own startup: the top-level `startTime` is
-   * ~330ms earlier than the first suite's on this repo. What the per-suite
-   * pair then measures is NOT the same quantity across runners. On vitest it
-   * tracks test time closely (135ms span against 134ms of summed assertions),
-   * but jest stamps a suite's `startTime` before transform and module load,
-   * so the same fields give 5595ms against 128ms of assertions. Both are
-   * honest suite wall clock; neither is comparable to the other, and only the
-   * vitest figure is close to what pytest's `in 0.05s` or ExUnit's
-   * `Finished in 0.05 seconds` report.
-   *
-   * Falls back to the summed per-assertion `duration` when a reporter omits
-   * the suite pair. Never returns a negative or non-finite value — a garbled
-   * payload must degrade to "unmeasured", not to a wrong number.
-   *
-   * #1479: that degradation is now literal. This used to return 0 for a
-   * payload it could not read, which is the figure a sub-millisecond suite
-   * also produces, so the caller could not tell them apart. It returns
-   * `undefined` instead. A readable pair whose span is 0 still returns 0,
-   * because that is a measurement.
-   */
   private jsonRunDurationMs(
     suites:
       | Array<{
@@ -1152,16 +839,10 @@ export class TestRunnerClient {
     const span = maxEnd - minStart;
     if (Number.isFinite(span) && span > 0) return Math.round(span);
     if (assertionTotal > 0) return Math.round(assertionTotal);
-    // Ordering above is unchanged from #1452 on purpose: a positive span
-    // still beats the assertion sum, and the sum still beats a suite pair
-    // that read as zero. Only the terminal case moved. A pair we could
-    // read whose span is 0 is a run that took under a millisecond — report
-    // it. Everything else was never measured.
     if (Number.isFinite(span) && span === 0) return 0;
     return undefined;
   }
 
-  // --- Vitest Parser ---
   private parseVitestOutput(
     stdout: string,
     stderr: string,
@@ -1172,7 +853,6 @@ export class TestRunnerClient {
     return this.parseJsonTestOutput(stdout, stderr, testFile, cwd, runner);
   }
 
-  // --- Jest Parser ---
   private parseJestOutput(
     stdout: string,
     stderr: string,
@@ -1182,8 +862,6 @@ export class TestRunnerClient {
   ): TestResult {
     return this.parseJsonTestOutput(stdout, stderr, testFile, cwd, runner);
   }
-
-  // --- Pytest Parser (text-based, no JSON dependency) ---
 
   private parsePytestOutput(
     stdout: string,
@@ -1196,7 +874,6 @@ export class TestRunnerClient {
     const failures: TestFailure[] = [];
     const output = `${stdout}\n${stderr}`;
 
-    // Parse summary line: "5 passed, 2 failed, 1 skipped in 0.23s"
     const summaryMatch =
       output.match(/(\d+)\s+passed?.*?(\d+)\s+failed.*?in\s+([\d.]+)s/i) ||
       output.match(/(\d+)\s+passed.*?in\s+([\d.]+)s/i);
@@ -1204,12 +881,9 @@ export class TestRunnerClient {
     let passed = 0;
     let failed = 0;
     let skipped = 0;
-    // #1479: undefined until pytest's own `in N.NNs` is read. `in 0.00s` is
-    // a real pytest summary, so 0 has to stay available as a measurement.
     let duration: number | undefined;
 
     if (summaryMatch) {
-      // Extract numbers from various patterns
       const passedMatch = output.match(/(\d+)\s+passed/);
       const failedMatch = output.match(/(\d+)\s+failed/);
       const skippedMatch = output.match(/(\d+)\s+skipped/);
@@ -1218,14 +892,9 @@ export class TestRunnerClient {
       passed = passedMatch ? parseInt(passedMatch[1], 10) : 0;
       failed = failedMatch ? parseInt(failedMatch[1], 10) : 0;
       skipped = skippedMatch ? parseInt(skippedMatch[1], 10) : 0;
-      // Rounded, like `jsonRunDurationMs` and PHPUnit's legacy path:
-      // `in 2.01s` is 2009.9999999999998 in binary floating point, and
-      // the turn-end log prints the number as it stands.
-      // (Routing this through `toMeasuredDurationMs` is #1484, not this.)
       if (durationMatch) duration = Math.round(parseFloat(durationMatch[1]) * 1000);
     }
 
-    // Parse individual failures: "FAILED tests/test_foo.py::test_something - AssertionError: ..."
     const failureRegex = /FAILED\s+(\S+::\S+)\s*-\s*(.+?)(?:\n|$)/g;
     let match;
     while ((match = failureRegex.exec(output)) !== null) {
@@ -1236,10 +905,8 @@ export class TestRunnerClient {
       });
     }
 
-    // Also look for assertion errors with traceback
     const tracebackRegex = /_{10,}\s*\n\s*(\w+Error:\s*.+?)(?:\n|$)/gs;
     while ((match = tracebackRegex.exec(output)) !== null) {
-      // Add to last failure if exists, or create generic
       if (failures.length > 0 && !failures[failures.length - 1].stack) {
         failures[failures.length - 1].stack = match[1].trim().slice(0, 1000);
       }
@@ -1258,8 +925,6 @@ export class TestRunnerClient {
     };
   }
 
-  // --- PHPUnit Parser (text-based, default CLI output) ---
-
   private parsePhpunitOutput(
     stdout: string,
     stderr: string,
@@ -1272,12 +937,10 @@ export class TestRunnerClient {
     let failed = 0;
     let skipped = 0;
 
-    // Success (or success-with-incomplete/skipped): "OK (12 tests, 34 assertions)"
     const okMatch = output.match(/OK\s*\((\d+)\s+tests?,\s*\d+\s+assertions?\)/i);
     if (okMatch) {
       passed = Number.parseInt(okMatch[1], 10);
     } else {
-      // Failure summary: "Tests: 12, Assertions: 34, Errors: 1, Failures: 2, Skipped: 1."
       const testsMatch = output.match(/Tests:\s*(\d+)/i);
       const failuresMatch = output.match(/Failures:\s*(\d+)/i);
       const errorsMatch = output.match(/Errors:\s*(\d+)/i);
@@ -1291,7 +954,6 @@ export class TestRunnerClient {
       passed = Math.max(0, total - failed - skipped);
     }
 
-    // Individual failures: "1) Foo\BarTest::testSomething"
     const failures: TestFailure[] = [];
     const failureRegex = /^\d+\)\s+(\S+)/gm;
     let match;
@@ -1299,26 +961,12 @@ export class TestRunnerClient {
       failures.push({ name: match[1], message: match[1] });
     }
 
-    // #1452: PHPUnit prints its own elapsed time and this parser dropped it,
-    // so every PHPUnit run reported 0ms. Two shapes are accepted because the
-    // summary changed across supported majors:
-    //   PHPUnit >= 9.3   "Time: 00:00.123, Memory: 8.00 MB"   (HH:)MM:SS.mmm
-    //   PHPUnit <= 9.2   "Time: 1.23 seconds, Memory: 10.00MB" | "Time: 123 ms"
-    // NOT VERIFIED AGAINST A LIVE PHPUnit — there is no PHP toolchain on the
-    // box this was written on. Both shapes are covered by unit tests against
-    // literal summary lines taken from the PHPUnit printers, and the parser
-    // leaves duration UNMEASURED when neither matches (#1479 — it used to
-    // leave 0, which the turn-end log printed as a measurement), so an
-    // unrecognised summary degrades to "we do not know" rather than to a
-    // wrong figure.
     let duration: number | undefined;
     const clockMatch = output.match(/^Time:\s*(?:(\d+):)?(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?/im);
     if (clockMatch) {
       const hours = clockMatch[1] ? Number.parseInt(clockMatch[1], 10) : 0;
       const minutes = Number.parseInt(clockMatch[2], 10);
       const seconds = Number.parseInt(clockMatch[3], 10);
-      // ".1" is a tenth, ".12" hundredths — pad rather than parseInt, or
-      // "Time: 00:00.1" would read as 1ms instead of 100ms.
       const millis = clockMatch[4] ? Number.parseInt(clockMatch[4].padEnd(3, "0"), 10) : 0;
       duration = ((hours * 60 + minutes) * 60 + seconds) * 1000 + millis;
     } else {
@@ -1353,8 +1001,6 @@ export class TestRunnerClient {
     };
   }
 
-  // --- mix test Parser (ExUnit, text-based, default CLI output) ---
-
   private parseMixTestOutput(
     stdout: string,
     stderr: string,
@@ -1366,10 +1012,8 @@ export class TestRunnerClient {
     let passed = 0;
     let failed = 0;
     let skipped = 0;
-    // #1479: undefined until ExUnit's own `Finished in N seconds` is read.
     let duration: number | undefined;
 
-    // Summary: "3 tests, 1 failure" (optionally ", N excluded" / ", N skipped")
     const summaryMatch = output.match(
       /(\d+)\s+tests?,\s*(\d+)\s+failures?(?:,\s*(\d+)\s+excluded)?(?:,\s*(\d+)\s+skipped)?/i,
     );
@@ -1384,13 +1028,9 @@ export class TestRunnerClient {
 
     const durationMatch = output.match(/Finished in\s+([\d.]+)\s+seconds?/i);
     if (durationMatch) {
-      // Rounded for the same reason pytest's is: `2.01` seconds is
-      // 2009.9999999999998 ms unrounded, and that reaches the log.
-      // (Routing this through `toMeasuredDurationMs` is #1484.)
       duration = Math.round(Number.parseFloat(durationMatch[1]) * 1000);
     }
 
-    // Individual failures: "  1) test some behavior (MyModuleTest)"
     const failures: TestFailure[] = [];
     const failureRegex = /^\s*\d+\)\s+(.+?)\s*\(([^)]+)\)\s*$/gm;
     let match;
@@ -1415,116 +1055,6 @@ export class TestRunnerClient {
     };
   }
 
-  // --- Generic text parser for non-JSON runners ---
-
-  /**
-   * #1480: elapsed time for the runners `parseGenericRunnerOutput` handles.
-   *
-   * Before this, only go's `ok  pkg  0.25s` was read and every other runner
-   * reported a hardcoded 0. #1479 made the log tell "measured" from
-   * "unmeasured", but this parser is the `default:` arm behind cargo, dotnet,
-   * maven, gradle, rspec, minitest and every unrecognised runner, so all of
-   * them still reported a number nobody measured. Each runner below prints
-   * its elapsed time in the same summary block this parser already regexes
-   * for pass/fail counts.
-   *
-   * Absent, not 0, is the answer when nothing is found — see
-   * `TestResult.duration` and `run-duration.ts`. A probe that returned 0 here
-   * would be claiming a measurement.
-   *
-   * One parser serves all runners, so the probe is selected BY RUNNER NAME.
-   * Running every probe over every runner's output was the original shape of
-   * this code, and it let gradle borrow a number: `BUILD SUCCESSFUL in 3s`
-   * plus a preceding `... ok` line satisfied go's `ok <pkg> <n>s` probe, so
-   * the whole-build wall clock got reported as test time — the exact wrong
-   * number this function refuses to print. Gating on the runner makes that
-   * structurally impossible rather than merely unlikely, and it matters most
-   * for the `default:` arm of the switch, which is where an unrecognised or
-   * custom runner's arbitrary output lands.
-   *
-   * Within a runner the patterns are still anchored where an anchor helps,
-   * for the same reason #1452's PHPUnit `Time:` pattern is anchored: an
-   * unanchored /m match takes the FIRST hit over stdout+stderr, and a failure
-   * diff quoting "Finished in ..." would beat the real summary. Note what the
-   * `^` in `^Finished in` does and does not buy. It rejects a decoy that is
-   * INDENTED, which is what a quoted expectation or an assertion diff is; it
-   * does NOT rank two column-0 matches, so an unindented decoy printed by the
-   * suite itself would still win. It is a cheap filter for the common shape,
-   * not a proof of uniqueness. And it is not an anchor to the counts line for
-   * rspec or minitest: both print their elapsed time on a `Finished in ...`
-   * line and their counts (`3 examples, 0 failures`, `1 runs, 1 assertions,
-   * ...`) on a different line.
-   *
-   * KNOWN LIMIT — first summary only. cargo across multiple crates, `dotnet
-   * test` across multiple assemblies, and `go test ./...` across multiple
-   * packages each print one summary per unit, and these probes take the
-   * first. A multi-unit run therefore UNDER-REPORTS its duration. That is
-   * left as-is deliberately: the count parsers below have the same first-match
-   * shape for those runners, so duration and counts describe the same scope.
-   * Fixing one without the other would trade an under-report for an
-   * inconsistency. Pinned by test so it stays a known limit, not an accident.
-   *
-   * Formats and how each was verified:
-   *
-   * - go — `ok  example.com/pkg  0.253s`. Pre-existing pattern, unchanged
-   *   apart from the shared finite/non-negative guard.
-   *
-   * - cargo — `test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured;
-   *   0 filtered out; finished in 0.253s`. NOT VERIFIED AGAINST A LIVE CARGO
-   *   RUN — this box has no MSVC linker, so `cargo test` cannot link. Format
-   *   read out of the libtest printer shipped with the local rustc 1.94.1:
-   *   `library/test/src/formatters/pretty.rs` builds `"; finished in
-   *   {exec_time}"` and `library/test/src/time.rs` renders `TestSuiteExecTime`
-   *   as `{:.2}s`. Older rustc omits the suffix entirely; that degrades to
-   *   unmeasured.
-   *
-   * - dotnet/vstest — `Failed: 1, Passed: 2, Skipped: 0, Total: 3, Duration:
-   *   1 m 30 s - t.dll (net8.0)`. NOT VERIFIED AGAINST A LIVE `dotnet test` —
-   *   NuGet restore has no network here. Format read out of the
-   *   vstest.console.dll shipped with the local .NET SDK 8.0.423, which holds
-   *   the literal `{0} - Failed: {1}, Passed: {2}, Skipped: {3}, Total: {4},
-   *   Duration: {5}` next to the unit literals `" h"`, `" m"`, `" s"`,
-   *   `" ms"`, `"< 1 ms"`. The duration is a space-joined token list, so it
-   *   is summed rather than read as one number.
-   *
-   * - maven/surefire — `Tests run: 4, Failures: 0, Errors: 0, Skipped: 0,
-   *   Time elapsed: 0.05 s -- in com.example.AppTest`. NOT VERIFIED AGAINST A
-   *   LIVE MAVEN — no mvn on this box. Summed across the per-class lines,
-   *   because surefire prints `Time elapsed` per test class and its final
-   *   `Results:` total carries no time. `[INFO] Total time: 3.4 s` is
-   *   deliberately NOT used: that is whole-build wall clock including compile,
-   *   which would report a wrong number rather than none. Surefire 2.x wrote
-   *   `sec` where 3.x writes `s`; both are accepted.
-   *
-   *   EXPECT THIS TO BE ABSENT IN PRACTICE. choco-pi-lsp invokes `mvn test -q`
-   *   (see RUNNERS.maven above), and surefire logs its per-class `Tests run:
-   *   ..., Time elapsed: ...` lines at INFO, which `-q` suppresses. Only the
-   *   ERROR-level lines of a FAILING class survive, so a green maven run
-   *   typically reports unmeasured and a red one reports the failing classes'
-   *   time alone. REASONED, NOT RUN — there is no mvn on this box to confirm
-   *   it. Left in rather than dropped: it costs nothing, it is correct when
-   *   the output does carry the lines (a repo that sets `-Dsurefire.useFile`
-   *   or drops `-q` via `.mvn/maven.config`), and `unmeasured` is an honest
-   *   report of the quiet case.
-   *
-   * - rspec — `Finished in 0.32394 seconds (files took 0.49427 seconds to
-   *   load)`. VERIFIED against a live rspec-core 3.13.6 run on ruby 3.4.10.
-   *   The minutes form (`Finished in 2 minutes 15.14 seconds`) comes from
-   *   `RSpec::Core::Formatters::Helpers.format_duration` in the same
-   *   installed gem; rspec never prints hours. Load time trails the run time
-   *   on the same line and must not be read instead of it.
-   *
-   * - minitest — `Finished in 0.254594s, 7.8557 runs/s, 7.8557 assertions/s.`
-   *   VERIFIED against a live minitest 5.25.4 run on ruby 3.4.10. The format
-   *   string is `"Finished in %.6fs, ..."` in minitest.rb, always seconds.
-   *
-   * - gradle — deliberately left unmeasured, and now UNREACHABLE by any other
-   *   runner's probe rather than merely unmatched by it. Gradle's console
-   *   summary (`4 tests completed, 1 failed`) carries no elapsed time, and
-   *   `BUILD SUCCESSFUL in 3s` is whole-build wall clock including compile
-   *   and dependency resolution. Reporting that as test time would be a wrong
-   *   number; #1479 makes the absence legible in the log instead.
-   */
   private parseGenericRunnerDuration(output: string, runner: string): number | undefined {
     switch (runner) {
       case "go":
@@ -1540,49 +1070,30 @@ export class TestRunnerClient {
       case "minitest":
         return this.parseMinitestDuration(output);
       default:
-        // gradle and anything unrecognised: unmeasured, never
-        // zero-as-measurement and never another runner's number.
         return undefined;
     }
   }
 
-  /** go: `ok  	example.com/pkg	0.253s`. First package summary only. */
   private parseGoDuration(output: string): number | undefined {
     const goSummary = output.match(/ok\s+\S+\s+([\d.]+)s/m);
     if (!goSummary) return undefined;
     return toMeasuredDurationMs(Number.parseFloat(goSummary[1]) * 1000);
   }
 
-  /** cargo: `...; 0 filtered out; finished in 0.25s`. First crate only. */
   private parseCargoDuration(output: string): number | undefined {
     const cargoTime = output.match(/^test result:.*?;\s*finished in\s+([\d.]+)\s*s\b/im);
     if (!cargoTime) return undefined;
     return toMeasuredDurationMs(Number.parseFloat(cargoTime[1]) * 1000);
   }
 
-  /**
-   * dotnet/vstest: `..., Total: 3, Duration: 1 m 30 s - t.dll (net8.0)`.
-   *
-   * Anchored to the counts line, and the tail stops at the ` - <dll>`
-   * separator: without that stop an assembly name is scanned for unit tokens,
-   * and a name like `Timeouts.30s.Tests.dll` adds 30 seconds of nothing.
-   * First assembly only.
-   */
   private parseDotnetDuration(output: string): number | undefined {
     const dotnetTime = output.match(
       /Failed:\s*\d+,\s*Passed:\s*\d+,\s*Skipped:\s*\d+,\s*Total:\s*\d+,\s*Duration:\s*([^\r\n-]+)/i,
     );
     if (!dotnetTime) return undefined;
-    // `< 1 ms` is vstest's "too fast to name a number", and under the
-    // optional-duration contract 0 is exactly the right thing to say: the
-    // run WAS measured and it rounds to 0 ms. The token scan below would
-    // reach the same 0 by finding no tokens, but only by accident, and the
-    // accident is indistinguishable from an unparseable tail — so the case
-    // is spelled out.
     if (/^\s*</.test(dotnetTime[1])) return 0;
     let total = 0;
     let tokens = 0;
-    // "ms" before "m", or "250 ms" scores as 250 minutes.
 
     interface UnitsValues extends Record<string, number> {}
     const units: UnitsValues = {
@@ -1595,19 +1106,10 @@ export class TestRunnerClient {
       total += Number.parseFloat(token[1]) * units[token[2].toLowerCase()];
       tokens++;
     }
-    // A tail we matched but could not read a single token out of is not a
-    // zero-length run, it is an unrecognised format.
     if (tokens === 0) return undefined;
     return toMeasuredDurationMs(total);
   }
 
-  /**
-   * maven/surefire: summed across per-class `Time elapsed` lines.
-   *
-   * The guard is "did any line match", NOT "is the sum positive". Surefire
-   * prints `Time elapsed: 0.00 s` for a trivial test class, and that is a
-   * measurement of zero, not a failure to measure.
-   */
   private parseMavenDuration(output: string): number | undefined {
     let surefireTotal = 0;
     let matched = false;
@@ -1623,7 +1125,6 @@ export class TestRunnerClient {
     return toMeasuredDurationMs(surefireTotal * 1000);
   }
 
-  /** rspec: `Finished in 2 minutes 15.14 seconds (files took 0.5 ...)`. */
   private parseRspecDuration(output: string): number | undefined {
     const rspecTime = output.match(
       /^Finished in\s+(?:([\d.]+)\s+minutes?\s+)?([\d.]+)\s+seconds?/im,
@@ -1633,13 +1134,6 @@ export class TestRunnerClient {
     return toMeasuredDurationMs(minutes * 60_000 + Number.parseFloat(rspecTime[2]) * 1000);
   }
 
-  /**
-   * minitest: `Finished in 0.254594s, 7.8557 runs/s, ...`.
-   *
-   * The trailing `,` is load-bearing, not decoration: it is what separates
-   * minitest's own line from a bare `Finished in 99s` the suite under test
-   * printed at column 0, which the `^` alone does not rank.
-   */
   private parseMinitestDuration(output: string): number | undefined {
     const minitestTime = output.match(/^Finished in\s+([\d.]+)s\s*,/im);
     if (!minitestTime) return undefined;
@@ -1657,20 +1151,9 @@ export class TestRunnerClient {
     const lower = output.toLowerCase();
 
     let passed = 0;
-    // #1487: NOT `exitCode === 0 ? 0 : 1`. Pre-seeding `failed` to 1 on a
-    // non-zero exit made the runner-error branch below unreachable — it
-    // requires `failed === 0`, which a spawn/config/load failure (no
-    // counts to parse) could never reach once this had already claimed
-    // the slot. `matched` tracks whether a count parser actually found
-    // real counts; the exit-code-distrust fallback further down uses it
-    // to tell "a runner that never ran" from "a runner whose summary
-    // legitimately parsed to zero failures".
     let failed = 0;
     let skipped = 0;
     let matched = false;
-    // #1480: `number | undefined`, and sourced per runner. This used to be
-    // `let duration = 0` with only go's probe able to move it, so every
-    // other runner reported a zero it never measured.
     const duration = this.parseGenericRunnerDuration(output, runner);
 
     const cargoSummary = output.match(
@@ -1691,24 +1174,6 @@ export class TestRunnerClient {
       matched = true;
     }
 
-    // #1480 (adjacent, duration-independent): surefire prints one
-    // `Tests run:` line PER TEST CLASS (those carry `Time elapsed:`) and
-    // then a per-MODULE aggregate under `Results:` (which does not). Taking
-    // the FIRST match scored a run by its first class alone — a two-class
-    // run with a failure in the second class reported 0 failures.
-    //
-    // Taking the LAST match is just as wrong, in a worse direction. A
-    // multi-module reactor run prints one `Results:` aggregate per module,
-    // and the last is the last module: a `--fail-at-end` build whose first
-    // module had 3 failures and whose second module was green would report
-    // 0 failures, turning a red build into `PASS` in the turn-end log. That
-    // is reachable without choco-pi-lsp passing the flag, because maven also
-    // reads `.mvn/maven.config` and `MAVEN_ARGS`.
-    //
-    // So: SUM the aggregates. That makes counts reactor-wide, the same
-    // scope `parseMavenDuration` sums its per-class times over. When no
-    // aggregate is present (output truncated, or `Results:` suppressed) the
-    // per-class lines sum to the same totals, so they are the fallback.
     const mavenLines = [
       ...output.matchAll(
         /^.*?Tests run:\s*(\d+),\s*Failures:\s*(\d+),\s*Errors:\s*(\d+),\s*Skipped:\s*(\d+).*$/gim,
@@ -1759,37 +1224,7 @@ export class TestRunnerClient {
       matched = true;
     }
 
-    // #1487/#1524/#1524-r3: `--- FAIL: TestName` is extracted first and
-    // separately from the other two name patterns, because it is the
-    // ONLY one of the three that is unambiguous evidence a real go test
-    // ran — see the `runnerError` comment below for why the other two
-    // may no longer veto on their own. go otherwise has no count parser
-    // at all (only a duration probe), so without this go's `matched`
-    // stayed false even on a real failure.
-    //
-    // #1524-r3: go ALSO gets a real count parser here, not just a name
-    // extractor. A panic inside `TestMain`/package `init` (exit 2) never
-    // prints a `--- FAIL:` line — there is no test to name, the process
-    // died before any test ran — so `goFailNames` alone left `matched`
-    // false and such a panic hit the same runner-error branch as a
-    // spawn failure, even though `go test` DID run and DID fail. `FAIL
-    // \t<pkg>` is go's own per-package verdict line and is printed for
-    // exactly this case; `ok  <pkg>  <n>s` is its pass counterpart.
-    // Package-line counts, like the go duration probe above, take the
-    // FIRST package summary only — the same known limit already
-    // documented on `parseGenericRunnerDuration`.
     const goFailNames = [...output.matchAll(/--- FAIL:[^\S\n]+([^\s(]+)/g)];
-    // #1524-r4: only COUNT unparented failures. go prints a `--- FAIL:`
-    // line for every level of a failing subtest tree — `TestA` AND
-    // `TestA/sub` each get their own line for what is really one
-    // underlying failure — so counting every line inflated `failed`
-    // (two lines here read as two failures for one broken test). A name
-    // containing "/" whose prefix up to that "/" is itself in the list
-    // is a subtest of an already-counted parent; only names that are
-    // NOT such a subtest count. `goFailNames` itself (all lines) is
-    // still what decides `matched`/the runner-error veto below and
-    // what's listed in `failures` — subtest names are still useful
-    // detail there, just not double-counted.
     const goFailNameSet = new Set(goFailNames.map((m) => m[1].trim()));
     const goTopLevelFailCount = goFailNames.filter((m) => {
       const name = m[1].trim();
@@ -1797,44 +1232,18 @@ export class TestRunnerClient {
       return slash === -1 || !goFailNameSet.has(name.slice(0, slash));
     }).length;
     if (runner === "go") {
-      // #1524-r4: `(?![^\n]*\[(?:build|setup) failed\])` rejects go's
-      // INFRASTRUCTURE verdict lines — `FAIL <pkg> [build failed]` (a
-      // compile error) and `FAIL <pkg> [setup failed]` (no packages to
-      // test) — which matched the same shape as a real `FAIL <pkg>
-      // <duration>` test verdict line. Neither ran a single test; both
-      // were rendering as `✗ 1/1 failed ✗ go failure` instead of the
-      // runner error they are.
       const goFailPackage = /^FAIL(?![^\n]*\[(?:build|setup) failed\])[^\S\n]+\S+/m.test(output);
       const goOkPackages = [...output.matchAll(/^ok[^\S\n]+\S+[^\S\n]+[\d.]+s/gm)];
       if (goFailNames.length > 0 || goFailPackage) {
         failed = Math.max(failed, goTopLevelFailCount || 1);
         matched = true;
       }
-      // #1524-r4: unconditional, not `else if`. A multi-package run
-      // can have BOTH a real failure and packages that passed clean —
-      // `ok a` / `--- FAIL: TestB` / `ok c` is 2 passed AND 1 failed,
-      // not "1 failed, 0 passed" with the green packages silently
-      // dropped because the fail branch above already ran.
       if (goOkPackages.length > 0) {
         passed = Math.max(passed, goOkPackages.length);
         matched = true;
       }
     }
 
-    // #1524-r3: anchored to line START (`^`), and `[^\S\n]` (horizontal
-    // whitespace only) in place of `\s` between the keyword and the
-    // name. The prior `\bFAILED\s+([^\n]+)` and `Failure:\s+([^\n]+)`
-    // let their OWN `\s+` gap cross the newline: a bare `FAILED` at the
-    // end of a line has nothing after it on that line, so `\s+` ate the
-    // newline itself and `([^\n]+)` captured the FIRST TOKEN OF THE
-    // NEXT LINE as the "test name" — proven on a gradle compile failure
-    // (`> Task :compileJava FAILED` followed by
-    // `FAILURE: Build failed with an exception.`, which then rendered
-    // as the invented failure name) and the newline-spanning shape in
-    // general (`FAILED\n\nsome trailing note` → name "some trailing
-    // note"). Requiring `(\S.*)$` on the SAME line makes a keyword with
-    // nothing following it on that line simply not match, rather than
-    // reaching across for content that was never the name.
     const failures: TestFailure[] = [];
     for (const m of goFailNames.slice(0, 5)) {
       failures.push({ name: m[1].trim(), message: m[1].trim() });
@@ -1848,56 +1257,15 @@ export class TestRunnerClient {
       failures.push({ name: m[1].trim(), message: m[1].trim() });
     }
 
-    // #1487: gated on `!matched`, not on `failed === 0`. A non-zero exit
-    // with NO count parser match — a spawn/config/load failure, nothing
-    // ran — is infrastructure, not a test verdict: report it as a runner
-    // error. A non-zero exit a count parser DID match (even to a
-    // legitimate `failed === 0`, e.g. a green last module of a red
-    // reactor) is a real run that produced real counts, so it is never a
-    // runner error, and the exit-code-distrust guard below still forces
-    // at least one failure so it can't render as PASS.
-    //
-    // #1524-r3: the veto is `goFailNames.length === 0`, NOT
-    // `failures.length === 0`. Only `--- FAIL:` is a marker a test
-    // runner emits SPECIFICALLY for a failed test; `FAILED`/`Failure:`
-    // are generic words a build tool prints for reasons that have
-    // nothing to do with a test — a gradle task failing to compile, a
-    // maven goal failing before surefire ever runs, an rspec file that
-    // never loaded. Letting those two veto the runner-error branch on
-    // their own reintroduced #1487's exact symptom for the commonest
-    // gradle/maven/rspec failure shapes (proven: `[ERROR] Failed to
-    // execute goal ... FAILED` and rspec's `Failure: cannot load such
-    // file` both rendered as a fabricated test failure instead of the
-    // runner error they actually are). They still label a name onto
-    // `failures` above when `matched` or `goFailNames` already settled
-    // the question some other way, but they no longer settle it alone.
     const runnerError =
       exitCode !== 0 && !matched && goFailNames.length === 0 && lower.includes("error")
         ? `Runner ${runner} exited with ${exitCode}`
         : undefined;
 
-    // #1524-r4 (tidy): a runner-error result reports through
-    // `formatResult`'s runner-error branch, not the failed-tests
-    // branch, so any name `otherNames` picked up before this was
-    // decided (e.g. a same-line `Failure: cannot load such file`)
-    // would sit in `failures` unused but visible to anything reading
-    // the raw `TestResult` — an error result with a non-empty
-    // `failures` list is a self-contradiction. Clear it here so the
-    // result is one or the other, never both.
     if (runnerError) {
       failures.length = 0;
     }
 
-    // #1480 (adjacent): a non-zero exit is the runner saying the run
-    // failed. Every count parser above can legitimately arrive at
-    // `failed === 0` — a summary that only covers part of the run, a green
-    // module of a red reactor build, a failure outside any test — and the
-    // turn-end log would then print PASS over a build the runner rejected.
-    // Trust the exit code: no parse of the text may talk it out of at least
-    // one failure. Skipped when `runnerError` is set — that case already
-    // reports through `formatResult`'s runner-error branch, which requires
-    // `passed === 0 && failed === 0` to stay reachable, and forcing
-    // `failed` to 1 here would make it unreachable again (#1487).
     if (exitCode !== 0 && failed === 0 && !runnerError) {
       failed = 1;
     }
@@ -1935,34 +1303,16 @@ export class TestRunnerClient {
     };
   }
 
-  // --- Formatting ---
-
-  /**
-   * Format test result for LLM consumption
-   */
   formatResult(result: TestResult): string {
     if (result.error && result.passed === 0 && result.failed === 0) {
-      // Runner error, not test failure
       return `[Tests] ⚠ Could not run tests: ${result.error}`;
     }
 
     const total = result.passed + result.failed + result.skipped;
     if (total === 0) {
-      return ""; // No tests to report
+      return "";
     }
 
-    // #1479 deliberately does NOT change this surface. The agent-facing
-    // string already suppressed the suffix for a 0, so an unmeasured run
-    // and a zero-length one look the same here and always did. The issue
-    // scopes the unmeasured/zero distinction to the turn-end log line;
-    // widening it to the LLM prompt is a separate call about prompt noise.
-    // #1480: the "is this a measurement at all" half of the test comes from
-    // `run-duration.ts` so this surface cannot drift from the log's answer.
-    // The `> 0` half is the scope decision above and stays local to it — it
-    // is what suppresses the suffix for a measured zero, which is a choice
-    // about prompt noise rather than about the duration contract. Routing
-    // the first half through the shared predicate also stops a non-finite
-    // duration rendering as ` (Infinitys)`.
     const durationStr =
       isMeasuredDuration(result.duration) && result.duration > 0
         ? ` (${(result.duration / 1000).toFixed(2)}s)`
@@ -1972,12 +1322,11 @@ export class TestRunnerClient {
       return `[Tests] ✓ ${result.passed}/${total} passed${durationStr} — ${result.runner}`;
     }
 
-    // Has failures
     let output = `[Tests] ✗ ${result.failed}/${total} failed, ${result.passed} passed${durationStr} — ${result.runner}\n`;
 
     for (const failure of result.failures.slice(0, 5)) {
       output += `  ✗ ${failure.name}\n`;
-      const msg = failure.message.split("\n")[0].slice(0, 200); // First line, truncated
+      const msg = failure.message.split("\n")[0].slice(0, 200);
       output += `    ${msg}\n`;
       if (failure.location) {
         output += `    at ${failure.location}\n`;
@@ -1993,27 +1342,6 @@ export class TestRunnerClient {
     return output.trimEnd();
   }
 
-  // --- Helpers ---
-
-  /**
-   * Additional mirrored-directory candidate for source trees whose test
-   * tree mirrors the source tree under a *different*, conventional
-   * source-root segment rather than the source file's full relative
-   * directory — e.g. PHPUnit's `src/Foo/Bar.php` -> `tests/Foo/BarTest.php`
-   * (strips `src`) or ExUnit's `lib/accounts/user.ex` ->
-   * `test/accounts/user_test.exs` (strips `lib`).
-   *
-   * Unlike the `relDir`-based candidates above (which mirror under the
-   * hardcoded "tests"/"__tests__" roots), this uses `testDir` — the
-   * pattern's own configured test root from `SOURCE_TO_TEST_PATTERNS`
-   * (e.g. "tests" for PHP, "test" for Elixir) — since ExUnit's root is
-   * singular and wouldn't otherwise be checked.
-   *
-   * Returns an empty array when the source directory doesn't start with a
-   * known source-root segment (src/lib/app) followed by at least one more
-   * path segment — i.e. this is a no-op for languages/layouts that don't
-   * use this convention.
-   */
   private sourceRootMirroredCandidates(
     dir: string,
     cwd: string,
@@ -2029,16 +1357,6 @@ export class TestRunnerClient {
     return [];
   }
 
-  /**
-   * Fallback discovery: scan known test directories for a file that imports
-   * the source module. Catches cases where the test file name doesn't match
-   * the source basename (e.g. cline.test.ts testing cline-auth.ts).
-   *
-   * Checks for the basename appearing in a quoted import/require path:
-   *   from "../providers/cline/cline-auth"   → /cline-auth"  ✓
-   *   from "./cline-auth.js"                 → /cline-auth.  ✓
-   *   import("cline-auth")                   → "cline-auth"  ✓
-   */
   private findTestFileByImport(sourceFilePath: string, cwd: string): string | null {
     const ext = path.extname(sourceFilePath);
     const basename = path.basename(sourceFilePath, ext);
@@ -2081,26 +1399,12 @@ export class TestRunnerClient {
     return null;
   }
 
-  /**
-   * Resolve the executable and args for a runner, preferring a local
-   * node_modules/.bin binary over npx to avoid the ~150ms npx startup cost.
-   *
-   * When a resolved binary becomes the command itself, `stripWrapperArgs`
-   * drops ONLY the leading arg(s) that named the wrapped binary — never a
-   * real subcommand (#1098: `cargo test --no-fail-fast` unconditionally lost
-   * `test` here because the old code assumed every runner's args() started
-   * with an npx-style runner-name arg, which only holds for wrapper-style
-   * runners like vitest/jest/pytest).
-   */
   private async resolveExec(
     runner: string,
     config: RunnerConfig,
     testFile: string,
     cwd: string,
   ): Promise<{ command: string; args: string[] }> {
-    // PHPUnit has no npx-style automatic local-binary resolution — Composer's
-    // standard local-install location is vendor/bin/phpunit, so check that
-    // explicitly before falling back to a global `phpunit` on PATH.
     if (runner === "phpunit") {
       const suffix = process.platform === "win32" ? ".bat" : "";
       const vendorBin = path.join(cwd, "vendor", "bin", `phpunit${suffix}`);
@@ -2114,14 +1418,10 @@ export class TestRunnerClient {
     const suffix = process.platform === "win32" ? ".cmd" : "";
     const localBin = path.join(cwd, "node_modules", ".bin", binName + suffix);
 
-    // A resolved binary (local, or any manager's global bin) becomes the command
-    // itself, so the leading wrapper-name arg(s) that named it (e.g. "vitest",
-    // or "-m pytest") are stripped from args() — see stripWrapperArgs.
     if (fs.existsSync(localBin)) {
       return { command: localBin, args: stripWrapperArgs(binName, config.args(testFile, cwd)) };
     }
 
-    // Any package manager's global bin dir (npm/pnpm/yarn/bun) before npx (#375).
     const globalBin = await findGlobalBinary(binName);
     if (globalBin) {
       return { command: globalBin, args: stripWrapperArgs(binName, config.args(testFile, cwd)) };
@@ -2144,15 +1444,12 @@ export class TestRunnerClient {
       failed: 0,
       skipped: 0,
       failures: [],
-      // #1479: no duration key at all. Nothing ran, so there is nothing
-      // to report — this used to say 0, which reads as "ran, instantly".
       error,
     };
   }
 
   private truncateStack(stack?: string): string | undefined {
     if (!stack) return undefined;
-    // Keep first 3 lines of stack trace
     const lines = stack.split("\n").slice(0, 3);
     return lines.join("\n").slice(0, 500);
   }

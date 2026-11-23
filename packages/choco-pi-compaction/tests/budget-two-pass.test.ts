@@ -1,11 +1,3 @@
-/**
- * Budget overflow behavior.
- *
- * When one combined request cannot fit the context window, the summary is
- * produced in two passes: the discarded history is compressed first, then
- * reconciled against the retained tail. The newest tail message is never the
- * one dropped, and a tail that cannot fit at all fails loudly.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -34,9 +26,6 @@ async function hostFor(contextWindow: number, keepRecentTokens = 200): Promise<C
 }
 
 test("S7: a context window too small for one request produces two passes", async () => {
-  // One combined request for this fixture estimates at 1060 prompt tokens;
-  // with a 400-token output reserve and the margin it needs 1972, so it does
-  // not fit a 1900-token window while the two smaller passes do.
   const host = await hostFor(1_900);
   try {
     const fixture = ordinaryCut(host.sessionManager);
@@ -57,7 +46,6 @@ test("S7: a context window too small for one request produces two passes", async
       .at(-1);
     assert.ok(committed);
     assert.ok(committed.summary.startsWith("## Goal\nreconciled"));
-    // Usage is summed across both passes: 11 input and 7 output tokens each.
     assert.equal(committed.usage?.input, 22);
     assert.equal(committed.usage?.output, 14);
     assert.equal(committed.usage?.totalTokens, 36);
@@ -67,8 +55,6 @@ test("S7: a context window too small for one request produces two passes", async
 });
 
 test("S7: a tail that cannot fit at all fails instead of summarizing history alone", async () => {
-  // The history pass fits a 1650-token window, the reconciliation pass does
-  // not, and dropping down to the newest retained message still does not fit.
   const host = await hostFor(1_650);
   try {
     ordinaryCut(host.sessionManager);
@@ -106,7 +92,6 @@ test("the tail selection drops oldest first and never the newest", () => {
     content: text,
     timestamp: 0,
   }));
-  // Each retained message costs about 300 tokens to render, so only one fits.
   const render = (tail: readonly CompactionMessage[]): string =>
     serializeMessages(tail).padEnd(tail.length * 1_200, "-");
 
@@ -134,7 +119,6 @@ test("the fit test accounts for the output reserve and margin", () => {
     resolveMaxTokens(model, { enabled: true, reserveTokens: 1_000, keepRecentTokens: 1 }),
     800,
   );
-  // A reasoning model gets the reasoning summary cap, still bounded by its own limit.
   assert.equal(
     resolveMaxTokens(
       { contextWindow: 524_288, maxTokens: 65_536, reasoning: true },

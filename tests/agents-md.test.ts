@@ -7,13 +7,8 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
-// The package ships TypeScript source only (`pi.extensions: ["./index.ts"]`),
-// so these load straight from `src/` under Node's type stripping instead of
-// from a built `dist/`. Mirrors tests/subagent-config.test.ts.
 const packageRoot = resolve("packages/choco-pi-agents-md/src");
 const STALE_CONTEXT_MESSAGE = "This extension ctx is stale after session replacement or reload.";
-// Lifecycle accounting the shutdown/session_start handlers flush themselves;
-// the zero-emission assertions below cover only the stale tool_result path.
 const STATS_EVENT = "choco-pi-agents-md:session-stats";
 
 async function loadSubdir() {
@@ -39,7 +34,6 @@ function createStubUi(): StubUi {
   };
 }
 
-/** Minimal ExtensionAPI stub: records `on()` handlers by event name. */
 function createStubPi() {
   const handlers = new Map<
     string,
@@ -83,7 +77,6 @@ async function setup(
   registerAgentsMdAutoload(pi, dependencies);
   const ui = createStubUi();
   const baseCtx = { cwd: root, hasUI: true, ui };
-  // session_start and session_tree share the same handler.
   pi.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, baseCtx);
   return { pi, ui, baseCtx };
 }
@@ -98,11 +91,6 @@ function appendixText(
   return block?.text;
 }
 
-/**
- * A one-shot signal raised inside the injected `readFile` seam. The handler
- * awaits session-root resolution before reading, so the seam is entered on a
- * later microtask/IO turn, not synchronously with the handler call.
- */
 function createSeamSignal() {
   let markEntered: (() => void) | undefined;
   const entered = new Promise<void>((resolveEntered) => {
@@ -129,9 +117,8 @@ function createSeamSignal() {
 test("injects the AGENTS.md chain root-first, leaf-last, skipping missing levels", async () => {
   const root = makeTmpTree();
   try {
-    writeAgents(root, "root guidance"); // session root's own AGENTS.md: must be excluded
+    writeAgents(root, "root guidance");
     writeAgents(path.join(root, "a"), "A guidance");
-    // root/a/b has no AGENTS.md: missing level, must be skipped silently
     writeAgents(path.join(root, "a", "b", "c"), "C guidance");
     const leaf = path.join(root, "a", "b", "c", "leaf.txt");
     fs.writeFileSync(leaf, "leaf content");
@@ -144,14 +131,11 @@ test("injects the AGENTS.md chain root-first, leaf-last, skipping missing levels
 
     const text = appendixText(result);
     assert.ok(text, "expected an injected subdirectory_agents_context block");
-    // Root-first / leaf-last ordering: "A guidance" (a/) must appear before "C guidance" (a/b/c/).
     const aIndex = text!.indexOf("A guidance");
     const cIndex = text!.indexOf("C guidance");
     assert.ok(aIndex >= 0 && cIndex >= 0, "expected both A and C guidance in the appendix");
     assert.ok(aIndex < cIndex, "expected root-most AGENTS.md (a/) before leaf-most (a/b/c/)");
-    // The session root's own AGENTS.md must not be injected.
     assert.ok(!text!.includes("root guidance"), "session root AGENTS.md must be excluded");
-    // No AGENTS.md file entry for the missing a/b level.
     assert.ok(!text!.includes('path="a/b/AGENTS.md"'));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -178,11 +162,9 @@ test("dedups: an already-injected AGENTS.md is not injected again for a later to
     const firstText = appendixText(first);
     assert.ok(firstText?.includes("A guidance"));
 
-    // Same file again: nothing new, handler must return undefined (fully deduped).
     const repeat = await pi.handlers.get("tool_result")?.(readToolResultEvent(leaf1), baseCtx);
     assert.equal(repeat, undefined, "expected no injection on an exact repeat touch");
 
-    // A different leaf whose chain overlaps (a/) but extends further (a/d/): only D guidance is new.
     // SAFETY: The fixture supplies every host member exercised by this test.
     const second = (await pi.handlers.get("tool_result")?.(readToolResultEvent(leaf2), baseCtx)) as
       | { content: { type: string; text?: string }[] }
@@ -368,9 +350,6 @@ test("caps total injected appendix size, dropping the root-most files first", as
   const root = makeTmpTree();
   try {
     writeAgents(root, "root guidance");
-    // Four large AGENTS.md files whose combined size exceeds the total cap,
-    // each individually under the per-file cap (so no per-file truncation
-    // happens; only the total-appendix drop logic is exercised).
     const perFileSize = MAX_FILE_CHARS - 100;
     writeAgents(path.join(root, "l1"), `L1:${"x".repeat(perFileSize)}`);
     writeAgents(path.join(root, "l1", "l2"), `L2:${"y".repeat(perFileSize)}`);
@@ -394,7 +373,6 @@ test("caps total injected appendix size, dropping the root-most files first", as
       text!.length <= MAX_TOTAL_APPENDIX_CHARS + 2000,
       "appendix should respect the total size cap (plus wrapper markup)",
     );
-    // Root-most (l1) must be dropped before the leaf-most (l3) file when over budget.
     assert.ok(
       !text!.includes("L1:xxx"),
       "expected the root-most oversized file to be dropped first",

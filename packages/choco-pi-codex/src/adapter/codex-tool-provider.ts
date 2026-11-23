@@ -21,15 +21,9 @@ import {
 export const CODEX_TOOL_PROVIDER_UNSUPPORTED_MESSAGE =
   "web_run/imagegen requires an OpenAI Responses provider or /login openai (Sign in with ChatGPT)";
 
-/** Login guidance: provider `openai` first; `openai-codex` remains an opt-in legacy route. */
 export const CODEX_TOOL_PROVIDER_LOGIN_HINT =
   "run /login openai (Sign in with ChatGPT) or configure an openai API key; legacy fallback: /login openai-codex";
 
-/**
- * The bundled web_run helper only calls the ChatGPT backend `/alpha/search`
- * route with a ChatGPT account id. api.openai.com serves neither, so the
- * `openai` credential must never be handed to it.
- */
 export const OPENAI_PLATFORM_WEB_RUN_UNSUPPORTED_REASON =
   "web_run needs the ChatGPT backend /alpha/search route, which api.openai.com does not serve; provider openai (Sign in with ChatGPT or API key) cannot run native web_run. Select an openai-codex (legacy) model to use it";
 
@@ -41,13 +35,11 @@ export interface CodexToolProvider {
   model: string | undefined;
   token: string;
   accountId: string;
-  /** Present only for the stock `openai` provider on api.openai.com. */
   openAIPlatform?: { subscriptionSignIn: boolean };
 }
 
 export type CodexToolProviderErrorKind = "missing_credentials" | "auth" | "config" | "unsupported";
 
-/** `search` needs the ChatGPT backend search route; `responses` needs a Responses/Images endpoint. */
 export type CodexToolCapability = "responses" | "search";
 
 export interface CodexToolProviderOptions {
@@ -94,9 +86,7 @@ export function resolveCodexApiProviderBaseUrl(modelBaseUrl: string | undefined)
   try {
     const url = new URL(normalized);
     if (url.pathname === "" || url.pathname === "/") return `${normalized}/api/codex`;
-  } catch {
-    // Keep string-only fallback below.
-  }
+  } catch {}
   if (normalized.endsWith("/codex/responses")) return normalized.slice(0, -"/responses".length);
   if (normalized.endsWith("/codex")) return normalized;
   if (normalized.endsWith("/backend-api") || normalized.endsWith("/api"))
@@ -144,11 +134,6 @@ function isUsableOpenAIPlatformModel(model: ExtensionContext["model"]): boolean 
   return isOpenAIPlatformModel(model) && isResponsesModel(model);
 }
 
-/**
- * Resolve a stock `openai` model on api.openai.com whose provider has
- * configured auth (ChatGPT sign-in or API key). `getAvailable()` lists only
- * models with configured auth, so membership is the auth check.
- */
 export function resolveOpenAIPlatformAuthModel(
   registry: Pick<CodexToolProviderModelRegistry, "find" | "getAvailable">,
   preferredModelId?: string | undefined,
@@ -205,7 +190,6 @@ function resolveCodexToolAuthModel(
 }
 
 function assertCapability(model: Model<Api>, capability: CodexToolCapability | undefined): void {
-  // Fail before credentials are resolved so the openai token is never sent to a route it cannot use.
   if (capability === "search" && isOpenAIPlatformModel(model))
     throw new CodexToolProviderError("unsupported", OPENAI_PLATFORM_WEB_RUN_UNSUPPORTED_REASON);
 }
@@ -226,17 +210,6 @@ export async function resolveCodexToolProvider(
   return resolveCodexToolProviderForModel(ctx.modelRegistry, model);
 }
 
-/** Resolve credentials for the native OpenAI search helper.
- *
- * The conversation model is deliberately not accepted: callers on Anthropic,
- * Synthetic, or arbitrary Responses proxies must never forward that provider's
- * credential to the native OpenAI search helper.
- *
- * A configured `openai` provider takes precedence and is rejected as
- * `unsupported` (api.openai.com has no search route) without touching the
- * legacy `openai-codex` credential; that legacy chain is used only when
- * `openai` is not configured.
- */
 export async function resolveOpenAICodexToolProvider(
   modelRegistry: CodexToolProviderModelRegistry,
 ): Promise<CodexToolProvider> {
@@ -310,7 +283,6 @@ async function resolveCodexToolProviderForModel(
     searchUrl: resolveCodexSearchUrl(responsesUrl),
     model: model.id,
     token,
-    // api.openai.com has no ChatGPT account scope; never forward one there.
     accountId: openAIPlatform
       ? ""
       : (headerValue(auth.headers, "chatgpt-account-id") ??

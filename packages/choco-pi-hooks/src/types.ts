@@ -49,7 +49,6 @@ export interface HookInput extends JsonObject {
   effort?: { level: "low" | "medium" | "high" | "xhigh" | "max" };
   agent_id?: string;
   agent_type?: string;
-  /** choco-pi extension: the top-level session of a subagent session; absent elsewhere. */
   root_session_id?: string;
 }
 
@@ -128,7 +127,6 @@ export interface HookInvocationResult {
   stderr?: string;
   error?: string;
   completionOrder?: number;
-  /** A prompt or agent hook answered `ok: false` on an event whose block is not a JSON decision. */
   modelBlock?: boolean;
 }
 export interface MergedHookResult {
@@ -139,13 +137,11 @@ export interface MergedHookResult {
   systemMessages: string[];
   terminalSequences: string[];
   additionalContext: string[];
-  /** Stderr of every handler that exited 2, in completion order. */
   exitTwoStderr: string[];
   permissionDecision?: "deny" | "defer" | "ask" | "allow";
   permissionRequestDecision?: "allow" | "deny";
   updatedInput?: JsonObject;
   updatedToolOutput?: JsonValue;
-  /** PostToolUse replacement that applies to MCP tools only. */
   updatedMCPToolOutput?: JsonValue;
   displayContent?: string;
   worktreePath?: string;

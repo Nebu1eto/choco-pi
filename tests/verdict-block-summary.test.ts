@@ -355,7 +355,6 @@ test("generated mixed-script fields: lines fit, keep clusters whole, never start
               `${visibleWidth(line)} > ${width}: ${JSON.stringify(line)}`,
             );
             assert.equal(LONE_SURROGATE.test(line), false, JSON.stringify(line));
-            // No grapheme cluster of the line, the first included, starts with a mark: nothing was cut off its base.
             for (const { segment } of GRAPHEMES.segment(line)) {
               assert.equal(/^\p{M}/u.test(segment), false, JSON.stringify(line));
             }

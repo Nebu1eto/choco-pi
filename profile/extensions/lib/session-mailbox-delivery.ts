@@ -4,7 +4,6 @@ export type SubmittedMailboxClaim = {
   submittedAt: number;
 };
 
-/** Atomically reserves a message ID before host submission so recovery scans cannot resubmit it. */
 export function reserveMailboxSubmission(
   submitted: Map<string, SubmittedMailboxClaim>,
   messageId: string,

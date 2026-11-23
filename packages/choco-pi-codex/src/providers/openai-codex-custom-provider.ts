@@ -91,8 +91,6 @@ export async function prepareCodexRequestBody<TApi extends Api>(
     const input = normalizeResponsesToolHistory(body.input ?? []);
     if (input !== body.input) body = { ...body, input };
   }
-  // Final wire authority after every payload hook: stale or hook-injected access_programs is
-  // removed, and only a provider-minted, still-owned Daybreak decision may write it back.
   const daybreak = await resolveCodexDaybreakTicket(daybreakTicket);
   return applyCodexDaybreakAccessPrograms(
     applyFrozenFastModeDecision(body, fastModeDecision),
@@ -186,7 +184,6 @@ export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
     daybreak,
   );
   if (!isCurrentCodexFastModeDecision(fastModeDecision)) return;
-  // A prewarmed inference payload is reusable only for the exact Daybreak revision it carries.
   if (!daybreak || !isCurrentCodexDaybreakDecision(daybreak)) return;
   const accountId = extractAccountId(options.apiKey);
   const routing = resolveCodexRequestRouting({
@@ -225,8 +222,6 @@ export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
       deps.preserveContinuation,
     );
   } catch (error) {
-    // Prewarm bypasses the transport catch that drops a stale Daybreak grant, so an
-    // auth rejection here must invalidate too; otherwise the next request reuses it.
     if (isWebSocketUnauthorizedError(error) || isWebSocketForbiddenError(error))
       invalidateCodexDaybreakEntitlement(options.apiKey, model.baseUrl);
     if (

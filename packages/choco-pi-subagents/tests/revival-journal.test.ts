@@ -44,7 +44,6 @@ function data(
   return buildJournalData({ rootSessionId, at: 1, suspended, agent: agent(overrides) });
 }
 
-/** What a session file can hold as custom-entry data, valid or not. */
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 let entryCounter = 0;
@@ -99,7 +98,7 @@ test("result and error are capped at 64 KiB with a truncation note", () => {
   const small = "x".repeat(JOURNAL_TEXT_CAP_BYTES);
   assert.equal(data({ status: "completed", result: small }).agent.result, small);
 
-  const large = "é".repeat(JOURNAL_TEXT_CAP_BYTES); // 2 bytes per char
+  const large = "é".repeat(JOURNAL_TEXT_CAP_BYTES);
   const built = data({ status: "error", result: large, error: large, sessionFile: "/s/c.jsonl" });
   for (const text of [built.agent.result, built.agent.error]) {
     assert.ok(text !== undefined);
@@ -201,7 +200,6 @@ test("disposition: unclean exit revives up to the cap", () => {
       revivals: 2,
     });
   }
-  // A suspend that journaled a live status breaks the contract: counted as unclean.
   assert.deepEqual(startupDisposition(data({ status: "running", revivals: 2 }, true)), {
     kind: "capped",
     revivals: 2,
@@ -400,7 +398,6 @@ test("writer projection is detached and reads only own properties", () => {
 });
 
 test("reader keeps accepting old and foreign entries with unknown or missing additive fields", () => {
-  // An old entry predates steers, inMemorySession and worktree.workPath/hookManaged.
   const old = jsonCopy({ ...FULL_ENTRY, future: { nested: true } });
   const extended = jsonCopy({
     ...FULL_ENTRY,

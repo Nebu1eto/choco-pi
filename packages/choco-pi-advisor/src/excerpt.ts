@@ -18,10 +18,8 @@ import {
 } from "@earendil-works/pi-schema";
 import { isSameModelDisabledMessage } from "./model-gate.ts";
 
-/** Mirrors `AGENT_MESSAGE_TYPES` in choco-pi-subagents; a test pins parity. */
 export const AGENT_MESSAGE_TYPES = ["MESSAGE", "TASK", "FINAL"] as const;
 
-/** Local mirror of choco-pi-subagents `AgentMessageParams`; extra keys are tolerated. */
 export const AgentMessageArgsSchema = obj(
   {
     to: str(),
@@ -40,10 +38,8 @@ const isText = compile(str()).check;
 const isScalar = compile(union([nul(), bool(), num()])).check;
 const isArgumentObject = compile(map(JsonValueSchema)).check;
 
-/** Mirrors `RuntimeToolTrace["status"]` in choco-pi-codex code mode; a test pins parity. */
 export const CODE_MODE_TRACE_STATUSES = ["running", "done", "error"] as const;
 
-/** Local mirror of the code-mode `RuntimeToolTrace` fields the excerpt renders. */
 const CodeModeTraceSchema = obj(
   {
     name: str(),
@@ -54,7 +50,6 @@ const CodeModeTraceSchema = obj(
   { open: true },
 );
 
-/** Local mirror of the code-mode `exec`/`wait` result details the excerpt renders. */
 const CodeModeDetailsSchema = obj(
   {
     codeMode: lit(true),
@@ -65,11 +60,8 @@ const CodeModeDetailsSchema = obj(
 );
 const isCodeModeDetails = compile(CodeModeDetailsSchema).check;
 
-/** Tools whose arguments are script source; the nested calls in their results show what ran. */
 const SCRIPT_TOOLS: ReadonlySet<string> = new Set(["exec"]);
-/** Tools whose whole argument object is credential material. */
 const SENSITIVE_TOOL_NAME = /secret|credential|password|passphrase|token|auth/i;
-/** Matched against a key lowercased with separators removed. */
 const SENSITIVE_KEY =
   /password|passwd|passphrase|secret|token|apikey|accesskey|privatekey|authorization|credential|cookie|^auth$/;
 const STRING_VALUE_CAP = 200;
@@ -84,7 +76,6 @@ function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEY.test(key.toLowerCase().replace(/[-_\s]/g, ""));
 }
 
-/** JSON replacer: blanks credential-like keys (scalars stay visible) and caps long strings. */
 function redactValue(key: string, value: JsonValue): JsonValue {
   if (key !== "" && isSensitiveKey(key) && !isScalar(value)) return "[redacted]";
   if (isText(value) && value.length > STRING_VALUE_CAP) {
@@ -93,16 +84,11 @@ function redactValue(key: string, value: JsonValue): JsonValue {
   return value;
 }
 
-/** A redacted value: strings raw, everything else as compact JSON. */
 function renderValue(key: string, value: JsonValue): string {
   const redacted = redactValue(key, value);
   return isText(redacted) ? redacted : JSON.stringify(redacted, redactValue);
 }
 
-/**
- * One-line, capped, redacted arguments with a leading space, or "" when there are none.
- * A string `description` becomes a quoted label; other fields read `key=value` joined by " · ".
- */
 function renderArgs(toolName: string, args: JsonValue | undefined, cap: number): string {
   if (args === undefined) return "";
   if (!isArgumentObject(args)) return ` ${oneLine(renderValue("", args)).slice(0, cap)}`;
@@ -118,10 +104,6 @@ function renderArgs(toolName: string, args: JsonValue | undefined, cap: number):
   return ` ${oneLine(text).slice(0, cap)}`;
 }
 
-/**
- * `agent_message` renders as recipient and body, script tools stay name-only because their
- * results list the nested calls, and every other tool shows redacted, capped arguments.
- */
 function renderToolCall({ name, arguments: args }: ToolCall, bodyCap: number): string {
   if (name === "agent_message" && isAgentMessageArgs(args)) {
     const kind = args.type ?? "MESSAGE";
@@ -141,7 +123,6 @@ interface NestedCall {
 
 interface NestedCalls {
   calls: NestedCall[];
-  /** Calls the recorder dropped before the excerpt saw them. */
   dropped: number;
   incomplete: boolean;
 }
@@ -149,10 +130,6 @@ interface NestedCalls {
 type MessageEntry = Extract<SessionEntry, { type: "message" }>;
 type ToolResultEntryMessage = Extract<MessageEntry["message"], { role: "toolResult" }>;
 
-/**
- * Code-mode traces cover every `tools.*` call a script made; the host `nestedCalls`
- * record covers only session-dispatched calls, so it is the fallback.
- */
 function nestedCallsOf(message: ToolResultEntryMessage): NestedCalls | undefined {
   const details = message.details;
   if (isCodeModeDetails(details) && details.traces) {
@@ -193,7 +170,6 @@ function renderNestedCall(call: NestedCall, cap: number): string {
   return `- ${oneLine(call.name)}${args} \u2192 ${outcome}`.slice(0, cap);
 }
 
-/** Appends nested call lines after the capped result text, within the entry cap. */
 function appendNestedCalls(head: string, nested: NestedCalls, entryCap: number): string {
   const lineCap = Math.min(NESTED_LINE_CAP, entryCap);
   if (lineCap === 0 || (nested.calls.length === 0 && nested.dropped === 0)) return head;

@@ -223,9 +223,7 @@ export default async function apexProvider(pi: ExtensionAPI): Promise<void> {
         overrides,
         AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
       );
-    } catch {
-      // Keep startup usable; refreshModels can fall back to Pi's persisted catalog.
-    }
+    } catch {}
   }
 
   pi.registerProvider(PROVIDER_ID, {
@@ -248,9 +246,7 @@ export default async function apexProvider(pi: ExtensionAPI): Promise<void> {
         if (initialModels.length > 0 && !context.signal.aborted) {
           try {
             await persist(initialModels);
-          } catch {
-            // Persistence is best-effort; the freshly discovered models remain usable in memory.
-          }
+          } catch {}
         }
         return fallback;
       }

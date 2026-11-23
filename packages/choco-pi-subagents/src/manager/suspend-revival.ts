@@ -1,7 +1,3 @@
-/**
- * suspend-revival.ts — Internal AgentManager module extracted from agent-manager.ts.
- */
-
 import { stat } from "node:fs/promises";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
@@ -74,11 +70,6 @@ import { drainQueue } from "./admission-queue.ts";
 import { spawnWith } from "./spawn-execution.ts";
 import { removeRecord, abortAll } from "./stop-cancellation.ts";
 
-/**
- * Settle a suspended run: no worktree cleanup, publication, completion
- * callback, owned-child abort or journal write. The session is disposed and
- * its file released, so a revival can reopen it.
- */
 export function finishSuspendedRun(
   mgr: ManagerState,
   record: AgentRecord,
@@ -88,9 +79,7 @@ export function finishSuspendedRun(
   if (record.outputCleanup) {
     try {
       record.outputCleanup();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     record.outputCleanup = undefined;
   }
   if (mgr.agents.get(record.id) === record) {
@@ -99,7 +88,6 @@ export function finishSuspendedRun(
   if (!mgr.disposed) drainQueue(mgr);
 }
 
-/** startResume's settle for a suspended generation. */
 export function settleSuspendedResume(
   mgr: ManagerState,
   id: string,
@@ -116,14 +104,6 @@ export function settleSuspendedResume(
   if (record !== undefined) finishSuspendedRun(mgr, record, undefined);
 }
 
-/**
- * Synchronous part of a graceful suspend. Every live journaled record that
- * is queued, running or waiting for a usage reset gets a `suspended: true`
- * entry first (interrupted, or waiting_for_reset with its usage wait and
- * steers), then is cancelled with cause `suspend`. Records without a run
- * (queued, parked) are removed at once; running ones on settle. Returns the
- * suspended records and the running ones whose settlement is pending.
- */
 export function suspendNow(mgr: ManagerState): SuspendPlanResult {
   mgr.revivalEpoch++;
   flushJournal(mgr);
@@ -131,13 +111,11 @@ export function suspendNow(mgr: ManagerState): SuspendPlanResult {
   for (const record of mgr.agents.values()) {
     if (journalSinkFor(mgr, record) === undefined) continue;
     const generation = record.resultGeneration ?? 1;
-    // A run already being cancelled for a real reason settles normally.
     if (record.cancellation?.generation === generation) continue;
     if (record.status === "waiting_for_reset") {
       plans.push({ record, status: "waiting_for_reset", wait: mgr.usageWaits.get(record.id) });
     } else if (record.status === "queued") {
       const queueEntry = mgr.queue.find((entry) => entry.id === record.id);
-      // A queued post-reset continuation is still a usage wait.
       if (queueEntry?.wait === undefined) {
         plans.push({ record, status: "interrupted", queueEntry });
       } else {
@@ -147,7 +125,6 @@ export function suspendNow(mgr: ManagerState): SuspendPlanResult {
       plans.push({ record, status: "interrupted" });
     }
   }
-  // Journal every suspension before anything is aborted.
   for (const plan of plans) writeSuspendedJournal(mgr, plan.record, plan.status, plan.wait);
 
   const running: AgentRecord[] = [];
@@ -178,8 +155,6 @@ export function suspendNow(mgr: ManagerState): SuspendPlanResult {
       record.abortController?.abort();
       running.push(record);
     } else {
-      // No run will settle it: unblock anyone awaiting the parked promise
-      // (the record reads "interrupted"), then dispose and release now.
       if (mgr.wakeRuns.get(record.id) === generation) mgr.wakeRuns.delete(record.id);
       wait?.release(record.result ?? "");
       removeRecord(mgr, record.id, record, { suspended: true });
@@ -188,13 +163,6 @@ export function suspendNow(mgr: ManagerState): SuspendPlanResult {
   return { suspended: plans.map((plan) => plan.record), running };
 }
 
-/**
- * Graceful suspend for quit, /reload, or a session switch. Journaled live
- * records are journaled as suspended and cancelled without an outcome;
- * records outside the journal (workflow steps, /btw) are stopped as by
- * `abortAll`. Waits up to `SUSPEND_SETTLE_TIMEOUT_MS` for suspended runs to settle
- * (each settle disposes its session and releases its file).
- */
 export async function suspendAll(mgr: ManagerState): Promise<SuspendSummary> {
   const { suspended, running } = suspendNow(mgr);
   const aborted = abortAll(mgr);
@@ -225,9 +193,6 @@ export async function suspendAll(mgr: ManagerState): Promise<SuspendSummary> {
   };
 }
 
-// ---- Durable revival: startup revival and dormant resume ----
-
-/** Journal a revival that can never succeed as an error, and keep it dormant. */
 export function journalRevivalFailure(
   mgr: ManagerState,
   snapshot: JournalAgentSnapshot,
@@ -274,12 +239,6 @@ export async function directoryExists(mgr: ManagerState, path: string): Promise<
   }
 }
 
-/**
- * Validate one snapshot for a revival, re-arm or dormant resume and take its
- * session-file claim. Mirrors spawn's checks (type, registry, model scope,
- * provider closure); every failure names its reason. After each await the
- * revival must still be current (`isCurrent`), otherwise any claim is released.
- */
 export async function prepareRevival(
   mgr: ManagerState,
   snapshot: JournalAgentSnapshot,
@@ -334,7 +293,6 @@ export async function prepareRevival(
       model,
       cwd: ctx.cwd,
       modelRegistry: ctx.modelRegistry,
-      // Strict: a revival never runs a model outside the current scope.
       callerSupplied: true,
       agentLabel: snapshot.type,
       modelInput: key,
@@ -423,7 +381,6 @@ export async function prepareRevival(
   };
 }
 
-/** Spawn options that re-create a journaled agent's run settings. */
 export function revivalSpawnOptions(
   mgr: ManagerState,
   prepared: PreparedRevival,
@@ -439,13 +396,10 @@ export function revivalSpawnOptions(
     budgets: saved.budgets,
     thinkingLevel: saved.thinkingLevel,
     isolated: saved.isolated,
-    // A reopened file already holds the conversation; re-sending the
-    // parent's context would only duplicate it.
     inheritContext: prepared.claim === undefined ? saved.inheritContext : false,
     isolation: saved.isolation,
     cwd: saved.cwd,
     configCwd: saved.configCwd,
-    // A revived foreground agent has no caller left to answer inline.
     isBackground: true,
     readOnly: saved.readOnly,
     maxSubagentDepth: saved.maxSubagentDepth,
@@ -467,10 +421,6 @@ export function revivalSpawnOptions(
   };
 }
 
-/**
- * Start (or queue) a prepared revival under its journaled identity. Throws
- * what spawn would throw; the caller journals it and releases the claim.
- */
 export function startPreparedRevival(
   mgr: ManagerState,
   prepared: PreparedRevival,
@@ -496,20 +446,13 @@ export function startPreparedRevival(
   const id = spawnWith(mgr, context.pi, context.ctx, prepared.type, prompt, options, identity);
   const record = mgr.agents.get(id);
   if (record === undefined) throw new Error(`Revived agent ${id} disappeared while starting.`);
-  // Journaled with the record's first entry (flushed before the runner ran).
   setRevivals(mgr, id, prepared.revivals);
   try {
     context.onRevived?.(record);
-  } catch {
-    /* caller wiring errors must not undo the revival */
-  }
+  } catch {}
   return record;
 }
 
-/**
- * Re-arm a usage wait for a record recreated from the journal. No session is
- * open while it waits; the file stays claimed so the wake can reopen it.
- */
 export function armRevivedWait(
   mgr: ManagerState,
   record: AgentRecord,
@@ -567,8 +510,6 @@ export function armRevivedWait(
   mgr.revivalArgs.set(record.id, args);
   const adopt = args.options.adoptWorktree;
   if (adopt !== undefined) {
-    // Journaled while waiting (a second restart must still find it) and
-    // cleaned up if the wait settles without a continuation.
     applyAdoptedWorktree(mgr, record, adopt);
     const customCwd = args.options.cwd ?? undefined;
     mgr.deferredWorktrees.set(record.id, () =>
@@ -579,17 +520,10 @@ export function armRevivedWait(
   if (resetAt !== undefined && resetAt > Date.now()) {
     armUsageWake(mgr, record, wait, resetAt);
   } else {
-    // The reset passed while the host was down (or was never estimated):
-    // re-check readiness shortly instead of waiting a full poll interval.
     armWakeTimer(mgr, record, wait, REARM_RESET_GRACE_MS);
   }
 }
 
-/**
- * Post-reset continuation of a re-armed record: reopen its claimed session
- * file through the spawn path under the same id. A start failure settles the
- * parked task as an error instead of throwing into the wake timer.
- */
 export function startRevivedContinuation(
   mgr: ManagerState,
   id: string,
@@ -599,7 +533,6 @@ export function startRevivedContinuation(
   finalize: QueuedFinalizer | undefined,
 ): void {
   record.abortController = new AbortController();
-  // The continuation's own settle cleans an adopted worktree from here on.
   const deferredCleanup = mgr.deferredWorktrees.get(id);
   mgr.deferredWorktrees.delete(id);
   try {
@@ -618,31 +551,18 @@ export function startRevivedContinuation(
     transition(mgr, record, "error");
     record.error = err instanceof Error ? err.message : String(err);
     record.completedAt = Date.now();
-    // Published after the restored worktree cleanup, which may append its note.
     if (finalize === undefined) {
       finishDeferredWorktreeThen(mgr, record, () => {
         publishTerminal(mgr, record);
         if (mgr.disposed) return;
         try {
           mgr.onComplete?.(record);
-        } catch {
-          /* ignore completion side-effect errors */
-        }
+        } catch {}
       });
     } else finalize(true);
   }
 }
 
-/**
- * Revive journaled agents at startup. Call after `setJournalSink` for the root
- * whose journal produced `snapshots` (`reduceJournal(...).values()`). Per
- * `startupDisposition`: revive (same id, handle and options; reopen the
- * session file with the interruption prompt, or restart a never-started run
- * from its original prompt), re-arm a usage wait, keep capped and terminal
- * agents dormant. Nested children revive only with their parent (parents
- * first). Every outcome except a plain terminal dormant entry is reported
- * through `context.onRevivalReport` and returned.
- */
 export async function reviveFromJournal(
   mgr: ManagerState,
   snapshots: Iterable<RevivalSnapshot>,
@@ -665,9 +585,7 @@ export async function reviveFromJournal(
     reports.push(entry);
     try {
       context.onRevivalReport?.(entry);
-    } catch {
-      /* reporting must not stop the revival pass */
-    }
+    } catch {}
   };
   const sink = mgr.journalSink;
   const inputs = [...snapshots].filter((input) => isJournalAgentSnapshot(input.agent));
@@ -697,8 +615,6 @@ export async function reviveFromJournal(
     if (disposition.kind === "dormant") {
       dormant.push(snapshot);
     } else if (disposition.kind === "capped") {
-      // Journaled once as a terminal error: the next startup finds a plain
-      // dormant error and neither revives nor reports it again.
       journalRevivalFailure(mgr, snapshot, CAPPED_REVIVAL_ERROR);
       report(
         "capped",
@@ -726,7 +642,6 @@ export async function reviveFromJournal(
     }
   };
   try {
-    // Prepare level by level so a child sees whether its parent made it.
     const depths = [...new Set(candidates.map((c) => c.snapshot.depth))].sort((a, b) => a - b);
     for (const depth of depths) {
       const level = candidates.filter((candidate) => candidate.snapshot.depth === depth);
@@ -785,8 +700,6 @@ export async function reviveFromJournal(
       return reports;
     }
 
-    // Start synchronously, parents first, each parent told which children
-    // are being revived for it.
     const ordered = [...prepared.values()].sort((a, b) => a.snapshot.depth - b.snapshot.depth);
     for (const item of ordered) {
       const snapshot = item.snapshot;

@@ -1,87 +1,24 @@
-/**
- * Tool definition types and the TOOLS catalog of install recipes.
- */
-
-// --- Tool Definitions ---
-
 interface GitHubAssetSpec {
-  /** owner/repo on GitHub */
   repo: string;
-  /**
-   * Return the asset filename substring to match for this platform/arch,
-   * or undefined if the platform is unsupported.
-   * platform: "linux" | "darwin" | "win32"
-   * arch:     "x64" | "arm64" | "ia32" | ...
-   */
   assetMatch: (platform: string, arch: string) => string | undefined;
-  /**
-   * If the asset is an archive, the name of the binary inside it.
-   * For bare .gz files (e.g. rust-analyzer) leave undefined — the asset IS the binary.
-   */
   binaryInArchive?: string;
   hashiCorpReleaseProduct?: string;
-  /**
-   * Additional release assets (EXACT names) to download as bare files alongside
-   * the primary binary. Needed when the primary is a wrapper that references a
-   * sibling file — e.g. ktlint's Windows `ktlint.bat` runs `java -jar %~dp0ktlint`,
-   * so the `ktlint` jar must land next to it (#218).
-   */
   extraAssets?: (platform: string, arch: string) => string[];
 }
 
-/**
- * A tool distributed as a runnable fat JAR on a Maven repository (default Maven
- * Central). Installed by downloading the JAR into the managed bin and writing a
- * `java -jar` launcher next to it, so it resolves like any other managed binary.
- * Requires a JRE at run time.
- */
 export interface MavenJarSpec {
   groupId: string;
   artifactId: string;
   version: string;
-  /** Classifier for the runnable fat jar, e.g. "with-dependencies". */
   classifier?: string;
-  /** Maven repo base URL (default Maven Central). */
   repoBaseUrl?: string;
 }
 
 export interface ArchiveSpec {
-  /**
-   * Download URL for the distribution archive (.tgz/.zip). Either a single
-   * platform-agnostic string (e.g. PowerShell Editor Services, a .NET bundle) or
-   * a resolver `(platform, arch) => url | undefined` for servers that ship a
-   * per-platform (and sometimes per-arch) archive — clangd, lua-language-server,
-   * etc. Returning `undefined` marks the current platform/arch unsupported, and
-   * the install degrades to "unavailable" (never a hard failure).
-   *   platform: "linux" | "darwin" | "win32"
-   *   arch:     "x64" | "arm64" | ...
-   */
   url: string | ((platform: string, arch: string) => string | undefined);
-  /** Archive kind — both extracted via `tar` (Windows bsdtar handles zip too). */
   kind: "tgz" | "zip";
-  /**
-   * Launcher path relative to the archive's top-level dir (which is stripped on
-   * extraction), e.g. "bin/spotbugs". On win32 the installer resolves the
-   * sibling `.bat`. OMIT for a TREE BUNDLE (a multi-folder module distribution
-   * with no single launcher binary, e.g. PowerShellEditorServices) — the whole
-   * extracted tree is the artifact and the install resolves to the extract dir
-   * (`~/.choco-pi-lsp/tools/<id>`) rather than a shim. The consuming server then
-   * launches a runtime (pwsh/java/node) against a bootstrap inside the tree.
-   */
   launcher?: string;
-  /**
-   * Components to strip on extraction. Default 1: drops a single versioned
-   * top-level dir so launcher paths are stable (spotbugs-X.Y.Z/bin → bin). Set 0
-   * for a multi-folder bundle that has NO wrapping dir (PSES extracts several
-   * sibling module folders at the root — stripping would flatten/merge them).
-   */
   stripComponents?: number;
-  /**
-   * For a tree bundle (no launcher), a path relative to the extract dir that must
-   * exist after extraction to confirm success, e.g.
-   * "PowerShellEditorServices/Start-EditorServices.ps1". Used in place of the
-   * launcher-existence check.
-   */
   treeMarker?: string;
 }
 
@@ -96,35 +33,15 @@ export interface ToolDefinition {
   github?: GitHubAssetSpec;
   maven?: MavenJarSpec;
   archive?: ArchiveSpec;
-  /**
-   * For npm tools whose runnable binary ships in a per-platform
-   * optional-dependency package (e.g. `@ast-grep/cli-<platform>`,
-   * `@biomejs/cli-<platform>`). Under pnpm/bun the main package's JS launcher
-   * frequently can't locate that binary (symlink store / skipped postinstall),
-   * but the binary itself IS installed — so resolve it directly. The general
-   * mechanism for any npm/pnpm/bun-distributed platform-CLI tool.
-   */
   platformPackage?: PlatformPackageSpec;
 }
 
 export interface PlatformPackageSpec {
-  /** Base name; the platform package is `${base}-${suffix}`. Defaults to `packageName`. */
   base?: string;
-  /** node `${platform}-${arch}` → npm package-name suffix. */
   suffixes: Record<string, string>;
-  /** Candidate binary filenames at the platform package root (first existing wins). */
   binaries: string[];
 }
 
-/**
- * Build a GitHub-release `assetMatch` from a small per-platform table, replacing
- * the copy-pasted `if (platform === "linux") return arch === "arm64" ? … : …`
- * ladder that several release entries repeat verbatim. Each platform maps to its
- * `x64` (default) and optional `arm64` asset substring; a missing platform or
- * arch ⇒ unsupported (`undefined`). Arches outside x64/arm64 (ia32, ppc64, …)
- * are unsupported too — no release entry ships a 32-bit or exotic asset, and
- * handing back the x64 substring there would install an unrunnable binary.
- */
 function archAssetMatch(table: {
   linux?: { x64?: string; arm64?: string };
   darwin?: { x64?: string; arm64?: string };
@@ -137,9 +54,6 @@ function archAssetMatch(table: {
   };
 }
 
-// Go-style `<os>_<arch>.zip` release assets, shared verbatim by tflint and
-// terraform-ls — both entries carried byte-identical ladders, down to the asset
-// strings themselves.
 const OS_ARCH_ZIP_ASSETS = {
   linux: { x64: "linux_amd64.zip", arm64: "linux_arm64.zip" },
   darwin: { x64: "darwin_amd64.zip", arm64: "darwin_arm64.zip" },
@@ -147,7 +61,6 @@ const OS_ARCH_ZIP_ASSETS = {
 };
 
 export const TOOLS: ToolDefinition[] = [
-  // Core LSP servers
   {
     id: "typescript-language-server",
     name: "TypeScript Language Server",
@@ -163,10 +76,6 @@ export const TOOLS: ToolDefinition[] = [
     checkCommand: "tsc",
     checkArgs: ["--version"],
     installStrategy: "npm",
-    // The managed compiler serves the classic typescript-language-server
-    // fallback. TypeScript 7 removed lib/tsserver.js and is selected only from
-    // project-local installs through the native `tsc --lsp --stdio` path.
-    // Revisit when typescript-language-server supports TS 7 — refs #1436.
     packageName: "typescript@5.9.3",
     binaryName: "tsc",
   },
@@ -179,7 +88,6 @@ export const TOOLS: ToolDefinition[] = [
     packageName: "pyright",
     binaryName: "pyright",
   },
-  // Linting/formatting tools
   {
     id: "prettier",
     name: "Prettier",
@@ -199,8 +107,6 @@ export const TOOLS: ToolDefinition[] = [
     binaryName: "ruff",
   },
   {
-    // Alternate Python LSP (fallback when pyright/the `python` server is
-    // unavailable or disabled). Used as a managedToolId by PythonJediServer.
     id: "jedi-language-server",
     name: "Jedi Language Server",
     checkCommand: "jedi-language-server",
@@ -230,8 +136,6 @@ export const TOOLS: ToolDefinition[] = [
       binaries: ["biome"],
     },
   },
-  // Analysis tools (run at session start / turn end)
-  // Structural search and dead code detection
   {
     id: "ast-grep",
     name: "ast-grep CLI",
@@ -361,21 +265,16 @@ export const TOOLS: ToolDefinition[] = [
     github: {
       repo: "helm/helm",
       assetMatch: (platform, arch) => {
-        // helm publishes per-OS archives: tar.gz for POSIX, zip for Windows.
         const cpu = arch === "arm64" ? "arm64" : "amd64";
         if (platform === "linux") return `linux-${cpu}.tar.gz`;
         if (platform === "darwin") return `darwin-${cpu}.tar.gz`;
         if (platform === "win32") return `windows-${cpu}.zip`;
         return undefined;
       },
-      // Release archives nest the executable under an OS/arch directory;
-      // the installer searches recursively and adds the Windows suffix.
       binaryInArchive: "helm",
     },
   },
   {
-    // Opengrep: a single standalone binary per platform on GitHub releases —
-    // no login, no telemetry (the reason for switching off Semgrep, #111).
     id: "opengrep",
     name: "Opengrep",
     checkCommand: "opengrep",
@@ -389,7 +288,6 @@ export const TOOLS: ToolDefinition[] = [
           return arch === "arm64" ? "opengrep_manylinux_aarch64" : "opengrep_manylinux_x86";
         if (platform === "darwin")
           return arch === "arm64" ? "opengrep_osx_arm64" : "opengrep_osx_x86";
-        // One x86 Windows build; runs on arm64 Windows via emulation.
         if (platform === "win32") return "opengrep_windows_x86.exe";
         return undefined;
       },
@@ -494,7 +392,6 @@ export const TOOLS: ToolDefinition[] = [
     packageName: "oxlint",
     binaryName: "oxlint",
   },
-  // GitHub release binaries
   {
     id: "shellcheck",
     name: "ShellCheck",
@@ -531,7 +428,6 @@ export const TOOLS: ToolDefinition[] = [
           return arch === "arm64" ? "windows_arm64.exe" : "windows_amd64.exe";
         return undefined;
       },
-      // bare binary, no archive
     },
   },
   {
@@ -551,14 +447,9 @@ export const TOOLS: ToolDefinition[] = [
         if (platform === "win32") return "x86_64-pc-windows-msvc.zip";
         return undefined;
       },
-      // Linux/macOS: bare .gz; Windows: .zip archive containing rust-analyzer.exe
     },
   },
   {
-    // Alternate JS/TS LSP (fallback when the `typescript` server is unavailable
-    // or disabled — e.g. Deno projects). Used as a managedToolId by DenoServer.
-    // Every platform ships a .zip containing the `deno` binary (the github
-    // strategy extracts it, as it does for rust-analyzer's Windows .zip).
     id: "deno",
     name: "Deno",
     checkCommand: "deno",
@@ -576,7 +467,6 @@ export const TOOLS: ToolDefinition[] = [
           return arch === "arm64"
             ? "deno-aarch64-apple-darwin.zip"
             : "deno-x86_64-apple-darwin.zip";
-        // Windows ships only x86_64 (runs under emulation on arm64).
         if (platform === "win32") return "deno-x86_64-pc-windows-msvc.zip";
         return undefined;
       },
@@ -611,10 +501,6 @@ export const TOOLS: ToolDefinition[] = [
     installStrategy: "github",
     binaryName: "ktlint",
     github: {
-      // ktlint ships a self-executable `ktlint` (a JAR with a shell preamble)
-      // for Linux/macOS, plus a `ktlint.bat` wrapper for Windows that runs
-      // `java -jar %~dp0ktlint`. On Windows BOTH files are needed: the .bat AND
-      // the `ktlint` jar it wraps (#218). No arm64-specific asset.
       repo: "pinterest/ktlint",
       assetMatch: (platform, _arch) => {
         if (platform === "linux") return "ktlint";
@@ -626,9 +512,6 @@ export const TOOLS: ToolDefinition[] = [
     },
   },
   {
-    // ktfmt (Meta's opinionated Kotlin formatter) ships only as a Maven-Central
-    // fat JAR — no native binary, no npm package — so it uses the maven strategy
-    // (#129). Run via a `java -jar` launcher; requires a JRE.
     id: "ktfmt",
     name: "ktfmt",
     checkCommand: "ktfmt",
@@ -643,10 +526,6 @@ export const TOOLS: ToolDefinition[] = [
     },
   },
   {
-    // SpotBugs (bytecode bug-pattern analyzer for Java/Kotlin/Scala/Groovy)
-    // ships as a distribution archive — a lib/ of many JARs + bin/ launchers,
-    // NOT a runnable fat JAR — so it uses the archive strategy, not maven
-    // (refs #133). Requires a JRE (gated by the runner, not the install).
     id: "spotbugs",
     name: "SpotBugs",
     checkCommand: "spotbugs",
@@ -660,14 +539,6 @@ export const TOOLS: ToolDefinition[] = [
     },
   },
   {
-    // PowerShell Editor Services (#278). NOT a single binary — a multi-folder
-    // PowerShell MODULE BUNDLE launched via `pwsh Start-EditorServices.ps1
-    // -Stdio` (see PowerShellServer.spawn). archive TREE BUNDLE: the release zip
-    // extracts sibling module dirs (PowerShellEditorServices/, PSReadLine/,
-    // PSScriptAnalyzer/) at the root with no wrapping dir, so stripComponents:0
-    // + no launcher — the whole tree is kept and resolved to its extract dir.
-    // checkCommand "pwsh" documents the runtime but is unused for resolution
-    // (tree bundles resolve only via the extract dir + treeMarker).
     id: "powershell-editor-services",
     name: "PowerShell Editor Services",
     checkCommand: "pwsh",
@@ -682,15 +553,6 @@ export const TOOLS: ToolDefinition[] = [
     },
   },
   {
-    // clangd (C/C++/Obj-C LSP, #241) — a self-contained native TREE BUNDLE: the
-    // release zip wraps `clangd_<ver>/{bin,lib}` (bin/clangd[.exe] + the bundled
-    // libclang headers under lib/), so stripComponents:1 drops the version dir and
-    // the whole tree is kept (no launcher). Unlike PSES there is no external
-    // runtime — CppServer launches `<bundle>/bin/clangd` directly. checkCommand
-    // documents the binary but is unused for resolution (tree bundles resolve only
-    // via the extract dir + treeMarker). Platform-matched url: clangd ships x64
-    // prebuilts; arm runs the x64 build under Rosetta/emulation (darwin/win32),
-    // while linux/arm64 has no official build → undefined (graceful unavailable).
     id: "clangd",
     name: "clangd",
     checkCommand: "clangd",
@@ -713,18 +575,6 @@ export const TOOLS: ToolDefinition[] = [
     },
   },
   {
-    // lua-language-server (#564, split from #241) — same self-contained native
-    // TREE BUNDLE shape as clangd: bin/lua-language-server[.exe] + bundled
-    // locale/meta files, no external runtime. UNLIKE clangd, the release
-    // archive has NO wrapping version dir (verified by inspecting the actual
-    // 3.18.2 linux-x64 .tar.gz and win32-x64 .zip contents: `bin/`, `LICENSE`,
-    // `locale/`, … sit at archive root) — so stripComponents:0, not 1.
-    // LuaServer launches `<bundle>/bin/lua-language-server` directly.
-    // checkCommand documents the binary but is unused for resolution (tree
-    // bundles resolve only via the extract dir + treeMarker). Platform-matched
-    // url: LuaLS publishes darwin/linux x64+arm64 and win32 x64 (no win32/arm64
-    // build as of 3.18.2 → undefined, graceful unavailable); asset naming
-    // verified against the live GitHub release listing, not guessed.
     id: "lua-language-server",
     name: "lua-language-server",
     checkCommand: "lua-language-server",
@@ -776,11 +626,6 @@ export const TOOLS: ToolDefinition[] = [
     },
   },
   {
-    // zizmor: GitHub Actions workflow security scanner that speaks LSP (#272).
-    // cargo-dist release archives, one per target triple, each holding a single
-    // `zizmor` binary (extracted via the recursive binary find). Online audits
-    // (known-vulnerable-actions, unpinned-uses, …) need a GitHub token — the LSP
-    // spawn forwards one via resolveZizmorGitHubToken (clients/zizmor-config.ts).
     id: "zizmor",
     name: "zizmor",
     checkCommand: "zizmor",
@@ -796,7 +641,6 @@ export const TOOLS: ToolDefinition[] = [
             : "x86_64-unknown-linux-gnu.tar.gz";
         if (platform === "darwin")
           return arch === "arm64" ? "aarch64-apple-darwin.tar.gz" : "x86_64-apple-darwin.tar.gz";
-        // One x86 Windows build; arm64 Windows runs it under emulation.
         if (platform === "win32") return "x86_64-pc-windows-msvc.zip";
         return undefined;
       },
@@ -804,12 +648,6 @@ export const TOOLS: ToolDefinition[] = [
     },
   },
   {
-    // typos-lsp: source-code spell checker that speaks LSP (#283). cargo-dist
-    // release archives, one per target triple, each holding a single `typos-lsp`
-    // binary (extracted via the recursive binary find). NO token / network — the
-    // dictionary is compiled in. The binary takes no `--version` (it ignores args
-    // and serves the LSP on stdin/stdout); the PATH probe ignores checkArgs and
-    // verifyToolBinary runs with stdin:ignore so the server gets EOF and exits.
     id: "typos-lsp",
     name: "typos-lsp",
     checkCommand: "typos-lsp",
@@ -826,7 +664,6 @@ export const TOOLS: ToolDefinition[] = [
         if (platform === "darwin")
           return arch === "arm64" ? "aarch64-apple-darwin.tar.gz" : "x86_64-apple-darwin.tar.gz";
         if (platform === "win32")
-          // Native win-arm64 build (one better than zizmor, which emulates).
           return arch === "arm64" ? "aarch64-pc-windows-msvc.zip" : "x86_64-pc-windows-msvc.zip";
         return undefined;
       },
@@ -847,9 +684,6 @@ export const TOOLS: ToolDefinition[] = [
     },
   },
   {
-    // Terragrunt ships a bare native binary per platform on GitHub releases.
-    // Windows arm64 uses the x64 binary through Windows' built-in emulation —
-    // there is no terragrunt_windows_arm64.exe upstream.
     id: "terragrunt",
     name: "terragrunt",
     checkCommand: "terragrunt",
@@ -872,7 +706,6 @@ export const TOOLS: ToolDefinition[] = [
           arm64: "terragrunt_windows_amd64.exe",
         },
       }),
-      // bare binary — no binaryInArchive
     },
   },
   {
@@ -973,9 +806,6 @@ export const TOOLS: ToolDefinition[] = [
     },
   },
   {
-    // clojure-lsp ships a self-contained native (GraalVM) binary per platform
-    // on GitHub releases — no JVM needed. Used as managedToolId by ClojureServer.
-    // The .zip carries the bare binary (located recursively on extract).
     id: "clojure-lsp",
     name: "clojure-lsp",
     checkCommand: "clojure-lsp",
@@ -989,7 +819,6 @@ export const TOOLS: ToolDefinition[] = [
           return arch === "arm64" ? "native-linux-aarch64.zip" : "native-linux-amd64.zip";
         if (platform === "darwin")
           return arch === "arm64" ? "native-macos-aarch64.zip" : "native-macos-amd64.zip";
-        // Only an x86_64 Windows native build; runs on arm64 via emulation.
         if (platform === "win32") return "native-windows-amd64.zip";
         return undefined;
       },
@@ -997,8 +826,6 @@ export const TOOLS: ToolDefinition[] = [
     },
   },
   {
-    // CUE ships a single native binary per platform on GitHub releases;
-    // the LSP runs via `cue lsp serve`. Used as managedToolId by CueServer.
     id: "cue",
     name: "CUE",
     checkCommand: "cue",
@@ -1020,10 +847,6 @@ export const TOOLS: ToolDefinition[] = [
     },
   },
   {
-    // gleam ships a single static binary per platform on GitHub releases; the
-    // LSP runs via `gleam lsp`. Used as managedToolId by GleamServer. The linux
-    // build is a FLAT musl tarball (a bare `gleam`), handled by the recursive
-    // tar-binary lookup in installGitHubTool.
     id: "gleam",
     name: "Gleam",
     checkCommand: "gleam",
@@ -1047,12 +870,6 @@ export const TOOLS: ToolDefinition[] = [
     },
   },
   {
-    // marksman ships a single BARE (uncompressed) binary per platform on GitHub
-    // releases — no archive, so it lands via the bare-binary branch of
-    // installGitHubTool (the `else` that writes the asset directly, like shfmt).
-    // Used as managedToolId by MarksmanServer; LSP entrypoint is `marksman
-    // server` (stdio). macOS ships a universal binary; Windows has only x64
-    // (runs on arm64 via emulation) — so all six platform/arch combos resolve.
     id: "marksman",
     name: "Marksman",
     checkCommand: "marksman",
@@ -1068,13 +885,9 @@ export const TOOLS: ToolDefinition[] = [
         if (platform === "win32") return "marksman.exe";
         return undefined;
       },
-      // bare binary — no binaryInArchive
     },
   },
   {
-    // Expert ships a bare native binary per platform on GitHub releases. Its
-    // `--stdio` flag is required to start the LSP transport. Windows arm64 uses
-    // the x64 binary through Windows' built-in x64 emulation.
     id: "expert",
     name: "Expert",
     checkCommand: "expert",
@@ -1092,7 +905,6 @@ export const TOOLS: ToolDefinition[] = [
         if (platform === "win32") return "expert_windows_amd64.exe";
         return undefined;
       },
-      // bare binary — no binaryInArchive
     },
   },
 ];

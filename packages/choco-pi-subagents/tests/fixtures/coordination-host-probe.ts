@@ -372,9 +372,6 @@ export default async function coordinationHostProbe(pi: ExtensionAPI): Promise<v
     },
   });
   await subagentsExtension(wrapped);
-  // The production event parser, not a hand-rolled dictionary cast: it is the
-  // same contract the TUI notice renders, so a queued flag captured here is the
-  // flag the user sees.
   messageUnsubscribe = pi.events.on("subagents:message", (eventData) => {
     const message = parseSubagentMessageNotification(eventData);
     if (!message) return;

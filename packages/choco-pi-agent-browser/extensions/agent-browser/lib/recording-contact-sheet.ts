@@ -13,10 +13,6 @@ export interface RecordingContactSheetRequest {
   enabled: boolean;
 }
 
-/**
- * agent-browser 0.38.1 enables the sheet for either contact-sheet flag. Its
- * recording module places the PNG beside the video using this suffix.
- */
 export function deriveAgentBrowser0381ContactSheetPath(videoPath: string): string {
   const parsed = parse(videoPath);
   return `${parsed.dir ? `${parsed.dir}/` : ""}${parsed.name}.contact-sheet.png`;

@@ -2,7 +2,6 @@ import type { AgentBrowserNextAction } from "./next-actions.ts";
 
 export type { AgentBrowserNextAction } from "./next-actions.ts";
 
-/** Values decoded from the agent-browser CLI JSON response. */
 export type AgentBrowserResultValue =
   | boolean
   | null
@@ -12,7 +11,6 @@ export type AgentBrowserResultValue =
   | AgentBrowserResultValue[]
   | AgentBrowserResultRecord;
 
-/** Object values decoded from the agent-browser CLI JSON response. */
 export interface AgentBrowserResultRecord {
   [key: string]: AgentBrowserResultValue;
 }
@@ -32,7 +30,6 @@ export interface AgentBrowserBatchResult {
 
 export type AgentBrowserResultCategory = "failure" | "success";
 
-/** Which layer produced a failure; "unknown" means the layer could not be determined. */
 export type AgentBrowserDiagnosticOrigin =
   | "cli"
   | "daemon"
@@ -41,13 +38,8 @@ export type AgentBrowserDiagnosticOrigin =
   | "validation"
   | "wrapper";
 
-/** Whether the requested command took effect: it never ran, ran to a definite failure, or cannot be told. */
 export type AgentBrowserDiagnosticOutcome = "completed" | "not-executed" | "unknown";
 
-/**
- * Normalized machine-readable failure diagnostic. retryable alone never authorizes replaying a
- * mutation whose outcome is "unknown"; hint says what to verify first.
- */
 export interface AgentBrowserDiagnostic {
   code: string;
   hint: string;

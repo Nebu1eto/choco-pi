@@ -1,13 +1,3 @@
-/**
- * Fact-rules runner — executes all registered FactRule instances against
- * the populated fact store. Each FactRule has its own appliesTo() guard
- * so this runner can be registered broadly; rules self-select.
- *
- * Severity semantics follow each rule's own diagnostic output.
- * Blocking rules surface on every write; warning-tier rules surface
- * only during full scans (blockingOnly === false).
- */
-
 import type { DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
 import { PRIORITY } from "../priorities.ts";
 import { evaluateRules } from "../fact-rule-runner.ts";

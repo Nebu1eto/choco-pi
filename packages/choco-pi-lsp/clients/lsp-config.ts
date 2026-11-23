@@ -28,97 +28,47 @@ interface MutableConfigDictionary extends Record<string, LspDictionaryValue> {}
 
 export type PiLensFormatMode = "deferred" | "immediate";
 
-/** The `{ enabled?: boolean }` section every registry flag key lives under. */
 export interface PiLensToggleConfig {
   enabled?: boolean;
 }
 
 export interface PiLensGlobalConfig {
-  /**
-   * Gitignore-style patterns excluded from choco-pi-lsp scans across ALL projects.
-   * Merged at LOWEST precedence: a project `.gitignore` or `.choco-pi-lsp.json`
-   * `ignore` (including `!negation`) overrides these. See #252.
-   */
   ignore?: string[];
   dispatch?: {
-    /**
-     * Minimum wall-clock budget (ms) for every dispatch runner.
-     * Acts as a floor: effective timeout = max(runner.timeoutMs ?? 30_000, runnerTimeoutFloorMs).
-     * Useful for large monorepos where slow toolchains (e.g. cargo clippy) exceed
-     * any runner's declared budget. Also overridable via CHOCO_PI_LSP_RUNNER_TIMEOUT_FLOOR_MS.
-     */
     runnerTimeoutFloorMs?: number;
   };
   widget?: {
-    /** Whether the diagnostics widget is visible when a session starts. */
     visible?: boolean;
   };
-  /** Whether choco-pi-lsp runs at all this session (`--no-lens`). */
   lens?: PiLensToggleConfig;
-  /** Whether unified LSP diagnostics run (`--no-lsp`). */
   lsp?: PiLensToggleConfig;
-  /** Whether session start may pre-start a language server. Defaults false. */
   warmup?: PiLensToggleConfig;
-  /** Whether TypeScript language servers may use automatic type acquisition. Defaults false. */
   typeAcquisition?: PiLensToggleConfig;
-  /** Whether the test runner fires on write (`--no-tests`). */
   tests?: PiLensToggleConfig;
-  /** Whether delta mode limits diagnostics to new ones (`--no-delta`). */
   delta?: PiLensToggleConfig;
-  /** Whether the experimental commit/push blocker runs (`--lens-guard`). */
   guard?: PiLensToggleConfig;
-  /** Whether the Opengrep auxiliary LSP attaches (`--no-opengrep`). */
   opengrep?: PiLensToggleConfig;
-  /** Whether the read-before-edit behavior monitor runs (`--no-read-guard`). */
   readGuard?: PiLensToggleConfig;
   format?: {
-    /** Whether auto-formatting is enabled. */
     enabled?: boolean;
-    /** When to run auto-formatting after write/edit tool results. */
     mode?: PiLensFormatMode;
   };
   autofix?: {
-    /**
-     * Whether the pipeline may apply deterministic linter fixes (Biome,
-     * Ruff, ESLint, ...). Defaults true. A project `.choco-pi-lsp.json`
-     * `autofix.enabled` overrides this in either direction (#792).
-     */
     enabled?: boolean;
   };
   actionableWarnings?: {
-    /** Write turn-delta fixable warning reports and inject a short advisory. */
     enabled?: boolean;
-    /** Enrich warning reports with LSP code-action titles. */
     includeLspCodeActions?: boolean;
-    /** Restrict reporting to warnings introduced by this turn. */
     deltaOnly?: boolean;
     autoFix?: {
-      /** Experimental conservative agent_end warning autofix. Defaults false. */
       enabled?: boolean;
-      /**
-       * Cap on quickfixes applied per turn. Defaults 5. `0` keeps the report
-       * but applies nothing. Documented since #792 but only wired up in #166.
-       */
       maxFixes?: number;
     };
   };
   contextInjection?: {
-    /**
-     * Whether choco-pi-lsp prepends automatic findings (session-start guidance,
-     * turn-end findings, test findings) into the next model turn via the
-     * `context` hook. Defaults true. Set false to keep tools/LSP/read-guard/
-     * formatting running while avoiding prompt-cache invalidation from injected
-     * messages. Findings are still cached for `diagnostics_report` / `/lens-health`.
-     */
     enabled?: boolean;
   };
   turnSummary?: {
-    /**
-     * Opt-in, transcript-persistent per-turn summary of diagnostics found,
-     * autofixes applied, and autoformats applied (#484). Defaults false —
-     * absence of this key means off. One collapsed/expandable entry per turn,
-     * only emitted when the turn's collection is non-empty.
-     */
     enabled?: boolean;
   };
 }
@@ -131,11 +81,6 @@ export function getPiLensGlobalConfigPath(homeDir = os.homedir()): string {
 
 const warnedInvalidGlobalConfigs = new Set<string>();
 
-/**
- * Same warn-once-per-(path, reason) contract as project-lsp-config.ts's
- * `warnInvalidConfigOnce` — a malformed global config value is logged once
- * and then treated as absent, rather than silently dropped (#792).
- */
 function warnInvalidGlobalConfigOnce(configPath: string, reason: string): void {
   const key = `${configPath}:${reason}`;
   if (warnedInvalidGlobalConfigs.has(key)) return;
@@ -147,25 +92,13 @@ function warnInvalidGlobalConfigOnce(configPath: string, reason: string): void {
     message,
     metadata: { configPath, reason },
   });
-  // HUMAN-audience too: a config the user wrote is being ignored. Routed
-  // through the host's own render path (#1333), never a raw write.
   notifyUserDegradation(`choco-pi-lsp: ${message}`);
 }
 
-/** For tests that need to force the warn-once cache to reset between cases. */
 export function resetGlobalConfigWarnCache(): void {
   warnedInvalidGlobalConfigs.clear();
 }
 
-/**
- * choco-pi fork: session-scoped runtime overrides set by user commands
- * (today only `/lsp on|off` → the `no-lsp` flag). Consulted FIRST in
- * `resolvePiLensFlagWithSource`, above env/CLI/config — an explicit runtime
- * command is the most recent, most deliberate user decision, so it outranks
- * the flags the session was launched with. Cleared only by another override
- * call; process-lifetime, never persisted (persistence goes through
- * `persistPiLensGlobalConfigKey`).
- */
 const runtimeFlagOverrides = new Map<string, boolean | string>();
 
 export function setRuntimeLensFlagOverride(
@@ -180,13 +113,6 @@ export function getRuntimeLensFlagOverride(name: string): boolean | string | und
   return runtimeFlagOverrides.get(name);
 }
 
-/**
- * choco-pi fork: persist one dotted `configKey` (e.g. `lsp.enabled`) into
- * `~/.choco-pi-lsp/config.json` so a runtime toggle survives the session. Creates
- * the directory/file when absent, preserves every other key, and returns
- * false (never throws) on any read/parse/write failure — the caller reports
- * that persistence failed while the in-memory override still applies.
- */
 export function persistPiLensGlobalConfigKey(
   configKey: string,
   value: boolean,
@@ -202,9 +128,7 @@ export function persistPiLensGlobalConfigKey(
         // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
         raw = parsed as Record<string, LspDictionaryValue>;
       }
-    } catch {
-      // absent or unreadable — start from an empty config
-    }
+    } catch {}
     const segments = configKey.split(".");
 
     let target: MutableConfigDictionary = raw;
@@ -263,9 +187,6 @@ function parsePiLensGlobalConfig(
     if (isFiniteNumber(floor) && Number.isFinite(floor) && floor > 0) {
       config.dispatch = { runnerTimeoutFloorMs: floor };
     } else {
-      // #533: warn only when the key is PRESENT but malformed — an absent
-      // key stays silent so a config that never mentions it is not falsely
-      // flagged. Same warn-once path as the maxFixes case below.
       if ("runnerTimeoutFloorMs" in dispatch) {
         warnInvalid("dispatch.runnerTimeoutFloorMs must be a positive finite number");
       }
@@ -312,7 +233,6 @@ function parsePiLensGlobalConfig(
     if (isBoolean(widget.visible)) {
       config.widget = { visible: widget.visible };
     } else {
-      // #533: present-but-wrong-type warns; absent stays silent.
       if ("visible" in widget) {
         warnInvalid("widget.visible must be a boolean");
       }
@@ -329,8 +249,6 @@ function parsePiLensGlobalConfig(
     if (format.mode === "immediate" || format.mode === "deferred") {
       formatSection.mode = format.mode;
     } else {
-      // #533: a present-but-invalid mode (e.g. "immedaite") warns and
-      // falls back; an absent mode stays silent.
       if ("mode" in format) {
         warnInvalid('format.mode must be "immediate" or "deferred"');
       }
@@ -338,14 +256,6 @@ function parsePiLensGlobalConfig(
     }
   }
 
-  // #533 hygiene: a completely unknown top-level key (e.g. a typo like
-  // `lps` for `lsp`) is otherwise dropped silently, so a setting the user
-  // thought they made does nothing with no signal. Warn once per key. The
-  // recognized set is single-sourced (#883): the flag sections derived
-  // from the registry plus the declared non-flag global sections
-  // (`GLOBAL_NON_FLAG_CONFIG_SECTIONS`, which co-locates `$schema` and the
-  // hand-parsed namespaces beside the registry). Adding a flag needs no
-  // edit here; adding a namespace is a one-line edit in that one constant.
   const knownGlobalConfigKeys = new Set<string>([
     ...flagConfigSectionKeys(LENS_FLAGS),
     ...GLOBAL_NON_FLAG_CONFIG_SECTIONS,
@@ -374,9 +284,6 @@ export function loadPiLensGlobalConfig(
   }
 }
 
-// Machine-global configuration is treated as immutable for this process. A
-// fresh process is the intentional invalidation boundary because sessions do
-// not normally rewrite type-acquisition policy while a language server starts.
 const asyncGlobalConfigCache = new Map<string, Promise<PiLensGlobalConfig | undefined>>();
 
 function parsePiLensGlobalConfigContents(
@@ -410,7 +317,6 @@ export function loadPiLensGlobalConfigAsync(
   return pending;
 }
 
-/** Test-only reset for process-lifetime async config memoization. */
 export function resetAsyncGlobalConfigCache(): void {
   asyncGlobalConfigCache.clear();
 }
@@ -423,16 +329,10 @@ export function getGlobalWidgetDefaultVisible(configPath?: string): boolean {
   return loadPiLensGlobalConfig(configPath)?.widget?.visible !== false;
 }
 
-/** Per-turn quickfix cap; undefined means "use the built-in default of 5". */
 export function getGlobalActionableWarningMaxFixes(configPath?: string): number | undefined {
   return loadPiLensGlobalConfig(configPath)?.actionableWarnings?.autoFix?.maxFixes;
 }
 
-/**
- * Automatic type acquisition is an explicit network opt-in. The environment
- * override follows the package's boolean opt-in convention; otherwise the
- * machine-global config is authoritative and absence means disabled.
- */
 export function isAutomaticTypeAcquisitionEnabled(configPath?: string): boolean {
   if (process.env.CHOCO_PI_LSP_TYPE_ACQUISITION === "1") return true;
   return typeAcquisitionEnabledFromConfig(loadPiLensGlobalConfig(configPath));
@@ -445,7 +345,6 @@ export async function isAutomaticTypeAcquisitionEnabledAsync(
   return typeAcquisitionEnabledFromConfig(await loadPiLensGlobalConfigAsync(configPath));
 }
 
-/** Which tier decided a resolved flag's value — for provenance in debug/skip logs (#792). */
 export type PiLensFlagSource =
   | "runtime"
   | "env"
@@ -460,23 +359,6 @@ export interface ResolvedPiLensFlag {
   source: PiLensFlagSource;
 }
 
-/**
- * Resolve a flag AND report which config tier decided it — same precedence
- * as {@link resolvePiLensFlag} (which now delegates here), just also
- * returning the `source` so callers can log e.g.
- * "(--no-autofix, source=project)" instead of a bare boolean (#792).
- *
- * Every tier is driven by `clients/lsp-flag-registry.ts` (#166): the spec's
- * `configKey` is read out of each config object rather than matched by a
- * per-flag branch, so a new toggle needs no change here at all.
- *
- * Precedence: env → cli → nested-project → project → global → default.
- * Project tiers apply to `scope: "project"` flags only (maintainer decision —
- * project wins over global, including re-enabling; only an explicit CLI
- * disabling flag outranks project config). A name with no registry entry
- * passes its CLI value straight through, which is how untyped string flags
- * like `--lens-opengrep-config` keep working.
- */
 export function resolvePiLensFlagWithSource(
   name: string,
   value: boolean | string | undefined,

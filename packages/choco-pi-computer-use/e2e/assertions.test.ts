@@ -15,12 +15,6 @@ import { packagePath } from "./isolation.ts";
 import { isJsonObject, isString, type JsonValue } from "../src/json.ts";
 import type { ScenarioId } from "./scenarios/index.ts";
 
-/**
- * Real tier-A evidence (fake daemon, synthetic fixture window) from the 2026-09-23 runs: S1 from
- * run 2 (`cu-u5b`), S3 and S5 from run 3 (`cu-u5c`). Events and sessions are sanitized (no
- * streaming deltas, thinking blocks or signatures); request logs are verbatim. `root` is run 2's
- * scratch root; the S1 isolation check compares recorded helper paths against it lexically.
- */
 const root = "/tmp/choco-pi/cu-u5b-9e686eaa/e2e";
 const opus = "anthropic-claude-opus-5-5";
 const sol = "openai-codex-gpt-6-sol";
@@ -65,18 +59,12 @@ function scoreScenario(
   const checked = verify(scenario, r, root, "a");
   return { ...checked, verdict: verdictOf(checked.errors, checked.inconclusive) };
 }
-/**
- * Run 3 did not persist the S5 mutation reply. The fake daemon logged the mutation request, and the
- * helper's stale-look refusal proves the mutation took effect, so replays supply the reply shape
- * the live harness passes (`ok: true`). Live runs now persist it as `S5.intervention.json`.
- */
 const mutationAck: RecordValue = { ok: true };
 interface Scored {
   checked: Verification;
   isolation: string[];
   verdict: string;
 }
-/** Scores S1 exactly as run.ts does: scenario assertions plus isolation checks. */
 function score(r: Replay): Scored {
   const checked = verify(
     "S1",
@@ -103,7 +91,6 @@ function score(r: Replay): Scored {
     ),
   };
 }
-/** Deep copy of fixture rows so a test can mutate them. */
 function clone(rows: RecordValue[]): RecordValue[] {
   return rows.map((row) => {
     const copy: JsonValue = JSON.parse(JSON.stringify(row));
@@ -111,7 +98,6 @@ function clone(rows: RecordValue[]): RecordValue[] {
     return copy;
   });
 }
-/** The successful act_ui execution trace in the opus session and events (same shape in both). */
 function executionOf(row: RecordValue, key: "message" | "result"): RecordValue {
   const holder = row[key];
   assert.ok(isJsonObject(holder));
@@ -142,7 +128,6 @@ function isActEnd(row: RecordValue): boolean {
     isJsonObject(result.details.execution)
   );
 }
-/** Apply one mutation to the executed trace in both the session and the event stream. */
 function mutateExecution(r: Replay, change: (execution: RecordValue) => void): Replay {
   const session = clone(r.session);
   const events = clone(r.events);
@@ -195,7 +180,6 @@ test("gpt-6-sol S1 replays as INCONCLUSIVE(no_dispatch), never PASS or a policy 
     checked.notes.rejected_before_dispatch[0].error,
     /^Coordinates require an image-bearing root/,
   );
-  // S1's isolation passed, so a non-PASS S1 does not block S2-S7.
   assert.equal(isolationBlock(isolation), undefined);
 });
 
@@ -295,7 +279,6 @@ test("isolation blocking depends only on isolation checks", () => {
   assert.equal(isolationBlock(undefined), "isolation-unproven");
 });
 
-/** Replace every act_ui result's details (session and events) with `details`. */
 function withActResult(r: ScenarioReplay, details: RecordValue, isError = false): ScenarioReplay {
   const session = clone(r.session);
   const events = clone(r.events);
@@ -322,7 +305,6 @@ for (const model of [opus, sol])
     assert.deepEqual(checked.errors, []);
     assert.equal(checked.verdict, "PASS");
     assert.equal(checked.notes.actCalls, 1);
-    // gpt-6-sol sent click then typeText in one call; opus sent typeText alone.
     assert.equal(checked.notes.dispatchedActRequests, model === opus ? 1 : 2);
     assert.equal(checked.notes.reissuedAfterForegroundRequired, false);
   });
@@ -433,7 +415,6 @@ test("S5 passes on the TS refusal path only with zero act requests", async () =>
   assert.match(scoreScenario("S5", replaced).verdict, /^FAIL\(/);
 });
 
-/** Synthetic S4 evidence on the S3 fixture: the typeText held, then cancelled by the transport. */
 async function cancelledReplay(): Promise<ScenarioReplay> {
   const r = await loadScenario(opus, "S3");
   const typed = r.requests.find((row) => row.action === "typeText");
@@ -441,7 +422,6 @@ async function cancelledReplay(): Promise<ScenarioReplay> {
   const requests = clone(r.requests);
   const held = requests.find((row) => row.action === "typeText");
   assert.ok(held);
-  // Fake-daemon log shape: the held act is logged when answered (cancelled), then the cancel row.
   held.response = {
     ok: false,
     error: { code: "cancelled", message: "Request was cancelled", effectPossible: true },
@@ -523,10 +503,6 @@ test("S3 fails when the logged helper reply is not didnt", async () => {
   assert.match(scoreScenario("S3", { ...r, requests }).verdict, /did not answer the typeText/);
 });
 
-/**
- * Synthetic S6 evidence on the S3 fixture, in the fake daemon's s6-grant shape: a background click
- * on custom-1 refused with effectPossible:false, then one granted foreground retry that worked.
- */
 async function grantReplay(): Promise<ScenarioReplay> {
   const r = await loadScenario(opus, "S3");
   const requests = clone(r.requests);
@@ -596,7 +572,6 @@ test("S6 passes on one refused background attempt and one granted foreground ret
   );
 });
 
-/** The grant replay with the granted HID retry answered `unknown`, as the updated fake does. */
 function withGrantOutcome(
   r: ScenarioReplay,
   response: string,

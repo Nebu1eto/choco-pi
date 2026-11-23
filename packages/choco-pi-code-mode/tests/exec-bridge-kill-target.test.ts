@@ -28,7 +28,6 @@ test(
 test(
   "a kill refused for another reason is returned, not swallowed",
   {
-    // SIGKILL to pid 1 is refused (EPERM) for an unprivileged user; as root it would succeed.
     skip: !unix || process.getuid?.() === 0,
   },
   () => {
@@ -82,9 +81,6 @@ test(
     skip: !unix,
   },
   async () => {
-    // The shell leads its own group (detached); its background sleep runs in a group of its own
-    // because job control (set -m) gives each background job a new group. After the job dies the
-    // shell execs a sleep, so the root keeps its pid and nothing is orphaned.
     const shell = spawn("sh", ["-c", "set -m; sleep 60 & echo $!; wait; exec sleep 60"], {
       detached: true,
       stdio: ["ignore", "pipe", "ignore"],
@@ -101,7 +97,6 @@ test(
       assert.equal(isAlive(shell.pid), true, "the root itself is the caller's to kill");
     } finally {
       shell.kill("SIGKILL");
-      // On a failure the sleeper survives and holds the stdout pipe; never leave it to the runner.
       if (sleeper > 0 && isAlive(sleeper)) process.kill(sleeper, "SIGKILL");
     }
   },

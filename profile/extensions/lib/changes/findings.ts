@@ -1,12 +1,3 @@
-/**
- * Recorded reviewer and verifier output for the pane.
- *
- * The subagents package writes `<scratch>/verdicts/<work_task>/<agentId>.json`
- * when a reviewer or verifier finishes under a work task. This module reads
- * those records (only when asked; the pane never polls) and reduces them to
- * what the pane shows. A malformed file is counted, never thrown; a missing or
- * invalid record means the run is unrecorded, never clean.
- */
 import { readdir } from "node:fs/promises";
 import type { RuntimeValue } from "../runtime-values.ts";
 import {
@@ -25,17 +16,14 @@ export type ClaimOutcome = VerdictClaim["outcome"];
 export type TaskRecords = {
   workTask: string;
   records: AgentParseRecord[];
-  /** Record files that could not be read or validated. */
   invalid: Array<{ file: string; reason: string }>;
 };
 
 export type RecordsRead = {
   tasks: TaskRecords[];
-  /** Directory-level failures (for example a permission error), one line each. */
   errors: string[];
 };
 
-/** Reads every work task's agent records under `<scratchDir>/verdicts/`. Never throws. */
 export type RecordsReader = (scratchDir: string) => Promise<RecordsRead>;
 
 const isWorkTaskName = (name: string): boolean => new RegExp(WORK_TASK_PATTERN, "u").test(name);
@@ -73,8 +61,6 @@ export const readRecords: RecordsReader = async (scratchDir) => {
   return read;
 };
 
-/* -------------------------------------------------------------- summary */
-
 export type ReviewState =
   | { kind: "unrecorded"; agentId: string; completedAt: number; reason: string }
   | {
@@ -88,25 +74,20 @@ export type ReviewState =
 
 export type TaskSummary = {
   workTask: string;
-  /** The newest review record of the task; undefined when only verifiers ran. */
   review?: ReviewState;
-  /** Claim outcomes from the task's verifier records of kind "claims"; newer records win. */
   claims: ReadonlyMap<string, ClaimOutcome>;
 };
 
 export type RecordedFinding = ReviewFinding & {
   workTask: string;
   agentId: string;
-  /** Epoch ms of the record; NaN when the record's timestamp does not parse. */
   completedAt: number;
   outcome?: ClaimOutcome;
 };
 
 export type FindingsSummary = {
   tasks: TaskSummary[];
-  /** Findings and candidates from each task's newest review record. */
   findings: RecordedFinding[];
-  /** Record files that failed to read or validate. */
   malformed: number;
   errors: string[];
 };
@@ -196,7 +177,6 @@ function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
-/** The header's compact Review line, or undefined when nothing is recorded. */
 export function reviewLine(summary: FindingsSummary): string | undefined {
   const parts: string[] = [];
   for (const task of summary.tasks) {
@@ -217,17 +197,10 @@ export function reviewLine(summary: FindingsSummary): string | undefined {
   return parts.length > 0 ? `Review: ${parts.join(" · ")}` : undefined;
 }
 
-/** How a review label reads: clean, findings, incomplete or not recorded, or trouble reading. */
 export type ReviewTone = "success" | "error" | "warning" | "muted";
 
 export type ReviewLabel = { text: string; tone: ReviewTone };
 
-/**
- * The boxed header's review summary: one short label per work task
- * (`wt-a ✓`, `wt-a ⚑2 ?1`, `wt-a incomplete`, `wt-a unrecorded`),
- * toned by its verdict, then the malformed-record and read-error counts.
- * Empty when nothing is recorded.
- */
 export function reviewLabels(summary: FindingsSummary): ReviewLabel[] {
   const labels: ReviewLabel[] = [];
   for (const task of summary.tasks) {

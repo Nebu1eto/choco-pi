@@ -154,9 +154,7 @@ function summarizeAgentDocs(cwd: string): AgentDocSummary[] {
       const raw = fs.readFileSync(abs, "utf-8");
       const lineCount = raw.split(/\r?\n/).length;
       docs.push({ filePath: candidate, lineCount });
-    } catch {
-      // candidate not present
-    }
+    } catch {}
   }
   return docs;
 }

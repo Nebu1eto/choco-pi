@@ -1,7 +1,3 @@
-/**
- * Manual follower fallback policy (D6): every row of the decision table, the
- * guard and eligibility blockers, and the exact outcome notices.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -59,12 +55,10 @@ test("cancellations stop silently and are never retried", () => {
       assert.equal(isManualCancellation(status(state, reason)), true);
     }
   }
-  // An overflow cancel is `canceled` with detail `overflow`.
   assert.deepEqual(
     manualFallbackPolicy(input(status("canceled", "canceled", { detail: "overflow" }))),
     { action: "stop", level: "info" },
   );
-  // A cancellation stays silent even when the guard or eligibility would block a retry.
   assert.deepEqual(
     manualFallbackPolicy(
       input(status("canceled", "owner-changed"), { opaqueBlocked: true, textEnabled: false }),
@@ -141,7 +135,6 @@ test("the opaque guard and a disabled text lane block the retry and name the blo
   assert.equal(noText.action, "stop");
   assert.equal(noText.level, "warning");
   assert.match(noText.notice ?? "", /text lane is off/u);
-  // A disabled Anthropic lane is blocked the same way.
   const disabledNoText = manualFallbackPolicy(
     input(status("canceled", "disabled"), { textEnabled: false }),
   );

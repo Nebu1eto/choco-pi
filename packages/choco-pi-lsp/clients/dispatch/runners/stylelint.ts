@@ -23,15 +23,7 @@ interface StylelintResult {
   warnings: StylelintWarning[];
 }
 
-// Stylelint's standard JSON output reports only aggregate fixableErrorCount /
-// fixableWarningCount per file — there is no per-warning fix flag in the CLI
-// surface. To route the actionable warnings here without a tool rewrite, we
-// keep a curated set of rule IDs whose `--fix` behavior is deterministic and
-// safe. Sourced from rule pages in stylelint's docs that explicitly state
-// "stylelint can automatically fix all of the problems reported by this rule".
-// Update when stylelint adds or removes fixable rules.
 const STYLELINT_FIXABLE_RULES = new Set<string>([
-  // whitespace / spacing — formatter-style, always safe
   "block-no-empty",
   "color-hex-length",
   "declaration-block-no-duplicate-properties",

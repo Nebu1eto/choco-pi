@@ -1,9 +1,5 @@
 import { isFigmaRecord, type FigmaRecord, type FigmaValue } from "./figma-values.ts";
 
-/**
- * camelCase keys that the Figma REST API itself spells. Processed tool output copies them from
- * Figma nodes, so they keep Figma's spelling; every other camelCase key is ours and becomes snake_case.
- */
 const FIGMA_REST_KEYS: ReadonlySet<string> = new Set([
   "layoutMode",
   "layoutWrap",
@@ -46,7 +42,6 @@ const FIGMA_REST_KEYS: ReadonlySet<string> = new Set([
   "preferredValues",
 ]);
 
-/** Keys whose children are data-keyed (user property names, variable paths): keep child keys as-is. */
 const OPAQUE_CHILD_KEYS: ReadonlySet<string> = new Set([
   "componentProperties",
   "boundVariables",
@@ -62,7 +57,6 @@ function outputKey(key: string): string {
   return FIGMA_REST_KEYS.has(key) ? key : toSnakeCaseKey(key);
 }
 
-/** Convert the keys we invent in processed tool output; Figma-spelled keys and data-keyed maps stay. */
 export function toFigmaOutput(value: FigmaValue, opaqueKeys = false): FigmaValue {
   if (Array.isArray(value)) return value.map((item) => toFigmaOutput(item));
   if (!isFigmaRecord(value)) return value;

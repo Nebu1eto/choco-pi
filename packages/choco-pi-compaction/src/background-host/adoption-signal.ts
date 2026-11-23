@@ -9,10 +9,6 @@ import type { Static } from "@earendil-works/pi-schema";
 
 import { hasMethods, nonEmptyStr, readProperty } from "../guards.ts";
 
-// ---------------------------------------------------------------------------
-// Process-global adoption signal (consumed by goal, hooks and the context cap)
-// ---------------------------------------------------------------------------
-
 const NonEmptyString = nonEmptyStr();
 const AdoptionIdentitySchema = obj(
   {
@@ -25,7 +21,6 @@ const AdoptionIdentitySchema = obj(
 type AdoptionIdentity = Static<typeof AdoptionIdentitySchema>;
 const isAdoptionIdentity = compile(AdoptionIdentitySchema).check;
 
-/** Coordinator-owned identity carried by every adopted checkpoint's details. */
 export function readAdoptionIdentity(
   source: Pick<CompactionEntryDraft, "details">,
 ): AdoptionIdentity | undefined {
@@ -33,7 +28,6 @@ export function readAdoptionIdentity(
   return isAdoptionIdentity(details) ? details : undefined;
 }
 
-/** How a committed adoption reached the session. */
 export type AdoptionRoute = "boundary" | "host" | "recovered";
 
 export interface BackgroundAdoptionNotice {
@@ -41,11 +35,6 @@ export interface BackgroundAdoptionNotice {
   readonly committedEntryId: string;
   readonly candidateId: string;
   readonly backendId: string;
-  /**
-   * "boundary" commits emit no host compaction event; "host" commits arrived
-   * through a real session_before_compact/session_compact pair; "recovered"
-   * commits were found on reload and already happened in an earlier process.
-   */
   readonly route: AdoptionRoute;
 }
 
@@ -54,7 +43,6 @@ export type BackgroundAdoptionListener = (
   ctx: ExtensionContext,
 ) => void;
 
-/** One owned main session, as seen by consumers. */
 export interface BackgroundAdoptionOwner {
   willAdopt(event: SessionBeforeCompactEvent): Promise<boolean>;
   isAdoption(entry: CompactionEntry): boolean;
@@ -63,21 +51,16 @@ export interface BackgroundAdoptionOwner {
 
 export interface BackgroundAdoptionSignal {
   readonly version: 1;
-  /** Whether this session_before_compact is answered by a background adoption (memoized per event). */
   willAdopt(sessionId: string, event: SessionBeforeCompactEvent): Promise<boolean>;
-  /** Whether a committed compaction entry is a background adoption proposed in this process. */
   isAdoption(sessionId: string, entry: CompactionEntry): boolean;
-  /** Start idle adoption of a ready candidate; false when none can be adopted now. */
   adoptReady(
     sessionId: string,
     ctx: ExtensionContext,
     onSettled: (adopted: boolean) => void,
   ): boolean;
-  /** Committed adoptions, delivered once per adoption after commit. */
   subscribe(listener: BackgroundAdoptionListener): () => void;
   registerOwner(sessionId: string, owner: BackgroundAdoptionOwner): () => void;
   publish(notice: BackgroundAdoptionNotice, ctx: ExtensionContext): void;
-  /** Process-unique owner generation, shared across extension reloads. */
   nextGeneration(): number;
 }
 
@@ -106,7 +89,6 @@ function unregisterOwner(
   if (owners.get(sessionId) === owner) owners.delete(sessionId);
 }
 
-/** Deliver to every listener; the first listener failure is rethrown after all ran. */
 function deliverNotice(
   listeners: ReadonlySet<BackgroundAdoptionListener>,
   notice: BackgroundAdoptionNotice,
@@ -157,7 +139,6 @@ function createAdoptionSignal(): BackgroundAdoptionSignal {
   };
 }
 
-/** The process-wide signal; a foreign or corrupt slot is refused, not replaced. */
 export function getBackgroundAdoptionSignal(): BackgroundAdoptionSignal {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, BACKGROUND_ADOPTION_SIGNAL_SYMBOL);
   const found: unknown = descriptor?.value;
@@ -173,12 +154,6 @@ export function getBackgroundAdoptionSignal(): BackgroundAdoptionSignal {
   return signal;
 }
 
-/**
- * Create the slot during extension registration: consumers loaded earlier
- * (goal, hooks) resolve it in their own session_start, which the host runs
- * only after every extension factory has returned. A foreign slot is left for
- * getBackgroundAdoptionSignal() to refuse on the session path.
- */
 export function publishBackgroundAdoptionSignalSlot(): void {
   if (Object.getOwnPropertyDescriptor(globalThis, BACKGROUND_ADOPTION_SIGNAL_SYMBOL) !== undefined)
     return;

@@ -1,12 +1,3 @@
-/**
- * A Node `--import` hook for tests: records each fs call whose first two
- * arguments name a path under FS_TRACE_ROOT, as one "<call> <path>" line
- * appended to FS_TRACE_LOG. It wraps node:fs (callback and sync forms) and
- * node:fs/promises, then syncs the ESM named exports, so a module that
- * imported `{ readFile }` calls the wrapper too. Lines are appended
- * asynchronously and in order; a process that ends through process.exit()
- * can drop its last lines, so trace processes that end normally.
- */
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";

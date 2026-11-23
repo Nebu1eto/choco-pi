@@ -39,7 +39,6 @@ import {
 } from "./usage-limit-fixture.ts";
 import { setRequireExplicitModel } from "../src/invocation-config.ts";
 
-/** Longer than index.ts's revival start delay (250 ms). */
 const REVIVAL_WAIT_MS = 600;
 const MARKER = "Your last tool call may have run partly or fully.";
 
@@ -58,7 +57,6 @@ interface SentMessage {
   content: string;
 }
 
-/** Parameters of the root tools these tests call. */
 interface ToolParams {
   agent_id?: string;
   prompt?: string;
@@ -74,7 +72,6 @@ interface RunCall {
   options: RunAgentOptions;
 }
 
-/** One extension activation over a shared session manager (a Pi runtime). */
 interface Activation {
   handlers: Map<string, LifecycleHandler>;
   tools: Map<string, ToolDefinition>;
@@ -92,19 +89,13 @@ interface Env {
   dir: string;
   runs: RunCall[];
   aborted: string[];
-  /** Journal entry seen by the runner's abort listener, per agent id. */
   atAbort: Map<string, SubagentJournalData | undefined>;
   sm: SessionManager;
   activate(options?: { mode?: ExtensionContext["mode"]; sm?: SessionManager }): Promise<Activation>;
   journal(id: string, sm?: SessionManager): SubagentJournalData[];
   seed(agent: JournalAgentSnapshot, suspended: boolean): void;
   childFile(name: string): Promise<string>;
-  /**
-   * Resolves once the `run`-th fake run of agent `id` (1-based) has installed
-   * its abort handling and pending settlement, i.e. it observes abort/finishAll.
-   */
   ready(id: string, run?: number): Promise<void>;
-  /** Settle every pending fake run as completed. */
   finishAll(): void;
 }
 
@@ -192,7 +183,6 @@ async function setup(t: TestContext): Promise<Env> {
           atAbort.set(id, journalOf(id).at(-1));
           settle(true);
         };
-        // A real runner honors a signal that aborted during its async setup.
         if (signal?.aborted === true) onAbort();
         else signal?.addEventListener("abort", onAbort, { once: true });
         pending.push(() => settle(false));
@@ -204,8 +194,6 @@ async function setup(t: TestContext): Promise<Env> {
     },
   };
 
-  // Swap the runner of each activation's internally constructed manager at the
-  // first session_start boundary (setJournalSink runs there for every session).
   const setSink = AgentManager.prototype.setJournalSink;
   t.mock.method(
     AgentManager.prototype,
@@ -227,7 +215,6 @@ async function setup(t: TestContext): Promise<Env> {
   ): Promise<Activation> {
     const handlers = new Map<string, LifecycleHandler>();
     let open = false;
-    // A failing assertion must not leave the global manager slot claimed.
     t.after(async () => {
       if (!open) return;
       for (const settle of pending.splice(0)) settle();
@@ -256,7 +243,6 @@ async function setup(t: TestContext): Promise<Env> {
     await subagentsExtension(pi);
     const base = env.context({ sessionManager: session });
     const mode = options.mode ?? "rpc";
-    // The SDK's headless UI; notify is captured for the latest activation.
     const ui = env.base.ui;
     t.mock.method(ui, "notify", (message: string) => {
       notices.push(message);
@@ -333,8 +319,6 @@ async function setup(t: TestContext): Promise<Env> {
 }
 
 async function spawnBackground(a: Activation): Promise<string> {
-  // Activation applies the project's subagents.json (requireExplicitModel on);
-  // this test drives spawn mechanics, not model choice, so lift the gate.
   setRequireExplicitModel(false);
   const text = await a.tool("Agent", {
     prompt: "long task",
@@ -483,8 +467,6 @@ test("dormant agents: result read, stop before revival, Agent resume and @handle
   const doneFile = await s.childFile("done.jsonl");
   const waitFile = await s.childFile("wait.jsonl");
   const mentionFile = await s.childFile("mention.jsonl");
-  // Activation loads the agent registry; a resume refuses fallback types, so
-  // seed with one that resolves exactly in this checkout.
   const a = await s.activate();
   const type = getAvailableTypes()[0];
   assert.ok(type);
@@ -499,7 +481,6 @@ test("dormant agents: result read, stop before revival, Agent resume and @handle
   );
   await a.start();
 
-  // Before the deferred revival fires: stopping the interrupted agent wins.
   const notRunning = await a.tool("get_subagent_result", { agent_id: "held" });
   assert.match(notRunning, /is not running \(saved status: interrupted\)/);
   const stopped = await a.tool("stop_subagent", { agent_id: "worker-held" });
@@ -621,8 +602,6 @@ test("Agent resume of a dormant agent with model: switches and journals, or refu
   assert.equal(run?.options.resumeSessionFile, file);
   assert.equal(`${run?.options.model?.provider}/${run?.options.model?.id}`, "openai/gpt-5.6-sol");
   await s.ready("mod");
-  // Every entry of the resumed run names the chosen model (the first one is
-  // written before the runner starts), so a later revival reopens on it.
   const entries = s.journal("mod").filter((entry) => entry.agent.status !== "completed");
   assert.ok(entries.length > 0);
   for (const entry of entries) {

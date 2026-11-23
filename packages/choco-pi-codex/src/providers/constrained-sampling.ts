@@ -6,8 +6,6 @@ import {
 } from "@choco-pi/code-mode/runtime-values";
 import type { Tool } from "@earendil-works/pi-ai";
 
-// Pi's extension loader exposes pi-ai root modules, not api/* subpaths.
-// Keep aligned with pi-ai src/api/constrained-sampling.ts.
 type JsonSchemaValue = JsonObject | BoundaryValue[] | string | number | boolean | null | undefined;
 type JsonSchemaProperty = JsonSchemaObject | undefined;
 interface JsonSchemaObject {

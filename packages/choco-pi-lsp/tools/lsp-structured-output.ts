@@ -115,7 +115,6 @@ function lspToolLocationFromUriRange<TUri, TRange>(
     return {
       uri,
       filePath: fileURLToPath(uri),
-      // LLM-facing coordinates: 1-based, matching editor/tool params.
       range: {
         start: {
           line: Math.floor(startLine) + 1,
@@ -297,9 +296,7 @@ export function parseLspNavigationTextPayload(text: string): ParsedTextPayload {
   if (!trimmed) return { notes, hints, errors };
   try {
     return { result: JSON.parse(trimmed), notes, hints, errors };
-  } catch {
-    // Continue with note/hint extraction and balanced-prefix parsing.
-  }
+  } catch {}
 
   const lines = trimmed.split(/\r?\n/);
   let jsonCandidate = trimmed;
@@ -363,12 +360,6 @@ export function buildLspNavigationEnvelope(
   return envelope;
 }
 
-/**
- * Model-visible JSON for an envelope. Envelope, location and metadata keys are
- * snake_case; `result` (LSP protocol data, or a result the tool already
- * converted) is emitted unchanged. The in-memory LspToolEnvelope keeps its
- * camelCase shape for internal consumers.
- */
 export function serializeLspToolEnvelope(envelope: LspToolEnvelope, operation?: string): string {
   return JSON.stringify({
     tool: envelope.tool,

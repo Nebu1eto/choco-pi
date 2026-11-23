@@ -1,12 +1,3 @@
-/**
- * Host-independent changes view: header, file list, expanded hunks, notes and
- * recorded review findings and comments, and the keys the pane handles while
- * it has focus.
- *
- * Rendered file blocks are cached by (width, snapshot revision, path,
- * expanded, decorations: notes, cursor, which findings and comments are open),
- * so a refresh that produces the same revision renders nothing new.
- */
 import { Input, matchesKey } from "@earendil-works/pi-tui";
 import { actionFor } from "./keys.ts";
 import { KEYBOARD_RESIZE_STEP, type PaneSurface, type PointerGesture } from "./surface.ts";
@@ -32,9 +23,6 @@ export {
 } from "./changes-view-state.ts";
 
 export class ChangesView extends ChangesViewNavigation implements PaneSurface {
-  /* ------------------------------------------------------------ mouse */
-
-  /** What body row `row` showed when the body was last drawn; undefined on any other row. */
   rowTarget(row: number): CursorRow | undefined {
     for (const entry of this.blockRows) {
       const offset = row - entry.start;
@@ -43,7 +31,6 @@ export class ChangesView extends ChangesViewNavigation implements PaneSurface {
     return undefined;
   }
 
-  /** Body rows of a hunk's lines as last drawn. */
   protected lineRows(path: string, hunkId: string): Array<{ row: number; lineIndex: number }> {
     const rows: Array<{ row: number; lineIndex: number }> = [];
     for (const entry of this.blockRows) {
@@ -57,11 +44,6 @@ export class ChangesView extends ChangesViewNavigation implements PaneSurface {
     return rows;
   }
 
-  /**
-   * Extend the selection to the line of the cursor's hunk nearest to `row`: it
-   * stays in one hunk. False when that leaves the selection as it was, which
-   * is most of a drag: a terminal reports every cell the pointer crosses.
-   */
   protected dragTo(row: number): boolean {
     const selection = this.selectedHunk;
     const from = this.cursorLine;
@@ -75,24 +57,16 @@ export class ChangesView extends ChangesViewNavigation implements PaneSurface {
     return this.cursorLine !== from;
   }
 
-  /**
-   * A click on a file row selects the file and expands or collapses it; on a
-   * hunk header it selects the hunk. With the line cursor, a press on a line
-   * puts the cursor there (Shift extends from where it was) and the drags
-   * that follow select a range.
-   */
   pointer(gesture: PointerGesture): boolean {
     if (this.noteInput || this.disposed) return false;
     const pinned = this.pinned.find((pin) => pin.row === gesture.row);
     if (pinned && gesture.kind !== "drag") {
-      // A pinned row: a click goes to its file's row or hunk (it does not fold either).
       if (gesture.kind !== "click") return false;
       const index = this.files().findIndex((file) => file.path === pinned.path);
       if (index < 0) return false;
       if (!this.options.keepMessages) this.message = undefined;
       if (pinned.hunkId === undefined) this.select(index);
       else {
-        // Where a hunk's header is not a stop (the review), its first line is.
         const header = { path: pinned.path, hunkId: pinned.hunkId };
         this.setCursor(this.options.hunkStops ? header : { ...header, lineIndex: 0 });
       }
@@ -108,7 +82,6 @@ export class ChangesView extends ChangesViewNavigation implements PaneSurface {
     const target = this.rowTarget(gesture.row);
     if (!target) return false;
     if (target.itemId !== undefined) {
-      // A finding or comment: a click puts the cursor on it and opens or closes it.
       if (gesture.kind !== "click") return false;
       if (!this.options.keepMessages) this.message = undefined;
       this.setCursor({ path: target.path, itemId: target.itemId });
@@ -140,7 +113,6 @@ export class ChangesView extends ChangesViewNavigation implements PaneSurface {
       this.select(index);
       this.toggleExpanded();
     } else if (!onLine) {
-      // Where an unfolded hunk's header is not a stop (the review), its first line is.
       const header = { path: target.path, hunkId: target.hunkId };
       const stop =
         !line ||
@@ -149,15 +121,11 @@ export class ChangesView extends ChangesViewNavigation implements PaneSurface {
             row.path === header.path && row.hunkId === header.hunkId && row.lineIndex === undefined,
         );
       this.setCursor(stop ? header : { ...header, lineIndex: 0 });
-      // Where headers are stops (the pane), a click on one folds or unfolds its hunk.
       if (line && this.options.hunkStops && stop) this.toggleHunk(header.hunkId);
     }
-    // A click on a line: its press already put the cursor there.
     this.actions.requestRender();
     return true;
   }
-
-  /* --------------------------------------------------------- actions */
 
   protected startNote(): void {
     const current = this.currentHunk();
@@ -188,10 +156,6 @@ export class ChangesView extends ChangesViewNavigation implements PaneSurface {
     this.noteInput = target;
   }
 
-  /**
-   * The reveal action (`v`): show a hidden sensitive file at once, for this
-   * view only. Nothing is saved, so the file is hidden again when the view reopens.
-   */
   protected reveal(): void {
     const file = this.selectedFile();
     if (!file) return;
@@ -211,7 +175,6 @@ export class ChangesView extends ChangesViewNavigation implements PaneSurface {
     this.dropCachedBlocks(path);
   }
 
-  /** What the cursor is on: selected lines, a hunk, or a file; undefined without a file. */
   protected cursorTarget(): AskTarget | undefined {
     const current = this.currentHunk();
     if (current) {
@@ -229,7 +192,6 @@ export class ChangesView extends ChangesViewNavigation implements PaneSurface {
     return file ? { file } : undefined;
   }
 
-  /** Hand the cursor's target to `action`, when the owner provides it. */
   protected withTarget(action: ((target: AskTarget) => void) | undefined): void {
     if (!action) return;
     const target = this.cursorTarget();
@@ -286,7 +248,6 @@ export class ChangesView extends ChangesViewNavigation implements PaneSurface {
         if (this.selectedItem !== undefined) this.toggleItem(this.selectedItem);
         else if (line && this.options.enterFolds !== false) this.toggleLine();
         else {
-          // The pane: on a hunk's header Enter folds the hunk; elsewhere it folds the file.
           const header = line ? this.headerHunkId() : undefined;
           if (header !== undefined) this.toggleHunk(header);
           else this.toggleExpanded();
@@ -338,7 +299,6 @@ export class ChangesView extends ChangesViewNavigation implements PaneSurface {
         this.moveFinding(-1);
         break;
       case "ask":
-        // Notes are asked about together; with none, the cursor's target is asked about.
         if (actions.sendNotes && (this.notes?.notes.length ?? 0) > 0) actions.sendNotes();
         else this.withTarget(actions.ask);
         break;

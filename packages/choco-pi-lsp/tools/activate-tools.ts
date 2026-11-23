@@ -1,25 +1,6 @@
 import type { ProtocolDictionary } from "./runtime-values.ts";
 import type { RuntimeValue } from "./runtime-values.ts";
 import { isRuntimeFunction, isRuntimeObject, isRuntimeString } from "./runtime-values.ts";
-/**
- * lsp_activate_tools — the loader tool that bootstraps pi's dynamic
- * tooling (registered-but-inactive tools activated via `pi.setActiveTools`).
- *
- * A handful of choco-pi-lsp tools are situational (structural ast-grep
- * search/replace/outline/dump, LSP go-to-definition/references/rename) —
- * useful on many turns, but not every turn. On hosts that support it, pi
- * lets an extension register such tools inactive and expose a small
- * always-active loader the model calls to activate a subset by name
- * (docs: https://github.com/earendil-works/pi, packages/coding-agent/docs/
- * extensions.md, "Dynamic Tool Loading"). Newly activated tools appear
- * starting the NEXT turn — no reload needed.
- *
- * This tool stays always-active (it has to, to bootstrap activation). It is
- * a no-op catalog lookup on hosts where the caller never wired
- * `setActiveTools`/`getActiveTools` (see the feature-detected gating in
- * index.ts) — the situational tools are registered statically active there
- * instead, so calling this tool is harmless, just unnecessary.
- */
 
 import { arr, obj, oneOf } from "@earendil-works/pi-schema";
 import { hostParams } from "./schema-bridge.ts";
@@ -38,8 +19,6 @@ export interface ActivatableToolInfo {
   summary: string;
 }
 
-/** The subset of the host `pi` API this tool needs, kept minimal + optional
- * so it degrades cleanly on hosts that don't implement dynamic tooling. */
 export type ActiveToolsHost = {
   getActiveTools?: () => string[];
   setActiveTools?: (names: string[]) => void;
@@ -47,13 +26,6 @@ export type ActiveToolsHost = {
 
 export interface ActivateToolsOptions {
   deferredToolSupport?: (ctx: RuntimeValue) => boolean;
-  /**
-   * Called with every lazy tool name the model asked for, so the extension
-   * can remember this logical session's activations and restore them after
-   * the host rebuilds the session — fork/reload/resume construct a fresh
-   * AgentSession with every registered tool active again, while choco-pi-lsp's
-   * closure state survives (see clients/tool-set-policy.ts).
-   */
   onActivated?: (names: string[]) => void;
   onMutation?: (mutation: {
     addedCount: number;
@@ -137,11 +109,6 @@ export function createActivateToolsTool(
         };
       }
 
-      // Additive only, per the docs' contract: never drop currently active
-      // tools in the same call.
-      // Remember every requested tool, not just the newly-added ones: a
-      // tool that is already active still has to survive the next
-      // fork/reload/resume restore.
       options.onActivated?.(requested);
 
       const active = pi.getActiveTools?.() ?? [];

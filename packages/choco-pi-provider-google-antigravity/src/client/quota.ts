@@ -36,12 +36,10 @@ const quotaSummaryValidator = compile(QuotaSummaryResponseSchema);
 export interface AntigravityQuotaBucket {
   bucketId: string;
   displayName: string;
-  /** "weekly" or "5h" in the captured response. */
   window: string;
   remainingFraction?: number | undefined;
   remainingAmount?: number | undefined;
   disabled?: boolean | undefined;
-  /** RFC 3339 reset time. */
   resetTime?: string | undefined;
 }
 
@@ -58,7 +56,6 @@ export type AntigravityQuotaSummary =
       description?: string | undefined;
     }
   | {
-      /** The account's tier has no quota summary (403 SUBSCRIPTION_REQUIRED). */
       kind: "no_quota_for_tier";
       detail?: string | undefined;
     };
@@ -85,7 +82,6 @@ function isNoQuotaForTier(error: AntigravityError): boolean {
   );
 }
 
-/** POST v1internal:retrieveUserQuotaSummary {project}: quota groups with weekly and 5h buckets. */
 export async function readQuotaSummary(
   options: QuotaRequestOptions,
 ): Promise<AntigravityQuotaSummary> {
@@ -132,7 +128,6 @@ export interface AntigravityCredits {
 }
 
 export interface AntigravityTier {
-  /** paidTier.name before currentTier.name (Google reports free-tier as current even for paid plans). */
   planLabel: string;
   tierId?: string | undefined;
   paidTierId?: string | undefined;
@@ -157,24 +152,16 @@ export interface TierRequestOptions {
   timeoutMs?: number | undefined;
 }
 
-/**
- * Google AI Ultra comes in two plans that loadCodeAssist names identically ("Google AI Ultra");
- * only the tier id tells them apart. agy 1.5.14 knows exactly two consumer Ultra tiers
- * (G1_ULTRA_TIER, G1_ULTRA_LITE_TIER), and an ultra-lite account is offered "a higher Google AI
- * Ultra plan". The account owner confirmed ultra-lite is the 5x plan, so the other is 20x.
- */
 const ULTRA_PLAN_SUFFIX = new Map([
   ["g1-ultra-lite-tier", "5x"],
   ["g1-ultra-tier", "20x"],
 ]);
 
-/** The display label for a tier: Google's name, with the Ultra plan size when the id names it. */
 export function planLabelFor(name: string, tierId: string | undefined): string {
   const suffix = tierId === undefined ? undefined : ULTRA_PLAN_SUFFIX.get(tierId);
   return suffix === undefined ? name : `${name} (${suffix})`;
 }
 
-/** The plan label and AI credit balance from loadCodeAssist. */
 export async function readTier(options: TierRequestOptions): Promise<AntigravityTier> {
   const response = await loadCodeAssist(options);
   const paid = response.paidTier;

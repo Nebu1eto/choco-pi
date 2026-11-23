@@ -394,7 +394,6 @@ test("xAI request swaps the model id only when active and never adds service_tie
     input: [],
   });
   assert.equal(applyFastModeRequest({ model: "grok-4.7" }, off, base), undefined);
-  // An existing tier is neither added nor stripped for xAI.
   assert.equal(
     applyFastModeRequest({ model: "grok-4.7", service_tier: "auto" }, off, base),
     undefined,
@@ -403,7 +402,6 @@ test("xAI request swaps the model id only when active and never adds service_tie
     model: "grok-4.7-build-fast",
     service_tier: "auto",
   });
-  // A payload already rewritten to another model is left alone.
   assert.equal(applyFastModeRequest({ model: "other" }, on, base), undefined);
   const older = xai("grok-4.5");
   assert.equal(

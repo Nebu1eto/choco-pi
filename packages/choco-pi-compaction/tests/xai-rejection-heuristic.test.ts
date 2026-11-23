@@ -1,9 +1,3 @@
-/**
- * Provider rejection heuristic of the xAI replay (O3): only an HTTP 400/422
- * whose JSON `error.message|code|param` names the compaction item turns
- * server-side compaction off; any other body (a mode error mentioning
- * "compact", plain text) does not.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 

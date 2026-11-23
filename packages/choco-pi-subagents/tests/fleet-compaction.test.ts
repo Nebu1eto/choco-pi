@@ -1,12 +1,3 @@
-/**
- * Fleet view per-agent "Compacting..." marker and the shared status line.
- *
- * The host window is driven through the session's own `compaction_start` /
- * `compaction_end` events; the background-preparation window through a real
- * child compaction bridge attached to a real SDK session with a fake
- * coordinator built against the frozen `CoordinatorApi`. The main session's
- * background window goes through the real process-wide registry.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -82,7 +73,6 @@ function agent(id: string, session: AgentSession): AgentRecord {
   });
 }
 
-// Theme tags count toward visible width, so default rows get room for them.
 function mount(records: AgentRecord[], width = 240, isMainCompacting?: () => boolean) {
   const manager = partialFixture<AgentManager>({
     listAgents: () => records.toReversed(),
@@ -122,9 +112,7 @@ function mount(records: AgentRecord[], width = 240, isMainCompacting?: () => boo
   panel.update();
   return {
     panel,
-    /** Every write to the compaction status entry, in order. */
     statusWrites,
-    /** The compaction status entry after an update. */
     status: () => {
       panel.update();
       return statusWrites.at(-1);
@@ -149,7 +137,6 @@ function mount(records: AgentRecord[], width = 240, isMainCompacting?: () => boo
   };
 }
 
-/** A session slice that only emits the events the compaction window reads. */
 function eventSession() {
   const listeners = new Set<(event: AgentSessionEvent) => void>();
   const session = partialFixture<AgentSession>({
@@ -373,7 +360,6 @@ test("stopping tracking closes an open window and removes the listener", () => {
   assert.equal(isSessionCompacting(child.session), false, "events after settlement are ignored");
 });
 
-/** Record whether each compaction event saw an open window. */
 function observeWindow(session: AgentSession): Array<[string, boolean]> {
   const observed: Array<[string, boolean]> = [];
   session.subscribe((event) => {
@@ -388,8 +374,6 @@ test("the runner tracks a real session's compaction only during the run", async 
   const { session } = await createSdkFixture();
   try {
     let inRun: Array<[string, boolean]> = [];
-    // Subscribed inside the run so it observes after the run's tracker; a
-    // failing compaction (no model) still emits start and end.
     session.prompt = async () => {
       inRun = observeWindow(session);
       await assert.rejects(session.compact());
@@ -402,7 +386,6 @@ test("the runner tracks a real session's compaction only during the run", async 
 
     inRun.length = 0;
     await assert.rejects(session.compact());
-    // A leaked tracker would open the window and make the end read true.
     assert.deepEqual(inRun, [
       ["compaction_start", false],
       ["compaction_end", false],

@@ -123,7 +123,6 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-/** A temp git repo with one commit and a detached worktree at `dir/name`. */
 async function repoWithWorktree(
   t: TestContext,
   dir: string,
@@ -245,8 +244,6 @@ test("capped and stopped snapshots are not revived", async (t) => {
     [["capped", "rev-cap"]],
   );
   assert.equal(s.h.runs.length, 0);
-  // Capped once: journaled as a terminal error, so the next startup neither
-  // revives nor re-reports it.
   assert.equal(s.manager.getDormant("rev-cap")?.status, "error");
   assert.equal(s.manager.getDormant("rev-cap")?.error, CAPPED_REVIVAL_ERROR);
   const cappedEntry = lastOf(s.entries, "rev-cap");
@@ -513,13 +510,11 @@ test("a re-armed wait journals its adopted worktree and cleans it if stopped bef
   assert.equal(s.manager.abort("rev-r"), true);
   await flush();
   assert.equal(s.manager.getRecord("rev-r")?.status, "stopped");
-  // The deferred cleanup runs git asynchronously after the stop; publication follows it.
   await waitFor(
     () => s.manager.getRecord("rev-r")?.worktreeResult !== undefined,
     "the stop's final settle",
   );
   await flush();
-  // A user stop is a cancellation: the worktree is retained, not committed or removed.
   assert.equal(await exists(path), true, "the stop's final settle retained the worktree");
   assert.equal(s.manager.getRecord("rev-r")?.worktreeResult?.retained, true);
   assert.match(s.manager.getRecord("rev-r")?.result ?? "", /Work retained in worktree/);
@@ -529,13 +524,10 @@ test("a re-armed wait journals its adopted worktree and cleans it if stopped bef
   assert.equal(sessionFileOwner(s.file), undefined, "released on eviction");
 });
 
-// ---- U5 follow-up: crash window and dormant resume with a model ----
-
 const OPUS_REF = "anthropic/claude-opus-4-5";
 const SOL_REF = "openai/gpt-5.6-sol";
 const KIMI_REF = "moonshotai/kimi-k3";
 
-/** Occupy the only pool slot so the next revival queues. */
 function fillSlot(s: Setup): void {
   s.manager.spawn(s.env.pi, s.context.ctx, "implementer", "blocker", {
     description: "blocker",
@@ -566,8 +558,6 @@ test("a revival queued behind the cap journals its file, and a kill then reopens
     assert.equal(entry.agent.prompt, undefined);
   }
 
-  // Kill in that window: the process (and its file claims) disappears; the
-  // next start reduces the journal and revives from it.
   s.manager.dispose();
   assert.equal(sessionFileOwner(file), undefined, "the dead process holds no claim");
   const disposition = startupDisposition(queued);
@@ -634,7 +624,6 @@ test("a worktree revival queued behind the cap journals its original worktree an
     assert.equal(entry.agent.worktree?.branch, queuedWorktree.branch);
   }
 
-  // Restart before the queued revival starts: reduce the journal as startup does.
   s.manager.dispose();
   assert.equal(await exists(second.path), true, "the original worktree is untouched");
   const reduced = reduceJournal(
@@ -718,7 +707,6 @@ test("a dormant resume with an out-of-scope model is refused like a live resume"
     join(cwd, ".pi", "settings.json"),
     JSON.stringify({ enabledModels: [OPUS_REF, SOL_REF] }),
   );
-  // Model Scope reads the snapshot the spawn entry points load first.
   await loadEnabledModels(cwd);
   setScopeModelsEnabled(true);
   t.after(() => setScopeModelsEnabled(false));
@@ -772,7 +760,6 @@ for (const outcome of ["settles", "throws"] as const) {
   });
 }
 
-/** What the test's `subagents:worktree-remove` listener observed. */
 interface HookRemoval {
   done?: () => void;
   paths: string[];

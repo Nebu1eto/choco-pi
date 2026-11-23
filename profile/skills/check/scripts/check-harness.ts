@@ -36,17 +36,8 @@ type Check = { id: string; status: CheckStatus; detail: string };
 type Settings = { packages?: unknown; tuiMode?: unknown; extensions?: unknown };
 type SubagentsSettings = { disableDefaultAgents?: unknown; fallbackSubagent?: unknown };
 
-/**
- * choco-pi keeps its exec bridge and registers its own `tool_search`, so Pi's
- * built-in `codemode` and `tool-search` stay off; it uses Pi's built-in MCP.
- */
 export const DISABLED_BUILTIN_EXTENSIONS = ["codemode", "tool-search"] as const;
 
-/**
- * Whether the project `extensions` entries disable `builtin:<name>`. Pi applies
- * the project's exact `+`/`-` and `!` entries in order and the last match wins;
- * a project match also overrides any user setting, so a project `-` decides.
- */
 function projectDisablesBuiltin(entries: readonly RuntimeValue[], name: string): boolean {
   let disabled = false;
   for (const entry of entries) {
@@ -64,27 +55,19 @@ function projectDisablesBuiltin(entries: readonly RuntimeValue[], name: string):
 
 export type HarnessOptions = {
   configRoot?: string;
-  /** Agent directory whose settings.json stands in when configRoot has none. */
   agentDir?: string;
   mode: "full" | "automatic";
   requiredCapabilities?: readonly Capability[];
   nodeVersion?: string;
   signal?: AbortSignal;
   runtimeIdentity?: RuntimeVersionObservation;
-  /**
-   * Built-in extension names whose tools or commands the active host
-   * registered, observed in-host. Undefined when no host was observed.
-   */
   loadedBuiltinExtensions?: readonly string[];
-  /** Tool names registered by the active host, with built-in tool search provenance. */
   activeHostTools?: { chocoToolSearch: boolean; adapterTools: readonly string[] };
   readImportedRuntime?: () => Promise<RuntimeVersionObservation>;
   readText?: (target: string) => Promise<string>;
   pathExists?: (target: string) => Promise<boolean>;
   runCommand?: RunCommand;
-  /** Environment for the launcher and agent-dir defaults; defaults to `process.env`. */
   env?: Readonly<Record<string, string | undefined>>;
-  /** Home directory for the legacy agent-dir default; defaults to `os.homedir()`. */
   homeDir?: string;
 };
 
@@ -194,9 +177,6 @@ export function parseCliArgs(
 
 export async function checkHarness(options: HarnessOptions): Promise<HarnessReport> {
   const configRoot = options.configRoot ?? defaultConfigRoot;
-  // configRoot is the profile directory. The checkout that holds it also holds
-  // the bundled packages and the optional project settings Pi reads from
-  // `<checkout>/.pi/settings.json`.
   const checkoutRoot = path.dirname(configRoot);
   const readText = options.readText ?? ((target: string) => readFile(target, "utf8"));
   const exists = options.pathExists ?? defaultExists;
@@ -254,7 +234,6 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
     }
   }
   if (options.mode === "full") {
-    // The standalone launcher names itself; a PATH `pi` is irrelevant there.
     const chocoLauncher = env.CHOCO_PI_LAUNCHER || undefined;
     if (chocoLauncher === undefined && standaloneHome(env) !== undefined) {
       add(
@@ -281,9 +260,6 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
   }
 
   let settings: Settings | undefined;
-  // The profile policy lives in the checkout's settings.json when present;
-  // otherwise the global settings an earlier install wrote carry it. Only a
-  // missing project file falls back; any other read failure is reported.
   const projectSettingsPath = path.join(checkoutRoot, ".pi", "settings.json");
   const agentDir = options.agentDir ?? piAgentDir(env, options.homeDir ?? homedir());
   let fromProject = true;
@@ -324,10 +300,6 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
       add("packages", "fail", "settings.packages must be an array");
     else {
       const bundledRoot = path.join(checkoutRoot, "packages");
-      // Project settings name bundled packages relative to their `.pi`
-      // directory. Agent settings name them by absolute path and may also hold
-      // the user's own packages, which this profile does not own and so does
-      // not validate.
       const bundledDir = (spec: RuntimeValue): string | undefined => {
         if (!isString(spec)) return undefined;
         if (/^\.\.\/packages\/[^/]+$/.test(spec))

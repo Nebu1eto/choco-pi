@@ -4,12 +4,10 @@ import { installMethodPatch } from "./ui/method-patch-registry.ts";
 
 const PROBE_WIDGET_KEY = "choco-pi-subagents:terminal-probe";
 
-/** The terminal member Pi's status reporter writes through. */
 export interface StatusTerminal {
   setProgramStatus(status: ProgramStatus): void;
 }
 
-/** The widget surface used to reach the TUI's terminal. */
 export interface TerminalProbeUI {
   setWidget(
     key: string,
@@ -23,11 +21,6 @@ export interface TerminalProbeUI {
   ): void;
 }
 
-/**
- * The TUI terminal Pi's status reporter writes through. A widget factory is
- * the only extension surface that receives the TUI; a below-editor widget
- * that renders nothing adds no spacer, and it is removed straight away.
- */
 function captureTerminal(ui: TerminalProbeUI): StatusTerminal | undefined {
   let terminal: StatusTerminal | undefined;
   ui.setWidget(
@@ -47,11 +40,6 @@ export interface ProgramStatusBridge {
   dispose(): void;
 }
 
-/**
- * Keep the root's terminal status `working` while its background work runs.
- * Returns `undefined`, leaving Pi's own reporting untouched, when the TUI
- * terminal cannot be reached.
- */
 export function installProgramStatusBridge(
   ui: TerminalProbeUI,
   options: ProgramStatusHoldOptions,

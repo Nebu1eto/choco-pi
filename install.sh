@@ -1,41 +1,7 @@
 #!/bin/sh
-# choco-pi standalone installer, stage 0.
-#
-#   sh install.sh [--home DIR] [--bin-dir DIR] [--source URL|PATH] [--ref REF]
-#                 [--rev COMMIT] [--runtime node|bun]
-#
-# Defaults: --home $CHOCO_PI_HOME, else ~/.choco-pi; --bin-dir ~/.local/bin;
-# --source and --ref the ones an existing install recorded, else
-# https://github.com/Nebu1eto/choco-pi.git and its default branch. REF must be
-# a branch or tag name. --rev installs exactly that commit (hex id) after
-# fetching REF, instead of REF's tip; "choco-pi self update" passes it.
-# --runtime selects what runs Pi itself (default node, or the runtime an
-# earlier install recorded); Node.js is required either way. bun uses a bun >=
-# the pinned minimum or downloads the pinned Bun into <home>/runtime/bun
-# (sha256-verified before unzip).
-#
-# Stage 0 (this script) checks the tools it needs, clones the app into
-# <home>/app or moves an existing checkout to the revision to install (only
-# forward, unless --ref changes or --rev is given), and finds Node.js >= 24 or
-# downloads the pinned Node into <home>/runtime/node, verifying its sha256
-# before extracting anything. It reads that revision's
-# scripts/standalone/runtime-pins.txt before it moves the checkout or downloads
-# anything, then runs that revision's own code: scripts/standalone/bootstrap.ts
-# (pnpm and dependencies), then stage 1, scripts/standalone/manage.ts install
-# (profile, link). Each path they create is journaled in
-# <home>/.install-provenance at once, so a failed run keeps ownership for the
-# retry. Never uses sudo or a global npm install. Re-running is idempotent.
-#
-# Mirrors (downloads are still verified against the pins):
-#   CHOCO_PI_NODE_MIRROR   default https://nodejs.org/dist
-#   CHOCO_PI_NPM_REGISTRY  default https://registry.npmjs.org (bootstrap.ts)
-#   CHOCO_PI_BUN_MIRROR    default https://github.com/oven-sh/bun/releases/download (stage 1)
 set -eu
 
 DEFAULT_SOURCE=https://github.com/Nebu1eto/choco-pi.git
-# The stage 0 -> stage 1 handoff this script speaks (installer_protocol in
-# runtime-pins.txt): 3 moves the checkout here, runs bootstrap.ts, then stage 1
-# with --home, --bin-dir, --source, --ref and --runtime. Other values are refused.
 SUPPORTED_INSTALLER_PROTOCOL=3
 
 say() { printf 'choco-pi install: %s\n' "$*"; }
@@ -45,7 +11,39 @@ die() {
 }
 
 usage() {
-  sed -n '2,/^set -eu$/p' "$0" 2>/dev/null | sed '$d' | sed 's/^# \{0,1\}//'
+  cat <<'EOF'
+choco-pi standalone installer, stage 0.
+
+  sh install.sh [--home DIR] [--bin-dir DIR] [--source URL|PATH] [--ref REF]
+                [--rev COMMIT] [--runtime node|bun]
+
+Defaults: --home $CHOCO_PI_HOME, else ~/.choco-pi; --bin-dir ~/.local/bin;
+--source and --ref the ones an existing install recorded, else
+https://github.com/Nebu1eto/choco-pi.git and its default branch. REF must be
+a branch or tag name. --rev installs exactly that commit (hex id) after
+fetching REF, instead of REF's tip; "choco-pi self update" passes it.
+--runtime selects what runs Pi itself (default node, or the runtime an
+earlier install recorded); Node.js is required either way. bun uses a bun >=
+the pinned minimum or downloads the pinned Bun into <home>/runtime/bun
+(sha256-verified before unzip).
+
+Stage 0 (this script) checks the tools it needs, clones the app into
+<home>/app or moves an existing checkout to the revision to install (only
+forward, unless --ref changes or --rev is given), and finds Node.js >= 24 or
+downloads the pinned Node into <home>/runtime/node, verifying its sha256
+before extracting anything. It reads that revision's
+scripts/standalone/runtime-pins.txt before it moves the checkout or downloads
+anything, then runs that revision's own code: scripts/standalone/bootstrap.ts
+(pnpm and dependencies), then stage 1, scripts/standalone/manage.ts install
+(profile, link). Each path they create is journaled in
+<home>/.install-provenance at once, so a failed run keeps ownership for the
+retry. Never uses sudo or a global npm install. Re-running is idempotent.
+
+Mirrors (downloads are still verified against the pins):
+  CHOCO_PI_NODE_MIRROR   default https://nodejs.org/dist
+  CHOCO_PI_NPM_REGISTRY  default https://registry.npmjs.org (bootstrap.ts)
+  CHOCO_PI_BUN_MIRROR    default https://github.com/oven-sh/bun/releases/download (stage 1)
+EOF
 }
 
 home= bin_dir= source= ref= rev= runtime=
@@ -91,7 +89,6 @@ case $os in
     die "Windows is not supported by the standalone installer; use WSL2 with a glibc Linux distribution." ;;
 esac
 
-# The launcher resolves CHOCO_PI_HOME the same way, so the install lands where it looks.
 [ -n "$home" ] || home=${CHOCO_PI_HOME:-}
 if [ -z "$home" ] || [ -z "$bin_dir" ]; then
   [ -n "${HOME:-}" ] || die "HOME is not set; pass --home and --bin-dir"
@@ -127,7 +124,6 @@ git_guidance() {
   printf '%s\n' "  This installer does not elevate privileges; re-run it once git works." >&2
 }
 
-# Stage 0 requirements.
 if ! command -v git >/dev/null 2>&1 || ! git --version >/dev/null 2>&1; then
   git_guidance
   exit 1
@@ -222,9 +218,6 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
-# Functions share the global scope: never assign a name the main script uses
-# (home, bin_dir, source, ref, runtime, app, ...). staging and archive are
-# deliberately global for the EXIT cleanup.
 provision_node() {
   platform=$(node_platform) ||
     die "no pinned Node.js build for $os $(uname -m); install Node.js 24+ yourself and re-run."
@@ -257,7 +250,6 @@ provision_node() {
   node_qualifies "$runtime_dir/node/bin/node" || die "the downloaded Node.js does not run on this system"
 }
 
-# normalize_source SOURCE: URLs as given, a directory as its physical path.
 normalize_source() {
   case $1 in
     file://* | *://* | *@*:*) printf '%s' "$1" ;;
@@ -276,9 +268,6 @@ case $home in
 '*) die "the install home path contains a newline" ;;
 esac
 app=$home/app
-# The creation journal (scripts/standalone/provenance.ts): one absolute path
-# per line, appended the moment the path exists. Stage 1 merges it into
-# install.json and removes it; ownership never comes from mere existence.
 journal=$home/.install-provenance
 journal_created=
 [ -e "$journal" ] || journal_created=1
@@ -286,8 +275,6 @@ record_created() {
   printf '%s\n' "$1" >>"$journal"
 }
 
-# A Node.js found without downloading anything; the download, if needed,
-# waits until the revision to install, and so its pins, is known.
 NODE=
 if path_node=$(command -v node 2>/dev/null) && node_qualifies "$path_node"; then
   NODE=$("$path_node" -e 'process.stdout.write(process.execPath)')
@@ -295,8 +282,6 @@ elif node_qualifies "$home/runtime/node/bin/node"; then
   NODE=$home/runtime/node/bin/node
 fi
 
-# recorded KEY: the string install.json records for KEY, "-" for null, else
-# nothing. Run only when install.json exists and NODE is set.
 recorded() {
   "$NODE" -e '
 require("node:fs/promises")
@@ -337,8 +322,6 @@ if [ -e "$app/.git" ]; then
   [ -z "$dirty" ] || die "$app has local changes; refusing to move it:
 $dirty"
   [ "$(git -C "$app" remote get-url origin)" = "$source" ] || git -C "$app" remote set-url origin "$source"
-  # A --rev already here (self update fetched it, or restores it after a failed
-  # update) needs no fetch, so a ref since deleted upstream cannot stop it.
   if [ -z "$rev" ] || ! git -C "$app" cat-file -e "$rev^{commit}" 2>/dev/null; then
     git -C "$app" fetch --quiet --no-auto-gc origin "$ref"
   fi
@@ -360,13 +343,10 @@ else
   fi
   target=$(git -C "$app" rev-parse --verify --quiet "${rev:-HEAD}^{commit}") ||
     die "commit $rev is not in $source at $ref"
-  # This run's own clone: move it before anything reads it.
   git -C "$app" checkout --quiet --detach "$target"
 fi
 short=$(printf '%.12s' "$target")
 
-# Undoes this run's clone, and the journal and home it alone created, so that
-# another install.sh starts clean; an existing checkout is not this run's.
 undo_clone() {
   [ -n "$app_cloned" ] || return 0
   rm -rf "$app"
@@ -379,7 +359,6 @@ if ! pins_text=$(git -C "$app" show "$target:$pins_path" 2>/dev/null); then
   undo_clone
   die "$ref ($short) has no $pins_path; the source is not a standalone-capable choco-pi"
 fi
-# pin KEY [DEFAULT]: the target revision's value of KEY, else DEFAULT, else a fatal error.
 pin() {
   while read -r key value rest; do
     if [ "$key" = "$1" ]; then
@@ -396,8 +375,6 @@ EOF
   die "runtime pin $1 is missing in $ref ($short):$pins_path"
 }
 
-# Checked before the checkout moves and before any download. The default
-# contains a space, which a pin value (one whitespace-free word) never does.
 protocol=$(pin installer_protocol 'no pin')
 case $protocol in
   'no pin') ;;
@@ -421,7 +398,6 @@ fi
 if [ -n "$existing" ]; then
   head=$(git -C "$app" rev-parse --verify HEAD)
   if [ "$target" != "$head" ]; then
-    # Only forward on the recorded ref; a new ref or an explicit --rev may go anywhere.
     if [ -z "$rev" ] && [ -n "$recorded_ref" ] && [ "$ref" = "$recorded_ref" ] &&
       ! git -C "$app" merge-base --is-ancestor "$head" "$target"; then
       die "origin $ref ($short) is not a fast-forward of $(printf '%.12s' "$head")"
@@ -440,7 +416,6 @@ say "using Node.js $("$NODE" --version) at $NODE"
 
 trap - EXIT
 cleanup
-# Everything from here on is the installed revision's own code.
 "$NODE" "$app/scripts/standalone/bootstrap.ts"
 set -- install --home "$home" --bin-dir "$bin_dir" --source "$source" --ref "$ref"
 [ -z "$runtime" ] || set -- "$@" --runtime "$runtime"

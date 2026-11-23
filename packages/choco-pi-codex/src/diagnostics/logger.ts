@@ -195,9 +195,7 @@ export async function createCodexDiagnosticsLog(options: {
           failed = true;
           try {
             options.onError(error);
-          } catch {
-            // Logging failures must not escape into provider or shutdown paths.
-          }
+          } catch {}
         });
     },
     async close() {

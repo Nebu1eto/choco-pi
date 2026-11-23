@@ -1,32 +1,3 @@
-/**
- * Prompt-cache observability (#1018).
- *
- * Two provider-independent signals, both sinking into ~/.choco-pi-lsp/latency.log
- * via {@link logLatency} (matching the neighboring `type: "phase"` records):
- *
- *   1. Response-side cache usage (`cache_usage`) — on each assistant
- *      `message_end`, record the provider-reported token/cost breakdown so a
- *      session's actual cacheRead/cacheWrite behavior is queryable after the
- *      fact. This is what the provider DID, not what we hoped it would do.
- *
- *   2. Request-side context observations (`cache_context`) — one bounded record
- *      for every `context` call, describing choco-pi-lsp's own before/after message
- *      transformation, placement, injection sources, and privacy-preserving
- *      hashes. This is what choco-pi-lsp observed locally, not the final provider
- *      request after other context handlers have run and not a provider cache
- *      result.
- *
- *   3. Request-side prefix stability (`cache_prefix_break`) — a content hash of
- *      `messages[0]` observed on every `context` call. After #1016 the first
- *      message must stay byte-stable across a whole session; a logged CHANGE
- *      flags that something (choco-pi-lsp or otherwise) broke the cache prefix. This
- *      remains a local observation, never a provider cache-miss claim.
- *
- * All paths are defensive: `usage` (and its fields) may be absent on older
- * hosts or non-assistant messages, so every access is guarded and the handlers
- * never throw — on error they `dbg(...)` and no-op, like the other index.ts
- * event handlers.
- */
 import { createHash } from "node:crypto";
 import { isBigInt, isBoolean, isFiniteNumber, isString, isSymbol } from "./runtime-guards.ts";
 import { logLatency } from "./latency-logger.ts";
@@ -99,15 +70,9 @@ interface CacheUsageContext {
   turnIndex?: number;
 }
 
-/** RuntimeCoordinator's counter is process-global when sessions share a host. */
 const PROCESS_TURN_SCOPE = "process-global-runtime" as const;
 const SECONDARY_TURN_SCOPE = "unavailable-concurrent-secondary" as const;
 
-/**
- * Keep context telemetry bounded even when a tool result or user message is
- * unexpectedly large. This is a hash input only; none of the sampled text is
- * written to the log.
- */
 const MAX_HASHED_MESSAGES = 64;
 const MAX_HASHED_CONTENT_CHARS = 2048;
 const MAX_REPORTED_MESSAGES = 10_000;
@@ -281,16 +246,6 @@ function firstMessageChangeFor(
   return before !== after ? "changed" : "unchanged";
 }
 
-/**
- * Log one bounded request-side observation for every `context` call. This is
- * deliberately a separate phase from `cache_prefix_break`: it describes the
- * messages choco-pi-lsp saw and returned from its own context handler, not the final
- * provider request after other context handlers and not whether a provider
- * reused or missed a prompt cache. `observationId` is local to this process; the
- * host currently exposes no request id on ContextEvent/MessageEndEvent. A
- * RuntimeCoordinator turn is process-global, so it is explicitly scoped as
- * such and is omitted for concurrent secondary sessions.
- */
 export function observeCacheContext(args: {
   existingMessages?: ReadonlyArray<ContextMessageLike>;
   resultMessages?: ReadonlyArray<ContextMessageLike>;
@@ -398,14 +353,6 @@ export function observeCacheContext(args: {
   }
 }
 
-/**
- * Part 1 — log one `cache_usage` record for an assistant `message_end` that
- * carries a `usage`. Provider/model come straight off the message itself
- * (`AssistantMessage.provider` / `.model` in pi-ai) — no dependency on the
- * runtime telemetry identity. Skips silently (no record) when the message is
- * not an assistant message or has no usage; never logs a zeros-only record for
- * a message that simply lacks usage.
- */
 export function logCacheUsage(
   message: HostValue,
   dbg?: (msg: string) => void,
@@ -423,7 +370,6 @@ export function logCacheUsage(
       cacheWrite: hostNumber(usage.cacheWrite),
       input: hostNumber(usage.input),
       output: hostNumber(usage.output),
-      // `Usage.cost` is a breakdown object; the total is the headline number.
       cost: hostNumber(cost?.total),
     };
     if (context) {
@@ -453,15 +399,7 @@ export function logCacheUsage(
   }
 }
 
-/**
- * Content hash of the first transcript message. Stable for identical content
- * (role + content are serialized in a fixed order), so a changing hash means
- * `messages[0]` actually changed byte-for-byte.
- */
 function hashFirstMessage(first: { role?: unknown; content?: unknown }): string {
-  // Keep the original full local hash semantics for the existing
-  // `cache_prefix_break` signal. The new `cache_context` hashes above are the
-  // bounded hashes; this signal must not silently miss a suffix-only change.
   const serialized = JSON.stringify({
     role: first.role,
     content: first.content,
@@ -469,44 +407,11 @@ function hashFirstMessage(first: { role?: unknown; content?: unknown }): string 
   return createHash("sha256").update(serialized).digest("hex");
 }
 
-/**
- * Per-session baseline hash of `messages[0]`, keyed by the STABLE pi session id
- * (`ctx.sessionManager.getSessionId()`). A single module-scoped var was wrong:
- * in ONE process, multiple logical conversations touch this module, and they
- * must not share a baseline —
- *   - new / fork / a concurrent in-process subagent (#473) is a DIFFERENT id →
- *     its OWN independent baseline, never compared against another id's (else a
- *     benign session boundary logs a spurious `cache_prefix_break`, and a
- *     concurrent subagent + its parent stomp each other's baseline, each
- *     emitting a false positive — fatal for a signal whose value is trust);
- *   - an IN-PROCESS reload / resume reuses the SAME id → the baseline is still in
- *     this map, so a genuine break is caught (no blinding reset). NOTE: a full
- *     process restart (quit → `pi --session <id>`) starts a NEW process with an
- *     empty map, so the first post-restart `context` re-anchors a fresh baseline
- *     rather than comparing across the restart. That's acceptable here — this is a
- *     pure observability signal (at worst a missed `cache_prefix_break` log on the
- *     first post-restart turn, never a user-facing action) — unlike genuine
- *     session state (read guard #1041, widget #190) which IS rehydrated from the
- *     sidecar.
- *
- * Bounded as an insertion-ordered LRU (evict oldest-inserted past the cap) so a
- * long-lived process cycling through many sessions can't grow this unbounded.
- */
 const MAX_TRACKED_SESSIONS = 32;
 const prefixHashBySession = new Map<string, string>();
 
-/**
- * Bucket key used when no session id is available (undefined/empty). Degrades
- * gracefully to the old single-var semantics — one shared baseline — rather than
- * throwing or dropping the signal.
- */
 const NO_SESSION_KEY = "<no-session>";
 
-/**
- * Store `hash` for `key`, refreshing its LRU recency (re-insert moves it to the
- * newest position since `Map` preserves insertion order) and evicting the
- * oldest-inserted entries once the cap is exceeded.
- */
 function recordSessionHash(key: string, hash: string): void {
   prefixHashBySession.delete(key);
   prefixHashBySession.set(key, hash);
@@ -517,27 +422,6 @@ function recordSessionHash(key: string, hash: string): void {
   }
 }
 
-/**
- * Part 2 — observe `messages[0]` stability turn-over-turn, keyed by session id.
- * Logs a baseline the first time it sees a non-empty transcript FOR A GIVEN
- * session id, then logs a `cache_prefix_break` whenever that same session's
- * first-message hash changes. Pure observation: it never inspects or mutates
- * anything but its own per-session hash map, and never throws.
- *
- * `sessionId` should be pi's STABLE id (`ctx.sessionManager.getSessionId()`),
- * which uniquely identifies the CURRENTLY-firing session: a concurrent
- * in-process subagent runs its own `AgentSession`/`sessionManager`, so its
- * `context` calls carry a DIFFERENT id than the parent's and get their own
- * baseline. (`runtime.telemetrySessionId` cannot be used here: per the #473
- * guard a concurrent secondary skips `updateRuntimeIdentityFromEvent`, so that
- * process-global singleton stays pinned to the PARENT — it would collapse
- * parent and subagent onto one baseline.) Residual limitation: if the host ever
- * does NOT supply a stable id, all such sessions collapse onto `NO_SESSION_KEY`
- * and behave like the old single-var (a concurrent subagent could then still
- * cross-contaminate) — accepted as graceful degradation, not silently perfect.
- *
- * Does nothing on an empty transcript (nothing to anchor a prefix to yet).
- */
 export function observeCachePrefix(
   messages: ReadonlyArray<{ role?: unknown; content?: unknown }> | undefined,
   turnIndex: number,
@@ -553,8 +437,6 @@ export function observeCachePrefix(
     const currentHash = hashFirstMessage(first);
     const previousHash = prefixHashBySession.get(key);
     if (previousHash === undefined) {
-      // Baseline: record this session's starting prefix so a later break has a
-      // reference point in the log. `previousHash: null` marks the baseline.
       recordSessionHash(key, currentHash);
       logLatency({
         type: "phase",
@@ -591,8 +473,6 @@ export function observeCachePrefix(
         },
       });
     }
-    // Refresh recency (and update the stored hash after a break) so an active
-    // session stays warm in the LRU and isn't evicted while still in use.
     recordSessionHash(key, currentHash);
     return currentHash === previousHash ? "unchanged" : "changed";
   } catch (err) {
@@ -601,19 +481,11 @@ export function observeCachePrefix(
   }
 }
 
-/**
- * Drop a single session's prefix baseline. Called from the `session_shutdown`
- * handler (primary path only — the concurrent-secondary guard there returns
- * first, and the LRU cap backstops any secondary entry left behind) so an ended
- * conversation's entry is reclaimed promptly rather than only when the LRU
- * evicts it. Idempotent and never throws.
- */
 export function clearCachePrefixSession(sessionId?: string): void {
   const key = sessionKey(sessionId);
   prefixHashBySession.delete(key);
 }
 
-/** Clear all per-session prefix hashes. For tests / session boundaries. */
 export function resetCachePrefixObservation(): void {
   prefixHashBySession.clear();
 }

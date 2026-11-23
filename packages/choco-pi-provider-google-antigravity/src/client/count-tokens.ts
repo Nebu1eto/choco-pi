@@ -8,7 +8,6 @@ const countTokensValidator = compile(
   obj({ totalTokens: int({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }) }, { open: true }),
 );
 
-/** Same codes as the synthetic provider's count-tokens client. */
 export type CountTokensErrorCode =
   | "auth"
   | "quota"
@@ -19,20 +18,17 @@ export type CountTokensErrorCode =
   | "http"
   | "network";
 
-/** Same result type as packages/choco-pi-provider-synthetic/src/client/count-tokens.ts. */
 export type CountTokensResult =
   | { ok: true; inputTokens: number }
   | { ok: false; code: CountTokensErrorCode; status?: number; message: string };
 
 export interface CountAntigravityTokensOptions {
   token: string;
-  /** Runtime model id (e.g. `gemini-3.8-flash-low`). */
   model: string;
   system: string;
   promptText: string;
   fetch?: FetchLike | undefined;
   signal?: AbortSignal | undefined;
-  /** Total deadline across endpoints. Defaults to 3 s. */
   timeoutMs?: number | undefined;
   endpoints?: readonly string[] | undefined;
 }
@@ -59,11 +55,6 @@ function codeFor(error: AntigravityError): CountTokensErrorCode {
   }
 }
 
-/**
- * POST v1internal:countTokens with the CountTokensRequest wrapper
- * `{request: {model, contents, systemInstruction}}`. Provider, network, timeout and abort
- * failures resolve to `{ok: false}`; only missing token/model or a bad timeout throw.
- */
 export async function countAntigravityTokens(
   options: CountAntigravityTokensOptions,
 ): Promise<CountTokensResult> {

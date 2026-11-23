@@ -62,7 +62,6 @@ function childStarted(probe: ChildProbe, ctx: ExtensionContext): void {
   );
 }
 
-/** The lean tool surface declares only always-active tools; keep the step tool declared. */
 function keepStepActive(pi: Parameters<ExtensionFactory>[0]): void {
   const active = pi.getActiveTools();
   if (!active.includes(STEP_TOOL)) pi.setActiveTools([...active, STEP_TOOL]);
@@ -105,7 +104,6 @@ function sessionCreated(probe: ChildProbe, child: AgentSession): void {
   });
 }
 
-/** Child 0 runs isolated; child 1 is readOnly on a main-session fork. */
 function childOptions(
   probe: ChildProbe,
   options: Pick<RunOptions, "pi" | "mainSessionFork">,
@@ -159,7 +157,6 @@ function childConfig(index: number) {
   };
 }
 
-/** Actual runner, including hidden production attachment; no synthetic child host. */
 async function runChildren(host: Host): Promise<ChildRuns> {
   const { pi, ctx } = host.parent();
   const parentEntries = structuredClone(host.manager.getBranch());
@@ -198,7 +195,6 @@ async function runChildren(host: Host): Promise<ChildRuns> {
   return { ...runs, parentUnchanged };
 }
 
-/** Prepares each child's own coordinator during its second request (text backend). */
 function prepareChildren(host: Host): string[] {
   const prepared: string[] = [];
   const mainId = host.manager.getSessionId();
@@ -210,7 +206,6 @@ function prepareChildren(host: Host): string[] {
   return prepared;
 }
 
-/** First and last active-tool sets each child declared on the wire. */
 function toolDrift(records: readonly EvidenceRecord[], childId: string): unknown[] {
   const sets = records.flatMap((record) =>
     record.kind === "child-before-provider" &&
@@ -262,7 +257,6 @@ function isolationObservations(
   ];
 }
 
-/** Runner onCompaction once per child, coordinator consumers once per adoption. */
 function childConsumerEvidence(host: Host, result: CheckEvidence): void {
   const childNotices = host.notifications.filter((notice) =>
     notice.adoptionId.startsWith(CHILD_OWNER_KEY_PREFIX),

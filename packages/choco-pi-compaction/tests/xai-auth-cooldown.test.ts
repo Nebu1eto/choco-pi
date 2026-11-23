@@ -1,11 +1,3 @@
-/**
- * xAI auth failures and the auth cooldown (D10): a compact 401 surfaces as a
- * cancel; a compaction while the gate still cools down after it falls back to
- * the local summarizer with an `auth-cooling` notice (no credential failed
- * now), unless an xAI checkpoint is committed, where the opaque guard
- * cancels instead. The auth cooldown is `min(cooldownMs, 300_000)` and never
- * doubles.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 

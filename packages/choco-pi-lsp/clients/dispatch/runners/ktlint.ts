@@ -113,9 +113,6 @@ const ktlintRunner: RunnerDefinition = {
       timeout: 30000,
     });
 
-    // Ktlint exits non-zero when issues are found, so only treat a total lack
-    // of output as a hard skip. Any non-empty but unparseable output should
-    // surface as runner failure instead of a false clean result.
     if (result.error && !result.stdout) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }

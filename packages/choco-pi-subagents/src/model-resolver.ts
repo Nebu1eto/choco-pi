@@ -1,7 +1,3 @@
-/**
- * Model resolution: exact match ("provider/modelId") with fuzzy fallback.
- */
-
 export interface ModelEntry {
   id: string;
   name: string;
@@ -16,16 +12,10 @@ export interface ModelRegistry {
 
 export type ModelResolution = { tag: "resolved"; model: any } | { tag: "error"; message: string };
 
-/**
- * Resolve a model string to a Model instance.
- * Tries exact match first ("provider/modelId"), then fuzzy match against all available models.
- */
 export function resolveModel(input: string, registry: ModelRegistry): ModelResolution {
-  // Available models (those with auth configured)
   const all: ModelEntry[] = registry.getAvailable?.() ?? registry.getAll();
   const availableSet = new Set(all.map((m) => `${m.provider}/${m.id}`.toLowerCase()));
 
-  // 1. Exact match: "provider/modelId" — only if available (has auth)
   const slashIdx = input.indexOf("/");
   if (slashIdx !== -1) {
     const provider = input.slice(0, slashIdx);
@@ -36,13 +26,9 @@ export function resolveModel(input: string, registry: ModelRegistry): ModelResol
     }
   }
 
-  // 2. Fuzzy match against available models. Normalize separators so cosmetic
-  // punctuation differences still match — e.g. "claude-haiku-4.5" and
-  // "claude-haiku-4-5" (dot vs dash in the version) resolve to the same model.
   const normalize = (s: string) => s.toLowerCase().replace(/\./g, "-");
   const query = normalize(input);
 
-  // Score each model: prefer exact id match > id contains > name contains > provider+id contains
   let bestMatch: ModelEntry | undefined;
   let bestScore = 0;
 
@@ -53,15 +39,12 @@ export function resolveModel(input: string, registry: ModelRegistry): ModelResol
 
     let score = 0;
     if (id === query || full === query) {
-      score = 100; // exact
+      score = 100;
     } else if (id.includes(query) || full.includes(query)) {
-      score = 60 + (query.length / id.length) * 30; // substring, prefer tighter matches
+      score = 60 + (query.length / id.length) * 30;
     } else if (name.includes(query)) {
       score = 40 + (query.length / name.length) * 20;
     } else if (
-      // A trailing date-stamp token (e.g. "20251001") is optional, so a
-      // date-pinned config like "claude-haiku-4-5-20251001" still matches an
-      // undated registry id like "claude-haiku-4-5".
       query
         .split(/[\s\-/]+/)
         .every(
@@ -72,7 +55,7 @@ export function resolveModel(input: string, registry: ModelRegistry): ModelResol
             m.provider.toLowerCase().includes(part),
         )
     ) {
-      score = 20; // all parts present somewhere
+      score = 20;
     }
 
     if (score > bestScore) {
@@ -86,10 +69,6 @@ export function resolveModel(input: string, registry: ModelRegistry): ModelResol
     if (found) return { tag: "resolved", model: found };
   }
 
-  // 3. Provider fallback: a "provider/modelId" query that didn't match under the
-  // named provider (exact or fuzzy above) retries against all providers. The
-  // named provider is preferred when present; this only kicks in when it isn't,
-  // so the same model from another provider beats falling back to "inherit".
   if (slashIdx !== -1) {
     const bare = resolveModel(input.slice(slashIdx + 1), registry);
     switch (bare.tag) {
@@ -100,7 +79,6 @@ export function resolveModel(input: string, registry: ModelRegistry): ModelResol
     }
   }
 
-  // 4. No match — list available models
   const modelList = all
     .map((m) => `  ${m.provider}/${m.id}`)
     .sort()

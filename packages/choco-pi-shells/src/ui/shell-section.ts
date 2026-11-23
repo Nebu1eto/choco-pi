@@ -93,7 +93,6 @@ export function createShellSectionProvider(options: {
       await ui.custom<undefined>(
         (tui, theme, keybindings, done) => {
           // SAFETY: Pi owns ui.custom and supplies its full Theme; the cross-package
-          // panel contract intentionally exposes only the rendering methods it uses.
           const viewer = new ShellOutputViewer(
             tui,
             manager,

@@ -62,7 +62,6 @@ test("document schema rejects invalid shapes, unknown keys and bad optional valu
   assert.equal(isEditorContextDocument({ ...base, selection: { truncated: "yes" } }), false);
   assert.equal(isEditorContextDocument([base]), false);
   assert.equal(isEditorContextDocument(null), false);
-  // Closed objects: unknown keys are rejected at every level.
   assert.equal(isEditorContextDocument({ ...base, extra: 1 }), false);
   assert.equal(isEditorContextDocument({ ...base, editor: { name: "zed", extra: 1 } }), false);
   assert.equal(isEditorContextDocument({ ...base, cursor: { line: 1, column: 1, z: 1 } }), false);

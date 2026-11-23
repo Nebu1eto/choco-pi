@@ -70,7 +70,6 @@ export function syncState(
   const m = ctx.model;
   state.modelId = m?.id ?? "";
   state.modelName = m?.name ?? "";
-  // Retained as a compatibility snapshot only; production surfaces format from raw fields.
   state.modelLabel = modelLabelFor(state, "id");
   state.providerLabel = formatProviderLabel(ctx.model?.provider);
   state.contextLabel = buildContextLabel(ctx);

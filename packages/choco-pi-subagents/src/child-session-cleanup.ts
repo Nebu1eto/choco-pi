@@ -46,12 +46,9 @@ function startCleanup(cleanup: ResolvedCleanup, ownerId: string): void {
   try {
     const result = cleanup.cleanupOwner.call(cleanup.candidate, ownerId);
     void Promise.resolve(result).catch(() => {});
-  } catch {
-    // Optional extension seams must not prevent the owning session from disposing.
-  }
+  } catch {}
 }
 
-/** Start optional cross-extension cleanup without delaying child-session disposal. */
 export function cleanupChildSessionOwner(session: ChildSessionOwner): void {
   const cleanups = [
     resolveCleanup(SHELL_MANAGER_SYMBOL),
@@ -63,7 +60,6 @@ export function cleanupChildSessionOwner(session: ChildSessionOwner): void {
   try {
     ownerId = session.sessionManager.getSessionId();
   } catch {
-    // Optional extension seams must not prevent the owning session from disposing.
     return;
   }
 
@@ -77,12 +73,6 @@ interface ShutdownCapableSession {
   };
 }
 
-/**
- * Give a child session's extensions their `session_shutdown` turn before `dispose()`,
- * mirroring Pi's `AgentSessionRuntime.dispose()`. Returns `undefined` synchronously when
- * no handler is registered so callers can dispose immediately; otherwise returns the
- * settled emit, which never rejects so disposal is never blocked.
- */
 export function emitChildSessionShutdown(
   session: ShutdownCapableSession,
 ): Promise<void> | undefined {

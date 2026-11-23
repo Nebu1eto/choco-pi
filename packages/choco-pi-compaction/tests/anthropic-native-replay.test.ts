@@ -1,13 +1,3 @@
-/**
- * Anthropic native replay rewrite verified at the transport.
- *
- * A real `createAgentSession` resumes a branch whose latest compaction entry
- * is an `anthropic-compaction-on-demand-v1` checkpoint. The rewrite runs as an
- * ordinary `before_provider_request` handler; the capturing provider (INSTALLED
- * adapter, fake base fetch) verifies the serialized body. Benign later handlers
- * keep the block first; hostile ones make the request fail closed before it is
- * transmitted.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -58,7 +48,6 @@ import {
 } from "../src/anthropic/replay-rewrite.ts";
 
 const API_KEY = "native-non-secret-placeholder-key";
-/** Synthetic signed block; the signature is a placeholder, not a credential. */
 const BLOCK = {
   type: "compaction",
   content: "NATIVE replay synthetic prefix facts",
@@ -152,7 +141,6 @@ interface HostOptions {
   readonly checkpoint?: Checkpoint;
   readonly details?: AnthropicDetails;
   readonly managedEffort?: boolean;
-  /** false: the provider is NOT wrapped by the capturing transport. */
   readonly wrapped?: boolean;
 }
 
@@ -332,7 +320,6 @@ test(
           ["rewritten"],
         );
         assert.equal(JSON.stringify(host.diagnostics).includes(BLOCK.signature), false);
-        // The replayed block maps back to the committed checkpoint entry.
         const [capture] = capturesFor(host.sessionId);
         assert.deepEqual(capture?.mapping?.messages[0]?.entryIds, [host.compactionId]);
         assert.deepEqual(transportRefusals(host.sessionId), []);

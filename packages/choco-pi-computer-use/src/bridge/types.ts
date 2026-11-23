@@ -43,28 +43,15 @@ export type ActOutcome = "worked" | "didnt" | "unknown";
 export type ObservationRefreshReason = "missing" | "stale";
 export type ComputerUseDetailsConfig = ComputerUseConfig & { notes?: string[] };
 
-/**
- * Structured refusal returned instead of foreground delivery. Foreground input
- * requires a host-issued grant; nothing retries or escalates automatically.
- */
 export interface ForegroundRefusal {
   code: "foreground_required";
   target: { app: string; bundleId?: string; pid: number; windowTitle: string };
   action: string;
   capability: string;
-  /** False only when the helper proved nothing was delivered. */
   effectPossible: boolean;
-  /** The helper posted pid-targeted pointer input before refusing. */
   pidPointerAttempted?: boolean;
-  /** With `pidPointerAttempted`: whether the settle window observed a change. */
   observableChange?: boolean;
-  /**
-   * Set when the refused input was already delivered in the background: the
-   * model must observe the target before acting on it again. Never retried in
-   * the same call.
-   */
   nextStep?: "observe_then_retry";
-  /** With `nextStep`: whether a host grant now covers the target for the next call. */
   grantedForNextCall?: boolean;
   grantHint: string;
   reason: string;
@@ -113,16 +100,11 @@ export interface ExecutionTrace {
   actionCount?: number;
   stoppedAt?: number;
   backgroundFirst?: boolean;
-  /** True only after a granted retry: a covered background attempt was refused with proof of no delivery. */
   escalatedToForeground?: boolean;
-  /** `foreground_required`: a config/env or earlier session grant covered the target; `user_grant`: the user granted it at the prompt; `auto_grant`: `foreground_prompt: "always"` granted it. */
   escalationReason?: "foreground_required" | "user_grant" | "auto_grant";
-  /** The host grant prompt shown (or skipped) after a refusal that proved non-delivery. */
   grantPrompt?: GrantPromptOutcome;
   backgroundAttempt?: { outcome: "foreground_required" | "didnt"; reason: string };
-  /** A background refusal followed a pid-targeted pointer attempt that showed no change. */
   pidPointerAttempted?: boolean;
-  /** The foreground retry was not run in this call because the input was already delivered. */
   retryDeferred?: true;
   retryDeferredReason?: string;
   requestId?: string;
@@ -130,7 +112,6 @@ export interface ExecutionTrace {
   refusal?: ForegroundRefusal;
   frontmostBefore?: JsonValue;
   frontmostAfter?: JsonValue;
-  /** Set after granted foreground input: whether focus went back to the user's previous app. */
   focusRestored?: boolean;
   focusRestoreReason?: string;
   verification?: {
@@ -174,18 +155,12 @@ export interface ComputerUseDetails {
   execution: ExecutionTrace;
   config?: ComputerUseDetailsConfig;
   helper?: PlatformDiagnostics;
-  /**
-   * `partial`: an action failed during delivery after earlier actions ran;
-   * `execution.stoppedAt` names it, `execution.error` says why, and the
-   * returned state is the successor of what was delivered.
-   */
   status?: "ok" | "partial";
   axDiagnostics?: {
     reason?: string;
     message?: string;
     debug?: JsonValue;
   };
-  /** Recent browser console messages/exceptions; only present when CDP is active. */
   console?: CdpConsoleEntry[];
   imageReason?:
     | "fallback_recovery"
@@ -197,20 +172,15 @@ export interface ComputerUseDetails {
     | "duplicated_ax_labels"
     | "browser_wait_verification";
 }
-/** Execution of a helper request that was stopped (cancel/deadline) or refused by ownership. */
 export interface InterruptedExecutionTrace {
   strategy: "act";
   outcome: "partial" | "rejected_before_delivery";
-  /** Action index at which the helper stopped, when it reported one. */
   stoppedAt?: number;
   reason?: string;
   effectPossible: boolean;
   cancel?: HelperCancelAck;
-  /** `stopping` is non-terminal: delivery may continue until the helper reports stopped. */
   state?: HelperInterruptionState;
-  /** Why the state cannot prove delivery ended (present for `stopping`). */
   stateReason?: string;
-  /** Actions of this call delivered before the interrupted one (absent when it was the first). */
   steps?: ExecutionTrace[];
   focusRestored?: boolean;
   focusRestoreReason?: string;
@@ -236,7 +206,6 @@ export interface TerminalDesktopActionDetails {
   };
   execution: ExecutionTrace | InterruptedExecutionTrace;
   error: { code: string; message: string };
-  /** `observe_then_retry`: the refused input was already delivered in the background. */
   nextStep?: "observe_then_retry";
   config?: ComputerUseDetailsConfig;
 }
@@ -288,16 +257,10 @@ export interface BrowserObservationDetails {
   root: { ref: string; kind: "browser_page"; title: string; url: string };
   outline: SerializedOutline;
   renderedOutline: string;
-  /**
-   * act_ui only. `partial`: an action failed during delivery after earlier
-   * actions ran; `execution.stoppedAt` names it and `execution.error` says why.
-   */
   status?: "ok" | "partial";
-  /** act_ui only: one `cdp_act` step per action; a sent step's outcome is `unknown` (effect not verified). */
   execution?: ExecutionTrace;
 }
 
-/** A browser act_ui result without a successor state: the page could not be observed afterward. */
 export interface TerminalBrowserActionDetails {
   tool: "act_ui";
   kind: "browser_page";
@@ -425,22 +388,15 @@ export interface NoteWindowInput {
 
 export type NativePreparedAction = Exclude<PreparedAction, { action: "wait" }>;
 
-/**
- * Per-transaction host context for foreground decisions: the tool call's
- * extension context (for the user grant prompt) and the user's frontmost app
- * captured once before the first granted foreground attempt.
- */
 export interface ForegroundSession {
   ctx?: ExtensionContext;
   focusCaptured: boolean;
   focusBefore?: { pid: number; windowTitle?: string };
-  /** The latest helper act request sent for the current action. */
   lastRequest?: { requestId: string; policy: DeliveryPolicy };
 }
 
 export interface HelperRefusalSignal {
   message: string;
-  /** False only when the refusal proves nothing took effect (see `refusalProvesNoEffect`). */
   effectPossible: boolean;
   evidence?: HelperRefusalEvidence;
 }
@@ -460,17 +416,14 @@ export interface ValidatedCondition {
   timeoutMs: number;
 }
 
-/** A desktop action that failed during delivery, after `index` earlier actions ran. */
 export interface DesktopDispatchFailure {
   index: number;
   error: Error;
-  /** The failed action's last helper request, when one was sent. */
   request?: { requestId: string; policy: DeliveryPolicy };
   interruption?: HelperInterruptionOutcome;
 }
 
 export interface DesktopDispatch {
-  /** Aggregate of the delivered steps (the failed action is not among them). */
   execution: ExecutionTrace;
   failure?: DesktopDispatchFailure;
 }
@@ -487,7 +440,6 @@ export interface HelperInterruptionOutcome {
   execution: InterruptedExecutionTrace;
 }
 
-/** The base observation a browser batch is prepared against. */
 export interface BrowserBase {
   stateId: string;
   snapshot: CdpPageSnapshot;
@@ -496,7 +448,6 @@ export interface BrowserBase {
 
 export type BrowserPoint = { x: number; y: number };
 
-/** A browser action prepared before anything is sent; node targets carry their backend node id. */
 export type BrowserPreparedAction =
   | { action: "press"; backendNodeId: number; clickCount: number }
   | {
@@ -512,7 +463,6 @@ export type BrowserPreparedAction =
   | { action: "drag"; path: BrowserPoint[] }
   | ({ action: "moveMouse" } & BrowserPoint);
 
-/** A browser action that failed during delivery, after `index` earlier actions ran. */
 export interface BrowserDispatchFailure {
   index: number;
   error: Error;

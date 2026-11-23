@@ -1,9 +1,3 @@
-/**
- * The review targets `/review-assist` offers when run with no argument, in
- * the terminal UI. The branch base comes from the same default-base rule as
- * `/diff source branch` (the remote's default branch, then main, then
- * master); the branch being reviewed is never offered as its own base.
- */
 import { resolveDefaultBranchBase } from "../../lib/changes/git/default-base.ts";
 import { listBranches, repositoryRoot } from "../core/git.ts";
 import { listPullRequests } from "../core/pr.ts";
@@ -21,7 +15,6 @@ export type TargetChoiceContext = {
   ui: TargetPickerHost & { notify(message: string, type?: "info" | "warning" | "error"): void };
 };
 
-/** The checked-out branch's short name; undefined when detached or unreadable. */
 async function currentBranch(root: string, runner: ExecRunner): Promise<string | undefined> {
   try {
     const result = await runner("git", ["symbolic-ref", "--quiet", "--short", "HEAD"], {
@@ -43,7 +36,6 @@ async function defaultBase(root: string, runner: ExecRunner): Promise<string | u
   }
 }
 
-/** Branch-base choices: the default base first, then the other branches; never the current one. */
 export function branchBaseChoices(
   branches: readonly string[],
   current: string | undefined,
@@ -58,7 +50,6 @@ export function branchBaseChoices(
     .map((name) => ({ label: `Branch base: ${name}`, target: { kind: "branch", base: name } }));
 }
 
-/** Offer every available target and return the one picked. */
 export async function chooseReviewTarget(
   context: TargetChoiceContext,
   provider: SessionCheckpointProvider,
@@ -89,7 +80,6 @@ export async function chooseReviewTarget(
       target: { kind: "session", sessionId: context.sessionId },
     });
   }
-  // An alias of "Branch base: HEAD": the working tree against HEAD.
   candidates.push({ label: "Uncommitted changes", target: { kind: "branch", base: "HEAD" } });
   for (const pullRequest of pullRequests) {
     candidates.push(pullRequestTargetChoice(pullRequest.number, pullRequest.title));

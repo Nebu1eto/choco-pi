@@ -185,15 +185,12 @@ function isTuiContext(ctx: ExtensionContext): boolean {
 export default function (pi: ExtensionAPI) {
   try {
     installToolRendering();
-  } catch {
-    // Renderer API drift must degrade to each tool's stock renderer.
-  }
+  } catch {}
   const state: FooterState = createInitialState(emptyGitStatus());
   const sessionLifecycle = new SessionLifecycle();
   const editorOwnerToken = Symbol("zentui-editor-owner");
 
   let currentConfig: PolishedTuiConfig = loadConfig();
-  // Keep the capability guard defensive for hosts with incomplete extension APIs.
   if (isCallable(pi.registerEntryRenderer)) {
     pi.registerEntryRenderer(TURN_SUMMARY_ENTRY_TYPE, (entry, options, theme) => {
       if (!isBoundaryValue(entry.data)) return undefined;
@@ -557,9 +554,7 @@ export default function (pi: ExtensionAPI) {
     } catch {
       try {
         cleanup?.();
-      } catch {
-        // Best effort: the installer is locally transactional.
-      }
+      } catch {}
       cleanupUserMessageStyle = () => {};
       userMessageStyleInstalled = false;
     }
@@ -569,7 +564,6 @@ export default function (pi: ExtensionAPI) {
     try {
       cleanupUserMessageStyle();
     } catch {
-      // Best effort cleanup.
     } finally {
       cleanupUserMessageStyle = () => {};
       userMessageStyleInstalled = false;
@@ -591,9 +585,7 @@ export default function (pi: ExtensionAPI) {
     } catch {
       try {
         cleanup?.();
-      } catch {
-        // Best effort: the installer is locally transactional.
-      }
+      } catch {}
       cleanupSelectorBorderStyle = () => {};
       selectorBorderStyleInstalled = false;
     }
@@ -603,7 +595,6 @@ export default function (pi: ExtensionAPI) {
     try {
       cleanupSelectorBorderStyle();
     } catch {
-      // Best effort cleanup.
     } finally {
       cleanupSelectorBorderStyle = () => {};
       selectorBorderStyleInstalled = false;
@@ -825,9 +816,7 @@ export default function (pi: ExtensionAPI) {
     try {
       if (token) Reflect.set(ctx.ui, ZENTUI_FOOTER_OWNER, token);
       else Reflect.deleteProperty(ctx.ui, ZENTUI_FOOTER_OWNER);
-    } catch {
-      // Failure to mark ownership intentionally prevents Native from restoring it.
-    }
+    } catch {}
   };
 
   const ownsStatusLine = (ctx: ExtensionContext) =>
@@ -861,10 +850,6 @@ export default function (pi: ExtensionAPI) {
     token: symbol,
     previous: FooterBookkeepingSnapshot,
   ) => {
-    // Pi has no transactional Footer replacement API. If a live replacement
-    // fails while retaining our predecessor, preserve that Footer's callbacks
-    // and timer. Otherwise clear only local bookkeeping; never issue a
-    // destructive setFooter(undefined) rollback.
     if (
       previous.token !== undefined &&
       installedFooterToken === previous.token &&
@@ -932,8 +917,6 @@ export default function (pi: ExtensionAPI) {
     try {
       ctx.ui.setFooter(undefined);
     } catch {
-      // A live transition must preserve an owned Footer that Pi retained.
-      // Shutdown cannot keep local callbacks alive, so it clears bookkeeping.
       if (!options.forceLocalCleanup) return;
     }
     clearFooterOwnership(ctx, ownedToken);
@@ -1019,22 +1002,16 @@ export default function (pi: ExtensionAPI) {
     uninstallSelectorBorders();
     try {
       removeUserMessageStyle();
-    } catch {
-      // Startup alone may supersede a stale registration from an earlier reload.
-    }
+    } catch {}
     try {
       removeSelectorBorderStyle();
-    } catch {
-      // Startup alone may supersede a stale registration from an earlier reload.
-    }
+    } catch {}
     uninstallStatusLine(ctx);
     if (effectiveEditorEnabled()) clearEditorOwnership();
     else {
       try {
         uninstallEditor(ctx, { allowStaleZentui: true });
-      } catch {
-        // Reconciliation below retries observable stale ownership.
-      }
+      } catch {}
     }
 
     applyConfiguredUi(ctx, { allowStaleZentui: true });
@@ -1091,9 +1068,7 @@ export default function (pi: ExtensionAPI) {
           trackZentuiEditorFactory(after.factory);
           retainedEditorOwnership = true;
         }
-      } catch {
-        // Continue cleaning independent surfaces.
-      }
+      } catch {}
     }
     if (!retainedEditorOwnership) clearEditorOwnership();
     uninstallUserMessages();
@@ -1286,7 +1261,6 @@ export default function (pi: ExtensionAPI) {
     pauseAgentRun();
     workingLine.finishAgent(ctx);
     workingLine.updateMetrics(displayTokens, interactionMetrics.currentThought(), ctx);
-    // Reconcile once more after Pi has persisted the assistant message.
     syncInteractiveAndProjectStateWithUsage(event, ctx);
   });
   pi.on("model_select", (event, ctx) => {
@@ -1310,9 +1284,6 @@ export default function (pi: ExtensionAPI) {
     if (result.status === "accepted") {
       workingLine.updateMetrics(result.displayTokens, interactionMetrics.currentThought(), ctx);
     }
-    // Pi notifies extensions before persisting a successful message, so retain its live
-    // context until agent_end; accepted failed messages clear immediately instead of showing
-    // stale usage. Rejected and duplicate finals are not authoritative.
     if (
       result.status === "accepted" &&
       event.message.role === "assistant" &&
@@ -1335,9 +1306,7 @@ export default function (pi: ExtensionAPI) {
           ...settled.summary,
           stylePrefix: snapshotWorkingLineHighStyle(ctx.ui.theme, config, currentConfig.colors),
         });
-      } catch {
-        // A transcript persistence failure must not break settlement cleanup.
-      }
+      } catch {}
     }
   });
   pi.on("tool_execution_start", (event, ctx) => {

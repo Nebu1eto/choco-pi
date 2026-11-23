@@ -1,36 +1,3 @@
-/**
- * Manual sentinel probe for the standalone launcher (plan section 7). Never run by the unit suite.
- *
- *   node tests/live/standalone-sentinel.ts --home <scratch HOME> [--launcher <choco-pi>] [--path <PATH>] [--project <cwd>] [--runtime node|bun]
- *
- * <scratch HOME> must already hold a standalone install (default launcher
- * <home>/.local/bin/choco-pi). Sessions run in --project (default a sibling
- * of HOME): with cwd = HOME, Pi's project-scope <cwd>/.pi would be ~/.pi. The probe:
- * 1. creates a poison ~/.pi (fake token, invalid settings JSON, a sentinel
- *    skill, memory, ACP session map, agent-browser config) and records a
- *    recursive listing with sizes, modes and mtimes;
- * 2. starts `choco-pi --mode rpc` (PI_OFFLINE=1) with NODE_OPTIONS importing
- *    this file, which wraps every node:fs and node:fs/promises function and
- *    reports any path under $HOME/.pi; runs get_state and get_commands; then
- *    starts `choco-pi self acp`, initializes it and opens a session;
- * 3. passes when no access is reported, the listing is unchanged, no
- *    "sentinel" skill or command is loaded, and the session started;
- * 4. repeats the RPC round with `chmod 000 ~/.pi`: the session must start
- *    with no EACCES/EPERM on stderr.
- *
- * --runtime sets CHOCO_PI_RUNTIME for every launcher run (default: whatever
- * the install selects); the summary records the runtime the launcher resolved.
- *
- * Limits: Node processes are traced through NODE_OPTIONS. Bun ignores
- * NODE_OPTIONS; BUN_OPTIONS preloads the same tracer, but in Bun it only sees
- * calls made through the `fs` / `fs/promises` objects, not named ESM
- * imports. To cover that gap, every poison file's atime is backdated before
- * the runs and compared afterwards: a content read by any process (Node, Bun
- * or a tool) updates it (relatime), while a stat does not. The listing
- * comparison covers writes by any process. Hits are written to stderr and to
- * a log file asynchronously, so a hit in the last instant before a forced exit
- * could be missed.
- */
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
@@ -45,9 +12,6 @@ const LOG_VARIABLE = "CHOCO_PI_SENTINEL_LOG";
 const HIT_PREFIX = "CHOCO_PI_SENTINEL_HIT";
 const SELF = fileURLToPath(import.meta.url);
 
-// ---------------------------------------------------------------- probe side
-
-/** The path-like arguments of an fs call (strings, Buffers, file: URLs); fds and options are skipped. */
 function pathArguments(args: readonly unknown[]): string[] {
   const paths: string[] = [];
   for (const argument of args.slice(0, 2)) {
@@ -101,7 +65,6 @@ function installProbe(roots: readonly string[], logFile: string | undefined): vo
 }
 
 const probeRoots = process.env[ROOTS_VARIABLE];
-// The module URL is a real path; argv[1] may go through a symlink (/tmp on macOS).
 const mainArgument = process.argv[1];
 const isMain =
   mainArgument !== undefined &&
@@ -109,8 +72,6 @@ const isMain =
 if (probeRoots !== undefined && !isMain) {
   installProbe(probeRoots.split(path.delimiter).filter(Boolean), process.env[LOG_VARIABLE]);
 }
-
-// --------------------------------------------------------- orchestrator side
 
 type Options = {
   home: string;
@@ -198,7 +159,6 @@ async function listing(root: string): Promise<string> {
   return lines.join("\n");
 }
 
-/** Backdated atime of the poison files: any content read moves it forward. */
 const BACKDATED_ATIME = new Date("2001-01-01T00:00:00.000Z");
 
 async function backdatePoisonAtimes(piDir: string): Promise<void> {
@@ -218,7 +178,6 @@ async function readPoisonFiles(piDir: string): Promise<string[]> {
   return read;
 }
 
-/** `self env --json`'s runtime report under the probe environment. */
 async function resolvedRuntime(options: Options, environment: NodeJS.ProcessEnv): Promise<string> {
   const child = spawn(options.launcher, ["self", "env", "--json"], {
     cwd: options.project,
@@ -241,7 +200,6 @@ type Exchange = {
   timedOut: boolean;
 };
 
-/** Runs `args` through the launcher, writes `requests` one per line, waits for responses with `ids`. */
 async function exchange(
   options: Options,
   environment: NodeJS.ProcessEnv,
@@ -288,7 +246,6 @@ async function exchange(
   return { responses, stderr: await fsPromises.readFile(stderrFile, "utf8"), exitCode, timedOut };
 }
 
-/** A top-level field of a JSON line: booleans as is, objects re-serialized, others as strings; null when absent. */
 function jsonField(line: string | undefined, key: string): string | boolean | null {
   if (line === undefined) return null;
   const parsed: unknown = JSON.parse(line);

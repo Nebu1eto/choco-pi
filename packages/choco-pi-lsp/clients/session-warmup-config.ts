@@ -1,13 +1,11 @@
 export type GetSessionFlag = (name: string) => boolean | string | undefined;
 
-/** Session-start LSP spawning is opt-in; ordinary tool use remains lazy. */
 export function shouldPrewarmLanguageServers(getFlag: GetSessionFlag): boolean {
   return getFlag("lsp-warmup") === true;
 }
 
 export type LanguageServerPrewarmResult = "configured" | "automatic" | "disabled";
 
-/** Explicit warmFiles remain an opt-in even when automatic prewarming is disabled. */
 export async function runLanguageServerPrewarm(options: {
   warmFiles: string[];
   automaticWarmupEnabled: boolean;

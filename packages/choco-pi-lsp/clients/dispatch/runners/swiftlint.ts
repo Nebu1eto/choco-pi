@@ -11,23 +11,6 @@ import {
 
 const swiftlint = createAvailabilityChecker("swiftlint", ".exe");
 
-/**
- * SwiftLint JSON output is a flat array of violation objects:
- *
- * [
- *   {
- *     "rule_id": "identifier_name",
- *     "reason": "Variable name should be between 3 and 40 characters long",
- *     "character": 10,
- *     "file": "/path/to/file.swift",
- *     "severity": "Warning",
- *     "type": "Identifier Name",
- *     "line": 15
- *   }
- * ]
- *
- * An empty array means clean. Exit code is non-zero when violations exist.
- */
 const SwiftLintOutputSchema = arr(
   obj(
     {
@@ -44,12 +27,6 @@ const SwiftLintOutputSchema = arr(
 );
 const isSwiftLintOutput = compile(SwiftLintOutputSchema).check;
 
-// SwiftLint rules whose rule class declares a `corrector` — i.e. rules that
-// `swiftlint --fix` rewrites deterministically. The JSON reporter does not
-// surface a per-violation `is_corrected` flag, so we keep a curated allowlist.
-// Source: https://realm.github.io/SwiftLint/rule-directory.html (each rule
-// page indicates whether a corrector exists). Conservative — when in doubt,
-// leave a rule off this list.
 const SWIFTLINT_FIXABLE_RULES = new Set<string>([
   "closing_brace",
   "colon",
@@ -181,7 +158,6 @@ const swiftlintRunner: RunnerDefinition = {
       { cwd, timeout: 15000 },
     );
 
-    // SwiftLint exits non-zero on violations — stdout still has the JSON
     const raw = result.stdout || "";
     const diagnostics = parseSwiftLintOutput(raw, ctx.filePath);
 

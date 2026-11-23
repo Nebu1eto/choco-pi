@@ -55,7 +55,6 @@ const DEFAULT_AGENT_BROWSER_SOCKET_DIR_PREFIX = "/tmp/piab";
 const TERMUX_PACKAGE_NAME_PATTERN = /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/;
 export const SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS = 25_000;
 const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 35_000;
-/** Grace period after `exit` before resolving when `close` is delayed by inherited stdio handles. */
 const EXIT_STDIO_GRACE_MS = 100;
 const WINDOWS_AGENT_BROWSER_MISSING_MARKER = "PI_AGENT_BROWSER_COMMAND_NOT_FOUND:agent-browser.cmd";
 const UNTRUSTED_LOCAL_FILE_SESSION_MESSAGE =
@@ -128,7 +127,6 @@ export function getWindowsExplicitDefaultNamespaceEnv(
 
 export interface ProcessRunResult {
   aborted: boolean;
-  /** True once the native agent-browser executable, not merely the Windows PowerShell launcher, started. */
   agentBrowserStarted: boolean;
   exitCode: number;
   spawnError?: Error;
@@ -148,7 +146,6 @@ function quoteWindowsPowerShellArg(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-/** Exported for unit tests that lock Windows launcher argv ordering. */
 export function reorderWindowsLeadingGlobalArgs(args: string[]): string[] {
   const leadingGlobals: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
@@ -190,9 +187,6 @@ export function reorderWindowsLeadingGlobalArgs(args: string[]): string[] {
     if (GLOBAL_VALUE_FLAGS.some((valueFlag) => valueFlag === flag)) {
       const value = args[index + 1];
       if (value === undefined) return args;
-      // PowerShell -> .cmd drops empty argv values. Planning rejects empty
-      // caller --args; keep this defensive skip so an unexpected empty value
-      // cannot turn the next flag into its accidental value on native Windows.
       if (value === "" && (flag === "--args" || flag === "--namespace")) {
         index += 1;
         continue;
@@ -221,9 +215,7 @@ export function pinAgentBrowserFileAccessDisabled(
     }
     filtered.push(token);
   }
-  // These are launch-only controls. Sending them on an attached-session follow-up makes upstream replace the CDP connection with a local browser.
   if (preserveAttachedBrowserSession) return filtered;
-  // Upstream's flag overrides only the active CDP target; the Chrome arg covers new tabs. Its --args parser splits commas/newlines.
   const browserArgs = wrapperCompatibilityUserAgent
     ? ["--args", `--user-agent=${wrapperCompatibilityUserAgent.replaceAll(/[\r\n,]/g, "")}`]
     : [];
@@ -300,7 +292,6 @@ function terminateSpawnedChild(
   child.kill(signal);
 }
 
-/** Exported for unit tests that lock subprocess exit-code precedence. */
 export function resolveSpawnedChildExitCode(input: {
   closeCode?: number | null;
   exitCode?: number | null;
@@ -308,8 +299,6 @@ export function resolveSpawnedChildExitCode(input: {
   timedOut: boolean;
   spawnError?: Error;
 }): number {
-  // Precedence: observed `close` code when present, then wrapper timeout (124), then
-  // post-`exit` fallback when inherited stdio delays `close`, then spawn failure (127).
   if (input.closeCode !== null && input.closeCode !== undefined) {
     return input.closeCode;
   }
@@ -337,7 +326,6 @@ function watchSpawnedChildCompletion(
   let exited = false;
   let exitCode: number | null = null;
   let postExitTimer: NodeJS.Timeout | undefined;
-  // `completed` suppresses duplicate exit/close callbacks; `settled` in `finish` guards async spill cleanup.
   let completed = false;
 
   const complete = (closeCode?: number | null) => {
@@ -564,9 +552,6 @@ export function getAgentBrowserSocketPathValidationError(options: {
   if ((options.platform ?? processPlatform) === "win32") return undefined;
   const descriptor = parseArgvDescriptor(options.args);
   const { command } = descriptor.commandInfo;
-  // Preflight commands that can start or navigate a browser. Follow-up reads and
-  // cleanup may target a daemon created by an earlier wrapper version, so let
-  // upstream inspect those identities instead of rejecting them from path math.
   if (!command || !["batch", "connect", "goto", "navigate", "open", "visit"].includes(command))
     return undefined;
   const sessionName = extractExplicitSessionName(options.args);
@@ -921,7 +906,6 @@ export async function runAgentBrowserProcess(options: {
         if (!spawnError && stdoutSpillError) {
           spawnError = stdoutSpillError;
         }
-        // Idempotent teardown: streams may already be destroyed by the post-`exit` fallback.
         destroySpawnedChildStreams(child);
         resolve({
           aborted,

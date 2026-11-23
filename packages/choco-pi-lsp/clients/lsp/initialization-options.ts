@@ -1,14 +1,6 @@
-/**
- * LSP initializationOptions validation and deep merge.
- *
- * Extracted from `clients/lsp/index.ts`; behavior is unchanged.
- */
-
 import { obj, compile } from "@earendil-works/pi-schema";
 import { isRuntimeString } from "../../tools/runtime-values.ts";
 import { isBooleanValue, isFiniteNumber } from "./schema-guards.ts";
-
-// --- Init override helpers ---
 
 export interface LspInitializationOptions {
   [key: string]: LspInitializationValue;
@@ -39,11 +31,6 @@ export function isInitializationOptions<T>(value: T): value is T & LspInitializa
   return isInitializationObject(value) && Object.values(value).every(isInitializationValue);
 }
 
-/**
- * Recursively merges `override` onto `base`. Override wins on leaf conflicts
- * at every nesting level; arrays and non-plain-object values are replaced, not
- * merged (consistent with standard LSP settings merge semantics).
- */
 export function deepMergeObjects(
   base: LspInitializationOptions,
   override: LspInitializationOptions,
@@ -64,12 +51,6 @@ export function deepMergeObjects(
   return result;
 }
 
-/**
- * Merges user-supplied initializationOptions onto a server's built-in defaults.
- * - If neither side is defined → undefined (no options sent).
- * - If only one side is defined → that side is returned directly.
- * - Both defined → deep merge, user wins on conflicts.
- */
 export function mergeInitializationOptions(
   base: LspInitializationOptions | undefined,
   override: LspInitializationOptions | undefined,

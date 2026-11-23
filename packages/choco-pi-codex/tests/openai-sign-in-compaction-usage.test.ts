@@ -140,7 +140,6 @@ test("session_before_compact on openai sign-in falls back to Pi compaction with 
     preparation: { tokensBefore: 10, firstKeptEntryId: "entry" },
   });
   const journal: string[] = [];
-  // Each fallback also appends one lane-journal record.
   const pi = fixture<ExtensionAPI>({
     getThinkingLevel: () => "off",
     appendEntry: (customType: string) => journal.push(customType),

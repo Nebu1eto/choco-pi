@@ -782,10 +782,6 @@ export async function processBrowserOutput(
         signal,
       });
     }
-    // A failed eval/back/forward/reload/state-load/tab would otherwise drop the page to unverified and force the
-    // agent through a manual get url round trip. Probe the live URL ourselves instead: an observed http(s) page
-    // stays verified, a file URL keeps the local-file gate closed through currentSessionTabTarget, and a failed
-    // probe preserves the existing unknown-target behavior.
     if (
       succeeded === false &&
       !navigationSummary &&
@@ -805,9 +801,6 @@ export async function processBrowserOutput(
         sessionName: prepared.executionPlan.sessionName,
         signal,
       });
-      // A failed transition command can still have mutated or replaced the document before throwing, so
-      // keeping the verified URL must not keep the prior snapshot refs (markTabTargetUnknown dropped
-      // them before this probe existed); invalidate so the next ref use requires a fresh snapshot.
       failedTransitionReverification = navigationSummary !== undefined;
     }
     if (
@@ -1187,10 +1180,6 @@ export async function processBrowserOutput(
         sessionPageState.clearSession(sessionStateKey);
         state.closedManagedSessionNames.add(sessionStateKey);
       } else {
-        // A batch that times out or returns unparseable output yields no result rows, but the daemon
-        // may already have executed a recording page swap; fall back to the planned steps then. This
-        // also fires for wrapper-replaced envelopes and upstream pre-loop errors where nothing ran,
-        // which only over-invalidates (one extra snapshot), never under-invalidates.
         const plannedBatchRecordSwap =
           !Array.isArray(presentationEnvelope?.data) &&
           batchCommandSteps.some((step) => isRecordPageTransitionCommand(step));
@@ -1334,7 +1323,6 @@ export async function processBrowserOutput(
         failedFreshDaemon.restoreKey,
       );
     }
-    // Only a confirmed inactive daemon proves that a started fresh command did not establish browser ownership.
     const postLaunchFreshFailure =
       failedFreshDaemon !== undefined && failedFreshDaemon.status !== "inactive";
     const managedTransitionSucceeded =

@@ -18,9 +18,6 @@ import {
   type ThreadGoal,
 } from "./types.ts";
 
-// Persisted journal entries are decoded JSON. The previous TypeBox objects were open (unknown keys
-// accepted) and numbers rejected NaN/Infinity, so every object here is { open: true } and every
-// number is the bounded finiteNumber.
 const finiteNumber = finiteNum();
 const GoalStatusSchema = oneOf(["active", "paused", "budgetLimited", "complete"]);
 const RuntimeUsageGoalStatusSchema = oneOf(["active", "budgetLimited"]);

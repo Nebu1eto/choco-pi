@@ -6,12 +6,10 @@ import type {
 import { isObject, type RuntimeValue } from "@choco-pi/shared/runtime-values";
 import type { AppendRecord, CoordinatorApi } from "./contract.ts";
 
-/** Global slot the compaction extension publishes its child provider on. */
 export const CHILD_COMPACTION_PROVIDER_SYMBOL: unique symbol = Symbol.for(
   "choco-pi:compaction-child-provider",
 );
 
-/** Everything a child coordinator may use; no parent session object is reachable from here. */
 export interface ChildCoordinatorContext {
   readonly ownerKey: string;
   readonly ownerGeneration: number;
@@ -20,17 +18,10 @@ export interface ChildCoordinatorContext {
   readonly mainSessionFork: boolean;
   readonly readOnly: boolean;
   readonly isolated: boolean;
-  /** The child's own (read-only) manager; for a /btw fork it is the in-memory fork. */
   readonly sessionManager: ExtensionContext["sessionManager"];
   readonly model: ExtensionContext["model"];
-  /** Persists through the child's `pi.appendEntry`; refused after detachment. */
   readonly appendRecord: AppendRecord;
-  /**
-   * Appends a model-invisible anchor entry through the child's `pi.appendEntry`
-   * and returns its entry ID; returns "" (append nothing) after detachment.
-   */
   readonly appendAnchor: () => string;
-  /** Aborted when the attachment is detached (cancel, timeout, disposal). */
   readonly signal: AbortSignal;
 }
 
@@ -39,12 +30,9 @@ export interface ChildBoundary {
   readonly contextUsage: ContextUsage | undefined;
 }
 
-/** Returned by the provider: the coordinator plus optional runner-only observation hooks. */
 export interface ChildCoordinatorAttachment {
   readonly coordinator: CoordinatorApi;
-  /** Synchronous boundary observation (threshold scheduling); never adopts. */
   observeBoundary?(boundary: ChildBoundary): void;
-  /** Called once per committed checkpoint this bridge proposed, from the SDK `entry_appended` event. */
   acknowledgeCommit?(entry: CompactionEntry): void;
 }
 
@@ -54,7 +42,6 @@ export type CreateChildCoordinator = (
 
 export interface ChildCompactionProvider {
   readonly version: 1;
-  /** Background-compaction feature switch, read once per spawn. */
   isEnabled(): boolean;
   createChildCoordinator: CreateChildCoordinator;
 }
@@ -79,7 +66,6 @@ function isProvider<T extends RuntimeValue>(value: T): value is T & ChildCompact
   );
 }
 
-/** Resolve a published, structurally valid provider; foreign or corrupt slots are ignored. */
 export function resolveChildCompactionProvider(): ChildCompactionProvider | undefined {
   const found: RuntimeValue = Object.getOwnPropertyDescriptor(
     globalThis,
@@ -88,10 +74,6 @@ export function resolveChildCompactionProvider(): ChildCompactionProvider | unde
   return isProvider(found) ? found : undefined;
 }
 
-/**
- * Publish the provider; the compaction extension calls this. Returns an
- * unpublish callback that only removes this instance.
- */
 export function publishChildCompactionProvider(provider: ChildCompactionProvider): () => void {
   if (!isProvider(provider)) throw new Error("Invalid child compaction provider");
   Object.defineProperty(globalThis, CHILD_COMPACTION_PROVIDER_SYMBOL, {

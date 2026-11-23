@@ -1,10 +1,5 @@
-/**
- * context.ts — Extract parent conversation context for subagent inheritance.
- */
-
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-/** Extract text from a message content block array. */
 export function extractText(content: unknown[]): string {
   return content
     .filter((c: any) => c.type === "text")
@@ -12,11 +7,6 @@ export function extractText(content: unknown[]): string {
     .join("\n");
 }
 
-/**
- * Build a text representation of the parent conversation context.
- * Used when inherit_context is true to give the subagent visibility
- * into what has been discussed/done so far.
- */
 export function buildParentContext(ctx: ExtensionContext): string {
   const entries = ctx.sessionManager.getBranch();
   if (!entries || entries.length === 0) return "";
@@ -33,9 +23,7 @@ export function buildParentContext(ctx: ExtensionContext): string {
         const text = extractText(msg.content);
         if (text.trim()) parts.push(`[Assistant]: ${text.trim()}`);
       }
-      // Skip toolResult messages — too verbose for context
     } else if (entry.type === "compaction") {
-      // Include compaction summaries — they're already condensed
       if (entry.summary) {
         parts.push(`[Summary]: ${entry.summary}`);
       }

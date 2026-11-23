@@ -32,17 +32,10 @@ import { registerTurnHooks } from "./extension/turn-hooks.ts";
 
 export { createHostPorts, type CreateHostPortsOptions } from "./extension/host-ports.ts";
 
-// First executable statement: every import above has been evaluated, so the
-// full load/transpile cost has been paid. Capture it now.
 const CHOCO_PI_LSP_LOAD_MS = markPiLensLoaded();
 const CHOCO_PI_LSP_EVAL_MS = getPiLensEvalMs() ?? 0;
-// Start the event-loop occupancy monitor as early as possible so startup
-// blocks are captured. Native histogram — no per-event overhead. (#192)
 startEventLoopMonitor();
 
-// Log how long pi took to load choco-pi-lsp — the jiti transpile of every module is
-// paid by now. Source mode includes transpiling ~200 .ts files; the precompiled
-// dist build does not, so the delta is the #182 startup win. One line per load.
 dbg(
   `choco-pi-lsp loaded: ${CHOCO_PI_LSP_LOAD_MS}ms after process start (from ${CHOCO_PI_LSP_LOADED_FROM})`,
 );
@@ -68,20 +61,9 @@ logLatency({
   metadata: { loadedFrom: CHOCO_PI_LSP_LOADED_FROM },
 });
 
-// --- State ---
-
 const runtime = new RuntimeCoordinator();
 
-// --- Extension ---
-
-/**
- * The extension activation. Always reached through the default export below,
- * which runs it inside a console capture window (#1434).
- */
 function activateExtension(hostPi: ExtensionAPI) {
-  // Order matters and mirrors the former single closure: activation setup
-  // (capture-window wrap, host ports, plumbing, flags, read bridge, state),
-  // then renderer, commands, tools, and event hooks in registration order.
   const activation = createActivation(hostPi, runtime);
   registerTurnSummaryRenderer(activation);
   registerToggleCommands(activation);
@@ -101,8 +83,4 @@ export default function (pi: ExtensionAPI) {
   return runInConsoleCaptureWindow(() => activateExtension(pi));
 }
 
-// #1434: the import graph has finished evaluating, so the module window closes
-// here. Everything after this point is host-owned execution, until one of
-// choco-pi-lsp's own entry points opens its own window. This must stay the last
-// statement in index.ts.
 closeModuleLoadConsoleWindow();

@@ -6,15 +6,8 @@ import { arr, lit, obj, opt, str, type Static } from "@earendil-works/pi-schema"
 import { matches } from "./schema-check.ts";
 
 export const WORKTREE = fileURLToPath(new URL("../../../", import.meta.url));
-/**
- * The real agent dir, read when this module loads: before any launcher scopes
- * PI_CODING_AGENT_DIR and HOME to its isolated runtime.
- */
 const GLOBAL_AGENT_DIR = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 
-// Mirrors the SDK package-manager discovery (collectAutoExtensionEntries) for the
-// subset this repository uses; any unsupported shape fails closed instead of
-// silently loading a different extension set than the real host.
 const IGNORE_FILE_NAMES = [".gitignore", ".ignore", ".fdignore"];
 const BUILTIN_EXCLUSION = /^-builtin:[a-z0-9-]+$/u;
 
@@ -76,7 +69,6 @@ async function assertNoIgnoreFiles(dir: string): Promise<void> {
     throw new Error(`Ignore-file filtered extension discovery is unsupported: ${dir}`);
 }
 
-/** SDK resolveExtensionEntries: nested manifest first, then index.ts, then index.js. */
 async function directoryRootEntries(dir: string): Promise<string[] | undefined> {
   const nested = await readManifestExtensions(dir);
   if (nested !== undefined && nested.length > 0)
@@ -97,7 +89,6 @@ async function discoveredChildEntries(dir: string, name: string): Promise<string
   return (await directoryRootEntries(path)) ?? [];
 }
 
-/** SDK collectAutoExtensionEntries: root entries, else one-level discovery. */
 async function expandExtensionDirectory(dir: string): Promise<string[]> {
   const rootEntries = await directoryRootEntries(dir);
   if (rootEntries !== undefined) return rootEntries;
@@ -143,11 +134,6 @@ async function canonicalUnique(paths: string[]): Promise<string[]> {
   return [...new Set(canonical)];
 }
 
-/**
- * Resolves the worktree host extension profile into canonical absolute entry
- * files in the order DefaultPackageManager.resolve() reports them: the profile
- * `profile/extensions` directory first, then configured packages.
- */
 export async function loadExtensionProfile(): Promise<string[]> {
   const settings = await profileSettings();
   assertSupportedExtensionSettings(settings.extensions);
@@ -156,7 +142,6 @@ export async function loadExtensionProfile(): Promise<string[]> {
   return canonicalUnique([...loose, ...packages.flat()]);
 }
 
-/** `./packages/<name>` for a bundled package path of any checkout (`<root>/packages/<name>`). */
 function bundledSpec(spec: string): string | undefined {
   if (/^\.\/packages\/[^/]+$/u.test(spec)) return spec;
   const parent = dirname(spec);
@@ -164,21 +149,13 @@ function bundledSpec(spec: string): string | undefined {
   return `./packages/${basename(spec)}`;
 }
 
-/** A global `extensions` entry naming a checkout's `profile/extensions` directory (discovered as loose entries). */
 function isProfileExtensionsDir(entry: string): boolean {
   return basename(entry) === "extensions" && basename(dirname(entry)) === "profile";
 }
 
-/**
- * The profile policy, as `scripts/install-profile.ts` resolves it: the
- * checkout's `.pi/settings.json` when present, else the bundled packages of
- * the global agent `settings.json` (the checkout ships no project settings),
- * each mapped onto this worktree's `packages`.
- */
 async function profileSettings(): Promise<Static<typeof settingsSchema>> {
   const projectPath = join(WORKTREE, ".pi", "settings.json");
   if ((await entryKind(projectPath)) === "file") {
-    // Pi resolves project package paths against the project's `.pi` directory.
     const project = await readJsonFile(projectPath, settingsSchema);
     return {
       ...project,

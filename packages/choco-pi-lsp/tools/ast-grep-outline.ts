@@ -12,7 +12,6 @@ import { hostParams } from "./schema-bridge.ts";
 import { compactRenderResult } from "./render-compact.ts";
 import { LANGUAGES } from "./shared.ts";
 
-// Cap the wire payload so an outline over a large directory can't flood context.
 const MAX_FILES = 50;
 const MAX_ITEMS_PER_FILE = 200;
 
@@ -21,7 +20,6 @@ type OutlineEntry = Omit<AstGrepOutlineItem, "members"> & {
   members?: OutlineEntry[];
 };
 
-/** Attach ready `read` args (1-based) to each item/member from its 0-based range. */
 function withReadHandles(filePath: string, item: AstGrepOutlineItem): OutlineEntry {
   const { members, ...rest } = item;
   const offset = item.range.start.line + 1;
@@ -144,8 +142,6 @@ export function createAstGrepOutlineTool(astGrepClient: AstGrepClient) {
         (p): p is string => isRuntimeString(p) && p.trim().length > 0,
       );
       if (rawPaths.length === 0) return errorResult("paths is required");
-      // Resolve relative paths against the workspace; pass absolute paths to the
-      // CLI (execFile-style args — no shell interpolation).
       const absPaths = rawPaths.map((p) => (path.isAbsolute(p) ? p : path.resolve(cwd, p)));
 
       if (!(await astGrepClient.ensureAvailable())) {
@@ -176,7 +172,6 @@ export function createAstGrepOutlineTool(astGrepClient: AstGrepClient) {
         items: file.items
           .slice(0, MAX_ITEMS_PER_FILE)
           .map((item) => withReadHandles(file.path, item)),
-        // Wrapper-added key; outline items themselves are ast-grep CLI JSON and stay verbatim.
         ...includePropertiesWhen(file.items.length > MAX_ITEMS_PER_FILE, () => ({
           truncated_items: file.items.length - MAX_ITEMS_PER_FILE,
         })),

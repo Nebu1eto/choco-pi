@@ -21,7 +21,6 @@ import {
 async function fakeBinary(dir: string, parts: readonly string[]): Promise<string> {
   const file = path.join(dir, "agy");
   const noise = Buffer.alloc(3 << 20, 0x41);
-  // Place the second value across the 1 MiB read-chunk boundary to prove the overlap scan.
   const head = Buffer.from(`\u0000${parts[0] ?? ""}\u0000`, "latin1");
   const chunks = [head, noise.subarray(0, (1 << 20) - head.length - 20)];
   for (const part of parts.slice(1))
@@ -51,7 +50,6 @@ test("findAgyBinary honors the env override and then PATH", async () => {
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
 test("login selects the fingerprinted client pair among several, asking nothing", async () => {
-  // Fingerprinted pair listed second, as in agy, where file order does not identify it.
   const scan = async () => ({
     clientIds: [FAKE_CLIENT_ID, FAKE_CLIENT_ID_2],
     clientSecrets: [FAKE_CLIENT_SECRET, FAKE_CLIENT_SECRET_2],
@@ -81,7 +79,6 @@ test("a binary without the fingerprinted pair fails without falling back to anot
   });
   for (const agyClient of [
     AGY_CONSUMER_CLIENT,
-    // The right id with a secret from another client is still no match.
     { clientIdSha256: sha256(FAKE_CLIENT_ID), clientSecretSha256: sha256("GOCSPX-other") },
   ]) {
     await assert.rejects(

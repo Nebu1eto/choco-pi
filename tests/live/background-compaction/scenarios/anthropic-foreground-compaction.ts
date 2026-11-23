@@ -24,26 +24,17 @@ import { replyPrompt } from "./prompts.ts";
 import { evidence, type Host, type Scenario } from "./types.ts";
 
 const MANUAL_INSTRUCTIONS = "HARNESS-FG-INSTRUCTIONS keep every acknowledgement token verbatim";
-/** Prefix of every foreground fallback and session-disable notice. */
 const FALLBACK_NOTICE = "Anthropic server-side compaction";
 const DISABLED_NOTICE = "rejected the replayed checkpoint";
 const SETTLE_TIMEOUT_MS = 10_000;
 const SEED_BYTES = 400;
-/**
- * The offline Anthropic mirror is a 1,000,000-token native window. Under
- * Standard / Standard the soft cap is 600,000 and the compaction point
- * min(450,000, 600,000 - 90,000 headroom) = 450,000 (no native budget hook
- * answers for Anthropic). Written out, not recomputed.
- */
 const AUTO_POINT = 450_000;
-/** Input tokens each automatic-route answer reports: past the point, under the cap. */
 const AUTO_REPORTED_INPUT = AUTO_POINT + 10_000;
 
 const LaneRequestSchema = withArtifactDefs(
   obj({ compaction: JsonSchema, betas: arr(str()) }, { open: true }),
 );
 
-/** The `compaction` field a lane request is expected to carry. */
 type LaneCompaction = {
   readonly type: "summarize";
   readonly instructions?: string;
@@ -58,7 +49,6 @@ interface Checkpoint {
   readonly details: AnthropicDetails | undefined;
 }
 
-/** Record-sequence and branch positions a compaction phase is measured from. */
 interface Mark {
   readonly records: number;
   readonly checkpoints: number;
@@ -101,7 +91,6 @@ function observe<T>(
   return { description, actual, expected, evidenceRefs };
 }
 
-/** Live: the newest provider response of a foreground turn was accepted. */
 function lastForegroundAccepted(host: Host): boolean {
   if (host.mode === "fake") return true;
   const last = host.recorder.records.findLast(
@@ -124,7 +113,6 @@ async function prompt(host: Host, marker: string, ack: string): Promise<void> {
   }
 }
 
-/** Waits for in-flight compactions (an agent_settled route) to finish. */
 async function settleCompaction(host: Host, minimum: number): Promise<void> {
   const deadline = performance.now() + SETTLE_TIMEOUT_MS;
   while (performance.now() < deadline) {
@@ -133,7 +121,6 @@ async function settleCompaction(host: Host, minimum: number): Promise<void> {
   }
 }
 
-/** The lane request(s) the foreground path sent during this phase. */
 function laneObservations(host: Host, from: Mark, compaction: LaneCompaction): Observation[] {
   const requests = recordsSince(host, from, "lane-request");
   const responses = recordsSince(host, from, "native-lane-response");
@@ -170,7 +157,6 @@ function laneObservations(host: Host, from: Mark, compaction: LaneCompaction): O
   ];
 }
 
-/** Compaction entries this phase committed; the lane enforces exactly one block. */
 function checkpointObservations(host: Host, added: readonly Checkpoint[]): Observation[] {
   const ref = host.snapshot();
   return [
@@ -247,11 +233,6 @@ function fallbackObservations(host: Host, from: Mark): Observation[] {
   ];
 }
 
-/**
- * After a rejected replay, the session-disable path must engage once and the
- * next request must send the checkpoint's summary text instead of the block.
- * Runs one extra turn only when the rejection happened (live diagnosis).
- */
 async function probeFallback(host: Host, from: Mark, checkpoint: Checkpoint): Promise<void> {
   const disabled = notices(host, from, DISABLED_NOTICE);
   if (!disabled.length) {
@@ -275,7 +256,6 @@ function protectedSignatures(list: readonly Checkpoint[]): string[] {
   return list.flatMap((item) => (item.details ? [item.details.block.signature] : []));
 }
 
-/** Live: stops before any compaction once a foreground turn is refused. */
 function refusedEarly(host: Host, marker: string): CheckEvidence {
   const result = evidence(host);
   const refused = [
@@ -288,7 +268,6 @@ function refusedEarly(host: Host, marker: string): CheckEvidence {
   return result;
 }
 
-/** A phase's check evidence and the compaction entries it committed. */
 interface PhaseEvidence {
   readonly result: CheckEvidence;
   readonly added: readonly Checkpoint[];
@@ -310,7 +289,6 @@ function phaseEvidence(host: Host, from: Mark, compaction: LaneCompaction): Phas
   return { result, added };
 }
 
-/** Two short turns, `/compact <instructions>`, one more turn (live: the only driven path). */
 async function runManual(host: Host): Promise<CheckEvidence> {
   await prompt(host, "HARNESS-FG-TURN-A", "HARNESS-FG-ACK-A");
   if (!lastForegroundAccepted(host)) return refusedEarly(host, "A");
@@ -335,12 +313,6 @@ async function runManual(host: Host): Promise<CheckEvidence> {
   return result;
 }
 
-/**
- * Automatic route: the preset compaction point (model-context-cap's
- * agent_settled → ctx.compact() with no instructions) must reach the same
- * foreground handler and lane. Offline answers report input tokens past the
- * point, so the real policy, not a test override, requests each compaction.
- */
 async function runAutomatic(host: Host): Promise<CheckEvidence> {
   const from = mark(host);
   if (host.mode === "fake") host.setReportedInputTokens(AUTO_REPORTED_INPUT);
@@ -348,7 +320,6 @@ async function runAutomatic(host: Host): Promise<CheckEvidence> {
     await prompt(host, "HARNESS-FG-AUTO-TURN-A", "HARNESS-FG-AUTO-ACK-A");
     await settleCompaction(host, from.checkpoints + 1);
     await prompt(host, "HARNESS-FG-AUTO-TURN-B", "HARNESS-FG-AUTO-ACK-B");
-    // The point is passed again after turn B; let it finish before verdicts and cleanup.
     await settleCompaction(host, from.checkpoints + 2);
   } finally {
     if (host.mode === "fake") host.setReportedInputTokens(undefined);
@@ -376,7 +347,6 @@ export const scenario: Scenario = {
     "Background off, Anthropic server-side mode: /compact <instructions> answered by the lane, block replayed on the next request",
   settings: { enabled: false },
   anthropicForeground: true,
-  // Small padding makes the seed end with an assistant turn (strict role alternation).
   seedBytes: SEED_BYTES,
   checks: CHECKS,
   markers: ["HARNESS-FG-TURN-A", "HARNESS-FG-TURN-B", "HARNESS-FG-TURN-C"],

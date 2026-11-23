@@ -1,5 +1,3 @@
-// The ACP adapter keeps its own copy of the sensitive-path rules (it may not import across the
-// package boundary). Both classifiers must withhold the same paths: one sample per category.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { isSensitiveDiffPath } from "../packages/choco-pi-acp/src/acp/native-diff.ts";

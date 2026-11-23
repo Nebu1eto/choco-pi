@@ -1,4 +1,3 @@
-// The guards replace TypeBox Check(); this pins the accept/reject matrix measured against typebox 1.x.
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

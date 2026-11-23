@@ -1,5 +1,3 @@
-// The review view's lifecycle: Finish, leaving and closing.
-// The design these tests enumerate is in review-view.ts next to `close`.
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -45,7 +43,6 @@ const STALE =
 const PATH = "src/a.ts";
 const BASE_TEXT = `${Array.from({ length: 60 }, (_unused, index) => `line ${index + 1}`).join("\n")}\n`;
 
-/** src/a.ts: an edit at line 5 (one more line after the refresh) and one at line 30. */
 function modelOf(extraLineInFirstHunk: boolean, headSha = "head"): DiffModel {
   const first = extraLineInFirstHunk
     ? ["@@ -5,1 +5,2 @@", "-line 5", "+line 5 edited", "+line 5b inserted"]
@@ -89,7 +86,6 @@ function recordOf(model: DiffModel, comments: ReviewComment[] = []): ReviewRecor
   };
 }
 
-/** A comment on RIGHT `line` of expanded context above the hunk at 30 (base lines 10..29 shown). */
 function contextComment(model: DiffModel, line: number): ReviewComment {
   const hunk = model.files[0]!.hunks[1]!;
   const above = Array.from({ length: 20 }, (_unused, index) => ({
@@ -110,7 +106,6 @@ function contextComment(model: DiffModel, line: number): ReviewComment {
   };
 }
 
-/** Promises the test settles itself, in the order it chooses. */
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: Error) => void;
@@ -135,19 +130,12 @@ type Mounted = {
   editorTexts: string[];
   notices: string[];
   saves: Array<ReturnType<typeof deferred<void>> & { record: ReviewRecord }>;
-  /** Every record given to the store, held or not. */
   savedRecords: ReviewRecord[];
   shutdown(): void;
-  /** The next frame throws, as a broken theme would. */
   breakDrawing(): void;
   ended: Promise<RuntimeValue>;
 };
 
-/**
- * A real view on a host that records completions and editor writes. Saves wait
- * until the test settles them unless `autoSave` is set; `shutdown` ends the
- * custom UI from outside, as a session replacement does, and makes the host stale.
- */
 async function mount(
   options: Partial<OpenReviewViewOptions> & {
     autoSave?: boolean;
@@ -259,29 +247,16 @@ async function mount(
   };
 }
 
-/* ------------------------------------- leaving and finishing, every ordering */
-
 type LifeEvent = "q1" | "q2" | "A" | "B" | "D";
 type Outcomes = {
-  /** Finish's save. */
   a: "resolve" | "reject";
-  /** The save the first q starts. */
   b: "resolve" | "reject" | "timeout";
-  /** A disruption: the next frame throws, or the session ends. */
   d: "render" | "shutdown";
 };
 const LEAVE_MS = 25;
 
-/** A run's broken guarantee (if any) and how many events had been applied when the view closed. */
 type RunResult = { problem: string | undefined; closedAfter: number | undefined };
 
-/**
- * Every distinct ordering of `items` (`allowed` says which event may come
- * next). An ordering branches only while the view is open: once it has closed,
- * every remaining event lands on the closed guards (a save that no longer owns
- * the view, a key after close, a frame after close), so the remaining events
- * in one order stand for all their orders. Returns the problems and the runs.
- */
 async function exploreOrderings<E extends string>(
   items: readonly E[],
   allowed: (next: E, prefix: readonly E[]) => boolean,
@@ -317,7 +292,6 @@ async function exploreOrderings<E extends string>(
     for (const next of rest(prefix)) {
       if (!allowed(next, prefix)) continue;
       const child = [...prefix, next];
-      // The child whose completion is this very order needs no second run.
       const same = complete(child).join(",") === order.join(",");
       await visit(child, same ? result : undefined);
     }
@@ -328,7 +302,6 @@ async function exploreOrderings<E extends string>(
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** One run; a description of the broken guarantee, or undefined. */
 async function runLifecycle(
   start: "open" | "finishing",
   order: readonly LifeEvent[],
@@ -376,7 +349,6 @@ async function runLifecycle(
       closedAfter = index + 1;
     }
   }
-  // Whatever is still pending finishes now, late.
   for (const save of view.saves) save.resolve();
   await flush();
   const closes = view.completions.length + (endedFromOutside ? 1 : 0);
@@ -440,14 +412,11 @@ for (const start of ["open", "finishing"] as const) {
   }
 }
 
-/* ---------------------------- Finish against pending reads, every ordering */
-
 type Step = "refresh" | "context" | "reveal";
 type StepOutcome = "completes" | "fails" | "timeout";
 type WaitEvent = "start" | "settle" | "S" | "q";
 const FINISH_MS = 30;
 
-/** A hidden .env whose comment the record places at line 1; revealed, its text is at line 2. */
 function hiddenScenario() {
   const revealed = parseGitDiff(
     [
@@ -482,11 +451,6 @@ function hiddenScenario() {
   return { model, comment, revealed };
 }
 
-/**
- * What the exported comment must be: "new" (its line after the step, not
- * marked), "old" (its line before, or marked), "marked" (outdated or
- * unconfirmed, whatever the number).
- */
 type Expected = "new" | "old" | "marked";
 
 function expectedExport(step: Step, order: readonly WaitEvent[], outcome: StepOutcome): Expected {
@@ -497,15 +461,12 @@ function expectedExport(step: Step, order: readonly WaitEvent[], outcome: StepOu
     if (!started) return "old";
     if (!landed) return "marked";
     if (landed === "completes") return "new";
-    // A failure stays uncertain until a later read of the same kind succeeds:
-    // the old model's number is never exported as current.
     return "marked";
   };
   for (const event of order) {
     if (event === "start") started = true;
     else if (event === "settle") {
       if (outcome !== "timeout") landed = outcome;
-      // A Finish waiting for it exports now: what landed, a failure marked, a timeout marked.
       if (waiting) return outcome === "completes" ? "new" : "marked";
     } else if (event === "S") {
       if (started && !landed) waiting = true;
@@ -514,7 +475,6 @@ function expectedExport(step: Step, order: readonly WaitEvent[], outcome: StepOu
       return now();
     }
   }
-  // A Finish still waiting gives up at its limit.
   return "marked";
 }
 
@@ -539,7 +499,6 @@ async function stepProblem(
   const first = modelOf(false);
   const moved = modelOf(true);
   const gate = deferred<void>();
-  // Rejected in "fails" runs even when nothing read through it (the view closed first).
   gate.promise.catch(() => {});
   let lines = { old: 30, new: 31 };
   let options: Partial<OpenReviewViewOptions>;
@@ -618,7 +577,6 @@ async function stepProblem(
   }
   await sleep(FINISH_MS * 2);
   await flush();
-  // Late: everything still pending lands now and must change nothing.
   reads.hold = false;
   gate.resolve();
   for (const wait of reads.pending) wait.resolve();
@@ -650,8 +608,6 @@ for (const step of ["refresh", "context", "reveal"] as const) {
   test(`every ordering of a ${step} with Finish and q exports each line as current or marked, never stale`, async (t) => {
     const failures: string[] = [];
     let runs = 0;
-    // Without q every ordering closes at S or at the step's settling, so the
-    // orderings with q last already cover them.
     const items: readonly WaitEvent[] = ["start", "settle", "S", "q"];
     for (const outcome of ["completes", "fails", "timeout"] as const) {
       const explored = await exploreOrderings(
@@ -667,9 +623,6 @@ for (const step of ["refresh", "context", "reveal"] as const) {
   });
 }
 
-/* -------------------------------- where a comment is, one answer for all */
-
-/** src/a.ts with two hunks on BASE_TEXT, and src/b.ts with a hunk too short to tell positions apart. */
 function tableDiff(variant = false): DiffModel {
   const raw = [
     `diff --git a/${PATH} b/${PATH}`,
@@ -743,7 +696,6 @@ function tableRows(): Row[] {
     const { position: _position, ...old } = anchor;
     return old;
   };
-  // Stored numbers are wrong on purpose (except where only the text decides): nothing may trust them.
   return [
     {
       name: "new, with position",
@@ -857,7 +809,6 @@ test("the view, the record after a refresh, Finish's Markdown and the pull-reque
   };
   const runner: ExecRunner = async () => ({ stdout: BASE_TEXT, stderr: "", code: 0 });
 
-  // The view, through Finish: its record, its Markdown, and what it drew.
   const view = await mount({
     autoSave: true,
     model: diff,
@@ -931,19 +882,11 @@ test("a leave-save that hangs gives up after its limit; the review stays open an
   assert.equal(view.completions.length, 1, "the late save resurrects nothing");
 });
 
-/* --------------------------------------- state that must not go stale */
-
 const PR_RECORD = (model: DiffModel, comments: ReviewComment[] = []): ReviewRecord => ({
   ...recordOf(model, comments),
   target: { kind: "pr", number: 7 },
 });
 
-/**
- * A failed leave-save, then {an edit (a reviewed mark), nothing}, then {q, S},
- * with the store {working, still failing}. Nothing marked after the failure
- * may be lost: it is saved, or the user was told the save failed and closed
- * knowingly with a second q on that very record.
- */
 for (const failure of ["rejects", "times out"] as const) {
   test(`after a leave-save that ${failure}, work done later is saved or the user is told before closing`, async (t) => {
     const failures: string[] = [];
@@ -971,7 +914,6 @@ for (const failure of ["rejects", "times out"] as const) {
           await flush();
           const attempted = view.saves.length > attemptsBefore;
           if (!edit && next === "q") {
-            // Nothing happened since the failure: the promised close without saving.
             if (attempted || closes() !== 1) failures.push(`${label}: did not close at once`);
             continue;
           }
@@ -993,7 +935,6 @@ for (const failure of ["rejects", "times out"] as const) {
               failures.push(`${label}: ${done?.action}`);
             continue;
           }
-          // Still failing: open, told; q tries (the record changed or a Finish ran) or closes knowingly.
           if (closes() !== 0) failures.push(`${label}: closed on a failed save`);
           if (!/disk still full/u.test(view.screen())) failures.push(`${label}: not told`);
           view.key("q");
@@ -1014,12 +955,6 @@ for (const failure of ["rejects", "times out"] as const) {
   });
 }
 
-/**
- * A pull-request Finish cancelled by q at each of its awaits (the outcome
- * prompt, the summary prompt, the wait for a refresh, its own save), with the
- * leave-save {working, failing}. The verdict and body enter the record only
- * once the Finish commits to its save; before that a cancel leaves them unset.
- */
 test("a Finish cancelled at each await never stores a verdict the user did not commit", async (t) => {
   const failures: string[] = [];
   let runs = 0;
@@ -1055,7 +990,6 @@ test("a Finish cancelled at each await never stores a verdict the user did not c
         failures.push(`${label}: Finish's save not started`);
       view.key("q");
       await flush();
-      // The cancelled Finish's awaits now settle, late.
       select.resolve("Approve");
       input.resolve("Ship it.");
       refresh.resolve(model);
@@ -1086,18 +1020,12 @@ test("a Finish cancelled at each await never stores a verdict the user did not c
   assert.deepEqual(failures, []);
 });
 
-/**
- * Finish's wait times out on a refresh, so the comment is saved "unconfirmed";
- * Finish's save {fails, succeeds}; the refresh then {completes, fails}; then
- * {q, S}. The mark lasts only until the next follow: no later save keeps it.
- */
 test("an unconfirmed mark from a timed-out wait is re-established by the next save", async (t) => {
   const failures: string[] = [];
   let runs = 0;
   for (const finishSave of ["fails", "succeeds"] as const) {
     for (const work of ["completes", "fails"] as const) {
       for (const next of ["q", "S"] as const) {
-        // A successful Finish save closes before work or next matter: one run covers it.
         if (finishSave === "succeeds" && (work !== "completes" || next !== "q")) continue;
         runs += 1;
         const first = modelOf(false);
@@ -1157,12 +1085,10 @@ test("an unconfirmed mark from a timed-out wait is re-established by the next sa
         const comment = later?.record.comments[0];
         if (later === finishing) failures.push(`${label}: no later save`);
         else if (work === "completes") {
-          // A successful read re-establishes it.
           if (comment?.stale !== undefined)
             failures.push(`${label}: still marked ${comment?.stale}`);
           else if (comment?.line !== 31) failures.push(`${label}: line ${comment?.line}`);
         } else if (comment?.stale !== "unconfirmed") {
-          // The read failed: still uncertain, never the old number as current.
           failures.push(`${label}: exported ${comment?.line} as current after a failed read`);
         }
         later?.resolve();
@@ -1182,7 +1108,6 @@ test("while closing, keys other than leaving change nothing", async () => {
   await flush();
   view.key("m");
   await flush();
-  // Refused, not applied to a record that is no longer the one being saved.
   assert.match(view.screen(), /0 reviewed/u);
   assert.match(view.screen(), /q again leaves without saving/u);
   view.saves[0]?.resolve();
@@ -1230,7 +1155,6 @@ test("a leave-save that stalls past its limit and lands after a newer save does 
   );
 });
 
-/** A side chat that answers nothing and records what it was asked. */
 class QuietChat implements ReviewChat {
   readonly messages: ReviewChatMessage[] = [];
   readonly pending = false;

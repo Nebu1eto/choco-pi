@@ -22,7 +22,6 @@ import {
 } from "./websocket-continuation.ts";
 import { extractCodexTurnStateFromWebSocketEvent } from "./turn-state.ts";
 
-// Server events are open JSON objects: only the members read here are checked.
 const eventValidator = compile(
   obj(
     {
@@ -74,7 +73,6 @@ function matchesUser(item: ProtocolValue, text: string): boolean {
   return content === text;
 }
 
-/** Owns the socket inbox across two Pi turns; Pi still persists and dispatches the queued user input. */
 export class NativeSteeringConnection {
   private socket: WebSocketLike;
   private owner: string;
@@ -136,7 +134,7 @@ export class NativeSteeringConnection {
       return true;
     } catch {
       this.close();
-      return false; // Pi's ordinary input path still owns and queues this message.
+      return false;
     }
   }
 
@@ -178,8 +176,6 @@ export class NativeSteeringConnection {
       if (this.closed) return { kind: "reconnect" };
       this.pending = undefined;
       this.delivery = pending;
-      // A failed successor can invalidate the steered response's server-side ID.
-      // Reconnect with Pi's full context instead of first sending a doomed delta.
       if (resolution === "failed") return { kind: "reconnect" };
       if (!pending.acceptedId) return { kind: "reconnect" };
       const users = request.input.filter((item) => matchesUser(item, pending.text));
@@ -206,7 +202,6 @@ export class NativeSteeringConnection {
         return outputs.length === 0 ? { kind: "automatic" } : { kind: "reconnect" };
       if (outputs.length === 0 || !outputs.every((item) => outputValidator.check(item)))
         return { kind: "reconnect" };
-      // Accepted steering is implicitly prepended by the server. Do not send it twice.
       return { kind: "send", body: { ...request, input: outputs } };
     } finally {
       if (timer) clearTimeout(timer);
@@ -247,7 +242,6 @@ export class NativeSteeringConnection {
           incompleteValidator.check(event.response?.["incomplete_details"])
         ) {
           this.steered = true;
-          // The server finished the current item: this is not a token-truncated tool call.
           const rewritten = {
             ...event,
             type: "response.completed",

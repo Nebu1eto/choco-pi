@@ -5,56 +5,16 @@ import {
   type LspDictionaryValue,
 } from "./runtime-guards.ts";
 
-/**
- * THE single declarative source of truth for every choco-pi-lsp toggle (#166).
- *
- * One entry per flag drives all four consumers that previously kept their own
- * hand-maintained list and drifted apart:
- *
- *   - `index.ts` — `pi.registerFlag` for the CLI surface (name, description,
- *     default), as a loop over this array.
- *   - `clients/lsp-config.ts` — parsing the key out of `~/.choco-pi-lsp/config.json`
- *     AND resolving the precedence chain, both keyed by `configKey`.
- *   - `clients/project-lsp-config.ts` — the closest-wins nested walk for the
- *     `scope: "project"` entries.
- *   - `tests/index-wiring.test.ts` — the registration contract, derived rather
- *     than restated.
- *
- * Every entry is settable BOTH ways: `--<name>` on the CLI and `configKey` in
- * `~/.choco-pi-lsp/config.json`. Adding a toggle means adding one entry here; there
- * is no second place to remember.
- */
-
 export type LensFlagScope = "global" | "project";
 
 export interface LensFlagSpec {
-  /** CLI flag name (`--<name>`) and the key callers pass to `getFlag`. */
   name: string;
   description: string;
-  /**
-   * Dotted path to this flag's boolean in `~/.choco-pi-lsp/config.json` (and, for
-   * `scope: "project"` entries, the identical path in `.choco-pi-lsp.json`).
-   */
   configKey: string;
-  /**
-   * True when the flag DISABLES what the config key enables — a `no-*` flag
-   * whose value is the negation of the config boolean.
-   */
   negated: boolean;
-  /** Value when neither env, CLI, project config, nor global config decides. */
   default: boolean;
-  /**
-   * `"project"` flags also read `.choco-pi-lsp.json` and nested per-directory
-   * configs (closest-wins per edited file); `"global"` flags resolve
-   * CLI → global → default.
-   */
   scope: LensFlagScope;
-  /** Env var that forces the flag on when set to `"1"`. Outranks the CLI. */
   env?: string;
-  /**
-   * Escape hatch for the one flag whose config key is not a boolean
-   * (`format.mode`). Returns undefined when the key is absent.
-   */
 
   readGlobal?: (config: Record<string, LspDictionaryValue>) => boolean | undefined;
 }
@@ -251,27 +211,10 @@ export function getLensFlagSpec(name: string): LensFlagSpec | undefined {
   return byName.get(name);
 }
 
-/** The `scope: "project"` subset — the flags a `.choco-pi-lsp.json` may also set. */
 export const PROJECT_SCOPED_LENS_FLAGS: readonly LensFlagSpec[] = LENS_FLAGS.filter(
   (spec) => spec.scope === "project",
 );
 
-/**
- * Recognized TOP-LEVEL sections of `~/.choco-pi-lsp/config.json` that are NOT
- * derived from the flag registry — the non-flag namespaces the global loader
- * parses by hand (`ignore`, `dispatch`, `widget`) plus `$schema` for editor
- * JSON-schema association. Declared here, beside {@link LENS_FLAGS}, so the
- * global unknown-key scan has ONE catalog to consult (#883) instead of a
- * second hand-maintained literal set inline in the loader. Adding a future
- * top-level namespace is a one-line edit HERE; adding a flag needs no edit at
- * all (its section is registry-derived via {@link flagConfigSectionKeys}).
- * Do NOT speculatively pre-add keys no loader reads yet (e.g. `languages` is
- * #195's job) — this is an extension point, not a wishlist.
- *
- * `actionableWarnings` is intentionally absent: it is already a flag section
- * (`actionableWarnings.enabled`, `.autoFix.enabled`, ...) so it is covered by
- * the registry-derived set.
- */
 export const GLOBAL_NON_FLAG_CONFIG_SECTIONS: readonly string[] = [
   "ignore",
   "dispatch",
@@ -280,16 +223,6 @@ export const GLOBAL_NON_FLAG_CONFIG_SECTIONS: readonly string[] = [
   "$schema",
 ];
 
-/**
- * Foreign top-level namespaces that legitimately appear in a SHARED
- * `.choco-pi-lsp.json` but belong to a DIFFERENT loader: the LSP config loader
- * (`clients/lsp/config.ts`) reads `servers` / `serverOverrides` /
- * `disabledServers` / `warmFiles` out of the very same file. The project-lens
- * loader must TOLERATE these (never warn "unknown key") — they are not typos,
- * just another subsystem's namespace. `$schema` is allowed for editor
- * JSON-schema association. Declared once, here, for the same #883 reason as
- * {@link GLOBAL_NON_FLAG_CONFIG_SECTIONS}.
- */
 export const PROJECT_FOREIGN_CONFIG_NAMESPACES: readonly string[] = [
   "servers",
   "serverOverrides",
@@ -298,12 +231,6 @@ export const PROJECT_FOREIGN_CONFIG_NAMESPACES: readonly string[] = [
   "$schema",
 ];
 
-/**
- * The distinct TOP-LEVEL section keys a set of flags lives under (the first
- * dotted segment of each `configKey`). Both config loaders derive their
- * recognized-key catalogs from this rather than restating flag sections, so a
- * new flag never needs an unknown-key-scan edit (#166/#883).
- */
 export function flagConfigSectionKeys(flags: readonly LensFlagSpec[]): string[] {
   return [...new Set(flags.map((spec) => spec.configKey.split(".")[0]))];
 }
@@ -349,12 +276,6 @@ function resolveFlagConfigPath(
   return { source: finalSource, segments };
 }
 
-/**
- * Read the boolean at a spec's dotted `configKey` out of an already-parsed
- * config object. Returns undefined when any segment is missing or the leaf is
- * not a boolean — callers treat that as "this tier does not decide".
- */
-
 export function readFlagConfigValue(
   config: LspBoundaryValue,
   configKey: string,
@@ -369,20 +290,10 @@ export function readFlagConfigValue(
   return isBoolean(value) ? value : undefined;
 }
 
-/** Turn a config-tier boolean into the flag's value, honoring `negated`. */
 export function flagValueFromConfig(spec: LensFlagSpec, configValue: boolean): boolean {
   return spec.negated ? !configValue : configValue;
 }
 
-/**
- * Copy the boolean at one flag's dotted `configKey` from a raw parsed config
- * into `out`, materializing intermediate objects only when they actually
- * exist in `raw` — an absent section stays absent, a present-but-empty one is
- * materialized with an undefined leaf. Shared by the global
- * (`lsp-config.ts`) and project (`project-lsp-config.ts`) loaders so both
- * parse and warn identically; it lives here rather than in either loader
- * because this module imports nothing and cannot form a cycle.
- */
 export function assignFlagConfigSection(
   raw: Record<string, LspDictionaryValue>,
 

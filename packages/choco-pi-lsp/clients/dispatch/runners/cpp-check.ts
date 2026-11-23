@@ -7,10 +7,6 @@ import { createAvailabilityChecker } from "./utils/runner-helpers.ts";
 
 type CompilerSpec = { command: string; args: string[]; flavor: "gcc" | "msvc" } | undefined;
 
-// Per-compiler availability checkers — each one caches per-cwd and
-// dedupes concurrent --version probes, the same protections every other
-// runner gets via createAvailabilityChecker. cpp-check previously
-// re-spawned its full candidate sweep on every edit.
 const compilerCheckers = {
   clang: createAvailabilityChecker("clang", ".exe"),
   gcc: createAvailabilityChecker("gcc", ".exe"),
@@ -89,14 +85,9 @@ async function resolveCompiler(absPath: string, cwd: string): Promise<CompilerSp
     }
   }
 
-  // MSVC `cl.exe` doesn't accept `--version`; the createAvailabilityChecker
-  // probe used by every other compiler returns false even when cl is on
-  // PATH. Keep the ad-hoc no-arg probe but cache the resolution via the
-  // shared checker so subsequent edits don't re-spawn.
   const clChecker = compilerCheckers.cl;
   const clCmd = clChecker.getCommand(cwd);
   if (clCmd) {
-    // Already probed in a previous turn and resolved.
     return { command: clCmd, args: ["/nologo", "/Zs", absPath], flavor: "msvc" };
   }
   const clProbe = await safeSpawnAsync("cl", [], { timeout: 5000 });

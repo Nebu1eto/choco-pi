@@ -37,38 +37,23 @@ import type { AgentRecordView, HostBridgeSources, ShellResultView } from "./sour
 export const HOST_BRIDGE_COMMAND = "host-bridge";
 export const FRAME_INTERVAL_MS = 250;
 
-/**
- * Shortest gap between two goal entries that differ only in usage. Goal mode
- * reports usage after every turn, and each entry repeats the whole objective,
- * so a long run appended thousands of near-identical entries that the session
- * file and Pi's in-memory entry list both kept. Objective, status and budget
- * changes are still written at once; usage is coalesced to its latest value.
- */
 export const GOAL_USAGE_INTERVAL_MS = 60_000;
 const COMMAND_USAGE =
   "Usage: /host-bridge snapshot | stop subagent <id> | stop shell <id> | goal complete";
 
-/** Cancels a pending timer callback. */
 type CancelTimer = () => void;
 
 export interface HostBridgeEnvironment {
-  /** `CHOCO_PI_HOST`; progress frames are sent only for `waku`. */
   host: string | undefined;
-  /** `CHOCO_PI_HOST_BRIDGE_SCHEMA`; a newer request warns and still sends schema 1. */
   requestedSchema: string | undefined;
 }
 
-/**
- * Whether this run streams transient host frames: progress frames here and
- * automatic structured reports in status-commands.ts share this one gate.
- */
 export function hostFramesEnabled(mode: string, host: string | undefined): boolean {
   return mode === "rpc" && host === "waku";
 }
 
 export interface HostBridgeClock {
   now(): number;
-  /** Schedules `callback` once and returns its canceller. */
   setTimeout(callback: () => void, ms: number): CancelTimer;
 }
 
@@ -81,14 +66,12 @@ export interface HostBridgeDependencies {
 
 type SessionStartReason = "startup" | "reload" | "new" | "resume" | "fork";
 
-/** The part of an extension context the bridge reads; the full ctx is passed on to the goal runtime. */
 export interface HostBridgeContext {
   readonly mode: ExtensionContext["mode"];
   readonly sessionManager: Pick<ExtensionContext["sessionManager"], "getSessionId" | "getBranch">;
   readonly ui: Pick<ExtensionContext["ui"], "setStatus">;
 }
 
-/** The ExtensionAPI surface the bridge uses; `ExtensionAPI` satisfies it. */
 export interface HostBridgeApi {
   on(
     event: "session_start",
@@ -108,23 +91,17 @@ export interface HostBridgeApi {
   ): void;
 }
 
-/** Private per-activation state; ownership never leaves this object or the wire schema. */
 interface ActiveSession {
   readonly generation: number;
   readonly sessionId: string;
   readonly ctx: HostBridgeContext;
   readonly frames: boolean;
-  /** Subagent ids this activation owns: evented here, adopted on restore, or descendants. */
   readonly owned: Set<string>;
-  /** Last durable status per subagent id, and the agent payload that carried it. */
   readonly agents: Map<string, SubagentAgent>;
-  /** Shells last recorded as started and not yet ended. */
   readonly liveShells: Map<string, ShellRecord>;
   lastFrameKey: string | undefined;
   timer: CancelTimer | undefined;
-  /** The goal last written durably; `undefined` until the first goal entry. */
   goalWritten: GoalMirror | null | undefined;
-  /** Newer usage for `goalWritten`, waiting for `goalTimer`. */
   goalPending: GoalMirror | undefined;
   goalTimer: CancelTimer | undefined;
 }
@@ -162,7 +139,6 @@ function isLive(status: SubagentStatus): boolean {
   return status === "queued" || status === "running";
 }
 
-/** Normalizes the manager's record status to the bridge's closed status union. */
 export function mapRecordStatus(status: string, completedAt: number | undefined): SubagentStatus {
   switch (status) {
     case "queued":
@@ -173,8 +149,6 @@ export function mapRecordStatus(status: string, completedAt: number | undefined)
       return "running";
     case "completed":
       return "completed";
-    // A steered run is a successful run that also delivered steering; it is
-    // terminal once the manager has stamped completion.
     case "steered":
       return completedAt === undefined ? "running" : "completed";
     case "error":
@@ -264,7 +238,6 @@ interface RestoredState {
   shells: Map<string, ShellRecord>;
 }
 
-/** Replays this bridge's own entries on the current branch to find what was live. */
 function restoreFromBranch(entries: readonly SessionEntry[]): RestoredState {
   const agents = new Map<string, SubagentAgent>();
   const shells = new Map<string, ShellRecord>();
@@ -289,9 +262,6 @@ function parsedSchemaRequest(raw: string | undefined): number | undefined {
 
 export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependencies): void {
   const { sources, clock } = deps;
-  // The subagent runner loads child-session extensions inside an async child
-  // context; a bridge loaded there must stay inert so it never mirrors or
-  // marks lost anything owned by the root session.
   const loadedInChild = sources.inChildLoad();
   const requestedSchema = parsedSchemaRequest(deps.environment.requestedSchema);
   if (
@@ -312,7 +282,6 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
     session.owned.has(record.id) ||
     (record.parentAgentId !== undefined && session.owned.has(record.parentAgentId));
 
-  /** Owned records, closing ownership over descendants discovered since the last read. */
   function ownedRecords(session: ActiveSession): AgentRecordView[] {
     const source = sources.subagents(session.sessionId, ownsRecord(session));
     let records = source.records();
@@ -326,7 +295,6 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
 
   function append(session: ActiveSession, customType: EntryType, data: RuntimeValue): boolean {
     if (session !== active) return false;
-    // The wire schema is frozen: refuse to persist anything Waku would reject.
     if (!ENTRY_VALIDATORS[customType](data)) {
       throw new Error(`host-bridge produced an invalid ${customType} entry`);
     }
@@ -412,7 +380,6 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
   function onSubagentEvent(event: SubagentEvent, payload: RuntimeValue): void {
     const session = active;
     if (session === undefined || !isSubagentLifecyclePayload(payload)) return;
-    // This bus belongs to the root session, so an evented record is ours.
     session.owned.add(payload.id);
     const record = sources.subagents(session.sessionId, ownsRecord(session)).record(payload.id);
     const previous = session.agents.get(payload.id)?.status;
@@ -442,7 +409,6 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
         .shells(session.sessionId)
         .shells()
         .some((result) => result.shellId === shell.id);
-    // C3 emits only for the activating session, but a foreign id is still refused here.
     if (!known && event !== "started") return;
     if (event === "started") session.liveShells.set(shell.id, shell);
     else session.liveShells.delete(shell.id);
@@ -461,7 +427,6 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
     session.goalTimer = undefined;
   }
 
-  /** Writes `goal` now, superseding any coalesced usage. */
   function appendGoal(session: ActiveSession, goal: GoalMirror | null): void {
     cancelGoalTimer(session);
     session.goalPending = undefined;
@@ -522,7 +487,6 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
     append(session, WORKFLOW_ENTRY_TYPE, data);
   }
 
-  /** Records transitions no event announced (nested descendants, evictions, revivals). */
   function reconcile(session: ActiveSession, records: readonly AgentRecordView[]): void {
     const present = new Set<string>();
     for (const record of records) {
@@ -530,8 +494,6 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
       const status = mapRecordStatus(record.status, record.completedAt);
       const previous = session.agents.get(record.id)?.status;
       if (previous === status) continue;
-      // Terminal-to-live happens only through an announced revival, except for
-      // a record this activation had marked lost.
       if (previous !== undefined && !isLive(previous) && previous !== "lost") continue;
       let event: SubagentEvent;
       if (previous === "lost" && isLive(status)) event = "resumed";
@@ -603,13 +565,11 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
     subagents: ProgressSubagent[],
     shells: ProgressShell[],
   ): void {
-    // Elapsed time alone does not make a frame "changed"; the host derives it.
     const key = JSON.stringify({
       subagents: subagents.map((item) => ({ ...item, durationMs: 0 })),
       shells,
     });
     if (key === session.lastFrameKey) return;
-    // An empty first frame carries nothing the host does not already assume.
     if (session.lastFrameKey === undefined && subagents.length === 0 && shells.length === 0) return;
     session.lastFrameKey = key;
     const frame: ProgressFrame = {
@@ -645,7 +605,6 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
 
   function restore(session: ActiveSession, reason: SessionStartReason): void {
     const restored = restoreFromBranch(session.ctx.sessionManager.getBranch());
-    // A fork copies the parent's entries but never its runtime.
     const mayAdopt = reason !== "fork";
     const candidates = sources.subagents(session.sessionId, (record) =>
       restored.agents.has(record.id),
@@ -699,8 +658,6 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
     for (const record of records) {
       current.set(record.id, mapRecordStatus(record.status, record.completedAt));
     }
-    // Retire unannounced completions durably before advertising the current
-    // live set; a later reconciliation must not lose the terminal transition.
     if (sources.subagents(session.sessionId, ownsRecord(session)).available) {
       const byId = new Map(records.map((record) => [record.id, record]));
       for (const [id, agent] of session.agents) {
@@ -736,7 +693,6 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
       if (session !== active) return;
     }
     const shellSource = sources.shells(session.sessionId);
-    // The manager is authoritative for what is running now; drop stale entries.
     if (shellSource.available) session.liveShells.clear();
     for (const result of shellSource.shells()) {
       if (result.state !== "running") continue;
@@ -758,7 +714,6 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
 
   async function runCommand(args: string, ctx: HostBridgeContext): Promise<void> {
     const session = active;
-    // Registration outlives the rpc session that created it; control stays rpc-only.
     if (ctx.mode !== "rpc") throw new Error("host-bridge commands are available only in rpc mode");
     const sessionId = ctx.sessionManager.getSessionId();
     if (session === undefined || session.sessionId !== sessionId) {
@@ -793,7 +748,6 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
         if (!owned) throw new Error(`Shell not found: ${id}`);
         const commandGeneration = session.generation;
         await sources.shells(sessionId).stop(id);
-        // The stop is complete; a replaced session gets no follow-up work.
         if (commandGeneration !== generation || session !== active) return;
         ensureLoop(session);
         return;
@@ -846,7 +800,6 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
   pi.on("session_shutdown", () => {
     generation += 1;
     if (active === undefined) return;
-    // Usage coalesced since the last entry is the latest the host will see.
     flushPendingGoal(active);
     if (active !== undefined) deactivate(active);
   });

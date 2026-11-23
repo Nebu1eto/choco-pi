@@ -19,24 +19,16 @@ import {
 
 export const AGENT_MESSAGE_TOOL_NAME = "agent_message";
 
-/**
- * What Pi did with queued input: `"queued"` entered the steering queue,
- * `"handled"` was consumed by an input handler and never reaches the model.
- * Pi 1.0.4 does not export the alias by name, so derive it from the session.
- */
 export type QueuedInputDisposition = Awaited<ReturnType<AgentSession["steer"]>>;
 
-/** The only session capability this tool uses; `AgentSession` satisfies it. */
 export interface SteerableAgentSession {
   steer(message: string): Promise<QueuedInputDisposition>;
 }
 
-/** The record surface this tool reads and writes, narrowed from `AgentRecord`. */
 export interface AgentMessageRecord extends MessagingRecord {
   admissionRoot?: string;
   admissionEpoch?: number;
   session?: SteerableAgentSession;
-  /** Steering messages held until the recipient's session exists. */
   pendingSteers?: string[];
 }
 
@@ -48,7 +40,6 @@ export interface AgentMessageManager {
 export interface AgentMessageToolContext {
   manager: AgentMessageManager;
   pi: Pick<ExtensionAPI, "events" | "sendMessage">;
-  /** Omitted for the root tool; otherwise the calling agent's own record id. */
   senderAgentId?: string;
 }
 
@@ -62,11 +53,6 @@ export interface AgentMessageParams {
   type?: AgentMessageType;
 }
 
-/**
- * Deliver one agent-authored message. The registered tool is a thin wrapper
- * around this: the execution context carries nothing this delivery reads, so
- * the whole behavior is reachable without an extension host.
- */
 export async function deliverAgentMessage(
   context: AgentMessageToolContext,
   params: AgentMessageParams,
@@ -98,8 +84,6 @@ export async function deliverAgentMessage(
   if (recipient.kind === "root") {
     context.pi.sendMessage(
       { customType: "subagent-message", content: envelope, display: true },
-      // SDK steering waits for the next safe boundary; it does not abort a tool/provider.
-      // A sender from a stopped epoch may still steer, but must not start a root turn.
       {
         deliverAs: "steer",
         triggerTurn: mayTriggerTurn(senderRoot, senderEpoch),
@@ -110,10 +94,6 @@ export async function deliverAgentMessage(
       to: recipient.address,
       toId: undefined,
       type,
-      // Not "queued": deliverAs "steer" hands the envelope to the root
-      // session's steering queue (drained before its next LLM call while it
-      // streams), and triggerTurn starts a turn when it is idle. Only a
-      // recipient whose session does not exist yet is genuinely held.
       queued: false,
     });
     return textResult(
@@ -137,9 +117,6 @@ export async function deliverAgentMessage(
 
   const session = recipient.record.session;
   const held = delivery === "queued" || !session;
-  // Snapshot the owner before the only await: the acknowledgement below claims
-  // delivery to this record, generation, and session, and none of them remain
-  // ours to assume across suspension.
   const recipientId = recipient.record.id;
   const generation = recipient.record.resultGeneration ?? 1;
   let disposition: QueuedInputDisposition | undefined;
@@ -163,10 +140,6 @@ export async function deliverAgentMessage(
       current.cancellation?.generation === generation ||
       classifyMessageDelivery(current) !== "running"
     ) {
-      // The recipient was retired, replaced, cancelled, or shut down while the
-      // steer was in flight. Report that plainly and touch neither the event bus
-      // nor the UI; retrying would duplicate an envelope the prior session may
-      // already hold.
       return textResult(
         `Delivery to ${recipient.address} is stale: the recipient was replaced, cancelled, or shut down while the message was in flight.`,
         true,
@@ -183,8 +156,6 @@ export async function deliverAgentMessage(
   });
   if (held) return textResult(`Message held for ${recipient.address} until its session starts.`);
   if (disposition === "handled") {
-    // An input handler in the recipient's session consumed the envelope. It
-    // was not queued and the recipient's model will not see it as a message.
     return textResult(
       `Message to ${recipient.address} was handled by an input handler in the recipient's session and was not queued; the recipient's model will not receive it as a message.`,
     );
@@ -194,7 +165,6 @@ export async function deliverAgentMessage(
   );
 }
 
-/** Build the root or nested peer-message tool. */
 export function createAgentMessageTool(context: AgentMessageToolContext): ToolDefinition {
   return defineTool({
     name: AGENT_MESSAGE_TOOL_NAME,

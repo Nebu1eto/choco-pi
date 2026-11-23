@@ -12,7 +12,6 @@ import {
 } from "../profile/extensions/lib/stats/report.ts";
 import { scanSessions } from "../profile/extensions/lib/stats/scan.ts";
 
-/** One session file holding one billed call from a minute ago. */
 async function writeSession(root: string, id: string): Promise<void> {
   const project = path.join(root, "--work-app--");
   await mkdir(project, { recursive: true });

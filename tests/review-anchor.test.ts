@@ -34,7 +34,6 @@ test("comment anchors contain side-specific verbatim context and a content hash"
   assert.doesNotMatch(anchor.snippet, /old/);
 });
 
-/** Wide enough that a range anchor and a single-line anchor differ. */
 function rangePatch(): string {
   return [
     "diff --git a/range.txt b/range.txt",
@@ -63,7 +62,6 @@ test("a range anchor covers the whole range and round-trips to both of its ends"
   assert.equal(single.snippet, "two\nthree\nfour\nfive\nsix");
   assert.equal(range.snippetHash, hashSnippet(range.snippet));
 
-  // Located in the same hunk after it moved two lines down, the range keeps both ends.
   const moved = parseGitDiff(
     rangePatch().replace("@@ -1,6 +1,8 @@", "@@ -3,6 +3,8 @@"),
     "base",
@@ -77,7 +75,6 @@ test("a range anchor covers the whole range and round-trips to both of its ends"
     { status: "placed", side: "RIGHT", hunkId: hunk.id, startLine: 5, line: 6, position: 2 },
   );
 
-  // The range is verified against the requested side, not merely clamped.
   assert.throws(() => buildCommentAnchor(hunk, "RIGHT", 3, 4), /range is invalid/);
   assert.throws(() => buildCommentAnchor(hunk, "LEFT", 99, 98), /not present on the LEFT side/);
 });
@@ -100,7 +97,6 @@ test("a comment is located in its hunk after line numbers move, by its text", ()
 test("when another line of its hunk changed, the comment is found in the new hunk by its exact text", () => {
   const original = parseGitDiff(patch("@@ -10,4 +10,4 @@ function example"), "base", "head");
   const anchor = buildCommentAnchor(original.files[0]!.hunks[0]!, "RIGHT", 13);
-  // "alpha" is outside the snippet of line 13 (omega's neighbours are new, tail).
   const changed = parseGitDiff(
     patch("@@ -10,4 +10,4 @@ function example", "alpha!"),
     "base",

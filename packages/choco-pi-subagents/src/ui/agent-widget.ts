@@ -1,20 +1,10 @@
-/**
- * agent-widget.ts — Shared agent-row rendering helpers.
- *
- * Formats agent labels, activity, durations, and token usage without UI ownership.
- */
-
 import { renderAgentName, renderAgentNameLabel, type AgentNameStyle } from "../agent-color.ts";
 import { getConfig } from "../agent-types.ts";
 import type { AgentInvocation, AgentRecord, SubagentType } from "../types.ts";
 import { type LifetimeUsage, type SessionLike } from "../usage.ts";
 
-// ---- Constants ----
-
-/** Braille spinner frames for animated running indicator. */
 export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/** Statuses that indicate an error/non-success outcome (used for linger behavior and icon rendering). */
 export const ERROR_STATUSES = new Set([
   "error",
   "aborted",
@@ -24,7 +14,6 @@ export const ERROR_STATUSES = new Set([
   "watchdog_stopped",
 ]);
 
-/** Tool name → human-readable action for activity descriptions. */
 const TOOL_DISPLAY = new Map(
   Object.entries({
     read: "reading",
@@ -36,8 +25,6 @@ const TOOL_DISPLAY = new Map(
     ls: "listing",
   }),
 );
-
-// ---- Types ----
 
 export type Theme = {
   fg(color: string, text: string): string;
@@ -57,21 +44,16 @@ export interface AgentTreeLabelStyle {
   topLevel?: AgentNameStyle;
 }
 
-/** Per-agent live activity state. */
 export interface AgentActivity {
   activeTools: Map<string, string>;
   toolUses: number;
   responseText: string;
   session?: SessionLike;
-  /** Current turn count. */
   turnCount: number;
-  /** Effective max turns for this agent (undefined = unlimited). */
   maxTurns?: number;
-  /** Lifetime usage breakdown — see LifetimeUsage docs. */
   lifetimeUsage: LifetimeUsage;
 }
 
-/** Metadata attached to Agent tool results for custom rendering. */
 export interface InvocationTags {
   modelName?: string;
   tags: string[];
@@ -97,23 +79,15 @@ export interface AgentDetails {
     | "waiting_for_reset"
     | "interrupted"
     | "background";
-  /** Human-readable description of what the agent is currently doing. */
   activity?: string;
-  /** Current spinner frame index (for animated running indicator). */
   spinnerFrame?: number;
-  /** Short model name if different from parent (e.g. "haiku", "sonnet"). */
   modelName?: string;
-  /** Notable config tags (e.g. ["thinking: high", "isolated"]). */
   tags?: string[];
-  /** Current turn count. */
   turnCount?: number;
-  /** Effective max turns (undefined = unlimited). */
   maxTurns?: number;
   agentId?: string;
   error?: string;
 }
-
-// ---- Formatting helpers ----
 
 const ANSI_FULL_RESET = "\u001b[0m";
 const ANSI_FOREGROUND_RESET = "\u001b[39m";
@@ -128,20 +102,17 @@ function restoreForegroundAfterResets(text: string, styleStart: string): string 
     .replaceAll(ANSI_FOREGROUND_RESET, `${ANSI_FOREGROUND_RESET}${styleStart}`);
 }
 
-/** Apply foreground styling while restoring it after nested foreground/full ANSI resets. */
 export function fgPreservingNestedStyles(theme: Theme, color: string, text: string): string {
   const styleStart = removeForegroundResets(theme.fg(color, ""));
   return theme.fg(color, restoreForegroundAfterResets(text, styleStart));
 }
 
-/** Format a token count compactly: "33.8k token", "1.2M token". */
 export function formatTokens(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M token`;
   if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k token`;
   return `${count} token`;
 }
 
-/** Format a token count compactly for agent rows, without a redundant unit label. */
 export function formatRowTokens(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
   if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`;
@@ -168,16 +139,6 @@ function formatAnnotatedTokens(
   return `${tokenStr} (${annot.join(" · ")})`;
 }
 
-/**
- * Token count with optional context-fill % and compaction-count annotations.
- * Thresholds for percent: <70% dim, 70–85% warning, ≥85% error.
- * Compaction count rendered as `⇊N` in dim.
- *
- *   "12.3k token"               — no annotations
- *   "12.3k token (45%)"         — percent only
- *   "12.3k token (⇊2)"          — compactions only (e.g. right after compact)
- *   "12.3k token (45% · ⇊2)"    — both
- */
 export function formatSessionTokens(
   tokens: number,
   percent: number | null,
@@ -187,7 +148,6 @@ export function formatSessionTokens(
   return formatAnnotatedTokens(formatTokens(tokens), percent, theme, compactions);
 }
 
-/** Row-only session token stat; completion notifications retain their unit wording. */
 export function formatRowSessionTokens(
   tokens: number,
   percent: number | null,
@@ -197,28 +157,23 @@ export function formatRowSessionTokens(
   return formatAnnotatedTokens(formatRowTokens(tokens), percent, theme, compactions);
 }
 
-/** Format turn count with optional max limit: "↻5≤30" or "↻5". */
 export function formatTurns(turnCount: number, maxTurns?: number | null): string {
   return maxTurns != null ? `↻${turnCount}≤${maxTurns}` : `↻${turnCount}`;
 }
 
-/** Format milliseconds as human-readable duration. */
 export function formatMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-/** Format duration from start/completed timestamps. */
 export function formatDuration(startedAt: number, completedAt?: number): string {
   if (completedAt) return formatMs(completedAt - startedAt);
   return `${formatMs(Date.now() - startedAt)} (running)`;
 }
 
-/** Get display name for any agent type (built-in or custom). */
 export function getDisplayName(type: SubagentType): string {
   return getConfig(type).displayName;
 }
 
-/** Render an alias in place of the role, using the role's exact row styling. */
 export function renderAgentTreeLabel(
   agent: Pick<AgentRecord, "type" | "handle" | "alias">,
   depth: number,
@@ -233,7 +188,6 @@ export function renderAgentTreeLabel(
   });
 }
 
-/** Build the invocation metadata shown by Agent tool results and conversation views. */
 export function buildInvocationTags(invocation: AgentInvocation | undefined): InvocationTags {
   const tags: string[] = [];
   if (!invocation) return { tags };
@@ -252,7 +206,6 @@ export function buildInvocationTags(invocation: AgentInvocation | undefined): In
   return { modelName: invocation.modelName, tags };
 }
 
-/** Truncate text to a single line, max `len` chars. */
 function truncateLine(text: string, len = 60): string {
   const line =
     text
@@ -263,7 +216,6 @@ function truncateLine(text: string, len = 60): string {
   return line.slice(0, len) + "…";
 }
 
-/** Build a human-readable activity string from currently-running tools or response text. */
 export function describeActivity(activeTools: Map<string, string>, responseText?: string): string {
   if (activeTools.size > 0) {
     const groups = new Map<string, number>();
@@ -283,12 +235,9 @@ export function describeActivity(activeTools: Map<string, string>, responseText?
     return parts.join(", ") + "…";
   }
 
-  // No tools active — show truncated response text if available
   if (responseText && responseText.trim().length > 0) {
     return truncateLine(responseText);
   }
 
   return "thinking…";
 }
-
-// ---- Widget manager ----

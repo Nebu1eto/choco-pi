@@ -463,8 +463,6 @@ export function handleZentuiSettingChange(
     if (thirdParty?.kind === "visible" && enabled !== undefined) {
       if (enabled) deps.clearExtensionStatusPlacement(thirdParty.key);
       else deps.setExtensionStatusPlacement(thirdParty.key, "off");
-      // Hiding a status drops its placement and color rows, so the list
-      // is rebuilt rather than repainted.
       rebuildList(id);
       notifyChange(`Status ${extensionStatusLabel(thirdParty.key)}`, newValue);
       return;

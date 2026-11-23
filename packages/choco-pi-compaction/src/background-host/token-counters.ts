@@ -1,16 +1,3 @@
-/**
- * Provider prompt token counters for background compaction admission.
- *
- * Selected by the owner model's provider. Anthropic's free
- * `messages/count_tokens` endpoint is counted here (API-key auth only); every
- * other provider is counted by the counter its package registered through
- * {@link registerCompactionTokenCounter} (the Synthetic and Google Antigravity
- * provider packages do on activation), and a provider without one is
- * uncounted, so admission keeps its estimate. A registered counter may name an
- * opt-in environment variable that must be `1` when the compaction counter is
- * created. A counter never throws: every failure resolves to undefined plus a
- * short `count-tokens: <code>` diagnostic.
- */
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { compile, obj } from "@earendil-works/pi-schema";
@@ -27,9 +14,7 @@ import {
   registeredTokenCounter,
 } from "./token-counter-registry.ts";
 
-/** Upper bound on one count request; an 800k-char Synthetic body took ~4 s. */
 export const COUNT_TOKENS_TIMEOUT_MS = 10_000;
-/** How long a deterministic failure (5xx, malformed, auth) suppresses requests for one model. */
 export const COUNT_TOKENS_NEGATIVE_TTL_MS = 600_000;
 
 const ANTHROPIC_PROVIDER = "anthropic";
@@ -38,11 +23,9 @@ const ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com";
 const isCountTokensResponse = compile(obj({ input_tokens: finiteInt(0) }, { open: true })).check;
 
 type CountInput = Parameters<TokenCounter["countTokens"]>[0];
-/** The registry slice a counter reads: request auth for the owner model. */
 export type CountRegistry = Pick<ExtensionContext["modelRegistry"], "getApiKeyAndHeaders">;
 type CountFailure = Extract<CompactionTokenCountOutcome, { ok: false }>;
 
-/** Negative results keyed by `provider|baseUrl|model`; shareable across counters. */
 export type CountTokensNegativeCache = Map<
   string,
   { readonly expiresAt: number; readonly detail: string }
@@ -54,11 +37,6 @@ export interface ProviderTokenCounterOptions {
   readonly now?: () => number;
   readonly timeoutMs?: number;
   readonly cache?: CountTokensNegativeCache;
-  /**
-   * Opt-in decisions by environment variable name (a registered counter's
-   * `optInEnv`). A variable not listed is `1` or not when the counter is
-   * created, or, for a counter registered later, when it is first used.
-   */
   readonly optIn?: ReadonlyMap<string, boolean>;
 }
 
@@ -69,7 +47,6 @@ interface CountContext {
   readonly optedIn: (env: string) => boolean;
 }
 
-/** One count attempt: a token figure, or a diagnostic and whether it is worth caching. */
 type CountOutcome =
   | { readonly tokens: number }
   | { readonly detail: string; readonly cache: boolean }
@@ -81,7 +58,6 @@ function failureDetail(failure: Pick<CountFailure, "code" | "status">): string {
     : `count-tokens: ${failure.code} ${failure.status}`;
 }
 
-/** Deterministic failures repeat on retry; transient ones (timeout, network, 429) do not. */
 function cacheable(failure: Pick<CountFailure, "code" | "status">): boolean {
   if (failure.code === "malformed" || failure.code === "auth") return true;
   return failure.code === "http" && failure.status !== undefined && failure.status >= 500;
@@ -100,7 +76,6 @@ function errorCodeForStatus(status: number): string {
   return "http";
 }
 
-/** Registry headers (null drops a header) under the count request's own fixed headers. */
 function anthropicHeaders(request: CompactionTokenCountRequest): Headers {
   const headers = new Headers();
   for (const [name, value] of Object.entries(request.headers ?? {})) {
@@ -112,10 +87,6 @@ function anthropicHeaders(request: CompactionTokenCountRequest): Headers {
   return headers;
 }
 
-/**
- * `{base}/v1/messages/count_tokens`, tolerating a base that already ends in
- * `/v1`; undefined for an unparsable or non-http(s) base URL.
- */
 function anthropicCountUrl(baseUrl: string): string | undefined {
   const raw = baseUrl.trim() || ANTHROPIC_DEFAULT_BASE_URL;
   const url = URL.parse(raw);
@@ -146,7 +117,6 @@ function parseAnthropicCount(text: string, status: number): CompactionTokenCount
   return isCountTokensResponse(data) ? { ok: true, inputTokens: data.input_tokens } : malformed;
 }
 
-/** Anthropic `messages/count_tokens`; Bearer/OAuth tokens are not accepted as `x-api-key`. */
 const anthropicTokenCounter: CompactionTokenCounter = {
   async countTokens(request) {
     if (authModeOf(request.apiKey) !== "api-key") return { skipped: true };
@@ -182,7 +152,6 @@ const anthropicTokenCounter: CompactionTokenCounter = {
   },
 };
 
-/** The counter for a provider: Anthropic is built in; others come from the registry. */
 function counterFor(provider: string): CompactionTokenCounter | undefined {
   return provider === ANTHROPIC_PROVIDER ? anthropicTokenCounter : registeredTokenCounter(provider);
 }
@@ -208,7 +177,6 @@ async function countFor(context: CountContext, input: CountInput): Promise<Count
     fetch: context.fetch,
     timeoutMs: context.timeoutMs,
   });
-  // A registered counter is another package's code; an unreadable answer is a defect there.
   if (!isTokenCountOutcome(outcome)) return { detail: "count-tokens: error", cache: true };
   return fromOutcome(outcome);
 }
@@ -217,10 +185,6 @@ function cacheKey(model: Model<Api>): string {
   return [model.provider, normalizeBaseUrl(model.baseUrl), model.id].join("|");
 }
 
-/**
- * Opt-in decisions: `options.optIn` first, then each variable as it was when
- * the counter was created (or first needed, for a counter registered later).
- */
 function optInReader(options: ProviderTokenCounterOptions): (env: string) => boolean {
   const snapshot = new Map<string, boolean>();
   const read = (env: string): boolean => {
@@ -237,12 +201,6 @@ function optInReader(options: ProviderTokenCounterOptions): (env: string) => boo
   return read;
 }
 
-/**
- * Counter for Anthropic owner models and every provider with a registered
- * counter; undefined for every other provider, without network. Deterministic
- * failures are remembered per `provider|baseUrl|model` for
- * {@link COUNT_TOKENS_NEGATIVE_TTL_MS}.
- */
 export function createProviderTokenCounter(options: ProviderTokenCounterOptions): TokenCounter {
   const now = options.now ?? Date.now;
   const cache: CountTokensNegativeCache = options.cache ?? new Map();
@@ -257,9 +215,7 @@ export function createProviderTokenCounter(options: ProviderTokenCounterOptions)
       const report = (detail: string): void => {
         try {
           input.onDiagnostic?.(detail);
-        } catch {
-          // A diagnostic sink never decides admission.
-        }
+        } catch {}
       };
       if (input.signal.aborted) return undefined;
       const key = cacheKey(input.model);
@@ -275,7 +231,6 @@ export function createProviderTokenCounter(options: ProviderTokenCounterOptions)
       try {
         outcome = await countFor(context, input);
       } catch {
-        // Invalid base URL or a registry failure: a configuration problem, not transient.
         outcome = { detail: "count-tokens: error", cache: true };
       }
       if ("tokens" in outcome) return outcome.tokens;

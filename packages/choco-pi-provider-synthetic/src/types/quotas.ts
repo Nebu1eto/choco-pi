@@ -52,14 +52,6 @@ export type QuotasResponse = Static<typeof QuotasResponseSchema>;
 
 export const isQuotasResponse = compile(QuotasResponseSchema).check;
 
-/** Refill-aware projection for a quota window, derived from recent snapshots.
- *
- * - `stable`: net drain <= 0; the quota is refilling at least as fast as it is
- *   being consumed, so no forward-looking warning is warranted.
- * - `projected`: net drain > 0; `usedPercent` is where usage is expected to be
- *   after `horizonMs`, accounting for both burn and refill. `timeToEmptyMs`
- *   estimates when remaining quota reaches zero at the same net drain rate.
- */
 export type ProjectionHint =
   | { kind: "stable" }
   | {
@@ -79,7 +71,7 @@ export const SyntheticQuotasSnapshotPayloadSchema = obj(
   {
     quotas: QuotasResponseSchema,
     source: QuotaSourceSchema,
-    updatedAt: finiteNum(), // epoch ms
+    updatedAt: finiteNum(),
   },
   { open: true },
 );
@@ -94,8 +86,6 @@ export const isSyntheticQuotasUpdatedPayload = compile(SyntheticQuotasUpdatedPay
 
 type QuotasRespond = (snapshot: SyntheticQuotasSnapshotPayload | undefined) => void;
 
-// Payloads carrying callbacks are runtime values, not JSON: the schema checks the
-// object shape (non-null, non-array, non-function; open) and a predicate the callback.
 const hasRespond = compile(obj({ respond: unknown() }, { open: true })).check;
 const hasOptionalRespond = compile(obj({ respond: opt(unknown()) }, { open: true })).check;
 
@@ -135,8 +125,6 @@ export type QuotasResult =
   | { success: true; data: { quotas: QuotasResponse } }
   | { success: false; error: { message: string; kind: QuotasErrorKind; status?: number } };
 
-/** Parse the `x-synthetic-quotas` header value into a QuotasResponse.
- *  Returns undefined if the header is missing or invalid. */
 export function parseQuotaHeader(
   headers: Record<string, string> | undefined,
 ): QuotasResponse | undefined {

@@ -4,19 +4,12 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-/**
- * `/review-assist` (`review/`) and the `/diff` pane (`diff/`) share code only
- * through `lib/changes/`. Either extension can then be disabled or edited
- * without breaking the other, and the shared layer depends on neither.
- */
-
 const EXTENSIONS = resolve(dirname(fileURLToPath(import.meta.url)), "../profile/extensions");
 
 type Area = "review" | "diff" | "lib/changes";
 
 const AREAS: readonly Area[] = ["review", "diff", "lib/changes"];
 
-/** What each area must never import. */
 const FORBIDDEN = {
   review: ["diff"],
   diff: ["review"],

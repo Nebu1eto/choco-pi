@@ -1,12 +1,3 @@
-/**
- * Explicit support policy for Anthropic native on-demand compaction.
- *
- * Eligibility is a static, local decision: the first-party Anthropic provider
- * at `https://api.anthropic.com`, OAuth credentials, and a model whose family
- * and version reach the documented floor. Nothing is probed over the network,
- * on session start or otherwise. Failures put the combination on a bounded
- * cooldown so a broken combination cannot cause a paid retry loop.
- */
 import type {
   BackgroundCompactionSettings,
   CapabilityVerdict,
@@ -15,7 +6,6 @@ import type {
 } from "../background/contract.ts";
 import type { AnthropicAuthMode } from "./details.ts";
 
-/** One exact provider/model/endpoint/auth combination (test and harness override). */
 export interface AnthropicSupportEntry {
   readonly provider: string;
   readonly model: string;
@@ -23,22 +13,16 @@ export interface AnthropicSupportEntry {
   readonly authMode: AnthropicAuthMode;
 }
 
-/** Minimum version of one model family that supports on-demand compaction. */
 export interface AnthropicFamilyFloor {
   readonly family: string;
   readonly minMajor: number;
   readonly minMinor: number;
 }
 
-/** The only provider, endpoint and auth mode the default policy admits. */
 export const ANTHROPIC_PROVIDER = "anthropic";
 export const ANTHROPIC_FIRST_PARTY_BASE_URL = "https://api.anthropic.com";
 const ADMITTED_AUTH_MODE: AnthropicAuthMode = "oauth";
 
-/**
- * Documented supported models (compaction-on-demand "Compatibility"): Fable 5+,
- * Mythos 5+ and Preview, Opus 4.6+, Sonnet 4.6+, Haiku 5.5+.
- */
 export const SERVER_SIDE_COMPACTION_FAMILIES: readonly AnthropicFamilyFloor[] = [
   { family: "fable", minMajor: 5, minMinor: 0 },
   { family: "mythos", minMajor: 5, minMinor: 0 },
@@ -47,10 +31,8 @@ export const SERVER_SIDE_COMPACTION_FAMILIES: readonly AnthropicFamilyFloor[] = 
   { family: "haiku", minMajor: 5, minMinor: 5 },
 ];
 
-/** Supported model IDs outside the numeric grammar. */
 export const SERVER_SIDE_COMPACTION_LITERAL_MODELS: readonly string[] = ["claude-mythos-preview"];
 
-/** `claude-<family>-<major>(-<minor>)?(-<yyyymmdd>)?` */
 const MODEL_ID_PATTERN = /^claude-([a-z]+)-(\d{1,3})(?:-(\d{1,2}))?(?:-(\d{8}))?$/u;
 
 interface ParsedModelId {
@@ -67,7 +49,6 @@ export function parseAnthropicModelId(model: string): ParsedModelId | undefined 
   return { family, major: Number(major), minor: minor === undefined ? 0 : Number(minor) };
 }
 
-/** Whether a model ID meets the family floor table (numeric version compare). */
 export function modelSupportsServerSideCompaction(
   model: string,
   families: readonly AnthropicFamilyFloor[] = SERVER_SIDE_COMPACTION_FAMILIES,
@@ -82,7 +63,6 @@ export function modelSupportsServerSideCompaction(
   return parsed.minor >= floor.minMinor;
 }
 
-/** The installed adapter sends OAuth (Bearer) auth exactly when the key carries this marker. */
 const OAUTH_TOKEN_MARKER = "sk-ant-oat";
 
 export function authModeOf(apiKey: string | undefined): AnthropicAuthMode | undefined {
@@ -98,20 +78,12 @@ export function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/u, "");
 }
 
-/** Reasons decided before any request; they say nothing about the combination's health. */
 const IGNORED: ReadonlySet<FailureReason> = new Set(["canceled", "no-legal-cut"]);
 const TRANSIENT: ReadonlySet<FailureReason> = new Set(["429", "529", "timeout", "quota"]);
-/** Consecutive transient failures tolerated before a cooldown starts. */
 const TRANSIENT_STREAK = 3;
-/**
- * Reasons cooled for a fixed, capped wait instead of the doubling rule: a
- * credential failure is not healed by waiting longer, and a long cooldown
- * only hides a fixed login (D10). The wait is `min(cooldownMs, 300_000)`.
- */
 export const FIXED_COOLDOWN_REASONS: ReadonlySet<FailureReason> = new Set<FailureReason>(["auth"]);
 export const FIXED_COOLDOWN_CAP_MS = 300_000;
 
-/** Called when a cooldown actually starts (wait > 0), after it is recorded. */
 export type CooldownObserver = (
   entry: AnthropicSupportEntry,
   reason: FailureReason,
@@ -121,18 +93,8 @@ export type CooldownObserver = (
 interface CapabilityGateOptions {
   readonly enabled: boolean;
   readonly cooldownMs: number;
-  /**
-   * Exact combinations admitted instead of the default policy (tests and
-   * harnesses that use a synthetic provider or endpoint). When set, only these
-   * entries match.
-   */
   readonly allowList?: readonly AnthropicSupportEntry[];
-  /**
-   * Default policy replacing the Anthropic first-party policy when no
-   * allow-list is set (another vendor's static support policy).
-   */
   readonly policy?: (scope: ProviderScope) => AnthropicSupportEntry | undefined;
-  /** Family floors of the default policy; defaults to {@link SERVER_SIDE_COMPACTION_FAMILIES}. */
   readonly families?: readonly AnthropicFamilyFloor[];
   readonly maxCooldownMs?: number;
   readonly maxTrackedScopes?: number;
@@ -172,13 +134,11 @@ export class AnthropicCapabilityGate {
     this.onCooldown = options.onCooldown;
   }
 
-  /** Base cooldown for the next failure (the loaded sidecar's `cooldownMs`); running cooldowns are unchanged. */
   setCooldownMs(cooldownMs: number): void {
     this.cooldownMs = Math.max(0, cooldownMs);
     this.maxCooldownMs = Math.max(this.cooldownMs, this.maxCooldownMs);
   }
 
-  /** Synchronous, local decision. Never performs I/O. */
   check(scope: ProviderScope): CapabilityVerdict {
     if (!this.enabled) return { supported: false, reason: "unsupported" };
     const entry = this.match(scope);
@@ -190,7 +150,6 @@ export class AnthropicCapabilityGate {
     return { supported: true };
   }
 
-  /** The admitted combination for a scope, or undefined when the policy refuses it. */
   match(scope: ProviderScope): AnthropicSupportEntry | undefined {
     if (scope.authMode === undefined || scope.baseUrl === undefined) return undefined;
     const baseUrl = normalizeBaseUrl(scope.baseUrl);
@@ -251,7 +210,6 @@ export class AnthropicCapabilityGate {
     if (entry !== undefined) this.cooldowns.delete(scopeKey(entry));
   }
 
-  /** Remaining cooldown in milliseconds (0 when none). */
   cooldownRemaining(scope: ProviderScope): number {
     const entry = this.match(scope);
     if (entry === undefined) return 0;
@@ -260,13 +218,11 @@ export class AnthropicCapabilityGate {
   }
 }
 
-/** Providers whose Anthropic stream must be captured for replay under a policy. */
 export function capturedProviders(allowList?: readonly AnthropicSupportEntry[]): string[] {
   if (allowList === undefined) return [ANTHROPIC_PROVIDER];
   return [...new Set(allowList.map((entry) => entry.provider))];
 }
 
-/** Length-prefixed fields: each part is self-delimiting, so distinct tuples never collide. */
 function scopeKey(entry: AnthropicSupportEntry): string {
   return [entry.provider, normalizeBaseUrl(entry.baseUrl), entry.model, entry.authMode]
     .map((field) => `${field.length}:${field}`)

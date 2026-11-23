@@ -1,6 +1,3 @@
-/**
- * Full graph build (_doBuildGraph) and the buildOrUpdateGraph entry point.
- */
 import { includePropertiesWhen } from "../../optional-properties.ts";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
@@ -73,34 +70,11 @@ async function _doBuildGraph(
 ): Promise<ReviewGraph> {
   const normalizedCwd = normalizeMapKey(cwd);
   const cacheEpoch = workspaceCacheEpoch(normalizedCwd);
-  // `await undefined` still yields a microtask, which reorders overlapping
-  // builds in production where no test gate is installed — only await a gate
-  // that exists.
   if (_reviewGraphBuildGateForTests) await _reviewGraphBuildGateForTests();
   const normalizedChanged = changedFiles.map((file) => normalizeMapKey(file));
   const normalizedChangedSet = new Set(normalizedChanged);
   logCwdWorktreeMismatchOnce(cwd);
 
-  // #622: reject a cwd that IS (or is an ancestor of) $HOME before any walk is
-  // attempted. The 3 real per-edit callers (dispatch/integration.ts's
-  // computeCascadeForFile, mcp/analyze.ts, tree-sitter.ts's
-  // runBlastRadiusInBackground) pass their session/pipeline cwd straight
-  // through on the assumption it's already a real project root — true when Pi
-  // is launched inside a repo, false when Pi is launched from $HOME itself and
-  // then edits an absolute-path file in some other repo. In that case
-  // getGraphSourceFiles's maxGraphFiles cap (#250) only trips AFTER a full
-  // unfiltered $HOME walk (206k+ files, ~500s of blocked event loop — #622),
-  // because the cap counts post-filter *kept* files, not directory entries
-  // visited. Bail before the walk starts instead, mirroring the same
-  // isAtOrAboveHomeDir ceiling already used by startup-scan.ts,
-  // dead-code-client.ts, knip-client.ts, and runtime-session.ts's
-  // resolveSnapshotRoot for the identical class of escape (#253/#250). Unlike
-  // those (which resolve a root by walking UP from an arbitrary start dir),
-  // this checks cwd directly: buildOrUpdateGraph's contract is that cwd
-  // already IS the project root, so there is no safe substitute root to fall
-  // back to here — skip graph construction entirely (matching #622's own
-  // stated expected behavior) rather than walking a directory the caller never
-  // asked for.
   if (isAtOrAboveHomeDir(path.resolve(cwd))) {
     const graph = createEmptyGraph();
     for (const file of normalizedChanged) {
@@ -110,30 +84,16 @@ async function _doBuildGraph(
       reused: false,
       mode: "skipped",
       skipReason: "unsafe_root",
-      // #459: never persisted/reused, same as the too_many_files skip below —
-      // treat as changed so dependents never trust stale derived state.
       graphChanged: true,
     });
     facts.setSessionFact("session.reviewGraph", graph);
     return graph;
   }
 
-  // #451: capture the seq BEFORE any await — every builtAtProjectSeq stamp in
-  // this build uses this value, so a bump that interleaves mid-build has
-  // seq > stamp and is re-diffed next build (redundant re-extract, never a miss).
   const seqAtBuildStart = seqHint?.projectSeq();
 
-  // #694: kick off the untracked-AND-ignored id fetch concurrently with the
-  // walk below — it's independent of both. Memoized/time-bounded internally
-  // (git-tracked-ignore.ts) so a hot per-edit rebuild loop shares one `git`
-  // spawn instead of paying for one per file/per edit.
   const ignoredIdsPromise = collectUntrackedIgnoredIds(cwd);
 
-  // #451: seq fast path — skip the O(project) walk+stat sweep when the
-  // RuntimeCoordinator can tell us exactly which files changed. Any doubt inside
-  // falls through to the full sweep below (which refreshes the verify clock). The
-  // fallback reason is stamped onto whichever build-info the sweep records, so
-  // cascade.log can watch the fast-path hit/miss rate.
   let seqFastpathFallback: SeqFastpathFallback | undefined;
   if (seqHint && seqAtBuildStart !== undefined && seqFastpathEnabled()) {
     const fast = await trySeqFastpath(
@@ -164,18 +124,7 @@ async function _doBuildGraph(
     for (const file of normalizedChanged) {
       upsertChangedSymbols(graph, facts, file);
     }
-    // #782: record a TTL'd verdict so getCachedReviewGraph can stop serving
-    // any graph cached/persisted from before the repo crossed the cap, and so
-    // project_report can render an honest "disabled at N files" hint instead
-    // of "retry shortly" — see getReviewGraphSizeSkipVerdict.
     recordReviewGraphSizeSkip(cwd, sourceFileCount, maxGraphFiles);
-    // #775 R3: `_lastGraphBuildInfo`/the size-skip verdict above are only
-    // SURFACED by callers that happen to read them (dispatch/integration.ts's
-    // cascade path logs a `graph_build` phase; lsp-map.ts, project-report.ts,
-    // mcp/analyze.ts, runtime-session.ts, and tree-sitter.ts's runner do not).
-    // Log unconditionally here, at the one place every caller funnels through,
-    // so a monorepo crossing the cap is never a SILENT truncation — no caller
-    // wiring required (AGENTS.md: no silent caps).
     logLatency({
       type: "phase",
       phase: "review_graph_size_skip",
@@ -212,31 +161,16 @@ async function _doBuildGraph(
       sourceFileCountTruncated: sourceFilesTruncated || filesToBuild.length > maxGraphFiles,
       maxFileCount: maxGraphFiles,
       seqFastpathFallback,
-      // #459: a fresh empty graph is returned every call on this path (never
-      // persisted/reused) — treat it as changed so dependents never trust stale
-      // derived state across skip/unskip transitions. Deliberately NOT stamped
-      // with a buildGeneration: absent ⇒ derived caches rebuild every time.
       graphChanged: true,
     });
     facts.setSessionFact("session.reviewGraph", graph);
     return graph;
   }
-  // #782: the repo is within the cap on this build attempt — drop any
-  // previously recorded size-skip verdict immediately (rather than waiting
-  // out the TTL) so a shrink or a raised cap re-enables reads the moment a
-  // build actually succeeds.
   if (!sourceFilesTruncated) clearReviewGraphSizeSkip(cwd);
   const fileSignatures = await sourceSignatureMapAsync(filesToBuild);
   const signature = sourceSignatureFromMap(fileSignatures);
 
-  // Tier 1: in-memory cache (hot path — same process, already built this session)
   let memCached = sourceFilesTruncated ? undefined : _workspaceGraphCache.get(normalizedCwd);
-  // A partial graph (hydrated from a capped snapshot for read-only orientation
-  // via getCachedReviewGraph) can share this cache. It MUST NOT seed a build:
-  // serving it silently drops the capped-away nodes/edges, and extending then
-  // re-persisting it would launder partial coverage onto disk as a complete
-  // snapshot (#936 review). Ignore it here — the disk tier rejects a partial
-  // base too, so the build falls through to a full rebuild.
   if (memCached?.graph.persistCoverage?.partial) memCached = undefined;
   if (memCached?.signature === signature) {
     touchWorkspaceGraph(normalizedCwd);
@@ -246,11 +180,7 @@ async function _doBuildGraph(
     for (const file of normalizedChanged) {
       upsertChangedSymbols(graph, facts, file);
     }
-    // #451: a signature-matching hit means the walk+stat just confirmed nothing
-    // changed — a legitimate full verify. Refresh the clock/counter and seq so a
-    // later fast path diffs from here and the periodic re-verify resets.
     Object.assign(memCached, verifiedCacheFields(seqAtBuildStart));
-    // #459: content unchanged ⇒ carry the entry's generation forward.
     const generation = (memCached.buildGeneration ??=
       ++reviewGraphBuilderState._graphGenerationCounter);
     setGraphBuildInfo(graph, {
@@ -284,11 +214,6 @@ async function _doBuildGraph(
     }
   }
 
-  // Tier 2: disk cache (cold start — files unchanged since last persist).
-  // #300: deliberately does NOT verify the git stamp — the signature match /
-  // #202 content-hash confirm below already content-verify the load, and
-  // dropping on every HEAD move would force a full whole-repo rebuild after
-  // each plain `git commit` (HEAD moves, files unchanged).
   const diskCached = sourceFilesTruncated ? null : loadPersistedGraph(cwd);
   if (diskCached?.signature === signature) {
     const graph = cloneGraph(diskCached.graph);
@@ -297,9 +222,6 @@ async function _doBuildGraph(
     for (const file of normalizedChanged) {
       upsertChangedSymbols(graph, facts, file);
     }
-    // #459: disk-hydrated content is new to THIS process — fresh stamp (a prior
-    // process's derived caches don't exist here; in-process derived caches from
-    // before a workspace-cache clear must not match it).
     const generation = ++reviewGraphBuilderState._graphGenerationCounter;
     setWorkspaceGraph(
       normalizedCwd,
@@ -324,10 +246,6 @@ async function _doBuildGraph(
     return graph;
   }
   if (diskCached) {
-    // #202: same incremental path as the in-memory tier. This is where it pays
-    // off most — on cold start, git/checkout mtime drift or a burst of new
-    // files since the last persist would otherwise force a full whole-repo
-    // rebuild; the delta + content-hash confirm reuses the persisted graph.
     const incremental = await tryIncrementalFromCache(
       {
         signature: diskCached.signature,
@@ -355,8 +273,6 @@ async function _doBuildGraph(
     }
   }
 
-  // Tier 3: full build — resumed from a prior session's checkpoint when one is
-  // present and still current (#936 limit 2), else cold from an empty graph.
   const resumed = sourceFilesTruncated
     ? null
     : await tryResumeFromCheckpoint(cwd, filesToBuild, ignoredIds);
@@ -364,12 +280,7 @@ async function _doBuildGraph(
   const filesToExtract = resumed?.remaining ?? filesToBuild;
   const treeSitterClient = getSharedTreeSitterClient();
   const extractionStartedAt = Date.now();
-  // Seeded with the reused files' hashes on resume so the completed snapshot
-  // still records a hash for every file (needed by #202 incremental next time).
   const fileHashes = resumed?.fileHashes ?? new Map<string, string>();
-  // #936: after each file, snapshot the PRE-resolution graph + processed-file
-  // hashes so a killed session can resume. Gated by BOTH a file-count stride
-  // and a min wall-time interval so a long build pays only a handful of writes.
   const checkpointEvery = graphCheckpointEveryFiles();
   const checkpointMinIntervalMs = graphCheckpointMinIntervalMs();
   const testStopAfter = Number(process.env.CHOCO_PI_LSP_GRAPH_CHECKPOINT_TEST_STOP_AFTER);
@@ -393,10 +304,6 @@ async function _doBuildGraph(
       }
       extractedCount++;
       filesSinceCheckpoint++;
-      // Test seam: simulate a session killed mid-build after N files, having
-      // just written a checkpoint. Write SYNCHRONOUSLY so the checkpoint is
-      // deterministically on disk before the abort throw — the offloaded path
-      // would not have promoted yet. The next (un-stopped) build resumes it.
       if (Number.isFinite(testStopAfter) && testStopAfter > 0 && extractedCount >= testStopAfter) {
         writeReviewGraphCheckpointSync(
           cwd,
@@ -426,10 +333,6 @@ async function _doBuildGraph(
     try {
       await extractFiles();
     } finally {
-      // The build consumed every fresh entry (consume-once deletes them);
-      // leftovers are stale/test/non-build files nothing will ever read.
-      // Clearing here bounds the registry to the scan-to-build window
-      // (#955 review — the #886 retention class).
       clearReviewGraphFileIr(cwd);
     }
   };
@@ -447,9 +350,6 @@ async function _doBuildGraph(
     await extractAndDrainIr();
   }
 
-  // #936: a changed file that was REUSED from the checkpoint (unchanged content)
-  // is never revisited by the extraction loop above, so run its changed-symbol
-  // upsert here — matching what a cold build's inline pass would have done.
   if (resumed) {
     for (const file of normalizedChangedSet) {
       if (resumed.fileHashes.has(file)) {
@@ -461,22 +361,13 @@ async function _doBuildGraph(
   resolveDeferredSymbolEdges(graph);
   graph.version = REVIEW_GRAPH_VERSION;
   graph.builtAt = new Date().toISOString();
-  // #936: the build is now complete over the full target set — drop the
-  // in-progress/partial marker a resumed seed carried so the finished graph is
-  // never mistaken for (or persisted as) a partial one, and retire the
-  // checkpoint now that an authoritative snapshot supersedes it.
   graph.persistCoverage = sourceFilesTruncated
     ? graphCoverage(graph, graphPersistMaxElements(), sourceFileCount, true, filesToBuild)
     : undefined;
   deleteReviewGraphCheckpoint(cwd);
-  // #202: the full-build pass hashes the same bytes it supplies to extraction,
-  // so change detection does not reread every file after the graph is built.
-  // #459: full rebuild ⇒ new generation.
   const generation = ++reviewGraphBuilderState._graphGenerationCounter;
   const graphSnapshot = cloneGraph(graph);
   rebuildIndexes(graphSnapshot);
-  // Keep the content generation on the persisted snapshot instance too, so
-  // scheduled persistence logs join the same graph identity as build success.
   graphSnapshot.buildGeneration = generation;
   setWorkspaceGraph(
     normalizedCwd,
@@ -497,7 +388,7 @@ async function _doBuildGraph(
     mode: "full",
     sourceFileCount,
     sourceFilesTruncated,
-  }); // fire-and-forget
+  });
   setGraphBuildInfo(graph, {
     reused: false,
     mode: "full",

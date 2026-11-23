@@ -1,15 +1,3 @@
-/**
- * NDJSON telemetry for the agent-facing ast_grep_search / ast_grep_replace
- * tools. Captures inputs, outcome, and failure category so we can answer:
- *
- *   - How often do agents hit "Multiple AST nodes" with multi-line patterns?
- *   - Which language emits which failure most often?
- *   - Do retries (post-skill-read) succeed within the same session?
- *   - Which patterns keep getting tried and keep failing?
- *
- * Mirrors `actionable-warnings-logger.ts` for shape + rotation behaviour.
- */
-
 import * as path from "node:path";
 import { isTestMode } from "./env-utils.ts";
 import { getGlobalPiLensDir } from "./file-utils.ts";
@@ -77,12 +65,6 @@ function countLines(value: string | undefined): number | undefined {
   return lines;
 }
 
-/**
- * Categorise an error string from the sg-runner / spawn layer. Looks first
- * at the friendly wrappers sg-runner.ts emits (which already contain the
- * original stderr); falls back to raw stderr substring checks for codepaths
- * that don't go through that wrapper.
- */
 export function classifyAstGrepError(errorMessage: string | undefined): AstGrepErrorKind {
   if (!errorMessage) return "other";
   const lower = errorMessage.toLowerCase();
@@ -115,22 +97,10 @@ export function classifyAstGrepError(errorMessage: string | undefined): AstGrepE
   return "other";
 }
 
-/**
- * Map a classified error kind to a one-line, agent-facing remediation hint.
- *
- * The runner layer (sg-runner.ts) already wraps the two highest-frequency
- * spawn errors — "Multiple AST nodes" and "Cannot parse query" — with curated
- * multi-line guidance, so those return `null` here (don't double up). This
- * closes the loop for the categories that otherwise reach the agent as raw
- * stderr (`other`/`timeout`/`tool_not_found`/`json_parse_failed`): we already
- * classify them for telemetry, so reuse that classification to help the agent
- * self-correct on the error path the way getPatternHint() does on zero-matches.
- */
 export function astGrepRemediationHint(kind: AstGrepErrorKind): string | null {
   switch (kind) {
     case "multiple_ast_nodes":
     case "cannot_parse_query":
-      // Error text already carries curated guidance from sg-runner.ts.
       return null;
     case "tool_not_found":
       return "Hint: the ast-grep CLI is missing or not on PATH — install it with `npm i -D @ast-grep/cli`.";
@@ -166,7 +136,6 @@ export function getAstGrepToolLogPath(): string {
   return AG_LOG_FILE;
 }
 
-/** Resolve once all enqueued ast-grep-tool writes are on disk. */
 export function flushAstGrepToolLog(): Promise<void> {
   return writer.flush();
 }

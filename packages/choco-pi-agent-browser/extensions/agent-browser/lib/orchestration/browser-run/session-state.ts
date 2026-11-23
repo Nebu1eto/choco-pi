@@ -476,10 +476,6 @@ export function getStaleRefArgs(commandTokens: string[], stdin?: string): string
   return steps.length > 0 ? steps.flatMap((step) => step) : commandTokens;
 }
 
-// Selector-carrying flags whose values remain page-scoped refs; values of other value-taking flags
-// (--text, --baseline, --name, and similar) are literal text or paths that may merely look like refs,
-// per upstream parsing. Boolean flags such as --new-tab or --full do not consume the following token,
-// so a ref after them is a genuine positional selector and must stay guarded.
 const SELECTOR_FLAG_TOKENS = new Set(["--selector", "-s"]);
 const SHORT_VALUE_FLAG_TOKENS = new Set(["-b", "-o", "-t"]);
 
@@ -667,9 +663,6 @@ export function buildPinnedBatchPlan(options: {
 }): PinnedBatchPlan | { error: string } | undefined {
   if (options.command === "batch") {
     const tabSelectionStep: BatchCommandStep = ["tab", options.selectedTab];
-    // Upstream executes raw argument steps exclusively when any exist, so the
-    // pinned rewrite must dispatch those same steps rather than resurrecting
-    // caller stdin the guard never scanned.
     const argumentSteps = getUpstreamEffectiveBatchSteps(options.commandTokens, undefined);
     if (argumentSteps.length > 0) {
       return {

@@ -1,13 +1,3 @@
-/**
- * The full-screen review (`/review-assist`): the shared changes view
- * (`lib/changes/view/changes-view.ts`, the same view `/diff` docks beside the
- * transcript) with a line cursor, mounted in a host that fills the terminal
- * and adds the review's footer, comment editor and side chat.
- *
- * The view reads a store that lives as long as the review: static for pull
- * requests and commit ranges, re-read on `r` and after the side chat's tool
- * calls for targets that end at the working tree.
- */
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { hunkWithExpandedContext } from "../core/expand.ts";
@@ -72,7 +62,6 @@ export {
   type ReviewViewHeights,
 } from "./review-view-format.ts";
 
-/** Rows use the theme; diff text keeps the caller's styler for inversion and backgrounds. */
 function paneStyler(session: ReviewSession, theme: Theme): PaneStyler {
   const diffStyler = session.options.styler;
   const styler: PaneStyler = {
@@ -87,7 +76,6 @@ function paneStyler(session: ReviewSession, theme: Theme): PaneStyler {
   return styler;
 }
 
-/** What Pi mounts: the review's own view, with every entry point guarded. */
 type ReviewComponent = {
   render(width: number): string[];
   invalidate(): void;
@@ -95,7 +83,6 @@ type ReviewComponent = {
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined;
 };
 
-/** Builds the view inside Pi's `custom` callback and starts it on the current record. */
 function mountReviewView(
   session: ReviewSession,
   tui: TUI,
@@ -145,9 +132,6 @@ function mountReviewView(
   session.repaint = () => tui.requestRender();
 
   const editorTheme = reviewEditorTheme(theme);
-  // Two inputs, two providers, two histories. Both complete against the
-  // review root rather than the process directory, because a pull request
-  // review reads a checked-out worktree that is not the user's cwd.
   const commentInput = new ReviewInput(tui, editorTheme, { root: options.reviewRoot });
   const chatCommands = createChatCommands(session);
   const chatInput = new ReviewInput(tui, editorTheme, {
@@ -199,10 +183,8 @@ function mountReviewView(
   commentInput.onSubmit = (body) => submitComment(ctx, body);
   chatInput.onSubmit = (question) => submitChat(ctx, question);
 
-  // A resumed record's comments take the line numbers their text has now.
   followComments(ctx);
   restoreCommentContext(ctx);
-  // A step that can move comments landed (a reveal, a context read, a refresh): follow it.
   session.afterWork = () => {
     if (session.closed) return;
     followComments(ctx);
@@ -219,15 +201,6 @@ function mountReviewView(
   return guardedComponent(ctx);
 }
 
-/**
- * pi-tui calls render and handleInput with nothing around them, and Pi
- * exits on any throw that escapes (interactive mode's uncaughtCrash).
- * A full-screen view that cannot draw would also trap the user, so a
- * render failure closes the review at once (the terminal and the pane
- * underneath come back), saves the record as it stands through the
- * store, and says so in Pi's notifications. Later frames until the
- * overlay is gone draw one fallback line without calling the view.
- */
 function guardedComponent(ctx: ReviewContext): ReviewComponent {
   const invalidate = () => {
     ctx.changes.invalidate();
@@ -255,11 +228,7 @@ function guardedComponent(ctx: ReviewContext): ReviewComponent {
     },
     handleInput: (data: string) => {
       if (ctx.renderFailure || ctx.closed) return;
-      // Closing: only leaving keys count. A change now would miss the copy
-      // being saved and be reported as kept when it was not.
       if (ctx.phase.kind !== "open") {
-        // A leaving key leaves, whatever has focus (the chat after /quit
-        // too): the immediate escape must not depend on where focus is.
         if (actionFor(REVIEW_KEYS, data) === "back") {
           leave(ctx);
           return;
@@ -273,17 +242,12 @@ function guardedComponent(ctx: ReviewContext): ReviewComponent {
         );
         try {
           ctx.tui.requestRender();
-        } catch {
-          // Drawn with the next frame.
-        }
+        } catch {}
         return;
       }
       try {
         handleReviewKey(ctx, data);
       } catch (error) {
-        // The view stays: the failure is on its message line. If the key
-        // was one that leaves, leave anyway, so a failing handler can
-        // never keep the user in the review.
         if (
           actionFor(REVIEW_KEYS, data) === "back" &&
           !ctx.commentDraft &&
@@ -294,9 +258,7 @@ function guardedComponent(ctx: ReviewContext): ReviewComponent {
         notify(ctx, `That key failed: ${failureLine(error)}`, "error");
         try {
           ctx.tui.requestRender();
-        } catch {
-          // Drawn with the next frame.
-        }
+        } catch {}
       }
     },
     handleMouse: (event: TuiMouseEvent): TuiMouseEventResult | undefined => {
@@ -304,7 +266,6 @@ function guardedComponent(ctx: ReviewContext): ReviewComponent {
       try {
         return handleReviewMouse(ctx, event);
       } catch (error) {
-        // The view stays, as for a key that fails.
         ctx.selecting = false;
         notify(ctx, `That click failed: ${failureLine(error)}`, "error");
         return { handled: true, render: true };

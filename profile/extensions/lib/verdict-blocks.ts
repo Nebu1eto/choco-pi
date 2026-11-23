@@ -1,5 +1,3 @@
-// Structured agent output: reviewer and verifier agents end their final message with a fenced JSON block. Code parses
-// that block instead of trusting prose. Parsing never throws and never treats a malformed block as a pass.
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -21,9 +19,7 @@ import { parseStrictJson } from "./strict-json.ts";
 export const VERDICT_INFO = "choco-pi-verdict";
 export const REVIEW_INFO = "choco-pi-review";
 export const WORK_TASK_PATTERN = "^[a-z0-9][a-z0-9-]{0,63}$";
-/** Agent ids name record files, so they must be a single safe path segment. */
 export const AGENT_ID_PATTERN = "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$";
-/** A block larger than this is rejected before JSON parsing. */
 export const MAX_BLOCK_BYTES = 1024 * 1024;
 
 const claimSchema = obj({
@@ -38,7 +34,6 @@ export const VerdictBlockSchema = obj({
   schema: lit(1),
   kind: lit("claims"),
   workTask: str({ pattern: WORK_TASK_PATTERN }),
-  // The checkout the claims were checked against; diffDigest identifies a dirty tree's changes.
   snapshot: obj({
     head: str({ minLength: 1 }),
     clean: bool(),
@@ -67,7 +62,6 @@ export const ReviewBlockSchema = obj({
   verdict: oneOf(["FINDINGS", "NO_FINDINGS", "INCOMPLETE"]),
   bundleDigest: str({ minLength: 1 }),
   findings: arr(findingSchema),
-  // The contract names the field only; a single description or a list of missing items are both accepted.
   incomplete: opt(
     obj({ missing: union([str({ minLength: 1 }), arr(str({ minLength: 1 }), { minItems: 1 })]) }),
   ),
@@ -99,7 +93,6 @@ export type BlockParse<Value> =
 
 export type Validation<Value> = { ok: true; value: Value } | { ok: false; errors: string[] };
 
-/** startLine is the opening fence's line index; endLine is the closing fence's, or the last line when unclosed. */
 type FencedBlock = {
   info: string;
   body: string;
@@ -110,14 +103,9 @@ type FencedBlock = {
 
 const OPENING_FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 const CLOSING_FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
-/** Any fence-like line, including one indented, inside a blockquote, or after a byte-order mark. */
 const FENCE_LIKE = /^[\s>]*(`{3,}|~{3,})(.*)$/;
 const STRUCTURED_INFOS: readonly string[] = [VERDICT_INFO, REVIEW_INFO];
 
-/**
- * CommonMark-style fenced block scan. A closing fence uses the opening character and is at least as long, so a
- * block opened with four backticks may contain three-backtick lines. An unclosed block runs to the end.
- */
 function fencedBlocks(lines: string[]): FencedBlock[] {
   const blocks: FencedBlock[] = [];
   let open: { fence: string; info: string; lines: string[]; startLine: number } | undefined;
@@ -141,7 +129,6 @@ function fencedBlocks(lines: string[]): FencedBlock[] {
     const opening = OPENING_FENCE.exec(line);
     if (!opening) continue;
     const info = opening[2].trim();
-    // A backtick fence's info string cannot contain a backtick; such a line is inline code, not a fence.
     if (opening[1][0] === "`" && info.includes("`")) continue;
     open = { fence: opening[1], info, lines: [], startLine: index };
   }
@@ -157,11 +144,6 @@ function fencedBlocks(lines: string[]): FencedBlock[] {
   return blocks;
 }
 
-/**
- * Line indexes of fence-like lines that name `info` (case-insensitively, possibly among other words) anywhere in the
- * message: nested in another block, quoted, indented, or with a near-miss info string. The caller excludes the one
- * top-level block it reads; any other such line makes the message ambiguous.
- */
 function fenceMentions(lines: string[], info: string): number[] {
   const mentions: number[] = [];
   for (const [index, line] of lines.entries()) {
@@ -190,7 +172,6 @@ function duplicates(ids: string[]): string[] {
   return [...repeated];
 }
 
-/** Shape plus cross-field rules for a choco-pi-verdict block. */
 export function validateVerdictBlock(value: RuntimeValue): Validation<VerdictBlock> {
   if (!verdictValidator.check(value)) {
     return { ok: false, errors: schemaErrors(verdictValidator.errors(value)) };
@@ -205,7 +186,6 @@ export function validateVerdictBlock(value: RuntimeValue): Validation<VerdictBlo
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value };
 }
 
-/** Shape plus verdict/findings consistency for a choco-pi-review block. */
 export function validateReviewBlock(value: RuntimeValue): Validation<ReviewBlock> {
   if (!reviewValidator.check(value)) {
     return { ok: false, errors: schemaErrors(reviewValidator.errors(value)) };
@@ -238,12 +218,6 @@ export function validateReviewBlock(value: RuntimeValue): Validation<ReviewBlock
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value };
 }
 
-/**
- * Reads the one block with info string `info`. The message is invalid, never read as a pass, when: more than one
- * top-level block has that info string; any other fence-like line names it (nested in another block, quoted,
- * indented, or with a different case or extra words); the block is unclosed; or anything but blank lines and other
- * closed structured blocks follows it. A single leading byte-order mark is ignored and CRLF line endings are accepted.
- */
 function parseSingleBlock<Value>(
   text: RuntimeValue,
   info: string,
@@ -307,7 +281,6 @@ function parseSingleBlock<Value>(
   }
 }
 
-/** Finds the single fenced block whose info string is exactly `info` and validates it for that info string. */
 export function parseStructuredBlock(
   text: RuntimeValue,
   info: typeof VERDICT_INFO,
@@ -333,7 +306,6 @@ export function parseReviewBlock(text: RuntimeValue): BlockParse<ReviewBlock> {
   return parseSingleBlock(text, REVIEW_INFO, validateReviewBlock);
 }
 
-/** Shape plus status consistency for a <agentId>.json verdict record. */
 export function validateAgentParseRecord(value: RuntimeValue): Validation<AgentParseRecord> {
   if (!agentRecordValidator.check(value)) {
     return { ok: false, errors: schemaErrors(agentRecordValidator.errors(value)) };
@@ -364,10 +336,6 @@ export type AgentRecordIdentity = {
   completedAt: string;
 };
 
-/**
- * Builds the parse record for an agent's final message. Any invalid block makes the record invalid, so a malformed
- * block next to a valid one is never read as a pass. With no block at all the status is "missing".
- */
 export function buildAgentParseRecord(
   text: RuntimeValue,
   identity: AgentRecordIdentity,
@@ -399,12 +367,10 @@ export function buildAgentParseRecord(
   return record;
 }
 
-/** The directory holding every work task's verdict records: `<scratch>/verdicts`. */
 export function verdictRecordsRoot(scratchDir: string): string {
   return path.join(scratchDir, "verdicts");
 }
 
-/** One work task's verdict records: `<scratch>/verdicts/<workTask>/<agentId>.json`. */
 export function verdictRecordsDirectory(scratchDir: string, workTask: string): string {
   return path.join(verdictRecordsRoot(scratchDir), workTask);
 }
@@ -414,7 +380,6 @@ export function agentRecordPath(recordsDir: string, agentId: string): string {
   return path.join(recordsDir, `${agentId}.json`);
 }
 
-/** Writes <agentId>.json atomically (same-directory temporary file, then rename). */
 export async function writeAgentParseRecord(
   recordsDir: string,
   record: AgentParseRecord,
@@ -469,7 +434,6 @@ export type AgentRecordListing = {
   invalid: { file: string; reason: string }[];
 };
 
-/** Reads every *.json record of one work task; unreadable or invalid files are reported, never dropped silently. */
 export async function readAgentParseRecords(recordsDir: string): Promise<AgentRecordListing> {
   let entries: string[];
   try {

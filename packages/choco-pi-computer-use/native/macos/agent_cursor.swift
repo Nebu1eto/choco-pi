@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// Visual-only cursor; native action delivery remains authoritative.
 @MainActor
 final class AgentCursor {
     typealias IdleHideScheduler = @MainActor (@escaping @MainActor () -> Void) -> Task<Void, Never>
@@ -72,7 +71,6 @@ final class AgentCursor {
     }
 }
 
-/// Main-display-only, click-through overlay that can never take focus.
 private final class AgentCursorOverlayWindow: NSWindow {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }

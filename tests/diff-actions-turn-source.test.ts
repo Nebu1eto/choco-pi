@@ -1,4 +1,3 @@
-// "Since a turn" source against real git: files edited before the checkpoint and unchanged since are not listed.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
@@ -39,13 +38,11 @@ test("since a turn lists only files changed after the checkpoint, even when they
   await writeFile(join(root, "bin.dat"), new Uint8Array([0, 1, 2]));
   await git(root, {}, "add", "-A");
   await git(root, {}, "commit", "-qm", "base");
-  // Uncommitted edits made before the turn, captured by the checkpoint.
   await writeFile(join(root, "before.txt"), "one\ntwo\n");
   await writeFile(join(root, "bin.dat"), new Uint8Array([0, 1, 2, 3]));
   const index = join(root, ".git", "checkpoint-index");
   await git(root, { GIT_INDEX_FILE: index }, "add", "-A");
   const tree = (await git(root, { GIT_INDEX_FILE: index }, "write-tree")).trim();
-  // The turn edits one more file.
   await writeFile(join(root, "after.txt"), "one\nchanged\n");
 
   const store = createDiffStore({

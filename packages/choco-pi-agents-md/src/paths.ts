@@ -2,7 +2,6 @@ import fs from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
-/** Resolve a possibly-relative path through its nearest existing ancestor. */
 export function resolvePath(targetPath: string, baseDir: string): string {
   const absolute = path.isAbsolute(targetPath)
     ? path.normalize(targetPath)
@@ -22,18 +21,12 @@ export function resolvePath(targetPath: string, baseDir: string): string {
   }
 }
 
-/** True when `targetPath` is `rootDir` itself or nested inside it. */
 export function isInsideRoot(rootDir: string, targetPath: string): boolean {
   if (!rootDir) return false;
   const relative = path.relative(rootDir, targetPath);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-/**
- * Find the boundary directory to search for AGENTS.md files above `targetPath`:
- * the nearest ancestor `.git` directory, or (failing that) the highest ancestor
- * that itself contains an AGENTS.md.
- */
 export function contentRootForTarget(resolvedTargetPath: string): string {
   try {
     const startDir =
@@ -54,7 +47,6 @@ export function contentRootForTarget(resolvedTargetPath: string): string {
   }
 }
 
-/** Real path of an existing path, or the normalized absolute input when it cannot be resolved. */
 export async function realpathOrSelf(targetPath: string): Promise<string> {
   try {
     return await realpath(targetPath);
@@ -72,11 +64,6 @@ async function pathExists(targetPath: string): Promise<boolean> {
   }
 }
 
-/**
- * The session project root: the nearest ancestor of the real `cwd` (inclusive)
- * that contains a `.git` entry (directory or worktree file), else the real
- * `cwd` itself.
- */
 export async function findSessionRoot(cwd: string): Promise<string> {
   const start = await realpathOrSelf(cwd);
   let dir = start;

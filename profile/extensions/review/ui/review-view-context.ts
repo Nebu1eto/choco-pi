@@ -1,7 +1,3 @@
-/**
- * Unchanged context the reader reveals around hunks (`+`/`-`), and the
- * reads that restore it for comments written on revealed lines.
- */
 import {
   collapseHunkContext,
   EXPANSION_LIMIT,
@@ -46,7 +42,6 @@ export async function expandContext(ctx: ReviewContext): Promise<void> {
   setExpansion(ctx, hunk.id, { above: above.expansion.above, below: below.expansion.below });
 }
 
-/** Replace one hunk's context; the cursor stays on its line and a selection collapses. */
 export function setExpansion(ctx: ReviewContext, hunkId: string, next: HunkExpansion): void {
   const before = ctx.expansions.get(hunkId)?.above.length ?? 0;
   if (next.above.length === 0 && next.below.length === 0) ctx.expansions.delete(hunkId);
@@ -54,12 +49,6 @@ export function setExpansion(ctx: ReviewContext, hunkId: string, next: HunkExpan
   ctx.changes.contextChanged(hunkId, next.above.length - before);
 }
 
-/**
- * Revealed context is read for a hunk's place: a hunk id names content,
- * not place, so after a refresh a hunk that moved (or left) loses the
- * context read for where it was, which would show other lines under
- * the old numbers. `restoreCommentContext` reads again what comments need.
- */
 export function dropMovedContext(ctx: ReviewContext): void {
   const hunks = new Map(
     ctx.store
@@ -75,16 +64,6 @@ export function dropMovedContext(ctx: ReviewContext): void {
   }
 }
 
-/**
- * A comment written on expanded context (`+`) is not in its hunk as
- * read, so after a resume or a refresh it would be outdated though
- * nothing changed. Expand that hunk the way `+` does, step by step up
- * to `EXPANSION_LIMIT`, until the comment's text is found; keep the
- * expansion only then. A comment whose text is not found within the
- * limit (its text is gone) stays outdated, and its hunk keeps the
- * context it had. A failed read leaves it outdated too: that is what
- * the reader can verify.
- */
 export function restoreCommentContext(ctx: ReviewContext): void {
   const started = (ctx.contextRestore += 1);
   const model = ctx.store.model();
@@ -108,9 +87,7 @@ export function restoreCommentContext(ctx: ReviewContext): void {
     "reading context for comments",
     (comment) => targets.has(comment.id),
     readCommentContext(ctx, started, model, targets),
-  ).catch(() => {
-    // Reported as unconfirmed by a Finish waiting for it; nothing else to do.
-  });
+  ).catch(() => {});
 }
 
 export async function readCommentContext(
@@ -148,7 +125,6 @@ export async function readCommentContext(
         break;
       }
       if (!current()) return;
-      // The user changed this hunk's context meanwhile: theirs stands.
       if (ctx.expansions.get(hunk.id) !== before) break;
       const [above, below] = read;
       if (above.addedLines + below.addedLines === 0) break;

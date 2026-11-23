@@ -209,7 +209,6 @@ test("agent separates immediate extension commands from prompt and skill session
   sessions.set(session);
 
   const agent = new PiAcpAgent(asAgentConn(conn));
-  // The injected manager implements the session operations exercised by command dispatch.
   Object.assign(agent, { sessions } satisfies AgentSessionsState);
   await agent.refreshAvailableCommands("s1");
 
@@ -279,10 +278,6 @@ test("agent separates immediate extension commands from prompt and skill session
     [[], []],
   );
 
-  // The adapter does not intercept the interactive review command, `/review-assist`.
-  // It dispatches to Pi like any other extension command, where the headless
-  // presenter answers with bounded display-only output. `/review` itself is a
-  // prompt template and takes the session-turn path like `/prompt` above.
   const reviewResult = await agent.prompt({
     sessionId: "s1",
     prompt: [{ type: "text", text: "/review-assist branch main" }],
@@ -351,7 +346,6 @@ test("session replacement cannot retain or publish the previous process catalog"
   sessions.set(commandSession("shared", oldProc));
 
   const agent = new PiAcpAgent(asAgentConn(conn));
-  // The injected manager implements the session operations exercised by catalog replacement.
   Object.assign(agent, { sessions } satisfies AgentSessionsState);
   await agent.refreshAvailableCommands("shared");
 

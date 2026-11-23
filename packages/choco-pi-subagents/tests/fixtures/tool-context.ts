@@ -2,12 +2,6 @@ import type { ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-
 
 type ToolCallOutcome = Awaited<ReturnType<ExtensionToolContext["executeTool"]>>;
 
-/**
- * Tool-execution context for tests that hold only an ExtensionContext. Every
- * base member is read lazily, so partial fixtures and getter-backed contexts
- * behave as they would when passed directly. No tools are callable: nested
- * calls resolve to an error outcome, matching a host without `executeTool`.
- */
 export function toolContext(
   base: ExtensionContext,
   toolCallId = "fixture-call",

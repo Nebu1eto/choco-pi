@@ -1,20 +1,3 @@
-/**
- * schedule.ts — `SubagentScheduler`: timer-driven dispatcher of scheduled subagents.
- *
- * Mirrors the engine shape of pi-cron-schedule/src/scheduler.ts:
- *   - two-Map split (jobs = croner Cron, intervals = setInterval/setTimeout)
- *   - addJob/removeJob/updateJob/scheduleJob/unscheduleJob/executeJob
- *   - static parsers for cron / "+10m" / "5m" / ISO formats
- *
- * Differences vs pi-cron-schedule:
- *   - Persistence is via ScheduleStore (PID-locked, session-scoped, atomic).
- *   - `executeJob` calls `manager.spawn(..., { bypassQueue: true })` instead
- *     of dispatching a user message — schedule fires bypass maxConcurrent so
- *     a 5-minute interval can't be deferred behind 4 long-running agents.
- *   - Result delivery is implicit: spawn → background completion → existing
- *     `subagent-notification` followUp path. No new delivery code.
- */
-
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Cron } from "croner";
 import { nanoid } from "nanoid";
@@ -24,7 +7,6 @@ import { resolveModel } from "./model-resolver.ts";
 import type { ScheduleStore } from "./schedule-store.ts";
 import type { IsolationMode, ScheduledSubagent, SubagentType, ThinkingLevel } from "./types.ts";
 
-/** Event emitted on `pi.events` for cross-extension consumers. */
 export type ScheduleChangeEvent =
   | { type: "added"; job: ScheduledSubagent }
   | { type: "removed"; jobId: string }
@@ -32,7 +14,6 @@ export type ScheduleChangeEvent =
   | { type: "fired"; jobId: string; agentId: string; name: string }
   | { type: "error"; jobId: string; error: string };
 
-/** Params accepted at job creation — ID, timestamps, and state are derived. */
 export interface ScheduleDetection {
   type: "cron" | "once" | "interval";
   intervalMs?: number;
@@ -79,7 +60,6 @@ export class SubagentScheduler {
   private ctx: ExtensionContext | undefined;
   private manager: AgentManager | undefined;
 
-  /** Start the scheduler: bind to a session's store and arm enabled jobs. */
   start(
     pi: ExtensionAPI,
     ctx: ExtensionContext,
@@ -96,7 +76,6 @@ export class SubagentScheduler {
     }
   }
 
-  /** Stop all timers; drop refs. Safe to call repeatedly. */
   stop(): void {
     for (const cron of this.jobs.values()) cron.stop();
     this.jobs.clear();
@@ -108,7 +87,6 @@ export class SubagentScheduler {
     this.manager = undefined;
   }
 
-  /** True if start() has bound a store and the scheduler is active. */
   isActive(): boolean {
     return this.store !== undefined;
   }
@@ -117,10 +95,6 @@ export class SubagentScheduler {
     return this.store?.list() ?? [];
   }
 
-  /**
-   * Build a `ScheduledSubagent` from user input. Validates the schedule
-   * format and tags `scheduleType`. Throws on invalid input.
-   */
   buildJob(input: NewJobInput): ScheduledSubagent {
     const detected = SubagentScheduler.detectSchedule(input.schedule);
     return {
@@ -149,11 +123,6 @@ export class SubagentScheduler {
     };
   }
 
-  /**
-   * Add a job, persist, and arm if enabled. Resolves the stored job. The
-   * store binding is the owner: a scheduler stopped or rebound while the
-   * write ran persists the job but neither arms nor announces it.
-   */
   async addJob(input: NewJobInput): Promise<ScheduledSubagent> {
     const store = this.requireStore();
     if (store.hasName(input.name)) {
@@ -178,7 +147,6 @@ export class SubagentScheduler {
     return ok;
   }
 
-  /** Toggle / mutate a job. Re-arms based on the new `enabled` state. */
   async updateJob(
     id: string,
     patch: Partial<ScheduledSubagent>,
@@ -192,7 +160,6 @@ export class SubagentScheduler {
     return updated;
   }
 
-  /** Next-run time as ISO, or undefined if not currently armed. */
   getNextRun(jobId: string): string | undefined {
     const cron = this.jobs.get(jobId);
     if (cron) return cron.nextRun()?.toISOString();
@@ -200,23 +167,12 @@ export class SubagentScheduler {
     if (!job?.enabled) return undefined;
     if (job.scheduleType === "once") return job.schedule;
     if (job.scheduleType === "interval" && job.intervalMs) {
-      // Before the first fire there's no `lastRun`, so fall back to "now" —
-      // accurate at create time (setInterval was just armed) and within
-      // intervalMs of correct in any pre-first-fire view.
       const base = job.lastRun ? new Date(job.lastRun).getTime() : Date.now();
       return new Date(base + job.intervalMs).toISOString();
     }
     return undefined;
   }
 
-  // ── Scheduling primitives ────────────────────────────────────────────
-
-  /**
-   * Persist a timer-driven state change in the background. Timer callbacks
-   * cannot await; a failed write (e.g. lock timeout) becomes an `error`
-   * event instead of an unhandled rejection. `then` runs only while the
-   * scheduler is still bound to `store`.
-   */
   private persist(
     store: ScheduleStore,
     id: string,
@@ -251,7 +207,6 @@ export class SubagentScheduler {
         if (delay > 0) {
           const t = setTimeout(() => {
             this.executeJob(job.id);
-            // Auto-disable one-shots after they fire (mirrors pi-cron-schedule)
             this.persist(store, job.id, { enabled: false }, () => {
               const updated = store.get(job.id);
               if (updated) this.emit({ type: "updated", job: updated });
@@ -259,7 +214,6 @@ export class SubagentScheduler {
           }, delay);
           this.intervals.set(job.id, t);
         } else {
-          // Past timestamp — disable, mark error, never fire
           this.persist(store, job.id, { enabled: false, lastStatus: "error" });
           this.emit({
             type: "error",
@@ -294,11 +248,6 @@ export class SubagentScheduler {
     }
   }
 
-  /**
-   * Fire a job: persist running state, spawn (bypassing the concurrency
-   * queue), persist completion. Fire-and-forget: the timer tick returns
-   * immediately so other jobs keep firing.
-   */
   private executeJob(id: string): void {
     const store = this.store;
     const pi = this.pi;
@@ -310,9 +259,6 @@ export class SubagentScheduler {
 
     this.persist(store, id, { lastStatus: "running" });
 
-    // Resolve model at fire time — registry contents may have changed since the
-    // job was created (auth added/removed). Fall back silently to spawn-default
-    // if resolution fails; the spawn path handles undefined model gracefully.
     let resolvedModel: any | undefined;
     if (job.model) {
       const resolution = resolveModel(job.model, ctx.modelRegistry);
@@ -327,12 +273,6 @@ export class SubagentScheduler {
 
     let agentId: string;
     try {
-      // Re-resolve at fire time against the registry as it stands. This does not
-      // reload from disk (the scheduler has no reason to rebuild process-global
-      // state from a timer), so it catches changes that went through /agents or
-      // an Agent call — not a file deleted directly from a shell. The catch below turns
-      // this into lastStatus: "error" plus an error event, like any other
-      // fire-time failure.
       const dispatch = resolveSpawnType(job.subagent_type);
       if (!dispatch.ok) throw new Error(dispatch.message);
       agentId = manager.spawn(pi, ctx, dispatch.type, job.prompt, {
@@ -374,9 +314,6 @@ export class SubagentScheduler {
       });
     };
 
-    // AgentManager's promise resolves either way (its .catch returns ""), so we
-    // can't infer success/failure from the promise — read record.status instead.
-    // Terminal states: completed/steered = success; error/aborted/stopped = error.
     if (record?.promise) {
       record.promise
         .then(() => {
@@ -391,7 +328,6 @@ export class SubagentScheduler {
         })
         .catch(() => finalize("error"));
     } else {
-      // Spawn returned without a promise (defensive — bypassQueue path always sets one).
       finalize("success");
     }
   }
@@ -405,24 +341,12 @@ export class SubagentScheduler {
     return this.store;
   }
 
-  // ── Format detection / parsers (statics — pure) ──────────────────────
-
-  /**
-   * Sniff a schedule string and tag its type. Throws on invalid input.
-   * Order matters: relative ("+10m") and interval ("5m") both match digit+unit;
-   * relative requires the leading "+" to disambiguate.
-   */
   static detectSchedule(s: string): ScheduleDetection {
     const trimmed = s.trim();
-    // "+10m" — relative one-shot
     const rel = SubagentScheduler.parseRelativeTime(trimmed);
     if (rel !== null) return { type: "once", normalized: rel };
-    // "5m" — interval
     const ivl = SubagentScheduler.parseInterval(trimmed);
     if (ivl !== null) return { type: "interval", intervalMs: ivl, normalized: trimmed };
-    // ISO timestamp — one-shot. Reject past timestamps upfront so we never
-    // create a dead-on-arrival record (scheduleJob's safety net still catches
-    // micro-races from `+0s`-style relatives).
     if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
       const d = new Date(trimmed);
       if (!Number.isNaN(d.getTime())) {
@@ -432,7 +356,6 @@ export class SubagentScheduler {
         return { type: "once", normalized: d.toISOString() };
       }
     }
-    // Cron — 6-field
     const cronCheck = SubagentScheduler.validateCronExpression(trimmed);
     if (cronCheck.valid) return { type: "cron", normalized: trimmed };
     throw new Error(
@@ -440,7 +363,6 @@ export class SubagentScheduler {
     );
   }
 
-  /** 6-field cron — 'second minute hour dom month dow'. */
   static validateCronExpression(expr: string): CronValidation {
     const fields = expr.trim().split(/\s+/);
     if (fields.length !== 6) {
@@ -450,7 +372,6 @@ export class SubagentScheduler {
       };
     }
     try {
-      // Croner validates by construction.
       new Cron(expr, () => {});
       return { valid: true };
     } catch (e) {
@@ -458,7 +379,6 @@ export class SubagentScheduler {
     }
   }
 
-  /** "+10s"/"+5m"/"+1h"/"+2d" → ISO timestamp. */
   static parseRelativeTime(s: string): string | null {
     const m = s.match(/^\+(\d+)(s|m|h|d)$/);
     if (!m) return null;
@@ -466,7 +386,6 @@ export class SubagentScheduler {
     return new Date(Date.now() + ms).toISOString();
   }
 
-  /** "10s"/"5m"/"1h"/"2d" → milliseconds. */
   static parseInterval(s: string): number | null {
     const m = s.match(/^(\d+)(s|m|h|d)$/);
     if (!m) return null;

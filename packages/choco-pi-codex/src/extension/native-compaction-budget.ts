@@ -5,16 +5,10 @@ import { resolveCodexRuntimePlanForState } from "../adapter/activation/runtime-p
 import type { AdapterState } from "../adapter/activation/state.ts";
 import { resolveNativeCompactionRequestBudget } from "../adapter/compaction/request-shrink.ts";
 
-/**
- * Process-global slot the profile's context policy reads to keep its
- * auto-compaction point under the native compaction request budget. The
- * profile only reads it; this package publishes and removes its own hook.
- */
 export const NATIVE_COMPACTION_BUDGET_SYMBOL: unique symbol = Symbol.for(
   "choco-pi.native-compaction-budget",
 );
 
-/** The model descriptor a consumer passes: its native (uncapped) window. */
 export interface NativeCompactionBudgetModel {
   provider: string;
   id: string;
@@ -28,12 +22,10 @@ export interface NativeCompactionBudgetHook {
 
 type HostModel = NonNullable<ExtensionContext["model"]>;
 
-/** Callers outside this package reach the hook through a global; parse what they pass. */
 const isBudgetModel = compile(
   obj({ provider: str(), id: str(), contextWindow: finiteNum() }, { open: true }),
 ).check;
 
-/** Full host model for a provider/id pair; undefined when it is unknown. */
 export type NativeCompactionModelLookup = (provider: string, id: string) => HostModel | undefined;
 
 export type NativeCompactionBudgetState = Pick<
@@ -42,18 +34,10 @@ export type NativeCompactionBudgetState = Pick<
 >;
 
 export interface NativeCompactionBudgetDeps {
-  /** The adapter's live state; read on every call so config changes apply at once. */
   state: () => NativeCompactionBudgetState;
-  /** Model lookup bound to the current session's registry; undefined between sessions. */
   findModel: () => NativeCompactionModelLookup | undefined;
 }
 
-/**
- * Budget for one model, or undefined unless the model is OpenAI/Codex-owned
- * and the effective runtime plan compacts natively (`responsesCompaction`).
- * The provider/id pair is resolved to the full host model so the runtime plan
- * sees the same API and base URL the transport will use.
- */
 export function createNativeCompactionBudgetHook(
   deps: NativeCompactionBudgetDeps,
 ): NativeCompactionBudgetHook {
@@ -80,11 +64,6 @@ export function createNativeCompactionBudgetHook(
   });
 }
 
-/**
- * Publish `hook` unless another publisher already owns the slot; undefined
- * when it was not published, so a later session can try again. The returned
- * function removes the slot only while it still holds this hook.
- */
 export function publishNativeCompactionBudgetHook(
   hook: NativeCompactionBudgetHook,
 ): (() => void) | undefined {

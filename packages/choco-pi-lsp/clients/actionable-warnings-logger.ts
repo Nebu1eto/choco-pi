@@ -43,7 +43,6 @@ export function getActionableWarningsLogPath(): string {
   return AW_LOG_FILE;
 }
 
-/** Resolve once all enqueued actionable-warnings writes are on disk. */
 export function flushActionableWarningsLog(): Promise<void> {
   return writer.flush();
 }

@@ -5,13 +5,6 @@ import type { TestContext } from "node:test";
 
 const PROFILE = path.resolve(import.meta.dirname, "..", "..", "profile");
 
-/**
- * Point PI_CODING_AGENT_DIR at a scratch agent directory whose `agents` and
- * `subagents.json` link to the profile's, as scripts/install-profile.ts installs
- * them, for the rest of the test. The checkout ships no project-level
- * `.pi/agents` or `.pi/subagents.json`, so a test that needs the repository's
- * roles and subagent settings loads them from the agent directory.
- */
 export async function useProfileAgents(context: TestContext): Promise<string> {
   const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-agents-"));
   const previous = process.env.PI_CODING_AGENT_DIR;

@@ -7,25 +7,12 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-/** Pi thinking levels from least to most reasoning, "off" excluded. */
 const THINKING_LEVELS_ASCENDING = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 type ActiveThinkingLevel = (typeof THINKING_LEVELS_ASCENDING)[number];
 
-/** Thinking level as the host hands it to extensions, including "off". */
 export type SessionThinkingLevel = NonNullable<ExtensionContext["thinkingLevel"]>;
 
-/**
- * The thinking level a summary call sends: the lowest level the model
- * supports, never above the session's own level.
- *
- * A summary is a structured transcription, not a reasoning task, and on
- * endpoints where reasoning shares the output cap every reasoning token is
- * taken from the summary. A model's `thinkingLevelMap` marks unsupported
- * levels with `null` (GLM-5.3 supports only "high" and "max"); undefined
- * keys use the provider default and count as supported. "off" stays "off",
- * and a non-reasoning model gets no level at all.
- */
 export function summaryThinkingLevel(
   model: Pick<SummaryCallRequest["model"], "reasoning" | "thinkingLevelMap">,
   sessionLevel: SessionThinkingLevel | undefined,
@@ -40,7 +27,6 @@ export function summaryThinkingLevel(
   return sessionLevel;
 }
 
-/** Raised when a summarization call ended because the caller aborted it. */
 export class CompactionAbortedError extends Error {
   constructor(message: string) {
     super(message);
@@ -48,11 +34,6 @@ export class CompactionAbortedError extends Error {
   }
 }
 
-/**
- * Raised when a summarization call stopped at its output cap (`stopReason`
- * "length"): the summary is incomplete, which on a reasoning model usually
- * means reasoning consumed the cap. Callers map it to "summary-truncated".
- */
 export class SummaryTruncatedError extends Error {
   constructor(message: string) {
     super(message);
@@ -60,7 +41,6 @@ export class SummaryTruncatedError extends Error {
   }
 }
 
-/** One summarization request against the session's active model. */
 export interface SummaryCallRequest {
   readonly modelRegistry: ExtensionContext["modelRegistry"];
   readonly model: NonNullable<ExtensionContext["model"]>;
@@ -69,12 +49,7 @@ export interface SummaryCallRequest {
   readonly maxTokens: number;
   readonly signal: AbortSignal;
   readonly thinkingLevel: SessionThinkingLevel | undefined;
-  /**
-   * Retry policy for transient provider failures, or undefined for a single
-   * attempt. Aborts and deterministic errors never retry.
-   */
   readonly retry: RetryPolicy | undefined;
-  /** Prefix for failure messages, e.g. "Summarization". */
   readonly label: string;
 }
 
@@ -83,20 +58,6 @@ export interface SummaryCallResult {
   readonly usage: Usage;
 }
 
-/**
- * Issue one summarization call and reject anything unsafe to persist.
- *
- * A truncated, empty, errored, or tool-calling response must never become a
- * session checkpoint: the checkpoint replaces the conversation, so a bad
- * summary destroys context instead of condensing it.
- *
- * A transient stream drop is not such a response: it carries no summary at
- * all. The call is therefore wrapped in the host's own `retryAssistantCall`
- * with the session's retry policy, exactly as the host's default compaction
- * does, so a dropped stream does not cancel an overflow-triggered compaction.
- * Aborts are terminal there, deterministic errors return immediately, and the
- * classification below runs on whatever the retry loop finally returns.
- */
 export async function runSummaryCall(request: SummaryCallRequest): Promise<SummaryCallResult> {
   const options: ModelsSimpleStreamOptions = {
     signal: request.signal,

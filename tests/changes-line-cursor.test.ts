@@ -1,6 +1,3 @@
-// The changes view's line cursor (lib/changes/view/line-cursor.ts): pure
-// movement, Shift selection, comment side rules and changed-line search.
-// Moved with the functions from the review's view-state reducers.
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -68,7 +65,6 @@ function file(
   return { path, open: options.open ?? true, hunks, folded: (id) => folded.has(id) };
 }
 
-/** Display order: the high-risk file first, as the review orders it. */
 function files(options: { authOpen?: boolean; folded?: readonly string[] } = {}): CursorFile[] {
   const folded = options.folded ?? [LOW_2.id];
   return [
@@ -118,11 +114,9 @@ test("a collapsed file is one row; a cursor on a line no longer shown resumes fr
     undefined,
   ]);
   assert.deepEqual(at(moveLine(collapsed, undefined, 1)), ["src/auth.ts", undefined, undefined]);
-  // The cursor's hunk was folded under it: movement starts from the placeholder.
   const folded = files({ folded: [HIGH.id, LOW_2.id] });
   const stale = { path: "src/auth.ts", hunkId: HIGH.id, lineIndex: 1 };
   assert.deepEqual(at(moveLine(folded, stale, 1)), ["src/ordinary.ts", undefined, undefined]);
-  // Its file collapsed: movement starts from the file row.
   assert.deepEqual(at(moveLine(collapsed, stale, 1)), ["src/ordinary.ts", undefined, undefined]);
 });
 
@@ -135,8 +129,6 @@ test("the comment side: removed lines on the LEFT, added and unchanged lines on 
     }),
     { path: "src/auth.ts", hunkId: HIGH.id, side: "RIGHT", line: 5 },
   );
-  // An unchanged line below an uneven replacement: old 13, new 14. The number
-  // a person looks up in the file as it is now, on the side that numbers it so.
   assert.deepEqual(
     currentCommentPosition("src/mixed.ts", MIXED, {
       path: "src/mixed.ts",
@@ -161,7 +153,6 @@ test("the comment side: removed lines on the LEFT, added and unchanged lines on 
     }),
     { path: "src/ordinary.ts", hunkId: LOW_1.id, side: "RIGHT", line: 2 },
   );
-  // A fold placeholder or a file row has no line to comment on.
   assert.equal(
     currentCommentPosition("src/auth.ts", HIGH, { path: "src/auth.ts", hunkId: HIGH.id }),
     undefined,
@@ -171,7 +162,6 @@ test("the comment side: removed lines on the LEFT, added and unchanged lines on 
 
 test("Shift extends one anchor in both directions and plain movement collapses it", () => {
   const mixed = [file("src/mixed.ts", [MIXED])];
-  // Anchor on the second added line, which comments on RIGHT line 13.
   let cursor: LineCursor = { path: "src/mixed.ts", hunkId: MIXED.id, lineIndex: 4 };
   assert.deepEqual(selectedLineIndexes(MIXED, cursor), [4]);
   assert.equal(currentCommentPosition("src/mixed.ts", MIXED, cursor)?.startLine, undefined);
@@ -185,7 +175,6 @@ test("Shift extends one anchor in both directions and plain movement collapses i
     line: 13,
     startLine: 12,
   });
-  // Reversing returns to the same anchor, so a one-line selection reports no range.
   cursor = extendSelection(MIXED, cursor, 1);
   assert.deepEqual(selectedLineIndexes(MIXED, cursor), [4]);
   assert.equal(currentCommentPosition("src/mixed.ts", MIXED, cursor)?.startLine, undefined);
@@ -216,11 +205,9 @@ test("a selection stops at a side boundary and at its hunk's edge, and never sta
     line: 12,
     startLine: 11,
   });
-  // The next row is an added line, with no LEFT number.
   assert.equal(extendSelection(MIXED, cursor, 1), cursor);
   assert.equal(moveLine([file("src/mixed.ts", [MIXED])], cursor, 1)?.lineIndex, 3);
 
-  // The hunk's last line: extension stops though movement continues into the next file.
   const last: LineCursor = { path: "src/auth.ts", hunkId: HIGH.id, lineIndex: 1 };
   assert.equal(extendSelection(HIGH, last, 1), last);
   assert.equal(moveLine(files(), last, 1)?.path, "src/ordinary.ts");
@@ -267,6 +254,5 @@ test("a range from an unchanged line onto added lines is a RIGHT range at the ne
     line: 14,
     startLine: 12,
   });
-  // One step further is the removed line: no single side numbers that range.
   assert.equal(extendSelection(MIXED, cursor, -1), cursor);
 });

@@ -465,7 +465,6 @@ export function foldToBudget(
 }
 
 function actionMatches(node: OutlineNode, action: string): boolean {
-  // Capability names are the snake_case labels the outline prints (set_value, text_input, ...).
   const query = action.toLowerCase();
   if (query === "press" && node.canPress) return true;
   if (query === "focus" && node.canFocus) return true;
@@ -613,9 +612,6 @@ export function searchOutline(
   const matches: OutlineSearchMatch[] = [];
   for (const node of outline.nodes) {
     const label = outlineNodeLabel(node);
-    // outlineNodeLabel short-circuits (title || description || value), so
-    // list the fields individually too or a titled node's value/description
-    // can never match.
     const haystack = [
       label,
       node.role,
@@ -695,9 +691,6 @@ function outlineRefNumber(ref: string): number {
 }
 
 function clearScopedRects(node: OutlineNode): void {
-  // Scoped look geometry is in the scoped image's pixel space, not the full look.
-  // Until helper-side act carries stable look geometry, grafted nodes are AX-only
-  // for ref actions; coordinate fallback must re-observe the full window.
   node.rect = undefined;
   for (const text of node.text) text.rect = undefined;
   for (const child of node.children) clearScopedRects(child);

@@ -1,14 +1,3 @@
-/**
- * A Codex-owned main session never gets a text candidate from the manual
- * route (`/compact`, RPC `compact`, extension `ctx.compact()`).
- *
- * Live cause: `manualLanes` listed the selected Codex lane plus the text lane,
- * and `followManual` retried the text lane after the Codex lane refused the
- * cut (`no-legal-cut` before the session's first recorded provider response),
- * so every manual request adopted a `local-reconciled` checkpoint over Codex
- * content. Real SDK session with an `openai-codex` model, the Codex lane
- * replaced by a probe that refuses every cut, no network.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -38,7 +27,6 @@ import { compactionEntries, createHost, mentions, reply } from "./host-boundary-
 
 const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
 const agentDir = await mkdtemp(join(tmpdir(), "choco-pi-codex-manual-agent-"));
-// The Codex package's global config: Codex owns compaction of `openai-codex` models.
 await writeFile(
   join(agentDir, "choco-pi-codex.json"),
   JSON.stringify({ compaction: { responsesCompaction: true } }),
@@ -52,7 +40,6 @@ test.after(async () => {
 
 const codexAttempts: string[] = [];
 const codexFactory = { calls: 0 };
-// First-wins registration: the probe replaces the real Codex lane for this process.
 registerBackendFactory(CODEX_BACKEND_SETTING_ID, () => {
   codexFactory.calls += 1;
   const probe: Backend = {
@@ -109,16 +96,11 @@ function rigExtension(rig: Rig, settingsFile: string) {
   };
 }
 
-/**
- * The removed deferral's traces: it answered a host compaction requested while
- * a run settled with no result, told the user so, and journaled a `yield`.
- */
 const REMOVED_DEFERRAL = {
   notice: "compaction deferred until the next prompt",
   reason: "deferred-until-prompt",
 } as const;
 
-/** No deferral notice was shown and no manual-route record was journaled. */
 function assertNotDeferred(
   host: { readonly manager: { getEntries(): SessionEntry[] } },
   rig: Rig,
@@ -158,8 +140,6 @@ for (const instructions of [undefined, "focus on the plan"]) {
       const ownerKey = mainOwnerKey(host.manager.getSessionId());
       await host.session.prompt("CODEX-MAIN-GO");
       assert.ok(getCoordinator(ownerKey), "the main owner has a coordinator");
-      // The programmatic route (RPC `compact`, typed `/compact`) once the run settled:
-      // the agent_settled emission is over, so the host compaction runs at once.
       await host.session.compact(instructions);
       assert.equal(compactionEntries(host.manager.getBranch()).length, 1, "ran at once");
       await host.session.prompt("CODEX-MAIN-NEXT");
@@ -170,8 +150,6 @@ for (const instructions of [undefined, "focus on the plan"]) {
           (entry) => entry.type === "custom" && entry.customType === "choco-compaction-candidate",
         );
       assert.deepEqual(candidates, [], "no candidate record");
-      // The host's own compaction ran instead (Codex's foreground handler answers it in pi;
-      // without the Codex extension loaded here, Pi's default summarizer stands in).
       assert.ok(host.summarizerCalls.length > 0, "the foreground compaction ran");
       assert.equal(compactionEntries(host.manager.getBranch()).length, 1);
       assert.equal(
@@ -186,7 +164,6 @@ for (const instructions of [undefined, "focus on the plan"]) {
     }
   });
 }
-/** Publish a Codex eligibility slot answering `native` for every Codex model; returns the models asked. */
 function installEligibility(native: boolean): string[] {
   const consulted: string[] = [];
   Object.defineProperty(globalThis, CODEX_ELIGIBILITY_SLOT, {
@@ -206,7 +183,6 @@ function installEligibility(native: boolean): string[] {
 
 test("with no sidecar the derived default binds the Codex lane through the eligibility slot; manual compaction still never uses text", async () => {
   const dir = await mkdtemp(join(tmpdir(), "choco-pi-codex-derived-"));
-  // No sidecar anywhere: the lanes derive from Codex's `responsesCompaction: true` (agent dir above).
   const absentSidecar = join(dir, "absent-background-compaction.json");
   const consulted = installEligibility(true);
   codexAttempts.length = 0;
@@ -216,7 +192,6 @@ test("with no sidecar the derived default binds the Codex lane through the eligi
     dir,
     contextWindow: 100_000,
     modelIdentity: { api: "openai-codex-responses", provider: "openai-codex", id: "gpt-6-luna" },
-    // Over the default prepareAt (0.7): the owner requests its selected lane at the turn end.
     respond: async (index) => reply(`R${index}`, { usageInput: 90_000 }),
     extensions: [rigExtension(rig, absentSidecar)],
   });
@@ -246,7 +221,6 @@ test("with no sidecar the derived default binds the Codex lane through the eligi
 
 test("control: the slot, not the snapshot, decides; an ineligible slot keeps the Codex lane unselected", async () => {
   const dir = await mkdtemp(join(tmpdir(), "choco-pi-codex-derived-off-"));
-  // The snapshot (agent dir) still says `responsesCompaction: true`; the slot says no.
   const consulted = installEligibility(false);
   codexAttempts.length = 0;
   const rig: Rig = { textCalls: [], notices: [], ctx: undefined };
@@ -272,11 +246,6 @@ test("control: the slot, not the snapshot, decides; an ineligible slot keeps the
   }
 });
 
-// The cap's handler runs after this extension's own agent_settled handler or before it;
-// `after-await`: another handler awaits a timer first, so the request arrives macrotasks
-// into the emission. In every order the host compaction starts at once and the prompt Pi
-// deferred during the emission waits for it (bridge prompt wrapper) instead of being
-// rejected when Pi re-runs it.
 for (const capOrder of ["after", "before", "after-await"] as const) {
   test(`a prompt deferred during agent_settled is not lost to a context-cap compaction (cap loads ${capOrder})`, async () => {
     const dir = await mkdtemp(join(tmpdir(), "choco-pi-codex-settled-"));
@@ -292,7 +261,6 @@ for (const capOrder of ["after", "before", "after-await"] as const) {
     let deferredFailure: unknown;
     let compactions = 0;
     let capSettled: string | undefined;
-    // Stands in for Codex's remote compaction (it took ~2.7 s live).
     const slowForeground = (pi: ExtensionAPI): void => {
       pi.on("session_before_compact", async () => {
         compactions += 1;
@@ -300,8 +268,6 @@ for (const capOrder of ["after", "before", "after-await"] as const) {
         return undefined;
       });
     };
-    // model-context-cap's agent_settled `ctx.compact()`, then the RPC driver's next
-    // prompt arriving while agent_settled is still being emitted (Pi defers it).
     const contextCapAndDriver = (pi: ExtensionAPI): void => {
       if (capOrder === "after-await") {
         pi.on("agent_settled", async () => {
@@ -330,8 +296,6 @@ for (const capOrder of ["after", "before", "after-await"] as const) {
             deferredFailure = cause;
           });
       });
-      // Other agent_settled handlers (task lineage, status) keep the emission open
-      // long enough for the host compaction to start inside it, as it did live.
       pi.on("agent_settled", async () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       });
@@ -348,7 +312,6 @@ for (const capOrder of ["after", "before", "after-await"] as const) {
     holder.session = host.session;
     let firstFailure: unknown;
     try {
-      // A deferred prompt's failure surfaces on the run that emitted agent_settled.
       await host.session.prompt("FIRST").catch((cause: unknown) => {
         firstFailure = cause;
       });
@@ -405,7 +368,6 @@ async function withCountingHost(
     dir,
     modelIdentity: { api: "openai-codex-responses", provider: "openai-codex", id: "gpt-6-luna" },
     respond: async (index) => reply(`R${index}`),
-    // Loaded after the compaction extension: its agent_settled ctx is the wrapped one.
     extensions: [rigExtension(rig, settingsFile), counting, extra],
   });
   try {
@@ -417,7 +379,6 @@ async function withCountingHost(
   }
 }
 
-/** Resolve with the outcome of a ctx.compact(), or "pending" when it did not settle in time. */
 function compactOutcome(ctx: ExtensionContext): Promise<string> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve("pending"), 1_000);
@@ -436,7 +397,6 @@ function compactOutcome(ctx: ExtensionContext): Promise<string> {
 
 const NATIVE_STRATEGY = "openai-responses-compaction-v2";
 
-/** Stands in for Codex's foreground handler: answers the host compaction natively. */
 function nativeForeground(pi: ExtensionAPI): void {
   pi.on("session_before_compact", (event) => ({
     compaction: {
@@ -448,14 +408,11 @@ function nativeForeground(pi: ExtensionAPI): void {
   }));
 }
 
-// Live (RPC probe, Codex Luna, background on): `compact` after `agent_settled` once
-// answered with no data and ran only at the next prompt.
 for (const instructions of [undefined, "FOCUS-MARKER"]) {
   test(`an idle RPC compact after the run settled runs the native foreground compaction at once (instructions: ${String(instructions)})`, async () => {
     await withCountingHost(nativeForeground, async (host, counts, rig) => {
       await host.session.prompt("FIRST");
       await host.session.waitForIdle();
-      // What RPC mode does for `compact`: answer with `await session.compact(...)`.
       const events: string[] = [];
       const unsubscribe = host.session.subscribe((event) => {
         if (event.type === "compaction_start" || event.type === "compaction_end")
@@ -514,7 +471,6 @@ test("a compact during a run started without input (turn_start) is never deferre
       });
       pi.on("turn_start", () => {
         if (settled.ctx === undefined || probe !== undefined) return;
-        // A run started without any input hook (a custom message).
         probe = compactOutcome(settled.ctx);
       });
     },
@@ -541,12 +497,6 @@ async function waitUntil(predicate: () => boolean, label: string): Promise<void>
   }
 }
 
-// Review reproduction: Pi re-runs the prompts it deferred during agent_settled one after
-// another, after the emission. While an earlier one (an async extension command) still
-// runs, an RPC `compact` starts a host compaction; the later re-run prompt then met it and
-// Pi rejected that prompt ("compaction is in progress"). `handled-first`: an earlier
-// re-run prompt is answered by an input handler before the held command runs. The
-// compaction now runs inside the RPC `compact`, and the re-run prompt waits for it.
 for (const drain of ["command-first", "handled-first"] as const) {
   test(`a compact while deferred prompts drain runs at once, and the next prompt waits for it (${drain})`, async () => {
     const gate = { entered: false, release: (): void => undefined };
@@ -574,12 +524,10 @@ for (const drain of ["command-first", "handled-first"] as const) {
           const session = holder.session;
           if (session === undefined || queued.done) return;
           queued.done = true;
-          // All are deferred by the host while it emits agent_settled.
           if (drain === "handled-first") await session.prompt("HANDLED-AT-INPUT");
           await session.prompt("/hold");
           await session.prompt("DRAINED-NEXT");
         });
-        // A host compaction that is still running when the held command finishes.
         pi.on("session_before_compact", async () => {
           await new Promise((resolve) => setTimeout(resolve, 100));
           return undefined;
@@ -592,15 +540,12 @@ for (const drain of ["command-first", "handled-first"] as const) {
             compactionEvents.push(`${event.type}:${event.reason}`);
         });
         let failure: unknown;
-        // The drain runs inside this prompt; a rejected deferred prompt fails it.
         const first = host.session.prompt("FIRST").catch((cause: unknown) => {
           failure = cause;
         });
         await waitUntil(() => gate.entered, "the deferred /hold command");
-        // What RPC mode does for `compact`: answer with `await session.compact()`.
         const compacted = host.session.compact();
         await waitUntil(() => compactionEvents.length > 0, "the host compaction started");
-        // The held command ends while the compaction runs; DRAINED-NEXT is re-run now.
         gate.release();
         const result = await compacted;
         assert.ok(result?.summary.includes("HOST-SUMMARY"), "compacted inside the RPC compact");

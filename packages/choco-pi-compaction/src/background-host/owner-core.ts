@@ -69,18 +69,8 @@ import { CANCELLATIONS } from "./manual-policy.ts";
 import { errorText } from "./notices.ts";
 import type { BackgroundCompactionOptions, OwnerSpec } from "./owner-spec.ts";
 
-// ---------------------------------------------------------------------------
-// Per-owner core: coordinator, port, backends, trigger policy
-// ---------------------------------------------------------------------------
-
-/** Host compaction default when no settings were loaded (pi's own default). */
 const DEFAULT_KEEP_RECENT_TOKENS = 20_000;
 
-/**
- * Replay-legal Anthropic cuts tried, latest first, before the lane refuses.
- * Each try maps the cut onto the capture and the branch; the first legal one
- * normally freezes, so the bound only caps a pathological walk.
- */
 const MAX_NATIVE_CUT_ATTEMPTS = 16;
 
 const OUTSTANDING: ReadonlySet<CandidateState> = new Set([
@@ -95,11 +85,6 @@ const TERMINAL_FAILURE: ReadonlySet<CandidateState> = new Set([
   "discarded-stale",
 ]);
 
-/**
- * Branch entry types that change what the model sees. The last one marks the
- * context position a threshold request was made at; extension state entries
- * (`custom`, labels, session info) appended between host hooks do not move it.
- */
 const CONTEXT_ENTRY_TYPES: ReadonlySet<string> = new Set([
   "message",
   "custom_message",
@@ -111,36 +96,24 @@ const CONTEXT_ENTRY_TYPES: ReadonlySet<string> = new Set([
 export interface OwnerCore {
   readonly ownerKey: string;
   readonly sessionId: string;
-  /** The owner's provider scope (the session model's resolved endpoint and auth mode). */
   readonly scope: ProviderScope;
   readonly coordinator: CoordinatorHandle;
-  /** Backend chosen for this owner's model, or undefined when none applies. */
   readonly backendId: string | undefined;
-  /** Backend IDs resolved for this owner; the chosen one may fall back to another at request time. */
   readonly backendIds: readonly string[];
-  /** Whether a replay rejection turned Anthropic server-side off for this owner's session. */
   anthropicDisabled(): boolean;
-  /** The opaque checkpoint that forbids `backendId`'s lane from answering now, if any. */
   opaqueBlock(backendId: string): OpaqueCheckpoint | undefined;
-  /** candidateId -> route of every proposal this owner handed to the host. */
   readonly proposals: Map<string, AdoptionRoute>;
-  /** Branch switch observed outside the per-read leaf check. */
   bumpBranch(): void;
-  /** Start preparation when usage crosses the threshold; never awaits it. */
   observeUsage(usage: ContextUsage | undefined): void;
-  /** Re-check that an adoption draft still matches its frozen prefix on this branch. */
   vet(draft: CompactionEntryDraft, branch: readonly SessionEntry[]): boolean;
-  /** Settle earlier proposals whose boundary has completed. */
   settle(): Promise<void>;
   dispose(): void;
 }
 
-/** Mutable trigger and branch state of one owner, shared by its port and coordinator callbacks. */
 interface OwnerCoreState {
   readonly spec: OwnerSpec;
   readonly options: BackgroundCompactionOptions;
   readonly backendId: string | undefined;
-  /** Every resolved lane; the threshold route may fall back from a native lane to text. */
   readonly backendIds: readonly string[];
   readonly snapshots: Map<string, PrefixSnapshot>;
   branchEpoch: number;
@@ -149,22 +122,9 @@ interface OwnerCoreState {
   armed: boolean;
   retryAfter: number;
   lastRequested: string | undefined;
-  /** Lane and context position of the last threshold request. */
   requested: ThresholdRequest | undefined;
-  /**
-   * Lanes whose threshold candidate failed at `failedAt`. A lane is not asked
-   * again at the same context position: nothing it decided on has changed, so
-   * the host's several boundary hooks of one run cannot each start a candidate.
-   */
   failedAt: string | undefined;
   readonly failedLanes: Set<string>;
-  /**
-   * Lanes that answered `unsupported` for this owner without a retry delay:
-   * nothing that changes within the owner lifts it, so they get no further
-   * threshold candidate; a model or Codex eligibility change replaces the
-   * owner. An `unsupported` with a retry delay (a capture-specific condition,
-   * such as a Daybreak request) is barred like any other failure instead.
-   */
   readonly unsupportedLanes: Set<string>;
 }
 
@@ -220,10 +180,6 @@ export async function createOwnerCore(
   return assembleCore(state, coordinator, [...backends.keys()]);
 }
 
-/**
- * Native background lanes with the provider each journals under. xAI has no
- * background lane: an admitted xAI model leaves compaction to xAI server-side.
- */
 const NATIVE_LANE_PROVIDERS: ReadonlyMap<string, LaneProvider> = new Map([
   [ANTHROPIC_BACKEND_ID, "anthropic"],
   [CODEX_BACKEND_SETTING_ID, "codex"],
@@ -236,13 +192,6 @@ export function laneIdOf(backendId: string): LaneId | undefined {
   return undefined;
 }
 
-/**
- * The opaque checkpoint that forbids `backendId`'s lane from answering over
- * `entries` (D2): the newest compaction is a provider-held record that lane
- * cannot replay, and the user has not authorized losing it. Undefined when
- * the lane may answer. Consent is read from the process-global slot, which
- * combines every registration's answer for the session.
- */
 export function opaqueBlockFor(
   sessionId: string,
   entries: readonly SessionEntry[],
@@ -255,11 +204,6 @@ export function opaqueBlockFor(
   return lossAuthorizedFor(sessionId, opaque.entryId) ? undefined : opaque;
 }
 
-/**
- * What besides the branch the cut search of `backendId` depends on, for the
- * cut fingerprint: the keep policy, and for the Anthropic lane the newest wire
- * capture it must replay (a new capture can make a deferred cut legal).
- */
 function cutSaltOf(state: OwnerCoreState, backendId: string): string {
   const keep = keepRecentTokens(state.spec);
   if (backendId !== ANTHROPIC_BACKEND_ID) return `keep=${keep}`;
@@ -267,7 +211,6 @@ function cutSaltOf(state: OwnerCoreState, backendId: string): string {
   return `keep=${keep}|capture=${capture?.sequence ?? "none"}`;
 }
 
-/** The provider a lane's records journal under, or undefined when there is no vendor lane to report on. */
 function providerOfLane(state: OwnerCoreState, backendId: string): LaneProvider | undefined {
   return (
     NATIVE_LANE_PROVIDERS.get(backendId) ??
@@ -275,7 +218,6 @@ function providerOfLane(state: OwnerCoreState, backendId: string): LaneProvider 
   );
 }
 
-/** A trigger the no-progress guard did not start: journaled once per cut fingerprint and lane, and logged. */
 function journalSuppressed(state: OwnerCoreState, event: SuppressedPortEvent): void {
   const from = laneIdOf(event.backendId);
   const provider = providerOfLane(state, event.backendId);
@@ -300,21 +242,11 @@ function journalSuppressed(state: OwnerCoreState, event: SuppressedPortEvent): v
   state.spec.journal(record);
 }
 
-/**
- * Journal a candidate's terminal failure, cancellation or discard. A text
- * candidate is journaled under the provider of this owner's selected native
- * lane; with no native lane selected there is no vendor lane to report on.
- * A backend (possibly another package's) supplies the reason and detail at
- * runtime, so both go through `ownedReasonOf`: anything that is not an owned
- * code is journaled as `provider-error`, never as it is.
- */
 function journalCandidateFailure(state: OwnerCoreState, failure: CandidateFailurePortEvent): void {
   const from = laneIdOf(failure.backendId);
   const provider = providerOfLane(state, failure.backendId);
   if (from === undefined || provider === undefined) return;
   const route: LaneRoute = failure.trigger === "recovery" ? "resume" : failure.trigger;
-  // `/compact <focus>` on the Anthropic lane: the instructions were sent as
-  // `compaction.instructions` (D9); recorded when no failure detail says more.
   const forwarded =
     failure.backendId === ANTHROPIC_BACKEND_ID && failure.customInstructions !== undefined;
   const detail = failure.detail ?? (forwarded ? REASONS.instructionsForwarded : undefined);
@@ -331,7 +263,6 @@ function journalCandidateFailure(state: OwnerCoreState, failure: CandidateFailur
     candidateId: failure.candidateId,
     noticeAttempted: false,
   };
-  // A recovered record carries no trigger of its own; every other candidate names what started it.
   if (failure.trigger !== "recovery") record.trigger = failure.trigger;
   if (failure.attempt !== undefined) record.attempt = failure.attempt;
   if (failure.cutFingerprint !== undefined) record.cutFingerprint = failure.cutFingerprint;
@@ -387,7 +318,6 @@ function createPort(state: OwnerCoreState): CoordinatorPort {
     getProviderScope: () => structuredClone(spec.scope),
     getLatestCompactionEntry: () => latestCompactionOf(manager.getBranch()),
     appendAnchor: () => spec.appendAnchor(),
-    // Observation only: the proposal is consumed once at the host boundary.
     proposeDraft: () => {},
     findCommittedCandidate: (candidateId, fingerprint) =>
       findCommittedAdoption(manager.getBranch(), spec.ownerKey, candidateId, fingerprint),
@@ -397,8 +327,6 @@ function createPort(state: OwnerCoreState): CoordinatorPort {
 function branchKey(state: OwnerCoreState): string {
   const branch = state.spec.sessionManager.getBranch();
   const lastLeaf = state.lastLeaf;
-  // A previously observed leaf that left the branch means the leaf moved to
-  // another path, even when the frozen prefix is shared.
   if (lastLeaf !== undefined && !branch.some((entry) => entry.id === lastLeaf)) {
     state.branchEpoch += 1;
   }
@@ -415,7 +343,6 @@ function exactFreezeOptions(state: OwnerCoreState, context: SnapshotContext): Ex
   };
 }
 
-/** Freeze exactly at cutEntryId (the last summarized entry), or refuse. */
 function freezeAt(
   state: OwnerCoreState,
   entries: readonly SessionEntry[],
@@ -427,14 +354,10 @@ function freezeAt(
 }
 
 function freeze(state: OwnerCoreState, context: SnapshotContext): FrozenSnapshot | SnapshotRefused {
-  // Second line of defence behind the routes (manual requests and recovery
-  // included): never freeze a prefix a lane cannot answer over an opaque record.
   if (opaqueBlockFor(state.spec.sessionId, context.entries, context.backendId) !== undefined) {
     return { refused: true, detail: REASONS.opaqueCheckpoint };
   }
   const record = context.recoveryRecord;
-  // Recovery reconstructs the recorded cut from the full branch; it never
-  // reselects a later cut and never starts a paid preparation.
   const selected =
     record === undefined
       ? freezeFresh(state, context)
@@ -458,12 +381,10 @@ function freezeFresh(
     keepRecentTokens: keepRecentTokens(state.spec),
   });
   if (isSnapshotRefusal(base)) return base;
-  // Wire-replay cut rules bind only the lane that replays the wire.
   if (context.backendId !== ANTHROPIC_BACKEND_ID) return base;
   return legalAnthropicCut(state, base, context);
 }
 
-/** Move the cut to one the Anthropic capture can replay, defer, or keep it. */
 function legalAnthropicCut(
   state: OwnerCoreState,
   base: PrefixSnapshot,
@@ -486,18 +407,11 @@ function legalAnthropicCut(
     attempts += 1;
     if (attempts >= MAX_NATIVE_CUT_ATTEMPTS) break;
   }
-  // No replay-legal cut: wait for a capture that has one. Replay-legal cuts the
-  // branch refuses are a different failure, never "nothing to summarize".
   return attempts === 0
     ? refusedCut("no-legal-cut", true)
     : refusedCut("cut-not-reproducible", true);
 }
 
-/**
- * Whether the branch holds an entry after the capture's last projected entry.
- * The capture is taken when its request is sent, so the turn's reply and any
- * later entries lie past it; a cut at the capture's tail then retains them.
- */
 function branchExtendsCapture(capture: WireCapture, entries: readonly SessionEntry[]): boolean {
   const tail = capture.mapping?.projection.at(-1)?.entryId;
   if (tail === undefined) return false;
@@ -547,7 +461,6 @@ function observeUsage(
   requestThresholdPreparation(state, coordinator, { lane, position }, usage.tokens);
 }
 
-/** The ID of the newest branch entry the model sees, or "" for none. */
 function contextPosition(state: OwnerCoreState): string {
   const branch = state.spec.sessionManager.getBranch();
   for (let index = branch.length - 1; index >= 0; index--) {
@@ -557,10 +470,6 @@ function contextPosition(state: OwnerCoreState): string {
   return "";
 }
 
-/**
- * Whether the opaque-history guard stops a threshold preparation on `lane`:
- * journaled (and noticed) once per checkpoint and session; no candidate.
- */
 function yieldsToOpaque(state: OwnerCoreState, lane: string): boolean {
   const { spec } = state;
   const blocked = opaqueBlockFor(spec.sessionId, spec.sessionManager.getBranch(), lane);
@@ -584,7 +493,6 @@ function yieldsToOpaque(state: OwnerCoreState, lane: string): boolean {
   return true;
 }
 
-/** The Anthropic lane is off for this session (replay rejection): threshold work moves to text, once noticed. */
 function announceDisabledYield(state: OwnerCoreState): void {
   const { spec } = state;
   spec.announce(
@@ -604,17 +512,6 @@ function announceDisabledYield(state: OwnerCoreState): void {
   );
 }
 
-/**
- * The lane for the next threshold preparation. The Anthropic lane yields to
- * the text lane (when enabled) while it cannot serve: no wire capture of this
- * session yet, its last attempt refused the cut, or a replay rejection turned
- * it off for this session (`anthropicDisabled`). Any other native lane
- * never yields: a Codex-owned model is compacted by Codex's own handler, so a
- * text candidate adopted over Codex content is exactly what
- * `selectBackendId` rules out. A refused Codex cut (no recorded provider
- * response yet, for example) retries on the Codex lane after the cooldown, at
- * a later context position.
- */
 export function thresholdLane(input: {
   readonly selected: string;
   readonly backendIds: readonly string[];
@@ -632,13 +529,6 @@ export function thresholdLane(input: {
   return refusedHere ? TEXT_BACKEND_ID : selected;
 }
 
-/**
- * A failed attempt may retry after the cooldown; an installed one waits for
- * usage to drop below the hysteresis band first. A failure also bars its lane
- * at the context position it was requested at, and an `unsupported` answer
- * with no retry delay bars the lane for the owner's lifetime. A retry delay
- * the backend reported lengthens the cooldown to at least that delay.
- */
 function rearmAfterFailure(state: OwnerCoreState, status: DetailedCoordinatorStatus): void {
   if (state.armed || state.lastRequested === undefined) return;
   if (status.candidateId !== state.lastRequested || !TERMINAL_FAILURE.has(status.state)) return;
@@ -650,11 +540,6 @@ function rearmAfterFailure(state: OwnerCoreState, status: DetailedCoordinatorSta
   if (failed) barRequestedLane(state, ownerInvariantUnsupported(status));
 }
 
-/**
- * Whether a failure is an `unsupported` no change within the owner lifts.
- * A backend that expects the condition to clear (the Codex lane refusing a
- * Daybreak capture, for one) reports a retry delay with it.
- */
 function ownerInvariantUnsupported(status: DetailedCoordinatorStatus): boolean {
   return status.reason === "unsupported" && status.retryAfterMs === undefined;
 }

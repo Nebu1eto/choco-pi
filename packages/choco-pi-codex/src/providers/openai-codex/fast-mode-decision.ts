@@ -18,15 +18,9 @@ export type CodexFastModeDecision = Readonly<{
   supported: boolean;
   active: boolean;
   serviceTier: "priority" | "standard" | undefined;
-  /** Why an otherwise selectable Fast mode is disabled for this model, for status display. */
   reason?: string | undefined;
 }>;
 
-/**
- * Subscription sign-in evidence for `snapshotCodexFastModeDecision`: a registry exposing
- * `isUsingOAuth` (e.g. `ctx.modelRegistry`), or a boolean the caller already resolved.
- * Omitted or `false` preserves the pre-sign-in behavior for every provider.
- */
 export type CodexFastModeSignIn = boolean | OAuthAwareModelRegistry | null | undefined;
 
 type FastModeController = Readonly<{
@@ -56,9 +50,6 @@ type FastModeBridgeHost = typeof globalThis & {
 };
 
 const bridgeDecisions = new WeakSet<CodexFastModeDecision>();
-// Bridge, controller, state and decision come from live host objects whose members may sit on the
-// prototype, and function members cannot be described as JSON, so these are shallow property
-// guards (shape only, like the TypeBox object schemas they replace).
 function isFastModeSource<Value>(value: Value): value is Value & FastModeState["source"] {
   return value === "default" || value === "explicit" || value === "inherited";
 }
@@ -107,7 +98,6 @@ function isFastModeController<Value>(value: Value): value is Value & FastModeCon
 function validatedBridge(): FastModeBridge | undefined {
   const host: FastModeBridgeHost = globalThis;
   const candidate = host[FAST_MODE_BRIDGE_SYMBOL];
-  // The guard validates the callable bridge surface; the named contract supplies its domain results.
   return isFastModeBridge(candidate) ? candidate : undefined;
 }
 
@@ -118,7 +108,6 @@ function validDecision(
   return decision.sessionId === sessionId && isFastModeDecision(decision);
 }
 
-/** True when `model` is the stock `openai` provider on api.openai.com with subscription OAuth. */
 export function isOpenAISignInFastModeModel(
   model: Model<Api> | null | undefined,
   signIn: CodexFastModeSignIn,
@@ -129,11 +118,6 @@ export function isOpenAISignInFastModeModel(
     : isOpenAISubscriptionSignInModel(model, signIn);
 }
 
-/**
- * Visible-but-disabled Fast decision for api.openai.com subscription sign-in: the server accepts
- * `service_tier: "priority"` but echoes `default`, so no tier is ever emitted. Keeps the
- * request/source/revision so status and revision-drift checks still reflect the user's choice.
- */
 export function openAISignInFastModeDecision(
   decision: CodexFastModeDecision,
 ): CodexFastModeDecision {
@@ -149,11 +133,6 @@ export function openAISignInFastModeDecision(
   });
 }
 
-/**
- * Freezes one Fast decision for a request. `signIn` (optional) identifies api.openai.com
- * subscription sign-in; when it does, any bridge or fallback decision is neutralized to
- * unsupported with `OPENAI_SIGN_IN_FAST_REASON`. Omitting it keeps the previous behavior.
- */
 export function snapshotCodexFastModeDecision(
   sessionId: string | undefined,
   model: Model<Api>,
@@ -204,17 +183,12 @@ export function initializeCodexFastModeDefault(
   return state.requested === requested ? state : controller.set(requested, "default");
 }
 
-/**
- * Mirrors openai/codex `service_tier_for_request`: only `priority` is sent; standard omits the
- * field rather than sending `default`.
- */
 export function codexServiceTierForDecision(
   decision: CodexFastModeDecision,
 ): "priority" | undefined {
   return decision.serviceTier === "priority" ? "priority" : undefined;
 }
 
-/** Whether a frozen decision requires removing any `service_tier` already on the payload. */
 export function codexDecisionOmitsServiceTier(decision: CodexFastModeDecision): boolean {
   return decision.serviceTier === "standard";
 }

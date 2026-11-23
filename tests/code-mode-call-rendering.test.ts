@@ -5,7 +5,6 @@ import { initTheme } from "@earendil-works/pi-coding-agent";
 import { renderExecCall } from "../packages/choco-pi-code-mode/src/tools/code-mode/call-rendering.ts";
 import { createCodeModeRenderTracker } from "../packages/choco-pi-code-mode/src/tools/code-mode/render-tracker.ts";
 
-// Pi 1.6 highlightCode reads the global theme, which the host initializes at startup.
 initTheme("dark", false);
 
 const PLAIN_THEME = {
@@ -167,7 +166,6 @@ test("the cut counts columns, so wide characters end at the line's edge too", ()
   const wide = "가".repeat(80);
   const call = describedCall(wide);
   const [line] = call.render(150);
-  // Thirteen columns of title, then 67 two-column characters and the ellipsis; two stay free.
   assert.equal(line?.trimEnd(), `• Ran code · ${"가".repeat(67)}…`);
   assert.equal(
     call.render(100).join("").replace(/\s+/g, ""),

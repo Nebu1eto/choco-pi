@@ -1,7 +1,3 @@
-/**
- * Coordinator failure port: one call per candidate terminal transition, with
- * the trigger and reason; the overflow cancel carries its own detail code.
- */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -20,7 +16,6 @@ import type { SchedulerClock } from "../src/background/scheduler.ts";
 import { cutFingerprint, fingerprintEntries } from "../src/background/snapshot.ts";
 import { buildSnapshot, FakeBackend, seededToolPairs } from "./background-fakes.ts";
 
-/** A fresh clock per fixture: coordinator cooldowns are keyed by clock. */
 function frozenClock(): SchedulerClock {
   return { now: () => 0, setTimer: () => () => {} };
 }
@@ -74,7 +69,6 @@ function fixture(
       }),
     onCandidateFailure: (failure) => failures.push(failure),
   });
-  /** The additive fields every reported failure carries: first attempt over the fixture's branch. */
   const cut = { attempt: 1, cutFingerprint: cutFingerprint(entries, `${backend.id}|`) };
   return { coordinator, backend, failures, cut };
 }
@@ -95,7 +89,6 @@ test("fail() reports once with the trigger and reason", async () => {
       ...f.cut,
     },
   ]);
-  // A later terminal request for the same candidate does not report again.
   f.coordinator.cancel();
   assert.equal(f.failures.length, 1);
   f.coordinator.dispose();
@@ -117,7 +110,6 @@ test("the overflow cancel reports detail 'overflow' once; a second terminal tran
       ...f.cut,
     },
   ]);
-  // Status keeps no coordinator-only detail: the port alone carries "overflow".
   assert.equal(f.coordinator.status().detail, undefined);
   f.coordinator.cancel("stale-prefix");
   f.backend.pending[0]?.resolve({ ok: false, reason: "timeout", retryable: true });

@@ -1,6 +1,3 @@
-// The tests' fake store (tests/diff-actions-fakes.ts FakeStore) must answer body loads the way
-// the real store (lib/changes/git/store.ts) does. One sequence of refreshes and loads runs
-// against both; the revisions each load reports must agree.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
@@ -20,10 +17,6 @@ function revisionOf(state: DiffStoreState): number {
   return state.kind === "ready" ? state.snapshot.revision : -1;
 }
 
-/**
- * The sequence: a load begins, the snapshot moves, a second load begins, the second load
- * completes before the first. Returns each load's revision relative to the first snapshot.
- */
 async function sequence(
   store: Pick<DiffStore, "getState" | "loadFile">,
   move: () => Promise<void>,
@@ -76,7 +69,6 @@ test("the fake store reports each load's revision as the real store does", async
       fake.ready(2, [file("a.txt")]);
     },
     async () => {
-      // Out of order: the later load first.
       for (const entry of [...fake.held].reverse()) entry.release();
     },
   );

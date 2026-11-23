@@ -1,13 +1,5 @@
 import type { Usage } from "@earendil-works/pi-ai";
 
-/**
- * Sum the usage of two summarization calls.
- *
- * Mirrors the host's private `combineUsage` (`core/compaction/compaction.js`),
- * which is not exported: the optional `cacheWrite1h` and `reasoning` fields
- * appear only when at least one input reported them, so a consumer can still
- * tell "not reported" from "zero".
- */
 export function combineUsage(first: Usage, second: Usage): Usage {
   const combined: Usage = {
     input: first.input + second.input,

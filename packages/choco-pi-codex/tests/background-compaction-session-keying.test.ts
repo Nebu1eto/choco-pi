@@ -1,10 +1,3 @@
-/**
- * Per-session keying of the Codex background integration: a subagent child's
- * binding is published under the child's owner key, a binding published after
- * the backend was created is picked up, a stale refresh never replaces a newer
- * binding, and one session's shutdown leaves every other session's binding.
- * Offline: no request leaves the process.
- */
 import assert from "node:assert/strict";
 import test, { after, afterEach } from "node:test";
 
@@ -98,7 +91,6 @@ function newSession(): SessionManager {
   return manager;
 }
 
-/** Mark one session ID as a live subagent child while `run` executes. */
 async function asChildSession<T>(childId: string, run: () => Promise<T>): Promise<T> {
   const key = Symbol.for("pi-subagents:manager");
   const previous = Object.getOwnPropertyDescriptor(globalThis, key);
@@ -130,7 +122,6 @@ test("a child binding is published under the child key and a late binding is pic
     assert.equal(registerCodexBackgroundFactory(true), true);
     const factory = getRegistry().backendFactories.get("codex-native-v2");
     assert.ok(factory);
-    // The child coordinator's backend exists before the child's Codex refresh bound anything.
     const backend = await factory({ ownerKey, ownerGeneration: 1, providerScope: scope });
     assert.deepEqual(await backend.capability(scope), { supported: false, reason: "unsupported" });
     const controller = createCodexBackgroundIntegration({
@@ -202,7 +193,6 @@ test("an older registration cannot clobber or withdraw a newer registration's bi
   assert.ok(await newer.refresh(ctx));
   const published = publishedCodexBinding(ownerKey);
   assert.ok(published);
-  // The older registration's slot is still current in its own state; its refresh is stale here.
   await older.refresh(ctx);
   assert.equal(publishedCodexBinding(ownerKey), published, "not replaced");
   older.stop(sessionId);
@@ -261,7 +251,6 @@ test("the per-session refresher re-runs the restore for that session only", asyn
     "same scope kept",
   );
   assert.equal(settingsReads, 1, "the settings snapshot of this generation is reused");
-  // Another session's ID reaches nothing of this one.
   await refreshSessionNativeState("unrelated-session", ctx);
   controller.stop(sessionId);
   assert.deepEqual(sessionNativeRefreshers(sessionId), [], "shutdown unregisters the refresher");

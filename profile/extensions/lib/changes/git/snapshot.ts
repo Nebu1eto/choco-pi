@@ -16,18 +16,11 @@ import type { DiffLimits } from "./limits.ts";
 import type { DiffSource, FileStatus, FileSummary, SnapshotBaseline } from "./model.ts";
 import { countLines, mapLimited, readWorktreeFile, statSignature } from "./worktree-files.ts";
 
-/** One listed file plus what the store needs beyond the public summary. */
 export type ListedFile = {
   summary: FileSummary;
-  /** Changes whenever the summary or the worktree file's stat signature changes. */
   key: string;
   submodule: boolean;
-  /** An untracked directory git reports as a whole, such as a nested repository. */
   untrackedDirectory: boolean;
-  /**
-   * Base blob of a file that is in the base tree and untracked now; its body
-   * compares that blob with the working file.
-   */
   untrackedBase?: string;
 };
 
@@ -35,22 +28,14 @@ export type SnapshotRead = {
   repoRoot: string;
   head: string | null;
   branch: string | null;
-  /** Tree-ish the working tree is compared against. */
   base: string;
-  /**
-   * Object ids the file bodies are computed against: the resolved base, and
-   * for a range the resolved head (otherwise the working tree). A body read
-   * for one comparison is never valid for another.
-   */
   compareBase: string;
   compareHead?: string;
   files: ListedFile[];
   omittedFiles: number;
   totals: { files: number; additions: number; deletions: number };
   fingerprint: string;
-  /** Equal for snapshots whose listed content is equal. */
   contentKey: string;
-  /** Present for the "session" source only. */
   baseline?: SnapshotBaseline;
 };
 
@@ -65,12 +50,9 @@ export type RefreshContext = {
   limits: DiffLimits;
   source: DiffSource;
   checkpoints: TurnTreeProvider | undefined;
-  /** Fingerprint of the last applied snapshot for this source, if any. */
   previousFingerprint: string | undefined;
   mode: "full" | "probe";
-  /** Throws when the refresh has been superseded; checked after every await. */
   assertCurrent(): void;
-  /** Called when a probe found a change and continues as a full refresh. */
   onEscalate(): void;
 };
 
@@ -81,7 +63,6 @@ export function sourceKey(source: DiffSource): string {
   if (source.kind === "session") return "session";
   if (source.kind === "uncommitted") return "uncommitted";
   if (source.kind === "branch-base") return `branch-base\0${source.base}`;
-  // A turn-only source is named by its label, which changes when its turns do.
   const turns = source.turnOnly ? `\0turns\0${source.label}` : "";
   if (source.kind === "range") return `range\0${source.base}\0${source.head}${turns}`;
   return `since-checkpoint\0${source.checkpointId}${turns}`;
@@ -117,11 +98,9 @@ async function emptyTree(runner: ExecRunner, root: string): Promise<string> {
   return id;
 }
 
-/** Said when a session has no checkpoint, so it cannot have changed anything yet. */
 export const NO_SESSION_CHECKPOINT =
   "No file checkpoint has been recorded in this session yet, so nothing has changed since it began.";
 
-/** The first checkpoint the provider knows, or why there is none. */
 async function sessionBaselineOf(context: RefreshContext): Promise<SessionBaselineChoice> {
   const provider = context.checkpoints;
   if (!provider) {
@@ -167,7 +146,6 @@ async function resolveBase(
     }
     if (status.head === null) throw new DiffGitError("HEAD has no commits to compare with a base");
     try {
-      // The pinned runner already sets `core.quotepath=false` and `color.ui=false`.
       const result = await context.runner("git", ["merge-base", "HEAD", source.base], {
         cwd: root,
       });
@@ -293,12 +271,6 @@ async function untrackedCounts(
 
 const ZERO_HASH = /^0+$/;
 
-/**
- * `status` paths are relative to HEAD, not to another base, so a file that
- * differs from HEAD but equals the base is listed by diff-index as modified
- * with an unknown (all-zero) worktree id. Hash those worktree files without
- * writing objects and return the paths whose content equals the base's.
- */
 async function identicalToBase(
   runner: ExecRunner,
   root: string,
@@ -324,7 +296,6 @@ async function identicalToBase(
     cwd: root,
     input: `${suspects.map((change) => change.path).join("\n")}\n`,
   });
-  // A file that vanished or cannot be read stays listed.
   if (result.code !== 0) return identical;
   const ids = result.stdout.split("\n");
   suspects.forEach((change, index) => {
@@ -363,13 +334,6 @@ function candidateFromChange(
   return { summary, submodule, untrackedDirectory: false };
 }
 
-/**
- * Files deleted from the index but present in the working tree, untracked.
- * With a checkpoint or branch base, diff-index calls such a file deleted
- * although it still exists. Hash the working files (no objects written) and
- * return each one's base blob id when it differs from the working content;
- * a path equal to its base is in `unchanged` and is not a change at all.
- */
 async function untrackedAgainstBase(
   runner: ExecRunner,
   root: string,
@@ -396,7 +360,6 @@ async function untrackedAgainstBase(
     cwd: root,
     input: `${suspects.map((change) => change.path).join("\n")}\n`,
   });
-  // When hashing fails, the files keep the listing diff-index gave them.
   if (result.code !== 0) return { differing, unchanged };
   const ids = result.stdout.split("\n");
   suspects.forEach((change, index) => {
@@ -413,7 +376,6 @@ type SnapshotParts = {
   head: string | null;
   branch: string | null;
   base: string;
-  /** Resolved ids when they differ from `base` and `head` as named (a range). */
   compareBase?: string;
   compareHead?: string;
   candidates: Candidate[];
@@ -480,13 +442,8 @@ async function finishSnapshot(
   return { kind: "snapshot", read };
 }
 
-/** A full SHA-1 or SHA-256 object id, which names one object for good. */
 const FULL_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
-/**
- * The object id a revision names now; a missing or malformed one is a git
- * error. A full object id cannot move, so it is used as it is.
- */
 async function resolveObject(
   context: RefreshContext,
   root: string,
@@ -504,10 +461,6 @@ async function resolveObject(
   return resolved;
 }
 
-/**
- * A "range" source: one `diff-tree` between two tree-ishes. No `status`, no
- * untracked files, and nothing in the working tree is read.
- */
 async function readRangeSnapshot(
   context: RefreshContext,
   root: string,
@@ -518,7 +471,6 @@ async function readRangeSnapshot(
       throw new DiffGitError(`Invalid revision: ${revision}`);
     }
   }
-  // Named revisions can move between refreshes; the listing and every body use the ids they had now.
   const compareBase = await resolveObject(context, root, source.base);
   const compareHead = await resolveObject(context, root, source.head);
   context.assertCurrent();
@@ -565,13 +517,6 @@ async function readRangeSnapshot(
   });
 }
 
-/**
- * Read one snapshot. A probe stops after `status` when the fingerprint is
- * unchanged; otherwise this runs `rev-parse`, `status`, and one
- * `diff --raw --numstat` (plus `merge-base` or `hash-object` when the base
- * needs resolving). No patch text is read for the list. A "range" source
- * runs `rev-parse` and one `diff-tree` instead.
- */
 export async function readSnapshot(context: RefreshContext): Promise<RefreshOutcome> {
   const { runner, limits } = context;
   const root = await repositoryRootOf(context);
@@ -598,9 +543,6 @@ export async function readSnapshot(context: RefreshContext): Promise<RefreshOutc
   const signatures = new Map<string, string>();
   signaturePaths.forEach((path, index) => signatures.set(path, signatureList[index] ?? "missing"));
 
-  // The session's baseline can appear (first prompt) or change (another
-  // session file) while the working tree stays the same, so it is part of the
-  // fingerprint.
   const session = context.source.kind === "session" ? await sessionBaselineOf(context) : undefined;
   context.assertCurrent();
   const sessionText =
@@ -621,7 +563,6 @@ export async function readSnapshot(context: RefreshContext): Promise<RefreshOutc
   if (context.mode === "probe") context.onEscalate();
 
   if (session?.kind === "none") {
-    // No checkpoint: the session has not changed anything it could show.
     return finishSnapshot(context, {
       root,
       head: status.head,
@@ -641,8 +582,6 @@ export async function readSnapshot(context: RefreshContext): Promise<RefreshOutc
   );
   context.assertCurrent();
 
-  // Plumbing diff-index, not porcelain `git diff`: the porcelain refreshes and
-  // rewrites the index even under --no-optional-locks.
   const diffOutput = await runGit(runner, root, [
     "diff-index",
     "--raw",
@@ -657,10 +596,6 @@ export async function readSnapshot(context: RefreshContext): Promise<RefreshOutc
   context.assertCurrent();
   const { changes, counts } = parseRawNumstat(diffOutput);
 
-  // diff-index trusts index stat data, so a file touched without a content
-  // change still appears. `status` refreshed that data in memory, so its paths
-  // are the real worktree changes; for other bases, paths committed since the
-  // base are real changes too.
   const changedPaths = new Set(statusByPath.keys());
   if (context.source.kind !== "uncommitted" && status.head !== null) {
     const committed = await runGit(runner, root, [
@@ -705,7 +640,6 @@ export async function readSnapshot(context: RefreshContext): Promise<RefreshOutc
     const candidate = candidateFromChange(change, counts, statusByPath.get(change.path));
     const blob = againstBase.differing.get(change.path);
     if (blob !== undefined) {
-      // Present in the base and in the working tree: modified, counted when its body loads.
       candidate.summary.status = "modified";
       candidate.summary.additions = null;
       candidate.summary.deletions = null;

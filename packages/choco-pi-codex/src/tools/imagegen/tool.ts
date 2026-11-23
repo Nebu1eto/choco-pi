@@ -29,11 +29,6 @@ const loadToolProvider = memoizedImport(() => import("../../adapter/codex-tool-p
 export const IMAGE_GENERATION_UNSUPPORTED_MESSAGE =
   "imagegen requires an image-capable OpenAI Responses provider or /login openai (Sign in with ChatGPT)";
 
-/**
- * The helper calls `<base>/images/generations` (Images API, model gpt-image-2).
- * On api.openai.com that is the documented API-key endpoint; acceptance of the
- * ChatGPT sign-in token there has not been verified.
- */
 export const OPENAI_SIGN_IN_IMAGEGEN_UNVERIFIED_NOTE =
   "imagegen through api.openai.com with openai Sign in with ChatGPT is unverified; an openai API key or openai-codex (legacy) model may be required";
 const IMAGE_GENERATION_PARAMETERS = hostParams(
@@ -60,7 +55,6 @@ type SavedImage = {
   latest_absolute_path?: string;
 };
 
-// Keep the post-parse validation aligned with imagegenOutputFromJson: only `path` is mandatory.
 function isImagegenDetails(value: ImagegenOutput | undefined): value is ImagegenDetails {
   return value !== undefined && isString(value.path);
 }

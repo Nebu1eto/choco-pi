@@ -12,7 +12,6 @@ import type {
 } from "../src/pi-rpc/protocol.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 
-/** A session manager that always resolves to one prepared session. */
 class SingleSessionManager implements SessionManagerLike {
   private readonly session: PiAcpSession;
 
@@ -43,7 +42,6 @@ class SingleSessionManager implements SessionManagerLike {
   async shutdownAll(): Promise<void> {}
 }
 
-/** A Pi process fake that reports a fixed state and records turn-mode changes. */
 class TurnModeProcess implements PiRpcProcessLike {
   readonly prompts: string[] = [];
   steeringMode: PiTurnMode | null = null;
@@ -81,7 +79,6 @@ class TurnModeProcess implements PiRpcProcessLike {
   }
 }
 
-/** Build an agent whose only session is backed by `proc`. */
 function agentWithSession(conn: FakeAgentSideConnection, proc: PiRpcProcessLike): PiAcpAgent {
   const agent = new PiAcpAgent(asAgentConn(conn));
   const session = new PiAcpSession({
@@ -92,13 +89,10 @@ function agentWithSession(conn: FakeAgentSideConnection, proc: PiRpcProcessLike)
     conn: asAgentConn(conn),
   });
   const sessions: SessionManagerLike = new SingleSessionManager(session);
-  // `sessions` is a private implementation detail of `PiAcpAgent`; `Object.assign`
-  // installs the fake through the same property without weakening any declared type.
   Object.assign(agent, { sessions });
   return agent;
 }
 
-/** Read the text of a trailing `agent_message_chunk` notification. */
 function agentMessageText(notification: SessionNotification | undefined): string {
   const update = notification?.update;
   if (update?.sessionUpdate !== "agent_message_chunk") {

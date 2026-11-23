@@ -1,26 +1,3 @@
-/**
- * Terminal-safe diagnostic sink for the in-pi extension path (#1333).
- *
- * pi owns the terminal: it runs the TTY in raw mode and repaints with
- * cursor-addressed diffs, so ANY byte an extension writes to stdout/stderr
- * lands mid-frame and desyncs pi's model of the screen — the layout stays
- * broken until a full repaint. `clients/`, `tools/`, `index.ts` and `i18n.ts`
- * are all reachable from the extension entry, so none of them may call
- * `console.*` or `process.std*.write`. (`mcp/`, `scripts/` and `bin/` DO own
- * their stdout contract and keep their writes.)
- *
- * This module is the general-purpose replacement sink: one `createNdjsonLogger`
- * instance over `<global choco-pi-lsp dir>/extension.log`, per the single-writer
- * invariant in AGENTS.md. Subsystems that already own a log (tree-sitter,
- * review-graph, cascade, latency, sessionstart) route to THAT log instead —
- * this file is for the areas that had no sink at all.
- *
- * Three-channels rule (#482/#484/#485): everything written here is
- * LOG-audience. A genuinely user-facing degradation must ALSO reach the human
- * through the host's own render path (`ctx.ui.notify` / a display-only session
- * entry) — never a raw write.
- */
-
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as path from "node:path";
 import { isObjectRecord, isString } from "./runtime-guards.ts";
@@ -36,11 +13,6 @@ const writer = createNdjsonLogger({
   maxBytes: getMaxLogSizeMB() * 1024 * 1024,
 });
 
-/**
- * `error`/`warn` mirror the console methods they replaced; `debug` is the level
- * the previously verbose-gated client loggers write at (the gate is preserved
- * at the call site — see `createSubsystemLogger`).
- */
 export type ExtensionLogLevel = "error" | "warn" | "debug";
 
 export type ExtensionLogMetadataValue =
@@ -54,10 +26,8 @@ export type ExtensionLogMetadataValue =
 export type ExtensionLogMetadata = Record<string, ExtensionLogMetadataValue>;
 
 export interface ExtensionLogEntry {
-  /** Owning area, e.g. `dispatch`, `format`, `lens-config`. */
   subsystem: string;
   message: string;
-  /** Defaults to `error` (the level every migrated ungated site wrote at). */
   level?: ExtensionLogLevel;
   metadata?: ExtensionLogMetadata;
 }
@@ -84,16 +54,6 @@ export function logExtension(entry: ExtensionLogEntry): void {
   writer.log(payload);
 }
 
-/**
- * Drop-in replacement for the `verbose ? (msg) => console.error(...) : () => {}`
- * shape that ~20 clients hand-rolled. The returned value is CALLABLE (so the
- * `this.log = createSubsystemLogger("ruff")` migration is a one-line swap) and
- * also carries explicit `error`/`warn`/`debug` methods.
- *
- * Gating stays at the call site: `verbose ? createSubsystemLogger(x) : noop`
- * keeps the exact same "written only when verbose" semantics — what changed is
- * the SINK, not the gate, so turning verbose on can never corrupt the frame.
- */
 export interface SubsystemLogger {
   (message: string, metadata?: ExtensionLogMetadata): void;
   error(message: string, metadata?: ExtensionLogMetadata): void;
@@ -117,7 +77,6 @@ export function createSubsystemLogger(
   });
 }
 
-/** No-op with the `SubsystemLogger` shape, for the verbose-off branch. */
 export function noopSubsystemLogger(): SubsystemLogger {
   const noop = () => {};
   return Object.assign(noop, { error: noop, warn: noop, debug: noop });
@@ -127,17 +86,13 @@ export function getExtensionLogPath(): string {
   return EXTENSION_LOG_FILE;
 }
 
-/** Resolve once all enqueued extension-log writes are on disk (tests/shutdown). */
 export function flushExtensionLog(): Promise<void> {
   return writer.flush();
 }
 
-/** Teardown-only: force queued entries to disk before the process exits. */
 export function flushExtensionLogSync(): void {
   writer.flushSync();
 }
-
-// --- Defense in depth: the console reroute -----------------------------------
 
 const CONSOLE_METHODS = ["log", "info", "warn", "error", "debug", "trace", "dir"] as const;
 
@@ -149,37 +104,13 @@ type ConsoleFn = (...args: RuntimeValue[]) => void;
 
 function readRuntimeProperty<T extends object>(target: T, prop: PropertyKey): RuntimeValue {
   // SAFETY: Proxy supplies a property key for this exact target; direct indexed access preserves
-  // the same receiver (`target`) used by the former Reflect.get call.
   return target[prop as keyof T] as RuntimeValue;
 }
 
 let consoleGuardInstalled = false;
-/** The console methods captured before the patch, for an exact restore. */
 const originalConsoleMethods = new Map<ConsoleMethod, ConsoleFn>();
-/** The replacements this module installed, so uninstall never clobbers a later patch. */
 const installedConsoleMethods = new Map<ConsoleMethod, ConsoleFn>();
 
-/**
- * The async capture window (#1434).
- *
- * The guard must catch choco-pi-lsp's own writes without swallowing the host's. pi's
- * one-shot CLI commands print through `console.log`, so a permanent global
- * reroute makes `pi list` print nothing in any project whose cwd loads the
- * extension first. The store answers "is choco-pi-lsp executing right now?" and
- * `AsyncLocalStorage` carries that answer into every promise, timer and
- * callback created inside the window — so an async handler still captures after
- * an `await`, while host code outside the window keeps its real sink.
- *
- * Built LAZILY (S1b, #1434 review): an active `AsyncLocalStorage` enables an
- * async_hooks init hook for every promise in the process on Node 22 — the same
- * hazard `tree-sitter-client.ts`'s `parseCacheMeasurement.disable()` comment
- * documents — so constructing one at module scope taxes every `await` in the
- * host even when the kill switch (`CHOCO_PI_LSP_CONSOLE_GUARD=0`) or test mode means
- * the guard never installs and nothing ever reads the store. Construction is
- * deferred to the first `runInConsoleCaptureWindow` call, and only happens once
- * `installConsoleGuard()` has actually installed (never under the kill switch
- * or test mode, since `consoleGuardInstalled` stays false in both).
- */
 let consoleCaptureStorage: AsyncLocalStorage<true> | undefined;
 
 function getConsoleCaptureStorage(): AsyncLocalStorage<true> | undefined {
@@ -190,36 +121,12 @@ function getConsoleCaptureStorage(): AsyncLocalStorage<true> | undefined {
   return consoleCaptureStorage;
 }
 
-/**
- * Module evaluation is the one window `AsyncLocalStorage` cannot wrap: the
- * module graph is evaluated by the loader, not by a choco-pi-lsp call. It is
- * synchronous, so a plain flag is enough (#1333's original concern — a
- * transitively loaded dependency writing during its own init).
- */
 let moduleLoadWindowOpen = false;
 
-/**
- * True while choco-pi-lsp owns execution, so console writes belong in the log.
- *
- * `consoleCaptureStorage` may not have been constructed yet (S1b) — that state
- * means "no window was ever opened through `runInConsoleCaptureWindow`", i.e.
- * the same as an empty store, so it reads as "no window" rather than throwing.
- */
 export function isConsoleCaptureActive(): boolean {
   return moduleLoadWindowOpen || consoleCaptureStorage?.getStore() === true;
 }
 
-/**
- * Open the module-evaluation window. Called by `clients/console-guard-install.ts`
- * before any other choco-pi-lsp module evaluates.
- *
- * The window closes explicitly at the end of `index.ts`. The backstop below
- * closes it anyway if that never runs (an import throws, or the entry changes
- * shape), because a leaked window would capture the host's output — the very
- * bug this design fixes. Module evaluation is synchronous, so the end of the
- * current macrotask is always past it. The timer is unref'd, so it can never
- * hold a one-shot CLI process open (defect shape 4).
- */
 export function openModuleLoadConsoleWindow(): void {
   if (moduleLoadWindowOpen) return;
   moduleLoadWindowOpen = true;
@@ -229,21 +136,10 @@ export function openModuleLoadConsoleWindow(): void {
   backstop.unref?.();
 }
 
-/** Close the module-evaluation window. Idempotent. */
 export function closeModuleLoadConsoleWindow(): void {
   moduleLoadWindowOpen = false;
 }
 
-/**
- * Run `fn` inside a capture window. Console writes from `fn`, and from anything
- * `fn` schedules, go to the extension log instead of the terminal.
- *
- * When the guard was never installed (kill switch or test mode), there is
- * nothing for a window to gate — `installConsoleGuard`'s own dispatcher is the
- * only reader of `isConsoleCaptureActive()`, and it short-circuits before that
- * call in both cases. Skip constructing the `AsyncLocalStorage` (S1b) and run
- * `fn` directly.
- */
 export function runInConsoleCaptureWindow<T>(fn: () => T): T {
   const storage = getConsoleCaptureStorage();
   if (!storage) return fn();
@@ -258,53 +154,10 @@ function inCaptureWindow<TArgs extends RuntimeValue[], TResult>(
   };
 }
 
-/**
- * True for every host API member that can hand choco-pi-lsp's own functions back to
- * the host to be called later: `on(event, handler)` and any `register*`
- * method (`registerTool`, `registerCommand`, `registerMessageRenderer`,
- * `registerShortcut`, `registerFlag`, `registerMarkdownTransformer`,
- * `registerEntryRenderer`, `registerProvider`, and any the host adds later).
- *
- * This is a DENY-LIST, not an allow-list (#1434 S1a review): every member
- * matching this predicate gets its function arguments wrapped, with no
- * per-method exemption. The earlier allow-list form (only `on` and
- * `registerTool`) let the 9 `registerCommand` call sites and
- * `registerMessageRenderer` bypass the window, regressing #1333 for those
- * paths — a host callback fired for one of them would still write straight to
- * the terminal.
- */
 function isCaptureSeam(prop: PropertyKey): boolean {
   return prop === "on" || (isString(prop) && prop.startsWith("register"));
 }
 
-/**
- * Wrap every function value found in `value`, in place. Handles the two
- * shapes a `register*`/`on` call takes today: a function passed directly
- * (`on(event, handler)`, `registerMessageRenderer(type, fn)`), and a
- * function ONE level inside a plain options/definition object
- * (`options.handler`, `tool.execute`).
- *
- * Deliberately NOT recursive past that one level (#1434 perf review): a tool
- * definition's `parameters`/`schema` is a large, deeply nested TypeBox object
- * that holds no functions, but walking its full tree on every `registerTool`
- * call — across every tool, on every extension activation, across the many
- * test files that re-activate the extension per case — measurably slowed
- * activation (a wiring test tripped its 5s budget under transform load; see
- * the commit body for the measured before/after). Checking only the
- * argument's own top-level keys is O(keys), independent of how deep an
- * unrelated nested value's own structure goes, and covers every shape
- * PI-LENS actually registers (`options.handler`, `tool.execute` — never two
- * levels deep). It does NOT cover every shape the host's `ExtensionAPI` type
- * permits: `registerProvider`'s `config.oauth.*` callbacks sit two levels
- * deep and `config.models[]` sits behind a skipped array. choco-pi-lsp never
- * calls `registerProvider`; extend the descent if that changes (same known-
- * gap convention as the `pi.events` note in AGENTS.md).
- *
- * Mutates the object in place rather than copying — a spread copy would drop
- * non-enumerable or prototype-carried members of a definition object (defect
- * shape 5), and these definitions are choco-pi-lsp's own, built just above the
- * register call.
- */
 function wrapFunctionsInPlace<T extends RuntimeValue>(value: T): RuntimeValue {
   if (value instanceof Function) {
     // SAFETY: Function has been checked at runtime; the adapter forwards every argument and result.
@@ -321,27 +174,13 @@ function wrapFunctionsInPlace<T extends RuntimeValue>(value: T): RuntimeValue {
   return value;
 }
 
-/**
- * Assign a wrapped function back onto `obj[key]`, degrading instead of
- * throwing or dropping the registration when the property resists (S2b).
- * ESM is always strict mode, so assigning into a non-writable data property
- * throws a `TypeError`; `Object.defineProperty` is tried next (it can
- * redefine a configurable-but-non-writable property); if both fail the
- * property is frozen solid, so the ORIGINAL unwrapped function is left in
- * place — the registration still succeeds, just without the console-capture
- * net for that one callback, which is strictly better than the tool/command
- * never registering at all.
- */
 function assignWrapped<T extends object>(obj: T, key: string, fn: ConsoleFn): void {
   const wrapped = inCaptureWindow(fn);
   try {
     // SAFETY: key comes from Object.keys(obj), and wrapped preserves the checked function member's
-    // call behavior while adding only the capture window.
     obj[key as keyof T] = wrapped as T[keyof T];
     return;
-  } catch {
-    // Non-writable data property — fall through to defineProperty.
-  }
+  } catch {}
   try {
     Object.defineProperty(obj, key, {
       value: wrapped,
@@ -349,37 +188,13 @@ function assignWrapped<T extends object>(obj: T, key: string, fn: ConsoleFn): vo
       configurable: true,
       enumerable: true,
     });
-  } catch {
-    // Frozen solid: leave the original unwrapped function in place rather
-    // than throwing (which would abort the whole register call) or silently
-    // dropping it.
-  }
+  } catch {}
 }
 
-/**
- * Wrap the host extension API so every choco-pi-lsp entry point runs in a capture
- * window.
- *
- * pi calls our event handlers and tool bodies from its own async context, so a
- * window opened during registration does not reach them. Wrapping every
- * `register*`/`on` seam (see `isCaptureSeam`) covers every current and future
- * handler from one place, instead of a hand-maintained list of call sites.
- * Everything else forwards untouched, except it is bound to `target` (S3a) so
- * a destructured reference (`const { getFlag } = pi`) keeps working, and
- * wrapper functions are memoized per-proxy in `wrapperCache` (S3b) so
- * `proxy.on === proxy.on` — code that compares handler identity, or a test
- * asserting a mock was called with a specific function reference across two
- * reads of the same property, sees a stable value.
- */
 export function withConsoleCaptureWindows<T extends object>(api: T): T {
   const wrapperCache = new Map<PropertyKey, RuntimeValue>();
   const proxy: T = new Proxy(api, {
     get(target, prop) {
-      // A non-configurable, non-writable OWN data property is a proxy
-      // invariant: the get trap MUST return the exact value the target
-      // holds, or the engine throws a TypeError on read. Degrade to the raw
-      // value instead of tripping that invariant (S2a) — a frozen host API
-      // loses the capture window for that member, but keeps working.
       const descriptor = Reflect.getOwnPropertyDescriptor(target, prop);
       if (descriptor && descriptor.writable === false && descriptor.configurable === false) {
         return descriptor.value;
@@ -390,19 +205,8 @@ export function withConsoleCaptureWindows<T extends object>(api: T): T {
       if (!(value instanceof Function)) return value;
       // SAFETY: Function has been checked at runtime; this signature models transparent forwarding.
       const method = value as RuntimeFunction;
-      // A host that returns `this` for chaining would hand back the raw API,
-      // so a chained `on(...).on(...)` would register an unwrapped handler.
-      // Keep the proxy on the chain.
       const keepProxy = <TResult>(result: TResult): TResult | T =>
         Object.is(result, target) ? proxy : result;
-      // Pass-through members are cached too (S3a/S3b: `proxy.getFlag ===
-      // proxy.getFlag`), but the cached wrapper re-reads `target[prop]` on
-      // EVERY call rather than closing over `method` -- a plain
-      // `method.bind(target)` pins the function reference captured at first
-      // access, so a host (or a test simulating one) that reassigns its own
-      // method after registration would silently keep calling the stale one.
-      // Re-reading keeps the cached wrapper's identity stable while staying
-      // live to whatever `target[prop]` currently is.
       const wrapper = isCaptureSeam(prop)
         ? (...args: RuntimeValue[]): RuntimeValue => {
             const wrapped = args.map((arg) => wrapFunctionsInPlace(arg));
@@ -435,24 +239,6 @@ function formatConsoleArgs(args: RuntimeValue[]): string {
     .join(" ");
 }
 
-/**
- * Patch every console method on the extension entry path so a transitively
- * loaded dependency cannot write raw bytes into pi's frame — the pi-side
- * mirror of `mcp/server.ts`'s `console.log = console.error` guard, which
- * protects the JSON-RPC stdout channel for the same structural reason.
- *
- * The patch is a DISPATCHER, not a permanent reroute (#1434). It sends a write
- * to the extension log only while choco-pi-lsp owns execution; every other write
- * goes to the original console method. pi's own one-shot CLI commands print
- * through `console.log`, so an unconditional reroute silenced them: `pi list`
- * exited 0 with no output in any project whose cwd loaded the extension first.
- *
- * This is a NET, not the fix: choco-pi-lsp's own sites are migrated to real sinks
- * with real schemas. Idempotent, and inert under test mode (vitest owns the
- * console) and under `CHOCO_PI_LSP_CONSOLE_GUARD=0`.
- *
- * Returns true when the patch was applied by this call.
- */
 export function installConsoleGuard(): boolean {
   if (consoleGuardInstalled) return false;
   if (isTestMode()) return false;
@@ -483,12 +269,6 @@ export function installConsoleGuard(): boolean {
   return true;
 }
 
-/**
- * Restore the exact console methods captured at install time.
- *
- * A method someone else patched after us is left alone — restoring it would
- * clobber their replacement. Returns true when this call uninstalled.
- */
 export function uninstallConsoleGuard(): boolean {
   if (!consoleGuardInstalled) return false;
   consoleGuardInstalled = false;
@@ -503,7 +283,6 @@ export function uninstallConsoleGuard(): boolean {
   return true;
 }
 
-/** Test-only: uninstall the guard and close every open capture window. */
 export function _resetConsoleGuardForTests(): void {
   uninstallConsoleGuard();
   consoleGuardInstalled = false;

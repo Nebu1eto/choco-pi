@@ -88,21 +88,20 @@ const CONFIG_DIR_NAME = ".pi";
 export const AGENT_BROWSER_CONFIG_ENV = "PI_AGENT_BROWSER_CONFIG";
 export const BRAVE_API_KEY_ENV = "BRAVE_API_KEY";
 export const EXA_API_KEY_ENV = "EXA_API_KEY";
-export const CONFIG_RELATIVE_PATH = /** @type {const} */ ([
+export const CONFIG_RELATIVE_PATH = [
   CONFIG_DIR_NAME,
   "config",
   "pi-agent-browser-native",
   "config.json",
-]);
-export const GLOBAL_CONFIG_RELATIVE_PATH = /** @type {const} */ ([
+];
+export const GLOBAL_CONFIG_RELATIVE_PATH = [
   CONFIG_DIR_NAME,
   "config",
   "pi-agent-browser-native",
   "config.json",
-]);
+];
 export const SECRET_COMMAND_TIMEOUT_MS = 15_000;
 
-/** @type {Readonly<Record<WebSearchProvider, WebSearchProviderDescriptor>>} */
 export const WEB_SEARCH_PROVIDER_DESCRIPTORS: Readonly<
   Record<WebSearchProvider, WebSearchProviderDescriptor>
 > = Object.freeze({
@@ -119,83 +118,52 @@ export const WEB_SEARCH_PROVIDER_DESCRIPTORS: Readonly<
     label: "Brave Search",
   }),
 });
-/** @type {readonly WebSearchProvider[]} */
 export const WEB_SEARCH_PROVIDERS: readonly WebSearchProvider[] = Object.freeze(["exa", "brave"]);
-/** @type {WebSearchProvider} */
 export const DEFAULT_WEB_SEARCH_PROVIDER: WebSearchProvider = "exa";
-/** @type {Readonly<Record<WebSearchProvider, WebSearchProviderConfigKey>>} */
 export const WEB_SEARCH_PROVIDER_CONFIG_KEYS: Readonly<
   Record<WebSearchProvider, WebSearchProviderConfigKey>
 > = Object.freeze({
   exa: WEB_SEARCH_PROVIDER_DESCRIPTORS.exa.configKey,
   brave: WEB_SEARCH_PROVIDER_DESCRIPTORS.brave.configKey,
 });
-/** @type {Readonly<Record<WebSearchProvider, string>>} */
 export const WEB_SEARCH_PROVIDER_ENV_VARS: Readonly<Record<WebSearchProvider, string>> =
   Object.freeze({
     exa: WEB_SEARCH_PROVIDER_DESCRIPTORS.exa.apiKeyEnv,
     brave: WEB_SEARCH_PROVIDER_DESCRIPTORS.brave.apiKeyEnv,
   });
 
-/**
- * @param {unknown} value
- * @returns {value is WebSearchProvider}
- */
 export function isWebSearchProvider(value) {
-  return (
-    hasRuntimeType(value, "string") &&
-    WEB_SEARCH_PROVIDERS.includes(/** @type {WebSearchProvider} */ (value))
-  );
+  return hasRuntimeType(value, "string") && WEB_SEARCH_PROVIDERS.includes(value);
 }
 
-/**
- * @param {WebSearchProvider} provider
- * @returns {WebSearchProviderDescriptor}
- */
 export function getWebSearchProviderDescriptor(provider) {
   const descriptor = WEB_SEARCH_PROVIDER_DESCRIPTORS[provider];
   if (!descriptor) throw new Error(`Unknown web-search provider: ${String(provider)}`);
   return descriptor;
 }
 
-/** @param {WebSearchProvider} provider */
 export function getWebSearchProviderLabel(provider) {
   return getWebSearchProviderDescriptor(provider).label;
 }
 
-/** @param {WebSearchProvider} provider */
 export function getWebSearchProviderEnvVar(provider) {
   return getWebSearchProviderDescriptor(provider).apiKeyEnv;
 }
 
-/**
- * @param {WebSearchProvider} provider
- * @returns {WebSearchProviderConfigKey}
- */
 export function getWebSearchProviderConfigKey(provider) {
   return getWebSearchProviderDescriptor(provider).configKey;
 }
 
-/**
- * Global config under Pi's state root: `~/.pi/config/...` in legacy mode,
- * `$CHOCO_PI_HOME/config/...` in standalone choco-pi.
- * @param {NodeJS.ProcessEnv} [env]
- */
 export function getGlobalAgentBrowserConfigPath(env = process.env) {
   const home = env.HOME?.trim() || env.USERPROFILE?.trim() || homedir();
   const [, ...relativeToStateRoot] = GLOBAL_CONFIG_RELATIVE_PATH;
   return join(piStateRoot(env, home), ...relativeToStateRoot);
 }
 
-/** @param {string} [cwd] */
 export function getProjectAgentBrowserConfigPath(cwd = process.cwd()) {
   return resolve(cwd, ...CONFIG_RELATIVE_PATH);
 }
 
-/**
- * @param {{ cwd?: string; env?: NodeJS.ProcessEnv }} [options]
- * @returns {AgentBrowserConfigPaths}
- */
 export function getAgentBrowserConfigPaths(options = {}) {
   const env = options.env ?? process.env;
   const override = env[AGENT_BROWSER_CONFIG_ENV]?.trim();
@@ -204,11 +172,6 @@ export function getAgentBrowserConfigPaths(options = {}) {
   return override ? { global, override: resolve(override), project } : { global, project };
 }
 
-/**
- * @param {AgentBrowserConfig} base
- * @param {AgentBrowserConfig} override
- * @returns {AgentBrowserConfig}
- */
 export function mergeAgentBrowserConfig(base, override) {
   return {
     ...base,
@@ -225,19 +188,10 @@ export function mergeAgentBrowserConfig(base, override) {
   };
 }
 
-/**
- * @param {unknown} value
- * @returns {value is Record<string, unknown>}
- */
 function isRecord(value) {
   return hasRuntimeType(value, "object") && value !== null && !Array.isArray(value);
 }
 
-/**
- * @param {unknown} value
- * @param {string} path
- * @param {string[]} errors
- */
 function validateString(value, path, errors) {
   if (value === undefined) return undefined;
   if (!hasRuntimeType(value, "string")) {
@@ -247,11 +201,6 @@ function validateString(value, path, errors) {
   return value;
 }
 
-/**
- * @param {unknown} value
- * @param {string} path
- * @param {string[]} errors
- */
 function validateBoolean(value, path, errors) {
   if (value === undefined) return undefined;
   if (!hasRuntimeType(value, "boolean")) {
@@ -261,12 +210,6 @@ function validateBoolean(value, path, errors) {
   return value;
 }
 
-/**
- * @param {unknown} value
- * @param {string} path
- * @param {string[]} errors
- * @returns {WebSearchProvider | undefined}
- */
 export function validateWebSearchProvider(value, path, errors) {
   if (value === undefined) return undefined;
   const provider = validateString(value, path, errors)?.trim();
@@ -278,12 +221,6 @@ export function validateWebSearchProvider(value, path, errors) {
   return provider;
 }
 
-/**
- * @param {unknown} value
- * @param {string} path
- * @param {string[]} errors
- * @returns {BrowserDefaultProfileConfig | undefined}
- */
 function validateBrowserDefaultProfile(value, path, errors) {
   if (value === undefined) return undefined;
   if (!isRecord(value)) {
@@ -301,31 +238,19 @@ function validateBrowserDefaultProfile(value, path, errors) {
     errors.push(`${path}.policy must be one of explicit-only, authenticated-only, always.`);
     return undefined;
   }
-  return { name, policy: /** @type {BrowserDefaultProfilePolicy} */ (policy) };
+  return { name, policy: policy };
 }
 
-/** @param {string} rawValue */
 export function isPlaintextCredentialValue(rawValue) {
   const trimmed = rawValue.trim();
   return Boolean(trimmed) && !trimmed.startsWith("!") && !trimmed.startsWith("$");
 }
 
-/**
- * @param {string} rawValue
- * @param {WebSearchProvider} provider
- */
 export function isProjectSafeCredentialValueForProvider(rawValue, provider) {
   void provider;
   return rawValue.trim().length > 0;
 }
 
-/**
- * @param {unknown} value
- * @param {string} path
- * @param {string[]} errors
- * @param {string[]} warnings
- * @returns {AgentBrowserConfig | undefined}
- */
 export function validateAgentBrowserConfig(value, path, errors, warnings) {
   if (!isRecord(value)) {
     errors.push(`${path} must contain a JSON object.`);
@@ -334,14 +259,12 @@ export function validateAgentBrowserConfig(value, path, errors, warnings) {
   if (value.version !== undefined && value.version !== 1) {
     errors.push(`${path}.version must be 1 when present.`);
   }
-  /** @type {AgentBrowserConfig} */
   const config = value.version === 1 ? { version: 1 } : {};
 
   if (value.webSearch !== undefined) {
     if (!isRecord(value.webSearch)) {
       errors.push(`${path}.webSearch must be an object.`);
     } else {
-      /** @type {NonNullable<AgentBrowserConfig["webSearch"]>} */
       const webSearch = {};
       const enabled = validateBoolean(value.webSearch.enabled, `${path}.webSearch.enabled`, errors);
       if (enabled !== undefined) webSearch.enabled = enabled;
@@ -400,14 +323,6 @@ export function validateAgentBrowserConfig(value, path, errors, warnings) {
   return config;
 }
 
-/**
- * @param {string} raw
- * @param {string} path
- * @param {ConfigLayerScope} scope
- * @param {string[]} errors
- * @param {string[]} warnings
- * @returns {ConfigLayer | undefined}
- */
 export function parseAgentBrowserConfigLayer(raw, path, scope, errors, warnings) {
   let parsed;
   try {
@@ -422,12 +337,6 @@ export function parseAgentBrowserConfigLayer(raw, path, scope, errors, warnings)
   return config ? { config, path, scope } : undefined;
 }
 
-/**
- * @param {string} rawValue
- * @param {AgentBrowserConfigScope} scope
- * @param {WebSearchProvider} [provider]
- * @returns {CredentialSource | undefined}
- */
 export function classifyCredentialSource(rawValue, scope, provider) {
   const trimmed = rawValue.trim();
   if (!trimmed) return undefined;
@@ -436,26 +345,17 @@ export function classifyCredentialSource(rawValue, scope, provider) {
   return { kind: "literal", provider, rawValue: trimmed, scope };
 }
 
-/**
- * @param {AgentBrowserConfig} config
- * @returns {Required<BrowserDefaultProfileConfig> | undefined}
- */
 function getBrowserDefaultProfile(config) {
   const profile = config.browser?.defaultProfile;
   if (!profile?.name.trim()) return undefined;
   return { name: profile.name.trim(), policy: profile.policy ?? "authenticated-only" };
 }
 
-/** @param {AgentBrowserConfig} config */
 function getBrowserExecutablePath(config) {
   const executablePath = config.browser?.executablePath?.trim();
   return executablePath || undefined;
 }
 
-/**
- * @param {ConfigLayer[]} layers
- * @returns {ConfigLayerScope | undefined}
- */
 function getBrowserDefaultProfileScope(layers) {
   for (let index = layers.length - 1; index >= 0; index -= 1) {
     const layer = layers[index];
@@ -464,10 +364,6 @@ function getBrowserDefaultProfileScope(layers) {
   return undefined;
 }
 
-/**
- * @param {ConfigLayer[]} layers
- * @returns {ConfigLayerScope | undefined}
- */
 function getBrowserExecutablePathScope(layers) {
   for (let index = layers.length - 1; index >= 0; index -= 1) {
     const layer = layers[index];
@@ -476,10 +372,6 @@ function getBrowserExecutablePathScope(layers) {
   return undefined;
 }
 
-/**
- * @param {ConfigLayer[]} layers
- * @returns {{ profile: Required<BrowserDefaultProfileConfig>; scope: ConfigLayerScope } | undefined}
- */
 function getTrustedBrowserDefaultProfile(layers) {
   for (let index = layers.length - 1; index >= 0; index -= 1) {
     const layer = layers[index];
@@ -490,10 +382,6 @@ function getTrustedBrowserDefaultProfile(layers) {
   return undefined;
 }
 
-/**
- * @param {ConfigLayer[]} layers
- * @returns {{ executablePath: string; scope: ConfigLayerScope } | undefined}
- */
 function getTrustedBrowserExecutablePath(layers) {
   for (let index = layers.length - 1; index >= 0; index -= 1) {
     const layer = layers[index];
@@ -504,11 +392,6 @@ function getTrustedBrowserExecutablePath(layers) {
   return undefined;
 }
 
-/**
- * @param {ConfigLayer[]} layers
- * @param {WebSearchProviderConfigKey} key
- * @returns {AgentBrowserConfigScope}
- */
 function getWebSearchCredentialScope(layers, key) {
   for (let index = layers.length - 1; index >= 0; index -= 1) {
     const layer = layers[index];
@@ -517,12 +400,7 @@ function getWebSearchCredentialScope(layers, key) {
   return "global";
 }
 
-/**
- * @param {{ env: NodeJS.ProcessEnv; layers: ConfigLayer[]; mergedConfig: AgentBrowserConfig }} options
- * @returns {Partial<Record<WebSearchProvider, CredentialSource>>}
- */
 export function buildWebSearchCredentialSources(options) {
-  /** @type {Partial<Record<WebSearchProvider, CredentialSource>>} */
   const sources = {};
   for (const provider of WEB_SEARCH_PROVIDERS) {
     const descriptor = getWebSearchProviderDescriptor(provider);
@@ -546,10 +424,6 @@ export function buildWebSearchCredentialSources(options) {
   return sources;
 }
 
-/**
- * @param {{ env: NodeJS.ProcessEnv; layers: ConfigLayer[]; mergedConfig: AgentBrowserConfig; paths: AgentBrowserConfigPaths; errors: string[]; warnings: string[]; projectConfigIncluded?: boolean }} options
- * @returns {AgentBrowserConfigState}
- */
 export function buildAgentBrowserConfigState(options) {
   const webSearchCredentialSources = buildWebSearchCredentialSources(options);
   const trustedBrowserDefaultProfile = getTrustedBrowserDefaultProfile(options.layers);
@@ -577,13 +451,6 @@ export function buildAgentBrowserConfigState(options) {
   };
 }
 
-/**
- * @param {string} path
- * @param {ConfigLayerScope} scope
- * @param {string[]} errors
- * @param {string[]} warnings
- * @returns {ConfigLayer | undefined}
- */
 function readConfigLayerSync(path, scope, errors, warnings) {
   let raw;
   try {
@@ -599,31 +466,18 @@ function readConfigLayerSync(path, scope, errors, warnings) {
   return parseAgentBrowserConfigLayer(raw, path, scope, errors, warnings);
 }
 
-/**
- * @param {AgentBrowserConfigLoadOptions} [options]
- * @returns {AgentBrowserConfigState}
- */
 export function loadAgentBrowserConfigStateSync(options = {}) {
   const env = options.env ?? process.env;
   const paths = getAgentBrowserConfigPaths({ cwd: options.cwd, env });
   const includeProjectConfig = options.includeProjectConfig !== false;
-  /** @type {string[]} */
   const errors = [];
-  /** @type {string[]} */
   const warnings = [];
-  /** @type {Array<{ path: string; scope: ConfigLayerScope }>} */
   const layerCandidates = [
     { path: paths.global, scope: "global" },
-    ...(includeProjectConfig
-      ? [{ path: paths.project, scope: /** @type {ConfigLayerScope} */ ("project") }]
-      : []),
-    ...(paths.override
-      ? [{ path: paths.override, scope: /** @type {ConfigLayerScope} */ ("override") }]
-      : []),
+    ...(includeProjectConfig ? [{ path: paths.project, scope: "project" }] : []),
+    ...(paths.override ? [{ path: paths.override, scope: "override" }] : []),
   ];
-  /** @type {ConfigLayer[]} */
   const layers = [];
-  /** @type {AgentBrowserConfig} */
   let mergedConfig = {};
   for (const candidate of layerCandidates) {
     const layer = readConfigLayerSync(candidate.path, candidate.scope, errors, warnings);
@@ -642,10 +496,6 @@ export function loadAgentBrowserConfigStateSync(options = {}) {
   });
 }
 
-/**
- * @param {string} rawValue
- * @param {NodeJS.ProcessEnv} env
- */
 export function resolveEnvInterpolations(rawValue, env) {
   let output = "";
   for (let index = 0; index < rawValue.length; index += 1) {
@@ -688,29 +538,16 @@ export function resolveEnvInterpolations(rawValue, env) {
   return output;
 }
 
-/**
- * @param {AgentBrowserConfigState} state
- * @param {WebSearchProvider | "auto"} [requestedProvider]
- * @returns {WebSearchProvider[]}
- */
 export function getWebSearchProviderOrder(state, requestedProvider) {
   if (requestedProvider && requestedProvider !== "auto") return [requestedProvider];
   const preferred = state.webSearchPreferredProvider;
   return [preferred, ...WEB_SEARCH_PROVIDERS.filter((provider) => provider !== preferred)];
 }
 
-/**
- * @param {AgentBrowserConfigState} state
- * @param {WebSearchProvider} provider
- */
 export function getWebSearchCredentialSource(state, provider) {
   return state.webSearchCredentialSources[provider];
 }
 
-/**
- * @param {CredentialSource | undefined} source
- * @param {NodeJS.ProcessEnv} env
- */
 export function hasPotentialCredentialSource(source, env) {
   if (!source) return false;
   if (source.kind === "command") return true;
@@ -718,10 +555,6 @@ export function hasPotentialCredentialSource(source, env) {
   return Boolean(source.rawValue.trim());
 }
 
-/**
- * @param {AgentBrowserConfigState} state
- * @param {NodeJS.ProcessEnv} [env]
- */
 export function canRegisterWebSearchTool(state, env = process.env) {
   if (!state.webSearchEnabled || state.errors.length > 0) return false;
   return WEB_SEARCH_PROVIDERS.some((provider) =>
@@ -729,10 +562,6 @@ export function canRegisterWebSearchTool(state, env = process.env) {
   );
 }
 
-/**
- * @param {CredentialSource | undefined} source
- * @param {WebSearchProvider} [provider]
- */
 export function getCredentialSourceSummary(source, provider) {
   if (!source) return "not configured";
   if (source.kind === "command") return `configured via command (${source.scope})`;
@@ -743,7 +572,6 @@ export function getCredentialSourceSummary(source, provider) {
   return `configured as plaintext ${source.scope} value [redacted]`;
 }
 
-/** @param {AgentBrowserConfigState} state */
 export function formatBrowserProfileStatus(state) {
   const profile = state.browserDefaultProfile;
   if (!profile) return "not configured";
@@ -751,7 +579,6 @@ export function formatBrowserProfileStatus(state) {
   return `${profile.name} (policy: ${profile.policy}; ${scope})`;
 }
 
-/** @param {AgentBrowserConfigState} state */
 export function formatBrowserExecutableStatus(state) {
   const executablePath = state.browserExecutablePath;
   if (!executablePath) return "not configured";
@@ -759,11 +586,6 @@ export function formatBrowserExecutableStatus(state) {
   return `${executablePath} (${scope})`;
 }
 
-/**
- * @param {AgentBrowserConfigState} state
- * @param {(path: string) => boolean} [exists]
- * @returns {ConfigFileSummary[]}
- */
 export function summarizeConfigFiles(state, exists = existsSync) {
   return [
     ["global", state.paths.global],

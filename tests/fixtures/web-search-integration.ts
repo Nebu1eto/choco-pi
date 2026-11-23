@@ -156,7 +156,6 @@ const legacySearchFactory: ExtensionFactory = (pi) => {
   }
 };
 
-/** A deferred tool, as built-in MCP registers them: only tool_search declares it. */
 export const DEFERRED_RESEARCH_TOOL = "mcp__research__digest";
 const deferredResearchFactory: ExtensionFactory = (pi) => {
   pi.registerTool({
@@ -393,9 +392,6 @@ async function createHarness(
     getSystemPrompt: () => "",
   };
   runner.bindCore(actions, contextActions);
-  // Pi activates registered direct tools by default; deferred, codemode, and
-  // inactive-by-default tools start inactive. The profile disables Pi's built-in
-  // tool_search (-builtin:tool-search); choco-pi's tool-search.ts supplies it.
   activeTools = runner
     .getAllRegisteredTools()
     .filter(
@@ -594,8 +590,6 @@ for (const harness of [anthropic, synthetic]) {
     limit: 5,
   });
   const discoveryText = JSON.stringify(discovery);
-  // Outside Code Mode, choco-pi's tool_search loads the matching deferred tool;
-  // legacy search names never surface.
   assert.match(discoveryText, new RegExp(DEFERRED_RESEARCH_TOOL));
   assert.ok(harness.runner.getActiveTools().includes(DEFERRED_RESEARCH_TOOL));
   for (const legacyName of LEGACY_SEARCH_NAMES) {

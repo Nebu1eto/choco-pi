@@ -1,12 +1,3 @@
-/**
- * ESLint runner for dispatch system
- *
- * Runs ESLint on JS/TS files when an ESLint config is present in the project.
- * Prefers the local node_modules installation over global.
- *
- * Gate: skips when no ESLint config is detected (project uses Biome/OxLint instead).
- */
-
 import { safeSpawnAsync } from "../../safe-spawn.ts";
 import { getAutofixCapability, hasEslintConfig } from "../../tool-policy.ts";
 import { PRIORITY } from "../priorities.ts";
@@ -15,15 +6,6 @@ import { createCwdCachedProbe, resolveToolCommand } from "./utils/runner-helpers
 
 const ESLINT_PROBE_BUDGET_MS = 5000;
 
-// Per-cwd cached eslint `--version` verification (#120). Before this, every
-// dispatch invocation ran a fresh `safeSpawnAsync(cmd, ["--version"])` after
-// the local cmd resolution. The probe is cached per cwd because
-// `resolveToolCommand("eslint")` is deterministic from cwd; the underlying
-// cmd identity is captured inside the probe closure.
-//
-// The verdict is governed by the shared availability policy (#1494): the probe
-// hands back the spawn result, so one stalled probe on the first JS/TS save
-// expires on a cooldown instead of disabling eslint for the whole session.
 function makeEslintProbe(cmd: string) {
   return createCwdCachedProbe(
     (cwd) =>
@@ -107,14 +89,12 @@ const eslintRunner: RunnerDefinition = {
     const cwd = ctx.cwd || process.cwd();
     const userHasConfig = hasEslintConfig(cwd);
 
-    // Only run if project has an ESLint config.
     if (!userHasConfig) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
 
     const cmd = resolveToolCommand(cwd, "eslint") ?? "eslint";
 
-    // Verify ESLint is actually executable (cached per cwd, see getEslintProbe).
     if (!(await getEslintProbe(cmd)(cwd))) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
@@ -125,7 +105,6 @@ const eslintRunner: RunnerDefinition = {
       { timeout: 30000, cwd },
     );
 
-    // ESLint exits 1 when there are lint errors, 2 on fatal/config error
     if (result.status === 2) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }

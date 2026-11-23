@@ -73,10 +73,6 @@ function findUpstreamErrorCode<Value>(error: Value, depth: number): string | und
   return undefined;
 }
 
-/**
- * Returns a validated machine code supplied by the CLI in envelope.error (or, for batches, the first failed
- * step's error), searching nested error/cause/details records. Prose and non-identifier values are ignored.
- */
 export function extractUpstreamErrorCode(
   envelope: AgentBrowserEnvelope | undefined,
 ): string | undefined {

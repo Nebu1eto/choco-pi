@@ -13,7 +13,6 @@ import {
 
 const CONFIG_BASENAME = "choco-pi-codex.json";
 
-/** A config whose owned keys folder-clearing would strip. */
 const PROFILE_CONFIG = `${JSON.stringify(
   {
     ui: { statusLine: false },
@@ -29,7 +28,6 @@ interface AliasFixture {
   projectConfigPath: string;
 }
 
-/** A checkout whose tracked config doubles as the global config, like the profile's. */
 function createAliasedCheckout(): AliasFixture {
   const root = mkdtempSync(path.join(tmpdir(), "codex-alias-"));
   const cwd = path.join(root, "checkout");

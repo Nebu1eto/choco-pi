@@ -9,8 +9,6 @@ const UNKNOWN_SUBSCRIPTION_COST = {
   cacheWrite: 0,
 };
 
-// Models the host built-in openai-codex catalog does not carry yet; entries the host
-// ships are dropped by id, so host metadata always wins.
 const ADDITIONAL_MODELS: Model<"openai-codex-responses">[] = [
   {
     id: "gpt-daybreak-blue-latest",

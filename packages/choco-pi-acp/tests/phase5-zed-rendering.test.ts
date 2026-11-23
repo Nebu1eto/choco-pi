@@ -5,13 +5,11 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { PiAcpSession, sanitizeExtensionUiText } from "../src/acp/session.ts";
 import { FakeAgentSideConnection, FakePiRpcProcess, asAgentConn } from "./helpers-fakes.ts";
 
-/** Either shape a tool call is reported with over `session/update`. */
 type ToolCallNotification = Extract<
   SessionUpdate,
   { sessionUpdate: "tool_call" | "tool_call_update" }
 >;
 
-/** Recorded `agent_message_chunk` payloads, in emission order. */
 function agentMessageChunks(
   conn: FakeAgentSideConnection,
 ): Extract<SessionUpdate, { sessionUpdate: "agent_message_chunk" }>[] {
@@ -22,7 +20,6 @@ function agentMessageChunks(
   return chunks;
 }
 
-/** The single recorded tool call notification with this id and status. */
 function toolCallNotification(
   conn: FakeAgentSideConnection,
   toolCallId: string,

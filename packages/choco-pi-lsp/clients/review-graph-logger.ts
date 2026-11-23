@@ -12,7 +12,6 @@ const writer = createNdjsonLogger({ filePath: REVIEW_GRAPH_LOG_FILE });
 
 export type ReviewGraphBuildMode = "full" | "cached" | "incremental" | "skipped" | "seq-fastpath";
 
-/** Counts and identity for the graph content involved in an operational event. */
 export interface ReviewGraphBuildMetadata {
   buildId?: number;
   graphGeneration?: number;
@@ -21,15 +20,12 @@ export interface ReviewGraphBuildMetadata {
   seqHint?: boolean;
   mode?: ReviewGraphBuildMode;
   sourceFiles?: number;
-  /** True when sourceFiles is a lower bound from a truncated source walk. */
   sourceFilesTruncated?: boolean;
   nodes: number;
   edges: number;
-  /** Exact complete-vs-partial coverage of the persisted graph snapshot. */
   persistCoverage?: ReviewGraphPersistCoverage;
 }
 
-/** Parent-side persistence lifecycle identity/status. */
 export interface ReviewGraphPersistenceMetadata {
   generation: number;
   attemptId: number;
@@ -57,11 +53,6 @@ export interface ReviewGraphBuildMetadataOptions {
   sourceFileCountTruncated?: boolean;
 }
 
-/**
- * Build the one canonical graph metadata shape used by build and persist logs.
- * Counts come from the graph instance; source-file count may use the exact
- * signature-map count when the build has one, otherwise the graph file index.
- */
 export function makeReviewGraphBuildMetadata(
   graph: Pick<
     ReviewGraph,
@@ -109,7 +100,6 @@ export function makeReviewGraphBuildMetadata(
 
 export interface ReviewGraphLogEntry {
   ts?: string;
-  /** Logger process identity for machine-global log correlation. */
   pid?: number;
   phase:
     | "build_started"
@@ -123,17 +113,11 @@ export interface ReviewGraphLogEntry {
     | "persist_skipped"
     | "persist_failed"
     | "worker_fallback"
-    // #936 limit 2: cross-session resumable full build (checkpointing).
     | "checkpoint_written"
     | "checkpoint_resumed"
-    // A present checkpoint was rejected (fail-open to a cold build) — `reason`
-    // says why, so "why isn't my checkpoint resuming?" is diagnosable.
     | "checkpoint_discarded"
-    // An offloaded/sync checkpoint WRITE failed — resume won't be available
-    // next session; `reason` carries the cause.
     | "checkpoint_write_failed";
   cwd: string;
-  /** Additive, bounded lifecycle metadata; never contains source contents/paths. */
   observability?: ReviewGraphOperationalMetadata;
   reason?: string;
   durationMs?: number;
@@ -148,7 +132,6 @@ export interface ReviewGraphLogEntry {
   serializeMs?: number;
   writeMs?: number;
   offloaded?: boolean;
-  // #936: checkpoint telemetry (files processed / reused / re-walked / target).
   processed?: number;
   reused?: number;
   stale?: number;
@@ -167,12 +150,10 @@ export function getReviewGraphLogPath(): string {
   return REVIEW_GRAPH_LOG_FILE;
 }
 
-/** Resolve once all enqueued review-graph writes are on disk (tests/shutdown). */
 export function flushReviewGraphLog(): Promise<void> {
   return writer.flush();
 }
 
-/** Teardown-only: force queued entries to disk before the process exits. */
 export function flushReviewGraphLogSync(): void {
   writer.flushSync();
 }

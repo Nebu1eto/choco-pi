@@ -6,18 +6,8 @@ import { actionLabel } from "./tool-params.ts";
 export type ActionTarget =
   | { ref: string }
   | { x: number; y: number }
-  /**
-   * The target app's own focused element, resolved by the helper. The point is
-   * the image center when the look has an image; keyboard delivery never uses
-   * it, so outline-only looks send an empty focus target.
-   */
   | { focus: { x: number; y: number } | Record<string, never> };
 
-/**
- * `wantsForeground` records a capability need only: the action's most reliable
- * delivery would use system focus or pointer events. It never authorizes
- * foreground delivery; only a host-issued grant (see config.ts) can.
- */
 export type PreparedAction =
   | {
       action: "press" | "click";
@@ -25,11 +15,6 @@ export type PreparedAction =
       params: { button?: MouseButtonName; clickCount?: number };
       establishesFocus: boolean;
       wantsForeground: boolean;
-      /**
-       * A ref click on a node with no AX press action that is not a text
-       * input: only pointer input can realize it, so a background `didnt` is
-       * a foreground need (the helper refuses it up front when ungranted).
-       */
       pointerOnly: boolean;
     }
   | {
@@ -45,7 +30,6 @@ export type PreparedAction =
       params: { text: string };
       establishesFocus: false;
       wantsForeground: boolean;
-      /** No ref and no focus established earlier in this call: the app's focused element. */
       implicitFocus: boolean;
     }
   | {
@@ -54,7 +38,6 @@ export type PreparedAction =
       params: { keys: string[] };
       establishesFocus: false;
       wantsForeground: boolean;
-      /** No ref and no focus established earlier in this call: the app's focused element. */
       implicitFocus: boolean;
     }
   | {
@@ -86,13 +69,7 @@ export type PreparedAction =
     };
 
 export interface ActionState {
-  /** An earlier action in this call established keyboard focus (see `focusEstablishedBy`). */
   currentFocus: boolean;
-  /**
-   * Model ref of the text input that the latest prepared ref click, press,
-   * typeText, or keypress targeted. An outline-only look has no image for a
-   * focus target, so later keyboard input without a ref goes to this ref.
-   */
   focusRef?: string;
 }
 
@@ -141,9 +118,6 @@ function nativeTarget(
   if (action.ref?.trim()) {
     const node = env.node(action.ref.trim());
     const semanticClick = operation === "click" || operation === "press";
-    // A text input keeps its ref: the helper focuses it through pid-scoped AX
-    // instead of pointer input. Coordinates remain only for inputs without a
-    // wire ref (and picture-only nodes below).
     if (semanticClick && node.isTextInput && !node.wireRef) {
       const point = env.center(node);
       env.validatePoint(point.x, point.y);
@@ -186,18 +160,15 @@ function focusedTarget(env: ActionEnvironment): ActionTarget {
   return { focus: { x: Math.floor(env.image.width / 2), y: Math.floor(env.image.height / 2) } };
 }
 
-/** Message for keyboard input without a ref in headless mode, which only allows ref targets. */
 export function headlessKeyboardRefusal(operation: "typeText" | "keypress"): string {
   return `${actionLabel(operation)} without ref is unavailable in headless mode: headless delivery cannot send keys to the app's focused element. Pass the @e ref of the control that should receive the input.`;
 }
 
-/** The ref's node when it is a text input the helper can target by ref. */
 function refTextInput(ref: string, env: ActionEnvironment): string | undefined {
   const node = env.node(ref);
   return node.isTextInput && node.wireRef && !node.pictureOnly ? ref : undefined;
 }
 
-/** No AX route for a click: no press action and no text-input focus path. */
 function lacksAxClickAction(node: OutlineNode): boolean {
   return !node.canPress && !node.isTextInput;
 }
@@ -217,12 +188,7 @@ export function prepareAction(
   const targetless = keyboard && !action.ref?.trim();
   if (targetless && env.headless) throw new Error(headlessKeyboardRefusal(operation));
   const usesCurrentFocus = targetless && state.currentFocus;
-  // Without a ref or an earlier focusing action, keyboard input goes to the
-  // target app's own focused element (pid-scoped, never system focus).
   const implicitFocus = targetless && !state.currentFocus;
-  // Without an image there is no focus point; keyboard input then targets the
-  // text input that the preceding ref action focused, exactly as if the model
-  // had named that ref.
   const focusRef = usesCurrentFocus && !env.image ? state.focusRef : undefined;
   const retargeted = focusRef ? { ...action, ref: focusRef } : action;
   const target =
@@ -272,7 +238,6 @@ export function prepareAction(
         target,
         params: { text: action.text ?? "" },
         establishesFocus: false,
-        // Implicit focus is always tried in the background first, even under a grant.
         wantsForeground: "focus" in target && !implicitFocus,
         implicitFocus,
       };
@@ -312,7 +277,6 @@ export function prepareAction(
   }
 }
 
-/** Whether a delivered action leaves keyboard focus for later ref-less keyboard input. */
 export function focusEstablishedBy(prepared: PreparedAction, headless: boolean): boolean {
   return (
     !headless &&

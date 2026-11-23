@@ -45,9 +45,8 @@ test("wake turns from intermediate completions never report done; the last one d
   const { state, hold, doneCount } = harness();
   state.busy = true;
   hold.report(working);
-  hold.report(done); // main agent ends its turn; three subagents run
+  hold.report(done);
   for (const remaining of [2, 1, 0]) {
-    // A completion wakes the root; its run settles with `remaining` agents running.
     state.busy = remaining > 0;
     hold.report(working);
     hold.report(done);
@@ -83,7 +82,6 @@ test("an expected wake turn blocks the release until it starts or its grace expi
   hold.expectWake();
   hold.check();
   assert.equal(doneCount(), 0, "a delivered completion's wake turn will report itself");
-  // The wake turn starts and settles normally: one done in total.
   hold.rootRunStarted();
   hold.report(working);
   hold.report(done);
@@ -142,7 +140,6 @@ test("the bridge wraps the TUI terminal and restores it on dispose", () => {
   };
   const terminal: StatusTerminal = { setProgramStatus: original };
   const widgets: string[] = [];
-  // The factory runs synchronously, as in Pi's TUI.
   const ui: TerminalProbeUI = {
     setWidget: (key, factory) => {
       widgets.push(factory ? `+${key}` : `-${key}`);

@@ -15,9 +15,6 @@ import {
 } from "../src/adapter/compaction/request-shrink.ts";
 import type { ResponsesInputItem } from "../src/adapter/compaction/serializer.ts";
 
-// Synthetic fixtures only: no session content, no network. The fake provider
-// records every payload the compaction client would send.
-
 const isPayload = compile(obj({ input: arr(unknown()) }, { open: true })).check;
 const isTruncatedOutput = compile(
   obj({ output: lit(COMPACTION_TRUNCATED_TOOL_OUTPUT_MESSAGE) }, { open: true }),
@@ -25,7 +22,6 @@ const isTruncatedOutput = compile(
 const OVERFLOW =
   "Codex error: Your input exceeds the context window of this model. Please adjust your input and try again.";
 
-/** Gpt-5.6-sol on the Codex transport: a Responses Lite id with a 272k window. */
 const codexModel: Model<"openai-codex-responses"> = {
   id: "gpt-5.6-sol",
   name: "Fixture Sol",
@@ -39,7 +35,6 @@ const codexModel: Model<"openai-codex-responses"> = {
   maxTokens: 128_000,
 };
 
-/** About `tokens` o200k tokens of varied prose. */
 function prose(tokens: number): string {
   return "alpha beta gamma delta ".repeat(Math.ceil(tokens / 4));
 }
@@ -87,7 +82,6 @@ function successMessage(): AssistantMessage {
   };
 }
 
-/** Runs one compaction against a fake Codex-transport stream; replies are used in order. */
 async function runCompaction(
   promptInput: ResponsesInputItem[],
   tokensBefore: number,
@@ -174,9 +168,6 @@ function truncatedOutputs(input: readonly unknown[]): number {
 }
 
 test("a Responses Lite request over the model window is shrunk before it is sent", async () => {
-  // Overflow recovery hands over a history larger than the 272k window. The
-  // 872k endpoint budget alone never shrank it; the last item is an assistant
-  // message, so the upstream trailing-output pass had nothing to rewrite either.
   const input = [
     user("start"),
     call("c1"),
@@ -191,13 +182,10 @@ test("a Responses Lite request over the model window is shrunk before it is sent
   const first = sent[0]!;
   assert.ok(truncatedOutputs(first) >= 1, "an oversized tool output is truncated");
   assert.ok(JSON.stringify(first).length < 4 * 258_400, "the request fits 95% of the window");
-  // Pairing is intact: both calls and both outputs are still present.
   assert.equal(first.filter((item) => JSON.stringify(item).includes('"call_id"')).length, 4);
 });
 
 test("a context-overflow rejection is classified and retried once with reduced input", async () => {
-  // The host's estimate (100k) is under the budget, so the first attempt sends
-  // the input unchanged; the provider still rejects it as over the window.
   const input = [user("start"), call("c1"), output("c1", prose(220_000)), assistant("done")];
   const { result, sent } = await runCompaction(input, 100_000, ["overflow", "ok"]);
   assert.equal(sent.length, 2, "exactly one reduced retry");
@@ -216,7 +204,6 @@ test("an overflow the input cannot shrink below fails as context-overflow withou
 });
 
 test("a caller that disabled retries gets no reduced overflow retry", async () => {
-  // The background lane passes maxRetries: 0 and owns its own attempt budget.
   const input = [user("start"), call("c1"), output("c1", prose(220_000)), assistant("done")];
   const { result, sent, payloadAttempts } = await runCompaction(input, 100_000, ["overflow"], 0);
   assert.equal(payloadAttempts, 1, "no second attempt is started");
@@ -225,8 +212,6 @@ test("a caller that disabled retries gets no reduced overflow retry", async () =
 });
 
 test("the reduced retry never resends the input the provider already rejected", async () => {
-  // One output over the budget: the first attempt already truncates it, and the
-  // reduced attempt would truncate it to the very same marker.
   const input = [user("start"), call("c1"), output("c1", prose(300_000)), assistant("done")];
   const { result, sent, payloadAttempts } = await runCompaction(input, 300_000, ["overflow"]);
   assert.equal(truncatedOutputs(sent[0]!), 1, "the first attempt was already shrunk");

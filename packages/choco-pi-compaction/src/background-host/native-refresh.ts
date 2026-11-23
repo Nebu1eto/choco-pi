@@ -1,29 +1,13 @@
-/**
- * Per-session refresh of provider-native compaction state.
- *
- * Every extension that keeps provider-native replay state for a session
- * (this package's Anthropic and xAI replay bindings, the Codex package's
- * committed-checkpoint restore) registers a refresher under that session's ID.
- * `refreshSessionNativeState` runs them all, so a caller that knows only the
- * session — the subagent bridge reattaching a child after cancel or resume —
- * can restore the session's committed native checkpoints without importing any
- * provider package.
- *
- * The table is process-global: each AgentSession runs its own extension
- * factories, and extension copies may load through separate module instances.
- */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isFunction, isNonEmptyString } from "../guards.ts";
 
 import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 
-/** The context a refresher reads; a live `ExtensionContext` satisfies it. */
 export type NativeRefreshContext = Pick<
   ExtensionContext,
   "sessionManager" | "model" | "modelRegistry" | "cwd" | "isProjectTrusted"
 > & { readonly ui: Pick<ExtensionContext["ui"], "notify"> };
 
-/** Restores one contributor's native state for the session it was registered under. */
 export type SessionNativeRefresher = (ctx: NativeRefreshContext) => void | Promise<void>;
 
 const NATIVE_REFRESHERS_SYMBOL = Symbol.for("choco-pi:compaction-native-session-refreshers");
@@ -53,11 +37,6 @@ function refresherTable(): RefresherTable {
   return table;
 }
 
-/**
- * Register `contributorId`'s refresher for `sessionId`, replacing that
- * contributor's previous one. The returned unregister removes only this exact
- * refresher, so an older registration's cleanup never drops a newer one.
- */
 export function registerSessionNativeRefresher(
   sessionId: string,
   contributorId: string,
@@ -78,23 +57,14 @@ export function registerSessionNativeRefresher(
   };
 }
 
-/** Contributor IDs registered for a session (diagnostics and tests). */
 export function sessionNativeRefreshers(sessionId: string): readonly string[] {
   return [...(refresherTable().get(sessionId)?.keys() ?? [])];
 }
 
-/**
- * Re-run every registered native-state restore for `sessionId` with `ctx`
- * (the session's own context). Contributors run in registration order; each
- * rechecks its own lifecycle, so a refresher whose session was replaced does
- * nothing. A stale-context failure is contained; any other failure is
- * rethrown after every contributor ran (an `AggregateError` when several fail).
- */
 export async function refreshSessionNativeState(
   sessionId: string,
   ctx: NativeRefreshContext,
 ): Promise<void> {
-  // Snapshot before the first await: a contributor may unregister while another runs.
   const refreshers = [...(refresherTable().get(sessionId)?.values() ?? [])];
   const failures: Error[] = [];
   for (const refresher of refreshers) {

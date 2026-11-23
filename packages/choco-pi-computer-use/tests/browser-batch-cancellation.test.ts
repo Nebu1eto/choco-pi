@@ -77,11 +77,9 @@ test(
         controller.abort();
         assert.ok(lateReply);
         if (action.action === "typeText") {
-          // A late first-action reply cannot authorize action two.
           lateReply();
           await rejected;
         } else {
-          // Paired cleanup and rejection do not depend on the held reply.
           await rejected;
           lateReply();
         }

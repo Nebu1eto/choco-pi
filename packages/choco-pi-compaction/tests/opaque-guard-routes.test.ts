@@ -1,10 +1,3 @@
-/**
- * Opaque-history guard (D2) on the compaction routes, through a real session:
- * over a committed xAI checkpoint no summarizer answers unless the loss is
- * authorized (setting or `/compaction-allow-loss` for exactly that
- * checkpoint), and Codex opaque strategies get the same outcome at the guard
- * predicate (no Codex extension loaded).
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -25,7 +18,6 @@ import {
   type XaiRig,
 } from "./xai-rig.ts";
 
-/** A committed xAI checkpoint (one captured turn, one native compaction); its entry id. */
 async function commitXaiCheckpoint(rig: XaiRig, prompt = "XR-GO"): Promise<string> {
   await rig.session.prompt(prompt);
   await rig.session.compact();
@@ -38,7 +30,6 @@ function guardRecords(rig: XaiRig, event: string) {
   return rig.records().filter((record) => record.event === event && record.provider === "xai");
 }
 
-/** One more turn after the checkpoint (the host compacts only new history), then drop its captures. */
 async function turnWithoutCaptures(rig: XaiRig, prompt: string): Promise<void> {
   await rig.session.prompt(prompt);
   releaseXaiSessionCaptures(rig.manager.getSessionId());
@@ -108,7 +99,6 @@ test(
   { timeout: 30_000 },
   async () => {
     const foreground = textForeground();
-    // Compact requests 1 and 3 fail (a transient outage), so the native lane falls through to the guard.
     const lane = recordingFetch((index) =>
       index % 2 === 1
         ? new Response(JSON.stringify({ error: { message: "synthetic outage" } }), { status: 503 })
@@ -146,7 +136,6 @@ test(
   "(d) after switching to a non-xAI model, /compact over the xAI checkpoint cancels",
   { timeout: 30_000 },
   async () => {
-    // The background text-candidate yield on the same switch is U-ANTH's (observeUsage).
     const foreground = textForeground();
     const lane = recordingFetch(() => compactResponse());
     const rig = await createXaiRig({ foreground, lane });
@@ -164,10 +153,6 @@ test(
     }
   },
 );
-
-// ---------------------------------------------------------------------------
-// (e) Codex opaque strategies at the guard predicate
-// ---------------------------------------------------------------------------
 
 const PRESERVE: CompactionModes = {
   anthropic: "choco-pi",

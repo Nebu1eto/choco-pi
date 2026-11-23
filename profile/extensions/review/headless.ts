@@ -24,7 +24,6 @@ import { pickReviewRecord, type TargetPickerHost } from "./ui/target-picker.ts";
 const MAX_HEADLESS_NOTIFICATION_BYTES = 256 * 1024;
 const NOTIFICATION_TRUNCATION = "\n…[notification truncated]";
 const encoder = new TextEncoder();
-/** How `ui/target-choice.ts` begins its warning when `gh` cannot list pull requests. */
 const PULL_REQUESTS_UNAVAILABLE = "Pull request targets are unavailable: ";
 
 type HeadlessReviewUi = TargetPickerHost & {
@@ -37,13 +36,6 @@ export type HeadlessReviewRequest =
   | { action: "resume" }
   | { action: "review"; target: ReviewTarget };
 
-/**
- * Headless output carries file names, diff lines and git messages from the
- * repository. Every control character becomes a visible glyph, as in the TUI,
- * except tab, newline and the CR of a CRLF line ending, which keep their
- * meaning. Without this the ACP adapter silently deletes escape sequences
- * (so a name is shown wrong) and a raw RPC client receives them as bytes.
- */
 export function headlessSafeText(text: string): string {
   return text
     .split("\n")
@@ -73,12 +65,6 @@ export type HeadlessReviewDependencies = {
     isCurrent?: () => boolean,
   ) => Promise<DiffModel>;
   isCurrent: () => boolean;
-  /**
-   * The environment the host started Pi with; `process.env` when absent. The
-   * choco-pi ACP adapter marks its Pi child with `CHOCO_PI_ACP_NATIVE_DIFF=1`,
-   * and its editor renders notifications as Markdown; every other host
-   * (print mode, other RPC clients) gets plain text.
-   */
   env?: Readonly<Partial<Record<string, string>>>;
 };
 
@@ -115,8 +101,6 @@ function guardedPickerHost(ui: HeadlessReviewUi, isCurrent: () => boolean): Targ
   };
 }
 
-// Headless review output is display-only: never append diffs, records, or
-// comments to Pi entries, prompts, editor text, or session history here.
 export async function presentHeadlessReview(options: PresentHeadlessReviewOptions): Promise<void> {
   const request = options.request;
   const cwd = options.cwd;
@@ -130,18 +114,15 @@ export async function presentHeadlessReview(options: PresentHeadlessReviewOption
   const readTargetDiff = dependencies.readTargetDiff;
   const isCurrent = dependencies.isCurrent;
   const markdown = editorRendersMarkdown(dependencies.env ?? process.env);
-  // In the editor, untrusted detail in a failure is a code block, not Markdown.
   const formatFailure = markdown
     ? (prefix: string, detail: string) => markdownFailure(prefix.trimEnd(), detail)
     : (prefix: string, detail: string) => `${prefix}${detail}`;
-  // The shared picker words its one failure as PULL_REQUESTS_UNAVAILABLE + gh's message.
   const pickerNotice = (message: string): string =>
     message.startsWith(PULL_REQUESTS_UNAVAILABLE)
       ? formatFailure(PULL_REQUESTS_UNAVAILABLE, message.slice(PULL_REQUESTS_UNAVAILABLE.length))
       : message;
 
   const notify = (message: string, type: "info" | "warning" | "error"): void => {
-    // In the editor a message is our own text or Markdown already sanitised once; not again.
     const safe = markdown ? message : headlessSafeText(message);
     if (isCurrent()) ui.notify(boundedNotification(safe), type);
   };
@@ -232,7 +213,6 @@ export async function presentHeadlessReview(options: PresentHeadlessReviewOption
     if (!markdown) {
       notify(renderHeadlessReview(presentation).join("\n"), "info");
     } else if (isCurrent()) {
-      // Already sanitised piece by piece; sanitising the Markdown again would be a second pass.
       ui.notify(boundedNotification(renderHeadlessReviewMarkdown(presentation)), "info");
     }
   } catch (error) {

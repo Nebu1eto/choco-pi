@@ -1,9 +1,3 @@
-/**
- * xAI server-side compaction units (no network): capability policy and
- * cooldown, wire cut legality around tool-call pairs, the bounded compact
- * client, details persistence, the replay rewrite and transport check, the
- * mode setting and the Preferences row.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -83,10 +77,6 @@ function details(): XaiDetails {
   return value;
 }
 
-// ---------------------------------------------------------------------------
-// Capability
-// ---------------------------------------------------------------------------
-
 test("capability: xai + api.x.ai + grok-* in either auth mode; everything else refused", () => {
   const base = { provider: "xai", model: "grok-4", baseUrl: "https://api.x.ai/v1/" };
   assert.equal(xaiSupportPolicy({ ...base, authMode: "api-key" })?.baseUrl, "https://api.x.ai/v1");
@@ -127,7 +117,6 @@ test("capability: 4xx/5xx failures cool the scope down; success clears it", () =
   assert.equal(gate.check(scope).supported, false);
   gate.recordSuccess(scope);
   assert.deepEqual(gate.check(scope), { supported: true });
-  // Server errors are transient: a streak is tolerated before cooling down.
   gate.recordFailure(scope, "529");
   assert.equal(gate.check(scope).supported, true);
   gate.recordFailure(scope, "529");
@@ -171,10 +160,6 @@ test("ownership: xai-native only for the xai provider's Responses models, after 
     "a Codex-configured provider stays Codex's",
   );
 });
-
-// ---------------------------------------------------------------------------
-// Cut legality
-// ---------------------------------------------------------------------------
 
 const SYSTEM: XaiWireItem = { role: "system", content: "SYSTEM PROMPT" };
 const user = (text: string): XaiWireItem => ({
@@ -227,10 +212,8 @@ test("cut legality: never splits a function_call from its output or an assistant
   assert.equal(judgeXaiWireCut(input, 6), "legal");
   assert.equal(judgeXaiWireCut(input, 8), "open-tool-call");
   assert.equal(judgeXaiWireCut(input, input.length), "legal", "whole request");
-  // A kept output may never answer a compacted call, even after a user message.
   const stray = [SYSTEM, user("A"), call("c9"), output("c9"), user("B"), output("c9")];
   assert.equal(judgeXaiWireCut(stray, 4), "open-tool-call");
-  // After a replayed item the instruction sits second; item plus instruction is nothing new.
   const replayed = [{ ...ITEM }, SYSTEM, user("D"), assistant("E"), user("F")];
   assert.equal(judgeXaiWireCut(replayed, 1), "instruction-only");
   assert.equal(judgeXaiWireCut(replayed, 2), "instruction-only");
@@ -269,10 +252,6 @@ test("compact input drops only the leading instruction item", () => {
   assert.equal(plain.instruction, undefined);
   assert.equal(plain.items.length, 2);
 });
-
-// ---------------------------------------------------------------------------
-// Compact client
-// ---------------------------------------------------------------------------
 
 const API_KEY = "xai-units-non-secret-placeholder";
 
@@ -335,7 +314,6 @@ test("compact client: happy path posts the body with bearer auth and returns the
   const { calls, request } = client(() => new Response(compactBody(extra), { status: 200 }));
   const result = await runXaiCompactRequest(request);
   assert.ok(result.ok);
-  // Written out, not the object the response was serialized from.
   assert.deepEqual(
     result.item,
     {
@@ -443,10 +421,6 @@ test("compact client: caller abort, oversize, malformed, missing auth, network e
   assert.ok(!failed.ok && failed.code === "network" && failed.retryable);
 });
 
-// ---------------------------------------------------------------------------
-// Details persistence
-// ---------------------------------------------------------------------------
-
 const usage = {
   input: 1,
   output: 1,
@@ -509,10 +483,6 @@ test("details survive a session file round trip byte-exact; invariants are enfor
   assert.match(fingerprint, /^[0-9a-f]{16}:\d+$/u);
 });
 
-// ---------------------------------------------------------------------------
-// Replay rewrite and transport check
-// ---------------------------------------------------------------------------
-
 function summaryText(): string {
   const [message] = convertToLlm([
     {
@@ -546,11 +516,9 @@ test("replay rewrite: item first, instruction second, kept items unchanged", () 
   assert.deepEqual(outcome.payload.input, [ITEM, SYSTEM, user("C"), assistant("D"), user("NEXT")]);
   assert.equal(outcome.payload.store, false);
   assert.deepEqual(verifyXaiReplayTransport({ body: outcome.payload }, checkpoint()), { ok: true });
-  // Without a system prompt the item is still first.
   const bare = rewriteXaiReplayPayload(hostPayload([summary, user("C")]), checkpoint());
   assert.ok(bare.ok);
   assert.deepEqual(bare.payload.input, [ITEM, user("C")]);
-  // The adapter's in-memory params carry undefined-valued fields; they are judged in wire form.
   const inMemory = {
     model: "grok-units",
     input: [SYSTEM, summary, { ...assistant("D"), phase: undefined }],
@@ -561,7 +529,6 @@ test("replay rewrite: item first, instruction second, kept items unchanged", () 
   assert.ok(normalized.ok);
   assert.equal("prompt_cache_retention" in normalized.payload, false);
   assert.deepEqual(normalized.payload.input, [ITEM, SYSTEM, assistant("D")]);
-  // An already rewritten payload is kept as is.
   const again = rewriteXaiReplayPayload(outcome.payload, checkpoint());
   assert.ok(again.ok);
   assert.deepEqual(again.payload, outcome.payload);
@@ -609,7 +576,6 @@ test("an invalid xAI checkpoint is guarded like a valid one; a newer text checkp
   const kept = manager.appendMessage(assistantMessage("B"));
   const bad = manager.appendCompaction("s", kept, 1, { strategy: XAI_STRATEGY, schemaVersion: 1 });
   assert.deepEqual(findActiveXaiCheckpoint(manager.getBranch()), { kind: "invalid", entryId: bad });
-  // The placeholder of an unreadable xAI record is still not history a summarizer may use.
   assert.equal(opaqueCheckpointOf(manager.getBranch())?.owner, "xai-native");
   const notices: string[] = [];
   const guard = () =>
@@ -662,10 +628,6 @@ test("provider rejection: only a 400/422 naming the compaction item disables rep
   assert.equal(await xaiReplayRejectionCode(response(500, "compaction failed")), undefined);
   assert.equal(await xaiReplayRejectionCode(response(200, "compaction")), undefined);
 });
-
-// ---------------------------------------------------------------------------
-// Mode and Preferences
-// ---------------------------------------------------------------------------
 
 test("mode: default server-side; write keeps other keys; malformed files are refused", async () => {
   const dir = await mkdtemp(join(tmpdir(), "choco-pi-xai-mode-"));

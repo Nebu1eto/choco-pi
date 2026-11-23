@@ -5,20 +5,9 @@ import type { Observation } from "../checks.ts";
 import type { SeedToolResults } from "../host-seed.ts";
 import type { Host } from "./types.ts";
 
-/**
- * Verdicts for the oversized/quota regression: the admission gate once compared
- * a raw chars/4 prefix estimate (full tool results) with a flat 200,000-token
- * `maxInputTokens`, so a large-window session's `/compact` failed `oversized`,
- * then `quota` on retry. These read only real host output: notices, recorded
- * coordinator statuses, branch entries and the live usage ledger.
- */
-
-/** The pre-fix flat admission ceiling the large seed must exceed. */
 export const PRE_FIX_MAX_INPUT_TOKENS = 200_000;
-/** The host serializer's per-tool-result cut in the rendered summary prompt. */
 export const RENDERED_TOOL_RESULT_CHARS = 2_000;
 
-/** `NOTICE_PREFIX` of the compaction package's host notices (not exported there). */
 const NOTICE_PREFIX = "Background compaction";
 const REGRESSION_TEXT = /\b(?:oversized|quota|cooling)\b/iu;
 const REGRESSION_REASONS: ReadonlySet<string> = new Set(["oversized", "quota", "cooling"]);
@@ -35,10 +24,6 @@ const FailureRowSchema = obj(
 );
 const FailuresSchema = obj({ recentFailures: arr(FailureRowSchema) }, { open: true });
 const StatusHolderSchema = obj({ status: FailuresSchema }, { open: true });
-/**
- * Loose candidate-record shape: the estimate source may sit in `admission.source`
- * (current contract) or a top-level `estimateSource`; absence is reported only.
- */
 const CandidateSchema = obj(
   {
     customType: lit("choco-compaction-candidate"),
@@ -64,7 +49,6 @@ function refsOr(host: Host, records: readonly EvidenceRecord[]): number[] {
   return records.length ? records.map((record) => record.sequence) : [host.snapshot()];
 }
 
-/** No compaction notice shown to the user names oversized, quota or cooling. */
 export function regressionNoticeObservation(host: Host): Observation {
   const notices = host.recorder.records.filter(
     (record) => record.kind === "ui-notify" && matches(NotifySchema, record.data),
@@ -90,7 +74,6 @@ function failureRows(data: EvidenceRecord["data"]) {
   return [];
 }
 
-/** No recorded coordinator status lists an oversized/quota/cooling candidate failure. */
 export function regressionFailureObservation(host: Host): Observation {
   const holders = host.recorder.records.filter((record) => failureRows(record.data).length > 0);
   const flagged = new Map<string, string>();
@@ -109,11 +92,6 @@ export function regressionFailureObservation(host: Host): Observation {
   };
 }
 
-/**
- * Every committed checkpoint has its candidate record on the branch. The
- * estimate source and admission figures are recorded for diagnosis; a record
- * without them is reported (`null`), never failed.
- */
 export function candidateRecordObservation(host: Host): Observation {
   const branch = host.manager.getBranch();
   const records = branch.flatMap((entry) =>
@@ -143,7 +121,6 @@ export function candidateRecordObservation(host: Host): Observation {
   };
 }
 
-/** Live: the fetch ledger read real usage for every request (Synthetic SSE included). */
 export async function liveUsageObservations(host: Host): Promise<Observation[]> {
   const report = await host.usage();
   if (!report) return [];
@@ -169,13 +146,11 @@ export async function liveUsageObservations(host: Host): Promise<Observation[]> 
 
 type BranchEntry = ReturnType<Host["manager"]["getBranch"]>[number];
 
-/** Raw characters of one branch entry; `toolResult` is set for a tool-result message. */
 interface MessageChars {
   readonly chars: number;
   readonly toolResult: number | undefined;
 }
 
-/** Characters of one message as the raw estimate counts them (tool results untruncated). */
 function messageChars(entry: BranchEntry): MessageChars {
   if (entry.type !== "message") return { chars: 0, toolResult: undefined };
   const message = entry.message;
@@ -204,13 +179,6 @@ function messageChars(entry: BranchEntry): MessageChars {
   return { chars, toolResult: undefined };
 }
 
-/**
- * Large seed: the prefix the first checkpoint summarized has a raw chars/4
- * estimate (every message untruncated, the figure the pre-fix gate compared)
- * above the old flat ceiling, built from tool results far above the rendered
- * cut. Computed from the branch: a native checkpoint's `tokensBefore` is the
- * provider's own count, not this estimate.
- */
 export function largePrefixObservations(host: Host, seed: SeedToolResults): Observation[] {
   const branch = host.manager.getBranch();
   const index = branch.findIndex((entry) => entry.type === "compaction");

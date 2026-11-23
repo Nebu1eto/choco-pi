@@ -1,5 +1,3 @@
-// Shell tokenization is intentionally lightweight: it only needs enough fidelity
-// to classify obvious read/list/search commands for compact Codex-style rendering.
 export function shellSplit(input: string): string[] {
   const tokens: string[] = [];
   let current = "";

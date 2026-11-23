@@ -1,29 +1,17 @@
-/** usage.ts — Token usage: shapes, accumulator operators, session-stats readers. */
-
 import { isFiniteNumber, isNonEmptyString } from "./value-guards.ts";
 
-/**
- * Lifetime usage components, accumulated via `message_end` events. Survives
- * compaction (which replaces session.state.messages and would reset any
- * stats-derived sum). cacheRead is excluded because each turn's cacheRead is
- * the cumulative cached prefix re-read on that one call — summing across
- * turns counts the prefix N times. See issue #38.
- */
 export type LifetimeUsage = { input: number; output: number; cacheWrite: number };
 
-/** Sum of lifetime usage components, or 0 if undefined. */
 export function getLifetimeTotal(u?: LifetimeUsage): number {
   return u ? u.input + u.output + u.cacheWrite : 0;
 }
 
-/** Add a usage delta into a target accumulator (mutates target). */
 export function addUsage(into: LifetimeUsage, delta: LifetimeUsage): void {
   into.input += delta.input;
   into.output += delta.output;
   into.cacheWrite += delta.cacheWrite;
 }
 
-/** Minimal shape we read from upstream `getSessionStats()`. */
 export type SessionStatsLike = {
   sessionId?: string;
   tokens: { input: number; output: number; cacheWrite: number };
@@ -46,7 +34,6 @@ function finiteNumber(value: number | null | undefined): number | null {
   return isFiniteNumber(value) ? value : null;
 }
 
-/** Settled session cost paired with the stats identity that produced it. */
 export function getSessionCostBaseline(
   session: SessionLike | undefined,
 ): SessionCostBaseline | null {
@@ -62,7 +49,6 @@ export function getSessionCostBaseline(
   }
 }
 
-/** Session cost, optionally reduced by a baseline from the same session. */
 export function getSessionCost(
   session: SessionLike | undefined,
   baseline?: SessionCostBaseline,
@@ -73,7 +59,6 @@ export function getSessionCost(
   return Math.max(0, current.cost - baseline.cost);
 }
 
-/** Live context utilization; percent and window are validated independently. */
 export function getSessionContextUsage(
   session: SessionLike | undefined,
   fallbackContextWindow?: number,
@@ -94,19 +79,6 @@ export function getSessionContextUsage(
   }
 }
 
-/**
- * Session-scoped token count: input + output + cacheWrite as reported by
- * upstream `getSessionStats().tokens` for the *current* session window.
- *
- * RESETS at compaction — upstream replaces `session.state.messages` and the
- * stats are derived from that array. For a lifetime total that survives
- * compaction, use `getLifetimeTotal(lifetimeUsage)` instead, which reads
- * from an independent accumulator fed by `message_end` events.
- *
- * Avoids upstream's `tokens.total` field, which sums per-turn `cacheRead`
- * and so counts the cumulative cached prefix N times across N turns
- * (issue #38).
- */
 export function getSessionTokens(session: SessionLike | undefined): number {
   if (!session) return 0;
   try {
@@ -117,10 +89,6 @@ export function getSessionTokens(session: SessionLike | undefined): number {
   }
 }
 
-/**
- * Context-window utilization (0–100), or null when unavailable
- * (no model contextWindow, or post-compaction before the next response).
- */
 export function getSessionContextPercent(session: SessionLike | undefined): number | null {
   return getSessionContextUsage(session).percent;
 }

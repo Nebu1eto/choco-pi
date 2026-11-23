@@ -8,23 +8,11 @@ import type { ReviewRecord, SessionCheckpointProvider } from "../core/types.ts";
 export const REVIEW_STATE_ENTRY = "choco-pi:review-state";
 
 export type SessionCheckpointAdapterOptions = {
-  /** A getter keeps the provider current if the session branch changes. */
   entries: readonly SessionEntry[] | (() => readonly SessionEntry[]);
-  /**
-   * Every entry of the session file (`getEntries()`), for the session
-   * baseline `/diff` uses: the first checkpoint anywhere in the session.
-   * Without it a session review starts at the active branch's first turn.
-   */
   sessionEntries?: () => readonly SessionEntry[];
-  /** Pi's appendEntry seam; omitted when review state should not enter the session. */
   appendEntry?: (customType: string, data: ReviewRecord) => void;
 };
 
-/**
- * Checkpointed turns of the active branch, oldest first, numbered by
- * position: 1 is the first checkpointed turn. (The checkpoint's own
- * `turnIndex` restarts with every prompt, so it cannot tell turns apart.)
- */
 export function reviewTurnsFromEntries(
   entries: readonly SessionEntry[],
 ): Array<{ turnIndex: number; tree: string; label: string }> {
@@ -35,7 +23,6 @@ export function reviewTurnsFromEntries(
   }));
 }
 
-/** Adapt choco-pi's pre-turn Git trees to the host-independent review seam. */
 export function createSessionCheckpointProvider(
   options: SessionCheckpointAdapterOptions,
 ): SessionCheckpointProvider {

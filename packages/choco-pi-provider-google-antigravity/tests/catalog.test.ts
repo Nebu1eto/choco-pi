@@ -103,7 +103,6 @@ test("the Antigravity Orchestrator is never offered", async () => {
     [],
   );
   assert.deepEqual(FALLBACK_CATALOG.models.map((model) => model.id).filter(isOrchestrator), []);
-  // Even when agentModelSorts is absent and the display-name heuristic decides.
   const unsorted = buildAntigravityCatalog({ ...response, agentModelSorts: [] });
   assert.deepEqual(unsorted.models.map((model) => model.id).filter(isOrchestrator), []);
   setActiveCatalog(catalog);
@@ -395,9 +394,6 @@ test("refreshModels: a failed fetch never falls back to another credential's per
   assert.equal(same.length, 8, "the same credential keeps its last good catalog");
 });
 
-// --- Shared models-store slot: Pi composes the built-in google remote-catalog refresh (base) with
-// this extension's refresh, and both persist into the slot `google` with replace semantics.
-
 const HOUR_MS = 60 * 60 * 1000;
 const BASE_MODEL: Model<Api> = {
   id: "gemini-base-remote",
@@ -412,7 +408,6 @@ const BASE_MODEL: Model<Api> = {
   maxTokens: 65_536,
 };
 
-/** The shape the base's 200 path persists: `{ ...catalog, checkedAt }` with no foreign keys. */
 function baseEntry(checkedAt: number): ModelsStoreEntry {
   return { models: [BASE_MODEL], lastModified: 1_700_000_000, etag: '"base-etag"', checkedAt };
 }
@@ -545,7 +540,6 @@ interface FakeStore {
   writes: number;
 }
 
-/** One composed run: Pi snapshots the slot once, then runs the base and this refresh. */
 async function composedRun(
   store: FakeStore,
   base: (context: RefreshModelsContext) => Promise<void>,
@@ -576,7 +570,6 @@ async function composedRun(
   return ours(value);
 }
 
-/** The base's freshness and persistence rules (remote-catalog-provider.js), with a fixed answer. */
 function fakeBase(now: () => number, status: 200 | 304, requests: { count: number }) {
   return async (context: RefreshModelsContext): Promise<void> => {
     const stored = context.stored;
@@ -610,7 +603,6 @@ for (const status of [200, 304] as const) {
     });
     const store: FakeStore = { entry: undefined, writes: 0 };
     const fetchesPerRun: number[] = [];
-    // Five runs inside one TTL window, then five more after both clocks expire.
     for (let run = 0; run < 10; run++) {
       if (run === 5) now += CATALOG_TTL_MS + HOUR_MS;
       else now += 60_000;
@@ -625,10 +617,6 @@ for (const status of [200, 304] as const) {
       assert.equal(models.length, 8, `run ${run} serves the live catalog, not the fallback`);
       assert.equal(getActiveCatalog().models.length, 8);
     }
-    // Run 0 fetches into an empty slot and its write replaces the base's same-run 200. With a 200,
-    // run 1's base refetch drops our key (we serve the snapshot), run 2 refetches and merges with
-    // the base's entry, and the slot is then stable; the same two-run settle repeats once per
-    // expired window. With a 304 the base keeps our key, so only expiry costs a fetch.
     assert.deepEqual(
       fetchesPerRun,
       status === 200 ? [1, 0, 1, 0, 0, 1, 0, 1, 0, 0] : [1, 0, 1, 0, 0, 1, 0, 0, 0, 0],

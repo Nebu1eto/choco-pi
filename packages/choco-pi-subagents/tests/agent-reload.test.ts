@@ -25,7 +25,6 @@ function registryOf(...names: string[]): Map<string, AgentConfig> {
   return new Map(names.map((name) => [name, agentNamed(name)]));
 }
 
-/** A reloader whose loads settle only when the test says so. */
 function harness() {
   const loads: PendingLoad[] = [];
   const registered: string[][] = [];
@@ -61,12 +60,10 @@ test("a reload overtaken by a newer one never registers, and both callers see th
     "cwd is snapshotted per reload before awaiting",
   );
 
-  // The newer load finishes first and registers.
   h.loads[1]?.resolve(registryOf("second"));
   await second;
   assert.deepEqual(h.registered, [["second"]]);
 
-  // The older load finishes last: its stale result is discarded.
   h.loads[0]?.resolve(registryOf("first"));
   await first;
   assert.deepEqual(h.registered, [["second"]], "the overtaken load must not register");

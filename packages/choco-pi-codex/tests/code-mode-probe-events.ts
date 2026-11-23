@@ -1,16 +1,3 @@
-/**
- * Wire contracts and decoding for the Pi JSON event stream and session transcript used by the
- * live code-mode probe.
- *
- * Every schema is intentionally partial: only the fields the probe asserts on are named, and
- * unrelated payload fields (reasoning, signatures, usage, provider metadata) stay unmodelled and
- * are never read or printed. Nested payloads whose shape the probe does not own stay raw JSON and
- * are re-parsed through a narrow schema at the point of use instead of being widened into an open
- * dictionary.
- *
- * This module is imported by both the opt-in live probe and an offline regression test, so the
- * decoder the live run depends on is exercised without starting any live process.
- */
 import assert from "node:assert/strict";
 import {
   arr,
@@ -26,7 +13,6 @@ import {
 } from "@earendil-works/pi-schema";
 import type { Static } from "@earendil-works/pi-schema";
 
-// Open objects (unmodelled fields are allowed), as the former TypeBox objects were.
 export const TextBlockSchema = obj({ type: lit("text"), text: str() }, { open: true });
 export const ToolCallBlockSchema = obj(
   { type: lit("toolCall"), id: str(), name: str(), arguments: opt(unknown()) },
@@ -48,12 +34,6 @@ export const AgentTraceSchema = obj(
   { open: true },
 );
 const NullableString = opt(nullable(str()));
-/**
- * Message content is a union because the SDK's CustomMessage declares
- * `content: string | (TextContent | ImageContent)[]`, while assistant, user, and toolResult
- * messages carry a block array. Modelling only the array shape rejects the entire terminal
- * `agent_end` envelope as soon as one extension-injected custom message is present.
- */
 const MessageContentSchema = opt(union([arr(unknown()), str()]));
 export const MessageSchema = obj(
   {
@@ -114,7 +94,6 @@ export type ProbeEvent =
   | { kind: "toolStart"; event: ProbeToolStart }
   | { kind: "toolEnd"; event: ProbeToolEnd };
 
-/** Parse one newline-delimited JSON line, or report it as unparseable rather than as an event. */
 function parseJsonLine(line: string): { parsed: true; value: unknown } | { parsed: false } {
   try {
     return { parsed: true, value: JSON.parse(line) };
@@ -123,7 +102,6 @@ function parseJsonLine(line: string): { parsed: true; value: unknown } | { parse
   }
 }
 
-/** Decode one JSON stream line, ignoring every event kind the probe does not use. */
 export function decodeProbeEventLine(line: string): ProbeEvent | undefined {
   const parsed = parseJsonLine(line);
   if (!parsed.parsed) {
@@ -142,7 +120,6 @@ export function decodeProbeEventLine(line: string): ProbeEvent | undefined {
   return undefined;
 }
 
-/** Decode one session transcript line into its message, when it carries one. */
 export function decodeTranscriptLine(line: string): ProbeMessage | undefined {
   const parsed = parseJsonLine(line);
   if (!parsed.parsed) {
@@ -151,7 +128,6 @@ export function decodeTranscriptLine(line: string): ProbeMessage | undefined {
   return isTranscriptEntry(parsed.value) ? parsed.value.message : undefined;
 }
 
-/** Decode the text blocks of a content array, ignoring every other block kind. */
 export function textFromContentBlocks(blocks: readonly unknown[] | undefined): string {
   const parts: string[] = [];
   for (const block of blocks ?? []) {
@@ -162,7 +138,6 @@ export function textFromContentBlocks(blocks: readonly unknown[] | undefined): s
   return parts.join("\n");
 }
 
-/** Decode a message's text, accepting both the block-array and the plain-string content shapes. */
 export function messageText(message: ProbeMessage): string {
   const content = message.content;
   if (isStringContent(content)) {
@@ -175,7 +150,6 @@ export function resultText(result: ProbeToolResult): string {
   return textFromContentBlocks(result.content);
 }
 
-/** Decode the tool calls an assistant message issued. */
 export function toolCallsOf(messages: readonly ProbeMessage[]): ProbeToolCall[] {
   const calls: ProbeToolCall[] = [];
   for (const message of messages) {
@@ -203,7 +177,6 @@ export function finalAssistant(messages: readonly ProbeMessage[]): ProbeMessage 
   return messages.findLast((message) => message.role === "assistant");
 }
 
-/** Assert a terminal assistant message stopped normally and reported every expected answer. */
 export function assertFinal(
   message: ProbeMessage | undefined,
   subject: string,

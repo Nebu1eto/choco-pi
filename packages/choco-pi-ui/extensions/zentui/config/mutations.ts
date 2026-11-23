@@ -505,14 +505,6 @@ export function saveExtensionStatusPlacement(
   }, path);
 }
 
-/**
- * Drops one status key's placement override so the status follows
- * `defaultPlacement` again.
- *
- * The raw record has to be cleaned separately: `saveComponentsMutation`
- * overlays the normalized config onto the file's own keys, so a key deleted
- * only from the normalized copy would survive in the file.
- */
 export function clearExtensionStatusPlacement(key: string, path = configPath): PolishedTuiConfig {
   return saveComponentsMutation(
     (components) => {

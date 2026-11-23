@@ -9,11 +9,6 @@ import { CODEX_BACKEND_SETTING_ID, isBackendEnabled } from "../background/settin
 
 type AuthRegistry = Pick<ExtensionContext["modelRegistry"], "getApiKeyAndHeaders">;
 
-/**
- * Provider scope of a session model: provider, model, endpoint and, when the
- * matching native backend is switched on, the auth mode (Anthropic) or the
- * hashed Codex account. Credentials are read in memory and never kept.
- */
 export async function resolveProviderScope(
   model: Model<Api>,
   registry: AuthRegistry,
@@ -30,7 +25,6 @@ export async function resolveProviderScope(
   return scope;
 }
 
-/** The key is inspected in memory for its auth mode only, never kept. */
 async function bindAnthropicAuthMode(
   scope: ProviderScope,
   model: Model<Api>,
@@ -41,11 +35,6 @@ async function bindAnthropicAuthMode(
   if (mode !== undefined) scope.authMode = mode;
 }
 
-/**
- * Codex scopes carry a non-secret hash of the OAuth account ID; the raw token
- * and account ID are never kept. Without one the Codex backend's capability
- * check refuses every candidate (fail closed).
- */
 async function bindCodexAccount(
   scope: ProviderScope,
   model: Model<Api>,
@@ -65,7 +54,6 @@ function readCodexAccountId(apiKey: string): string | undefined {
   try {
     return extractCodexAccountId(apiKey);
   } catch {
-    // Not a Codex OAuth token: leave the scope unbound to an account.
     return undefined;
   }
 }

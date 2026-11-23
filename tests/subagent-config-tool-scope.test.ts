@@ -1,12 +1,3 @@
-/**
- * Child tool scope after the move to Pi's built-in tool_search (ledger M1/M2).
- *
- * A real AgentSession runs a scripted faux model through the production
- * boundaries: the child's scoped built-in `tool_search`, the `tool_call`
- * guard (which also sees nested `ctx.executeTool()` calls), the turn_end
- * renarrow, and choco-pi-codex's exec bridge adapter including its direct
- * `execute()` fallback for tools `ctx.executeTool()` cannot reach.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -48,7 +39,6 @@ interface Harness {
   executed: string[];
   bridgeResults: string[];
   setResponses: ReturnType<typeof createFauxCore>["setResponses"];
-  /** Register a tool after the scope is installed, as an MCP server connecting late does. */
   registerLate(name: string): void;
   close(): Promise<void>;
 }
@@ -65,12 +55,10 @@ function probe(name: string, exposure: "deferred" | "direct", executed: string[]
       return { content: [{ type: "text", text: `${name} ran` }], details: {} };
     },
   };
-  // A direct tool the lean surface leaves inactive: only a bridge could run it.
   if (exposure === "direct") tool.defaultActive = false;
   return tool;
 }
 
-/** Late-bound reachability, filled once the scope is installed. */
 interface ScopeSlot {
   isReachable?: (name: string) => boolean;
 }
@@ -106,7 +94,6 @@ async function harness(): Promise<Harness> {
       streamSimple: faux.streamSimple,
     });
     for (const tool of probes.values()) pi.registerTool(tool);
-    // The exec bridge's dispatch for a registered tool, exactly as code mode wraps it.
     pi.registerTool({
       name: "bridge",
       label: "bridge",
@@ -129,7 +116,6 @@ async function harness(): Promise<Harness> {
         return { content: [{ type: "text", text: "bridged" }], details: {} };
       },
     });
-    // Any other extension issuing a nested call through ctx.executeTool().
     pi.registerTool({
       name: "raw_bridge",
       label: "raw_bridge",
@@ -184,7 +170,6 @@ async function harness(): Promise<Harness> {
   assert.ok(model, "faux model registered");
   await session.setModel(model);
 
-  // A tool-denied child: the probes' extension loads, two of its tools are denied.
   const isReachable = installExtensionToolScope(session, {
     loader,
     toolNames: ["read", "bridge", "raw_bridge", "late_probe"],
@@ -256,7 +241,6 @@ test("a tool-denied child reaches allowed deferred tools and never denied ones",
       ["mcp__allowed__probe"],
       "no denied tool executed directly, through the bridge, or through ctx.executeTool",
     );
-    // Tool calls of one turn run in parallel, so compare without order.
     assert.deepEqual([...h.bridgeResults].sort(), [
       "direct_denied_probe:Code mode tool error [not_available]: direct_denied_probe is not available to this session.",
       "mcp__allowed__probe:ok",
@@ -280,7 +264,6 @@ test("a tool-denied child reaches allowed deferred tools and never denied ones",
 test("renarrow withdraws a deferred tool activated outside the child's reach", async () => {
   const h = await harness();
   try {
-    // Something other than the scoped search activates a denied deferred tool.
     h.session.setActiveToolsByName([...h.session.getActiveToolNames(), "mcp__denied__probe"]);
     h.setResponses([fauxAssistantMessage([fauxText("done")])]);
     await h.session.prompt("go");
@@ -294,12 +277,10 @@ test("renarrow leaves a tool another extension deactivated and still admits a la
   const h = await harness();
   try {
     assert.ok(h.session.getActiveToolNames().includes("bridge"), "in scope at install");
-    // The Codex adapter hides the direct tools Code Mode replaces this way.
     h.session.setActiveToolsByName(
       h.session.getActiveToolNames().filter((name) => name !== "bridge"),
     );
     h.registerLate("late_probe");
-    // An earlier narrowing dropped it again before the turn ended.
     h.session.setActiveToolsByName(
       h.session.getActiveToolNames().filter((name) => name !== "late_probe"),
     );

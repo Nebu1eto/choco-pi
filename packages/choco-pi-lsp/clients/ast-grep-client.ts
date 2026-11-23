@@ -1,13 +1,3 @@
-/**
- * AstGrep Client for choco-pi-lsp
- *
- * Structural code analysis using ast-grep CLI.
- * Scans files against YAML rule definitions.
- *
- * Requires: npm install -D @ast-grep/cli
- * Rules: ./rules/ directory
- */
-
 import { finite } from "./runtime-guards.ts";
 import { arr, bool, compile, obj, opt, str, unknown } from "@earendil-works/pi-schema";
 import { createSubsystemLogger } from "./extension-log.ts";
@@ -18,8 +8,6 @@ import { AstGrepRuleManager } from "./ast-grep-rule-manager.ts";
 import type { AstGrepDiagnostic, AstGrepMatch, RuleDescription } from "./ast-grep-types.ts";
 import { resolvePackagePath } from "./package-root.ts";
 import { SgRunner, type SgExecutionOptions, type SgScanResult } from "./sg-runner.ts";
-
-// --- Client ---
 
 function extractDebugAst(raw: string): string | undefined {
   const lines = raw.split(/\r?\n/);
@@ -127,7 +115,6 @@ function formatDebugAst(tree: string, source: string): string {
     .join("\n");
 }
 
-/** One symbol/import/export/member in `ast-grep outline` JSON (lines 0-based). */
 export interface AstGrepOutlineItem {
   role: string;
   symbolType: string;
@@ -210,17 +197,10 @@ export class AstGrepClient {
     this.runner = new SgRunner(verbose);
   }
 
-  /**
-   * Check if ast-grep CLI is available, auto-install if not
-   */
   ensureAvailable(): Promise<boolean> {
     return this.runner.ensureAvailable();
   }
 
-  /**
-   * Replace using a raw YAML rule that includes a `fix:` field (Phase 3/4 of #125).
-   * Dry-run returns matches for preview; apply writes fixes to disk.
-   */
   async replaceWithRule(
     ruleYaml: string,
     paths: string[],
@@ -235,8 +215,6 @@ export class AstGrepClient {
     const allMatches: AstGrepMatch[] = [];
     for (const scanPath of paths) {
       if (apply) {
-        // Stale-preview check: dry-run first. Preserve CLI failures instead of
-        // treating an invalid rule as a stale, no-match preview.
         const preCheck = await this.tempScanDetailed(scanPath, ruleYaml);
         if (preCheck.failure || preCheck.error) {
           return {
@@ -278,19 +256,11 @@ export class AstGrepClient {
     };
   }
 
-  /**
-   * Search using a raw YAML rule (Phase 4 of #125).
-   * Routes through sg scan --config rather than sg run -p.
-   * Each path is scanned independently; results are merged.
-   */
   private async tempScanDetailed(
     dir: string,
     ruleYaml: string,
     options: SgExecutionOptions = {},
   ): Promise<SgScanResult> {
-    // Keep tests and older embedders that replace the runner with the historic
-    // match-only seam working. The production SgRunner always has the detailed
-    // method, so failures cannot be mistaken for an empty result there.
     // SAFETY: Production uses SgRunner; historic test embedders provide this same optional method signature.
     const compatibleRunner = this.runner as SgRunner & {
       tempScanDetailedAsync?: (
@@ -342,9 +312,6 @@ export class AstGrepClient {
     return { matches: allMatches, totalMatches: allMatches.length };
   }
 
-  /**
-   * Dump the parsed tree-sitter AST for a snippet using ast-grep CLI.
-   */
   async dumpAst(
     source: string,
     lang: string,
@@ -427,9 +394,7 @@ export class AstGrepClient {
     } finally {
       try {
         fs.rmSync(tmpDir, { recursive: true, force: true });
-      } catch {
-        // Best-effort cleanup; never mask the validation result.
-      }
+      } catch {}
     }
   }
 
@@ -460,19 +425,10 @@ export class AstGrepClient {
     } finally {
       try {
         fs.rmSync(tmpDir, { recursive: true, force: true });
-      } catch {
-        // Best-effort cleanup; never mask the validation result.
-      }
+      } catch {}
     }
   }
 
-  /**
-   * Syntax-only code outline via `ast-grep outline` (#311) — symbols, imports,
-   * exports, and members for file or directory input. Raw, fast, no index/LSP;
-   * complements module_report (which adds the cached graph's who-uses-this,
-   * complexity, and blast radius). Returns parsed JSON; args go through
-   * `execRaw` (execFile-style, no shell), so no interpolation risk.
-   */
   async outline(
     paths: string[],
     options: {
@@ -516,9 +472,6 @@ export class AstGrepClient {
     }
   }
 
-  /**
-   * Search for AST patterns in files
-   */
   async search(
     pattern: string,
     lang: string,
@@ -554,9 +507,6 @@ export class AstGrepClient {
     };
   }
 
-  /**
-   * Search and replace AST patterns
-   */
   async replace(
     pattern: string,
     rewrite: string,
@@ -578,7 +528,6 @@ export class AstGrepClient {
     }
 
     if (!apply) {
-      // Dry-run: --json=compact shows what would change without writing
       const result = await this.runner.exec([...baseArgs, "--json=compact", ...paths]);
       return {
         matches: result.matches,
@@ -589,8 +538,6 @@ export class AstGrepClient {
       };
     }
 
-    // Stale-preview check: re-run dry-run before writing.
-    // If the pattern no longer matches, the files changed since the preview.
     const preCheck = await this.runner.exec([...baseArgs, "--json=compact", ...paths]);
     if (preCheck.error) {
       return {
@@ -611,12 +558,6 @@ export class AstGrepClient {
       };
     }
 
-    // Apply: --update-all writes the files. We do NOT recount afterwards —
-    // the original pattern no longer matches post-rewrite, and searching for
-    // the rewrite as a pattern is unreliable (multi-line rewrites and
-    // metavariable substitutions don't round-trip into a valid search
-    // pattern, yielding a false "0 matches" even on a successful apply).
-    // preCheck above already captured exactly what matched and was rewritten.
     const applyResult = await this.runner.exec([...baseArgs, "--update-all", ...paths]);
     if (applyResult.error) {
       return {
@@ -636,9 +577,6 @@ export class AstGrepClient {
     };
   }
 
-  /**
-   * Run a one-off scan with a temporary rule and configuration
-   */
   private async runTempScanAsync(
     dir: string,
     ruleId: string,
@@ -649,9 +587,6 @@ export class AstGrepClient {
     return this.runner.tempScanAsync(dir, ruleId, ruleYaml, timeout);
   }
 
-  /**
-   * Find similar functions by comparing normalized AST structure
-   */
   async findSimilarFunctions(
     dir: string,
     lang: string = "typescript",
@@ -698,9 +633,6 @@ message: found
       .map(([pattern, functions]) => ({ pattern, functions }));
   }
 
-  /**
-   * Extract function name from match text
-   */
   private extractFunctionName(text: string): string | null {
     return text.match(/function\s+(\w+)/)?.[1] ?? null;
   }
@@ -718,17 +650,12 @@ message: found
       .replace(/\s+/g, " ")
       .trim();
 
-    // Extract just the body structure
     const bodyMatch = normalizedText.match(/\{(.*)\}/);
     const body = bodyMatch ? bodyMatch[1].trim() : normalizedText;
 
-    // Use first 200 chars as signature
     return body.slice(0, 200);
   }
 
-  /**
-   * Scan for exported function names in a directory
-   */
   async scanExports(dir: string, lang: string = "typescript"): Promise<Map<string, string>> {
     const exports = new Map<string, string>();
     const ruleYaml = `id: find-functions
@@ -763,9 +690,6 @@ message: found
     return this.runner.formatMatches(matches, isDryRun, maxItems, showModeIndicator);
   }
 
-  /**
-   * Format diagnostics for LLM consumption
-   */
   formatDiagnostics(diags: AstGrepDiagnostic[]): string {
     if (diags.length === 0) return "";
 

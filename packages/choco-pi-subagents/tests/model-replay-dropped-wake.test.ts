@@ -1,25 +1,3 @@
-/**
- * Replays two counterexamples TLC found in formal/tla/subagent-run (now the
- * mutation dropped-wake-publishes-early) against the real manager.
- *
- * A worktree agent parks on a usage limit; at the reset its continuation is
- * queued behind another agent; the user stops it while queued. The finalizer
- * (settleDroppedWake) runs the deferred worktree cleanup, which appends the
- * retained-worktree note to record.result, and then calls onComplete. Before
- * the fix the stop published the stopped generation at once (stopQueuedRecord),
- * so in that window:
- *
- * - StaleInert: a resume was admitted (the generation was published), and the
- *   late onComplete reported the record while it belonged to the new run.
- * - ReadSeesFinal: a result read saw text that the cleanup changed later.
- *
- * The finalizer now publishes after the cleanup, as settleParked does; until
- * then the stopped record is terminal-unpublished, which resumeBlockedByRun
- * treats as busy.
- *
- * Ordering is forced with the runner's deferred promises and mock timers; the
- * only real I/O is the git worktree, which the test waits for by condition.
- */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
@@ -76,10 +54,6 @@ interface Scenario {
   remove(): void;
 }
 
-/**
- * Trace steps 2-12: A (worktree) runs, B queues, A parks on a confirmed quota
- * limit (B starts), the reset is confirmed, A's continuation queues behind B.
- */
 async function queuedContinuation(t: TestContext): Promise<Scenario> {
   const env = await createUsageLimitEnv();
   t.after(() => env.dispose());
@@ -135,16 +109,12 @@ async function queuedContinuation(t: TestContext): Promise<Scenario> {
 test("a stopped queued continuation's late completion never reports a newer generation", async (t) => {
   const s = await queuedContinuation(t);
   try {
-    // Step 12: stop the queued continuation.
     assert.equal(s.h.manager.abort(s.id), true);
     assert.equal(s.record.status, "stopped");
     const stoppedGeneration = s.record.resultGeneration;
     assert.deepEqual(s.h.completions, [], "completion waits for the worktree cleanup");
 
-    // Step 13: resume in the same tick, before the git cleanup settles.
     const resumed = await s.h.manager.resume(s.id, "again", undefined, background);
-    // Compare a boolean, never the record: a failing assert on an AgentRecord
-    // diffs its whole session graph and runs for minutes.
     assert.equal(
       resumed === undefined,
       true,
@@ -152,7 +122,6 @@ test("a stopped queued continuation's late completion never reports a newer gene
     );
     assert.equal(s.record.resultGeneration, stoppedGeneration);
 
-    // Step 14: the deferred cleanup settles, then publication and onComplete.
     await waitFor(() => s.h.completions.length > 0, "the dropped wake's completion");
     await flush();
     assert.deepEqual(
@@ -170,7 +139,6 @@ test("a stopped queued continuation's result is final when it is published", asy
   const s = await queuedContinuation(t);
   try {
     assert.equal(s.h.manager.abort(s.id), true);
-    // get_subagent_result's synchronous claim before the cleanup settles.
     const early = claimSubagentResultRead(s.record);
     assert.equal(early.kind, "terminal-pending", "not readable before the cleanup settles");
 

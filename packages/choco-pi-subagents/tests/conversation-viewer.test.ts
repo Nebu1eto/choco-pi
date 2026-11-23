@@ -1,11 +1,3 @@
-/**
- * conversation-viewer.test.ts — The viewer renders the subagent transcript
- * through the same transcript components as the main Pi agent
- * (UserMessageComponent / AssistantMessageComponent / ToolExecutionComponent /
- * BashExecutionComponent), giving the overlay — and any zentui install that
- * restyles those components — the main agent's look and feel.
- */
-
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AssistantMessage, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
@@ -117,7 +109,6 @@ function makeSession(messages: unknown[]) {
   const listeners: AgentSessionEventListener[] = [];
   const session = partialFixture<AgentSession>({
     // SAFETY: each fixture builds pi-ai UserMessage / AssistantMessage /
-    // ToolResultMessage values, all members of the session message union.
     messages: messages as AgentSession["messages"],
     subscribe: (listener: AgentSessionEventListener) => {
       listeners.push(listener);
@@ -437,8 +428,6 @@ test("settling flushes the throttled tail into its final render immediately", ()
   fire({ type: "message_start", message: tail });
   assert.ok(rendered().includes("Half"));
 
-  // The final delta lands together with the status flip, inside the throttle
-  // window: the settle must bypass the window, not wait 100ms.
   tail.content = [{ type: "text", text: "Half — the full answer." }];
   messages.push(tail);
   fire({ type: "message_end", message: tail });
@@ -634,7 +623,6 @@ function sendCompletion(session: AgentSession, display: boolean): Promise<void> 
       display,
       details: completionDetails,
     },
-    // Exercise descendant delivery without starting a provider-backed turn.
     { deliverAs: "steer", triggerTurn: false },
   );
 }
@@ -731,7 +719,6 @@ test("focused tool renderers resolve historical tools and override registered an
       });
     },
   ]);
-  // The SDK fixture disables executable tools; expose its real registered definition as the base.
   session.getToolDefinition = (name) => session.extensionRunner.getToolDefinition(name);
   assert.ok(session.getToolDefinition("registered-render-test"));
   assert.equal(session.getToolDefinition("resolver-only"), undefined);
@@ -845,8 +832,6 @@ test("/btw viewers hide inherited main-session history in overlay and focus", ()
     ...makeAssistantMessage([{ type: "text", text: "Inherited main answer" }]),
     timestamp: forkedAt - 4000,
   };
-  // Pi re-creates compaction summaries on rebuild with the source entry's
-  // timestamp, so an inherited summary keeps a pre-fork timestamp.
   const inheritedSummary = {
     role: "compactionSummary",
     summary: "Inherited compaction summary",
@@ -912,14 +897,13 @@ test("the reply composer accepts multiline input and sends it on Enter", () => {
 
   viewer.handleInput("\r");
   viewer.handleInput("first line");
-  viewer.handleInput("\x1b[13;2~"); // Shift+Enter
+  viewer.handleInput("\x1b[13;2~");
   viewer.handleInput("second line");
   const draft = rendered();
   assert.match(draft, /first line/);
   assert.match(draft, /second line/);
   assert.match(draft, /Shift\+Enter newline/);
   assert.deepEqual(sent, [], "Shift+Enter inserts a newline instead of sending");
-  // No margin rows: the draft sits directly between the footer rule and hint.
   const rows = viewer.render(120).map(stripTerminalSequences);
   const firstRow = rows.findIndex((line) => line.includes("first line"));
   const rule = /^│ ─+ │$/;

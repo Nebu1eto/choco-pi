@@ -1,10 +1,3 @@
-/**
- * Anthropic native backend: capability gating, preparation, versioned details and the full
- * capture -> lane -> draft -> replay loop through a real `createAgentSession`
- * (INSTALLED Anthropic adapter, fake transports, no network): once with the
- * backend driven directly, once through the registered extension's owner and
- * coordinator (preparation, adoption with the owner's draft vetting, replay).
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -111,7 +104,6 @@ const SCOPE: ProviderScope = {
   baseUrl: BASE_URL,
   authMode: "api-key",
 };
-/** Synthetic signed block with an unknown field; the signature is a placeholder. */
 const BLOCK = {
   type: "compaction",
   content: "NATIVE backend synthetic prefix facts",
@@ -121,7 +113,6 @@ const BLOCK = {
 
 type Frame = JsonObject & { readonly type: string };
 
-/** Every key path in insertion order, so added or reordered fields are visible. */
 function keyPaths<T>(value: T, prefix = ""): string[] {
   if (!(value instanceof Object)) return [];
   return Object.entries(value).flatMap(([key, child]) => [
@@ -262,10 +253,6 @@ function isPrepared(
 ): result is PreparedCheckpoint<AnthropicDetails> {
   return !("ok" in result);
 }
-
-// ---------------------------------------------------------------------------
-// Synthetic capture (unit-level preparation tests)
-// ---------------------------------------------------------------------------
 
 const usage = {
   input: 1,
@@ -425,7 +412,6 @@ test("details persist exactly through JSON and the candidate record contract", a
   assert.ok(jsonEqual(restored, result.details), "structural equality");
   assert.ok(sameBlock(restored.block, result.details.block), "exact content and signature");
   assert.deepEqual(keyPaths(restored.block), keyPaths(BLOCK), "no added or reordered fields");
-  // Coordinator-added adoption keys are tolerated; malformed details are rejected.
   assert.ok(
     isAnthropicDetails({ ...restored, candidateId: "c", prefixFingerprint: "f", ownerKey: "o" }),
   );
@@ -441,7 +427,6 @@ test("details persist exactly through JSON and the candidate record contract", a
     false,
     "kept entry differs from the cut",
   );
-  // The shared candidate record accepts the draft unchanged.
   const record = {
     customType: "choco-compaction-candidate",
     schemaVersion: 1,
@@ -546,19 +531,16 @@ test("failures cool the combination down, boundedly, and no request is repeated"
   assert.equal(lane.sent.length, 1, "no second request while cooling down");
   clock += 1_000;
   assert.deepEqual(gate.check(SCOPE), { supported: true });
-  // Hard failures back off exponentially but never beyond the cap.
   for (let index = 0; index < 6; index++) gate.recordFailure(SCOPE, "malformed");
   assert.equal(gate.cooldownRemaining(SCOPE), 3_000);
   gate.recordSuccess(SCOPE);
   assert.deepEqual(gate.check(SCOPE), { supported: true });
-  // Transient failures honor retry-after and only cool down after a streak.
   gate.recordFailure(SCOPE, "529");
   gate.recordFailure(SCOPE, "529");
   assert.deepEqual(gate.check(SCOPE), { supported: true });
   gate.recordFailure(SCOPE, "429", 2_000);
   assert.deepEqual(gate.check(SCOPE), { supported: false, reason: "429" });
   assert.equal(gate.cooldownRemaining(SCOPE), 2_000);
-  // Pre-request deferrals never count.
   gate.recordSuccess(SCOPE);
   gate.recordFailure(SCOPE, "no-legal-cut");
   gate.recordFailure(SCOPE, "canceled");
@@ -643,10 +625,6 @@ test("preparation refusals happen before any request", async () => {
     assert.equal(lane.sent.length, 0, `${item.name}: no network`);
   }
 });
-
-// ---------------------------------------------------------------------------
-// Full loop through a real host session
-// ---------------------------------------------------------------------------
 
 const STEP_TOOL = defineTool({
   name: "step",
@@ -773,14 +751,12 @@ test(
       sessionId = manager.getSessionId();
       await session.prompt("NATIVE-GO");
 
-      // The preferred cut (just before GO) keeps C|GO adjacent users: legality moves it back to B.
       assert.equal(chosenCuts.length, 2);
       assert.notEqual(chosenCuts[0], b);
       assert.equal(chosenCuts[1], b);
       const [checkpoint] = prepared;
       assert.ok(checkpoint);
       assert.equal(checkpoint.draft.firstKeptEntryId, c);
-      // The lane carried exactly the frozen wire prefix [A, B] and nothing after it.
       assert.equal(lane.sent.length, 1);
       const laneBody = lane.sent[0]?.body;
       assert.ok(laneBody);
@@ -788,7 +764,6 @@ test(
       assert.ok(lane.sent[0]?.text.includes("NATIVE-PREFIX-B"));
       assert.equal(lane.sent[0]?.text.includes("NATIVE-KEPT-C"), false);
       assert.equal(lane.sent[0]?.text.includes("NATIVE-GO"), false);
-      // The draft committed as a real compaction entry with exact details.
       const committed = manager
         .getBranch()
         .filter((entry): entry is CompactionEntry => entry.type === "compaction");
@@ -801,7 +776,6 @@ test(
       assert.ok(
         isCompactionBlock(committedBlock) && sameBlock(committedBlock, checkpoint.details.block),
       );
-      // Request 2 replayed the block first, the kept tail after it, prefix gone.
       assert.equal(foreground.sent.length, 2, "no abort, no extra request");
       const replay = foreground.sent[1];
       assert.ok(replay?.body);
@@ -824,10 +798,6 @@ test(
   },
 );
 
-// ---------------------------------------------------------------------------
-// The same loop through the registered extension's owner and coordinator
-// ---------------------------------------------------------------------------
-
 const OWNER_MODEL: Model<"anthropic-messages"> = {
   ...MODEL,
   provider: "anthropic",
@@ -835,7 +805,6 @@ const OWNER_MODEL: Model<"anthropic-messages"> = {
 };
 const OWNER_OAUTH_KEY = "sk-ant-oat01-native-owner-non-secret-placeholder";
 
-/** The owner loop's lane: its n-th answer is a distinct block, so the adopted one is identifiable. */
 function ownerBlock(index: number) {
   return {
     type: "compaction",
@@ -869,7 +838,6 @@ const isOwnerBlock = compile(
 const isOwnerString = compile(str()).check;
 const isOwnerBlocks = compile(arr(unknown())).check;
 
-/** The test's own reading of a wire request: `<role>:<text>` per message. */
 function ownerTurns(body: WireBody | undefined): string[] {
   return (body?.messages ?? []).map((message) => {
     const content: unknown = message.content;
@@ -884,10 +852,6 @@ function ownerTurns(body: WireBody | undefined): string[] {
   });
 }
 
-/**
- * The lane prefix: the last captured request (three prompts, two answers), the
- * system prompt carried separately.
- */
 const OWNER_LANE_TURNS = [
   "user:NATIVE-OWNER-0",
   "assistant:NATIVE-OWNER-ACK-0",
@@ -910,7 +874,6 @@ test(
   async () => {
     const dir = await mkdtemp(join(tmpdir(), "choco-pi-native-owner-"));
     const sidecar = join(dir, "background-compaction.json");
-    // Native lane only; the usage threshold is never crossed, so only the explicit request prepares.
     await writeFile(
       sidecar,
       JSON.stringify({
@@ -1010,7 +973,6 @@ test(
       assert.ok(request.accepted, JSON.stringify(request));
       await waitUntil("a ready native candidate", () => coordinator.status().state === "ready");
       assert.equal(lane.sent.length, 1, "one paid lane request");
-      // Prefix fidelity: the lane received the turns before the legal cut, as written here.
       assert.deepEqual(ownerTurns(lane.sent[0]?.body), OWNER_LANE_TURNS);
       assert.ok(
         parseBetaHeader(lane.sent[0]?.headers.get("anthropic-beta") ?? null).includes(COMPACT_BETA),
@@ -1022,7 +984,6 @@ test(
       assert.ok(isAnthropicDetails(record.checkpoint.draft.details));
       assert.deepEqual(record.checkpoint.draft.details.block, ownerBlock(0));
 
-      // The next prompt's input hook adopts the ready candidate before its first request.
       const before = foreground.sent.length;
       await session.prompt("NATIVE-OWNER-NEXT");
       const committed = manager
@@ -1032,7 +993,6 @@ test(
       const [entry] = committed;
       assert.ok(entry && isAnthropicDetails(entry.details), "the native draft was committed");
       assert.deepEqual(entry.details.block, ownerBlock(0));
-      // The owner vetted this draft: its identity names this owner, and its kept entry is live.
       const identity = readAdoptionIdentity(entry);
       assert.equal(identity?.ownerKey, ownerKey);
       assert.ok(manager.getBranch().some((item) => item.id === entry.firstKeptEntryId));
@@ -1042,7 +1002,6 @@ test(
         [["anthropic-native", entry.id]],
       );
       assert.equal(coordinator.status().state, "installed");
-      // That prompt's request already replays the adopted block first, prefix gone.
       assert.equal(foreground.sent.length, before + 1, "no extra or aborted request");
       const replay = foreground.sent.at(-1);
       assert.deepEqual(replay?.body?.messages[0], { role: "assistant", content: [ownerBlock(0)] });
@@ -1061,7 +1020,6 @@ test(
   },
 );
 
-/** The validated candidate records persisted on the session, in order. */
 function persistedCandidates(manager: SessionManager) {
   return manager.getEntries().flatMap((entry) => {
     if (entry.type !== "custom") return [];

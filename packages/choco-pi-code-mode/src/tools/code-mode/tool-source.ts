@@ -13,14 +13,8 @@ export function scopeAllToolsToDeferredCustom(
   ctx?: ExtensionContext,
   registeredNames: readonly string[] = registeredToolNames(registeredToolRunner(ctx)),
 ): string {
-  // Deferred tools are the ones kept out of the prompt, so ALL_TOOLS is how a
-  // script discovers them: configured custom tools and the bridged Pi tools
-  // (LSP, MCP, sub-agents, sessions) alike.
   const deferredNames = tools.filter((tool) => tool.deferLoading).map((tool) => tool.name);
   const cellNames = tools.map((tool) => tool.name);
-  // Registered Pi tools the bridge never exposes and this cell lacks; scripts
-  // read them as ALL_TOOLS.direct_only (a non-enumerable array property, so
-  // the catalog keeps its array shape).
   const directOnly = registeredNames.filter(
     (name) => BRIDGE_EXCLUDED_TOOLS.has(name) && !cellNames.includes(name),
   );

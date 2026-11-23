@@ -28,7 +28,7 @@
     {
       "file": "packages/choco-pi-code-mode/src/tools/apply-patch/executor.ts",
       "symbol": "executePatchWithRust",
-      "hash": "sha256:9468c5bae13e7da838aed379562d8bcbe189652f35f1d838e4a670f099f96041"
+      "hash": "sha256:a6e472ff3c213dac69ad488bac75a99b23313f146f02f3a0568c953a0af8bf39"
     },
     {
       "file": "packages/choco-pi-code-mode/src/tools/apply-patch/context-preflight.ts",
@@ -54,6 +54,6 @@
     }
   ],
   "checkedAt": {
-    "commit": "e55757c6a33eaf3c20782f2f2fd30b890f120cf3"
+    "commit": "652c9663a4e0604748c5e76a8c4c8d833ba28714"
   }
 }

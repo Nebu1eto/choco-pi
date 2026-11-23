@@ -1,6 +1,3 @@
-/**
- * Live ACP session registry: creation, restore, idle reaping, and the bounded live-session cap.
- */
 import { type McpServer, RequestError } from "@agentclientprotocol/sdk";
 import { type BoundaryValue, isNumber, isString } from "../boundary.ts";
 import { SessionStore } from "./session-store.ts";
@@ -25,7 +22,6 @@ export const DEFAULT_PI_ACP_MAX_LIVE_SESSIONS = 8;
 
 export const DEFAULT_PI_ACP_SESSION_IDLE_MS = 10 * 60_000;
 
-/** Decode a numeric setting supplied as a number or an integral decimal string. */
 export function integerSetting(value: BoundaryValue): number | undefined {
   let parsed = Number.NaN;
   if (isNumber(value)) parsed = value;
@@ -52,7 +48,6 @@ export function boundedSessionIdleMs(value: BoundaryValue): number {
 
 export const PI_ACP_SESSION_IDLE_MS = boundedSessionIdleMs(process.env.PI_ACP_SESSION_IDLE_MS);
 
-/** Cancel a session's dialogs, then await its child's bounded shutdown. */
 export async function shutdownSession(session: PiAcpSession, graceMs?: number): Promise<void> {
   await session.closeExtensionUi();
   await session.proc.shutdown?.(graceMs);
@@ -74,7 +69,6 @@ export class SessionManager {
     if (!this.active || this.generation !== generation) throw new PiRpcStaleContextError();
   }
 
-  /** Dispose all sessions and their underlying pi subprocesses. */
   disposeAll(): void {
     if (!this.active) return;
     this.active = false;
@@ -87,7 +81,6 @@ export class SessionManager {
     }
   }
 
-  /** Invalidate every session synchronously, then await bounded child shutdown. */
   async shutdownAll(graceMs?: number): Promise<void> {
     if (!this.active) return;
     this.active = false;
@@ -100,15 +93,10 @@ export class SessionManager {
     await Promise.all(shutdowns);
   }
 
-  /** Get a registered session if it exists (no throw). */
   maybeGet(sessionId: string): PiAcpSession | undefined {
     return this.sessions.get(sessionId);
   }
 
-  /**
-   * Dispose a session's underlying pi process and remove it from the manager.
-   * Used when clients explicitly reload a session and we want a fresh pi subprocess.
-   */
   close(sessionId: string): void {
     this.recency.delete(sessionId);
     const s = this.sessions.get(sessionId);
@@ -117,9 +105,7 @@ export class SessionManager {
     void s.closeExtensionUi().finally(() => {
       try {
         s.proc.dispose?.();
-      } catch {
-        // ignore
-      }
+      } catch {}
     });
   }
 
@@ -130,7 +116,6 @@ export class SessionManager {
     session.reap();
   }
 
-  /** Mark one session as active and close only sessions beyond the bounded LRU cap. */
   retainRecent(activeSessionId: string, maxLive: number): string[] {
     if (this.sessions.has(activeSessionId)) {
       this.recency.delete(activeSessionId);
@@ -158,8 +143,6 @@ export class SessionManager {
     const store = this.store;
     this.assertCurrent(generation);
 
-    // Let pi manage session persistence in its default location (~/.pi/agent/sessions/...)
-    // so sessions are visible to the regular `pi` CLI.
     let proc: PiRpcProcess;
     try {
       proc = await PiRpcProcess.spawn({
@@ -227,10 +210,6 @@ export class SessionManager {
     return s;
   }
 
-  /**
-   * Used by session/load: create a session object bound to an existing sessionId/proc
-   * if it isn't already registered.
-   */
   getOrCreate(
     sessionId: string,
     params: SessionCreateParams & { proc: PiRpcProcessLike },

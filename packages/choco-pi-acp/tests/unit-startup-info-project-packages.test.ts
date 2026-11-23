@@ -11,7 +11,6 @@ import type {
 } from "../src/pi-rpc/protocol.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 
-/** A session manager that always resolves to one prepared session. */
 class SingleSessionManager implements SessionManagerLike {
   private readonly session: PiAcpSession;
 
@@ -42,7 +41,6 @@ class SingleSessionManager implements SessionManagerLike {
   async shutdownAll(): Promise<void> {}
 }
 
-/** A Pi process fake reporting one model and no commands. */
 class SingleModelProcess implements PiRpcProcessLike {
   onEvent(_handler: (ev: PiRpcEvent) => void): () => void {
     return () => {};
@@ -65,7 +63,6 @@ class SingleModelProcess implements PiRpcProcessLike {
   }
 }
 
-/** Replace `setTimeout` with a recorder so scheduled work never runs during a test. */
 class TimerRecorder {
   readonly callbacks: Array<() => void> = [];
 
@@ -76,7 +73,6 @@ class TimerRecorder {
     const callbacks = this.callbacks;
     const record = (callback: () => void): NodeJS.Timeout => {
       callbacks.push(callback);
-      // Hand back a genuine (already cleared) handle so callers can still unref it.
       const handle = realSetTimeout(() => {}, 0);
       clearTimeout(handle);
       return handle;
@@ -96,7 +92,6 @@ test("PiAcpAgent: startup info includes project-level packages from .pi/settings
 
   const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
 
-  // Create a fake global agent dir (empty settings)
   const agentDir = mkdtempSync(join(tmpdir(), "pi-acp-global-"));
   writeFileSync(
     join(agentDir, "settings.json"),
@@ -105,7 +100,6 @@ test("PiAcpAgent: startup info includes project-level packages from .pi/settings
   );
   process.env.PI_CODING_AGENT_DIR = agentDir;
 
-  // Create a fake project dir with .pi/settings.json containing packages
   const projectDir = mkdtempSync(join(tmpdir(), "pi-acp-project-"));
   const piDir = join(projectDir, ".pi");
   mkdirSync(piDir);
@@ -126,8 +120,6 @@ test("PiAcpAgent: startup info includes project-level packages from .pi/settings
 
   const agent = new PiAcpAgent(asAgentConn(conn), {});
   const sessions: SessionManagerLike = new SingleSessionManager(session);
-  // `sessions` is a private implementation detail of `PiAcpAgent`; `Object.assign`
-  // installs the fake through the same property without weakening any declared type.
   Object.assign(agent, { sessions });
 
   const timers = new TimerRecorder();

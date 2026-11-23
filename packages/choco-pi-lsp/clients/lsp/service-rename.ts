@@ -1,9 +1,3 @@
-/**
- * Symbol rename and file rename (willRenameFiles/didRenameFiles) for {@link LSPService}.
- *
- * Extracted from `clients/lsp/index.ts`; behavior is unchanged.
- */
-
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL, URL } from "node:url";
@@ -59,9 +53,6 @@ export function destinationUriPreservingSpelling(
     if (oldName.toLowerCase() !== expectedOldName.toLowerCase()) {
       return canonicalDestination();
     }
-    // Keep non-canonical percent-encoding choices from the URI that was
-    // opened (for example `%2E` instead of `.`) while using the new path's
-    // exact basename. The authority and directory spelling are preserved too.
     for (const match of oldRawName.matchAll(/%([0-9a-f]{2})/gi)) {
       const encoded = match[0];
       const decoded = String.fromCharCode(Number.parseInt(match[1], 16));
@@ -73,12 +64,6 @@ export function destinationUriPreservingSpelling(
   }
 }
 
-// #1621: bound a single rename-propagation notify call and classify how it
-// failed. `withTimeout` rejects with the deterministic `"Timeout after Nms"`
-// message on the timer branch (see deadline-utils.ts) — the same signal
-// `navRequest`/`clientPingLiveness` in clients/lsp/client.ts already match on
-// to tell a timeout from a genuine rejection, reused here rather than forking
-// a second convention.
 export type RenameNotifyResult =
   | { ok: true }
   | { ok: false; error: string; disposition: RenameNotifyDisposition };
@@ -100,7 +85,6 @@ export async function runRenameNotify(
   }
 }
 
-/** Implements {@link LSPService.rename}. */
 export async function rename(
   core: LSPServiceInternals,
   filePath: string,
@@ -113,7 +97,6 @@ export async function rename(
   return spawned.client.rename(filePath, line, character, newName);
 }
 
-/** Implements {@link LSPService.renameFile}. */
 export async function renameFile(
   core: LSPServiceInternals,
   oldFilePath: string,
@@ -122,11 +105,6 @@ export async function renameFile(
 ): Promise<LSPRenameFileResult> {
   const cwd = options.cwd;
   const apply = options.apply ?? false;
-  // Validate the complete resource operation before asking any server for
-  // willRenameFiles edits. This is a read-only preflight, but it reuses the
-  // same confinement, realpath/symlink, existence, and destination checks as
-  // the eventual apply path, so an invalid rename cannot first mutate an
-  // in-workspace file through returned text edits (including previews).
   await validateWorkspaceEdit(
     {
       documentChanges: [
@@ -218,9 +196,6 @@ export async function renameFile(
   const closeFailures: RenameNotifyFailure[] = [];
   await Promise.all(
     openDocuments.map(async ({ serverId, client }) => {
-      // #1621: bounded so one wedged server's didClose write cannot stall
-      // this Promise.all — and therefore the whole rename — for every
-      // other client alongside it.
       const result = await runRenameNotify(
         () => client.closeDocument(oldFilePath),
         RENAME_NOTIFY_TIMEOUT_MS,
@@ -241,22 +216,9 @@ export async function renameFile(
         status: "failed",
       });
     }
-    // Do not rename or send didRenameFiles while any server still has the
-    // old document open. Re-open/resync every affected client so a partial
-    // close cannot leave an in-memory document behind the disk contents.
-    // Reopen with the document's ACTUAL language ID (the same resolver every
-    // genuine open uses) rather than a hardcoded "plaintext" fallback — a
-    // wrong languageId here degrades that server's diagnostics until the
-    // next genuine open (#1147 P3-7).
     const content = await fs.readFile(oldFilePath, "utf-8");
     const languageId = getLanguageId(oldFilePath) ?? "plaintext";
     const resyncFailures: RenameNotifyFailure[] = [];
-    // #1621 F1: the resync write is the SAME class of notify as the didClose
-    // it is repairing after — a pipe that is wedged for didClose is wedged
-    // for every subsequent write on it too, so this bare await reintroduced
-    // the exact unbounded primitive one Promise.all up. Bound it with the
-    // same budget and record the disposition rather than let a wedged
-    // resync silently move the hang here instead of removing it.
     await Promise.all(
       openDocuments.map(async ({ serverId, client }) => {
         const resyncResult = await runRenameNotify(
@@ -273,10 +235,6 @@ export async function renameFile(
       }),
     );
     if (resyncFailures.length > 0) {
-      // A resync failure is not swallowed: the affected client is left with
-      // no open document at all until its next genuine open, so this is
-      // logged for the same reason lsp_client_shutdown records a forced
-      // teardown — a degraded resync must be countable from the log.
       logLatency({
         type: "phase",
         phase: "lsp_rename_resync_failed",
@@ -304,9 +262,6 @@ export async function renameFile(
   }
   let renameApplied;
   try {
-    // Route the resource mutation through the same preflight confinement,
-    // realpath and symlink policy as all other workspace edits. Do not
-    // duplicate that security boundary with a direct mkdir/rename pair.
     renameApplied = await applyWorkspaceEdit(
       {
         documentChanges: [
@@ -336,10 +291,6 @@ export async function renameFile(
   await Promise.all(
     activeClients.map(async ({ serverId, client }) => {
       const opened = openDocuments.find((entry) => entry.serverId === serverId);
-      // #1621: bounded for the same reason as the didClose notify above —
-      // rename propagation is best-effort advice to servers, not a
-      // correctness gate, so a wedged client's notify must not stall the
-      // healthy clients settling alongside it in this Promise.all.
       const result = await runRenameNotify(
         () =>
           opened?.oldUri

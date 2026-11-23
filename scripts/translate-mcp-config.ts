@@ -28,7 +28,6 @@ import { piAgentDir, type PiPathEnv } from "../profile/extensions/lib/pi-paths.t
 
 class McpTranslationError extends Error {}
 
-/** The file translated without `--file`: `mcp.json` in Pi's agent directory. */
 export function defaultMcpConfigPath(
   env: PiPathEnv = process.env,
   home: string = homedir(),
@@ -36,7 +35,6 @@ export function defaultMcpConfigPath(
   return resolve(piAgentDir(env, home), "mcp.json");
 }
 
-/** A closed record whose keys must all match `pattern` (pi-schema's map() accepts any key). */
 function patternMap<T>(pattern: string, value: Schema<T>): Schema<Record<string, T>> {
   return {
     type: "object",
@@ -133,10 +131,8 @@ type LegacyConfig = Static<typeof legacySchema>;
 const isLegacyConfig = compile(legacySchema).check;
 const isBuiltinConfig = compile(builtinSchema).check;
 
-/** The retired adapter always listened here (mcp-oauth-provider.ts DEFAULT_OAUTH_CALLBACK_PORT). */
 const LEGACY_CALLBACK_PORT = 19876;
 
-/** The adapter also honored MCP_OAUTH_CALLBACK_PORT; a valid value overrides the default port. */
 function legacyCallbackUrl(): string {
   const raw = process.env.MCP_OAUTH_CALLBACK_PORT;
   const parsed = raw === undefined ? Number.NaN : Number(raw);
@@ -151,16 +147,9 @@ export type McpTranslation = Readonly<{
 }>;
 
 export type McpTranslationOptions = Readonly<{
-  /** Servers to leave out of the translated output (recorded as a notice). */
   skip?: readonly string[];
 }>;
 
-/**
- * The adapter's top-level `settings` block only configured the retired adapter itself (generated
- * direct tools, tool prefixes, host discovery). Pi's built-in MCP has no top-level equivalent and
- * uses per-server `exposure`/`toolExposure` instead, so the block is dropped with a notice that
- * names only its keys.
- */
 export function translateMcpConfig(
   raw: LegacyConfig,
   options: McpTranslationOptions = {},
@@ -195,7 +184,6 @@ export function translateMcpConfig(
           ...rest
         } = server;
         const translated = { ...rest };
-        // Unsupported adapter fields have already been rejected; retain only validated built-in fields.
         for (const field of unsupported) Reflect.deleteProperty(translated, field);
         if (disabled !== undefined) translated.enabled = !disabled;
         if (requestTimeoutMs !== undefined) translated.timeout = requestTimeoutMs / 1000;
@@ -208,9 +196,6 @@ export function translateMcpConfig(
             Object.keys(server.headers ?? {}).some((key) => key.toLowerCase() === "authorization")
           )
             throw new McpTranslationError(`Conflicting Authorization header for ${name}`);
-          // The adapter ran "!command" values and used the output as the token. Pi runs a
-          // "!command" only when it is the whole header value, so wrap it to keep the scheme.
-          // "!!" was the adapter's escape for a literal leading "!".
           const authorization = bearerToken.startsWith("!!")
             ? `Bearer ${bearerToken.slice(1)}`
             : bearerToken.startsWith("!")
@@ -226,9 +211,6 @@ export function translateMcpConfig(
           throw new McpTranslationError(`Unsupported bearerToken without bearer auth for ${name}`);
         if (auth instanceof Object) Object.assign(translated, { auth });
         if (oldOauth === false || auth === false) {
-          // Pi has no "no authentication" switch for URL servers: OAuth is attempted only when
-          // the server answers with a 401 challenge. Omitting both fields is the closest
-          // equivalent; a server that never challenges is never prompted.
           notices.push(
             `Dropped explicit auth/OAuth disablement for ${name}: Pi only starts OAuth on a 401 challenge`,
           );
@@ -263,8 +245,6 @@ export function translateMcpConfig(
             !Object.hasOwn(config, "callbackUrl") &&
             !Object.hasOwn(config, "callbackPort")
           ) {
-            // A pre-registered client has the adapter's fixed redirect URI on file; Pi would
-            // otherwise pick a random port and the authorization server would reject it.
             Object.assign(mapped, { callbackUrl: legacyCallbackUrl() });
             notices.push(
               `Pinned oauth.callbackUrl for ${name} to the adapter's registered redirect URI`,
@@ -346,7 +326,6 @@ export function translateMcpConfig(
   return { config: result, notices };
 }
 
-/** All strings are withheld, including credentials embedded in URLs, args, and environment values. */
 function redact(value: JsonValue): JsonValue {
   if (isString(value)) return "[REDACTED]";
   if (Array.isArray(value)) return value.map(redact);

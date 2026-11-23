@@ -380,7 +380,6 @@ async function pruneStaleTempRoots(currentTempRoot: string | undefined): Promise
         }
         const staleTimestampMs = ownershipMarker.leaseUpdatedAtMs ?? ownershipMarker.createdAtMs;
         if (staleTimestampMs >= cutoffTime) return;
-        // Preserve roots when owner liveness cannot be proven; safe cleanup beats deleting another live process's files.
         if ((await getMarkerOwnerLiveness(ownershipMarker)) !== "dead") return;
 
         const stats = await stat(path).catch(() => undefined);
@@ -431,9 +430,7 @@ function registerExitCleanup(): void {
         } else {
           removeTempRootChildrenExceptSync(tempRoot, protectedChildren);
         }
-      } catch {
-        // Best-effort cleanup only.
-      }
+      } catch {}
     }
   });
 }

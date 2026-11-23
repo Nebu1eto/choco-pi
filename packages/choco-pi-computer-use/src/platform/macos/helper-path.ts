@@ -22,15 +22,6 @@ function defaultDirectoryIsWritable(directoryPath: string): boolean {
   }
 }
 
-/**
- * Resolve one stable helper location for both installation and runtime use.
- * Existing writable system installs stay in place; all other installs are
- * per-user so standard macOS accounts never require administrator access.
- *
- * Synchronous on purpose: `src/platform/macos/helper.ts` resolves
- * `HELPER_APP_PATH` once at module load, and the extension module graph must
- * not use top-level await. The default probes are two `stat`-class calls.
- */
 export function resolveMacosHelperAppPath(options: MacosHelperPathOptions = {}): string {
   const env = options.env ?? process.env;
   const explicitPath = env.PI_COMPUTER_USE_HELPER_APP_PATH?.trim();

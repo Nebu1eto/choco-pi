@@ -35,9 +35,6 @@ test("a live subagent runner does not hijack the calling session's registry", ()
   resetRegisteredToolCapture();
   installRegisteredToolCapture();
 
-  // The root session registers first, then two subagents build their own
-  // runners. A child session skips whole extensions, so mirroring the newest
-  // live runner would drop every orchestration tool from a root exec cell.
   const rootContext = sessionContext({ id: "root" });
   const rootRunner = captureRunner(rootContext);
   const firstChild = captureRunner(sessionContext({ id: "child-1" }));
@@ -98,7 +95,6 @@ function capturedRunners(): readonly ExtensionRunner[] {
   return prototype.__chocoPiCodeModeToolBridgeRunners ?? [];
 }
 
-/** A session context whose runner Pi has, or has not yet, invalidated. */
 interface DisposableContext {
   context: ExtensionContext;
   dispose: () => void;
@@ -127,8 +123,6 @@ test("disposed subagent runners behind the root runner are released", () => {
   for (const child of children) captureRunner(child.context);
   for (const child of children) child.dispose();
 
-  // Pi reassembles the root's tools, which moves its runner behind the
-  // finished children; the root's own lookups then stop at it immediately.
   ExtensionRunner.prototype.getAllRegisteredTools.call(rootRunner);
   assert.equal(registeredToolRunner(rootContext), rootRunner);
 

@@ -93,8 +93,6 @@ export function createInputContextEventHandlers(
     }) satisfies ExtensionHandler<ContextEvent, ContextEventResult | undefined>,
 
     onBeforeAgentStart: (async (event, ctx) => {
-      // Runs started by a custom message (this extension's own continuation or
-      // another extension's triggerTurn) must not clear queued continuation state.
       if (event.messageType !== "user") return undefined;
       const continuationGoalId = continuation.continuationGoalIdFromRuntimePrompt(event.prompt);
       if (continuationGoalId !== null) {

@@ -1,11 +1,3 @@
-/**
- * Biome check runner for dispatch system
- *
- * Dispatch mode is diagnostics-only.
- * Autofix is handled earlier by the post-write pipeline to avoid
- * mutating files mid-dispatch after LSP sync has already happened.
- */
-
 import * as path from "node:path";
 import { safeSpawnAsync } from "../../safe-spawn.ts";
 import {
@@ -77,8 +69,6 @@ const biomeCheckJsonRunner: RunnerDefinition = {
     const cwd = ctx.cwd || path.dirname(ctx.filePath);
     const policy = getJstsLintPolicyForCwd(cwd);
 
-    // Defer to ESLint/oxlint if the project has explicitly configured one —
-    // biome runs as the default linter only when no alternative is present.
     if (!policy.hasBiomeConfig && policy.hasExplicitNonBiomeLinter) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
@@ -88,19 +78,14 @@ const biomeCheckJsonRunner: RunnerDefinition = {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
 
-    // Shared config-args seam (#1247): `biomeClient.fixFileAsync` consumes
-    // the same builder, so the user's config / package fallback applies on
-    // `lint --write` too.
     const configArg = biomeConfigArgs(cwd);
 
-    // Run biome lint (diagnostics only - format is handled separately)
     const checkResult = await safeSpawnAsync(
       cmd,
       ["lint", "--reporter=json", "--no-errors-on-unmatched", ...configArg, ctx.filePath],
       { timeout: 30000, cwd },
     );
 
-    // Handle spawn errors (e.g., binary not found)
     if (checkResult.error) {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }

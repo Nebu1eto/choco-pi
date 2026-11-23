@@ -20,7 +20,6 @@ import {
   toolNamesHash,
 } from "../profile/extensions/cache-probe.ts";
 
-/** Point HOME at a scratch directory in legacy mode so probe logs land under it; returns the restore. */
 function isolateHome(home: string): () => void {
   const keys = ["HOME", "PI_CODING_AGENT_DIR", "CHOCO_PI_STANDALONE", "CHOCO_PI_HOME"] as const;
   const previous = keys.map((key) => [key, process.env[key]] as const);
@@ -756,15 +755,12 @@ test("cache-less assistant events do not consume observable usage linkage", () =
 test("a system change names the region that moved, not just the block", () => {
   const before = systemRegionHashes(SYSTEM);
 
-  // The model name lives inside the runtime block, so only that region moves.
   const switched = systemRegionHashes(SYSTEM.replace("claude-opus-5", "claude-fable-5"));
   assert.deepEqual(changedSystemRegions(before, switched), ["runtime-environment"]);
 
-  // An edited policy file moves only its own block.
   const policy = systemRegionHashes(SYSTEM.replace("Be concise.", "Be extremely concise."));
   assert.deepEqual(changedSystemRegions(before, policy), ["writing-policy"]);
 
-  // Anything no marker claims — Pi's prompt, context files — lands in base.
   const context = systemRegionHashes(`${SYSTEM}\nAn added AGENTS.md section.`);
   assert.deepEqual(changedSystemRegions(before, context), ["base"]);
 
@@ -777,6 +773,5 @@ test("a dropped region is reported rather than silently ignored", () => {
   const withoutPolicy = systemRegionHashes(
     SYSTEM.slice(0, SYSTEM.indexOf("<choco_pi_writing_policy>")),
   );
-  // The remainder is untouched, so only the dropped block is named.
   assert.deepEqual(changedSystemRegions(before, withoutPolicy), ["writing-policy"]);
 });

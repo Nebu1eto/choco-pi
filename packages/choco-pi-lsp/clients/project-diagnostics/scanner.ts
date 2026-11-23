@@ -36,32 +36,12 @@ import type {
   ProjectDiagnosticsScanOptions,
   ProjectDiagnosticsSnapshot,
 } from "./types.ts";
-// Side-effect import: registers fact providers and fact rules.
 import "../dispatch/integration.ts";
 
-// Skip files this large: matches the per-edit ast-grep runner's guard so a single
-// generated megafile can't dominate a project scan.
 const AST_GREP_MAX_FILE_BYTES = 1024 * 1024;
-// Project-audit budgets — looser than the per-edit runner's 10/50 (which exist to
-// keep inline output bounded), since a project scan is an explicit, expensive call.
 const AST_GREP_SCAN_MAX_MATCHES_PER_RULE = 25;
 const AST_GREP_SCAN_MAX_DIAGNOSTICS_PER_FILE = 100;
 const FACT_RULE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
-// Which languages the scan runs tree-sitter rules for: every language that has
-// (a loadable grammar) AND (a non-disabled rules/tree-sitter-queries/<lang>/ dir).
-//
-// The base is the shared per-edit resolver (EXT_TO_LANG — the single
-// ext→grammar-id authority), so c/cpp/csharp/php/css and the .tsx→tsx /
-// .jsx→javascript nuances can never drift from the per-edit path. `.tsx` resolves
-// to the tsx grammar (not typescript: the typescript grammar ERRORs on JSX);
-// typescript RULES still apply because `queriesForLanguage(...)` below merges the
-// typescript rule set onto tsx.
-//
-// java + kotlin are layered on here: they have loadable grammars and rule dirs
-// (java: 24 rules, kotlin: 1) but no per-edit runner `appliesTo` entry, so only
-// this broad project scan runs them. scanner.test.ts asserts this map covers
-// every non-disabled rule dir whose grammar is loadable, so adding a language dir
-// fails a test until its extension is registered here (or in EXT_TO_LANG).
 interface TreeSitterLanguageByExtension {
   [extension: string]: string;
 }
@@ -110,26 +90,14 @@ interface FileMajorScan {
   wasmAborted: boolean;
 }
 
-/**
- * One FILE-major pass for every in-process syntax consumer (#675/#896).
- * Per-consumer gates preserve their distinct language and size eligibility,
- * while separate result lists preserve the historical phase-major diagnostic
- * ordering.
- */
 async function scanFileMajorRules(
   cwd: string,
   files: string[],
   signal?: AbortSignal,
 ): Promise<FileMajorScan> {
   const client = getSharedTreeSitterClient();
-  // #1715: grow the tree cache to span this scan's working set BEFORE
-  // parsing starts, so a project bigger than the interactive default (50
-  // entries) still gets cross-scan reuse instead of every file re-parsing
-  // on every scan.
   client?.ensureTreeCacheCapacity(files.length);
   const treeSitterReady = !!client && client.isAvailable() && (await client.init());
-  // Same singleton the dispatch runner uses (tree-sitter.ts:444) — memoized
-  // per root, so repeated scans stop re-reading the ~180 query YAMLs.
   const queryMap = treeSitterReady ? await queryLoader.loadQueries(cwd) : undefined;
 
   const facts = new FactStore();
@@ -141,8 +109,6 @@ async function scanFileMajorRules(
   let phaseOneFilesScanned = 0;
   let astGrepFilesScanned = 0;
   let astGrepDurationMs = 0;
-  // #891: only fully completed files count — a wasm abort mid-file leaves that
-  // file out, so the caller can report a truncated filesScanned honestly.
   let filesScanned = 0;
   let wasmAborted = isTreeSitterWasmAborted();
 
@@ -176,15 +142,11 @@ async function scanFileMajorRules(
           source: "project-scan",
         });
       }
-    } catch {
-      // Continue scanning other rules/files.
-    }
+    } catch {}
   };
 
   const scanFactRulesFile = async (filePath: string, content: string | null): Promise<void> => {
     facts.clearFileFactsFor(filePath);
-    // Seed the exact bytes already supplied to tree-sitter so the file-content
-    // provider is skipped by runProviders.
     facts.setFileFact(filePath, "file.content", content);
     const ctx = createDispatchContext(filePath, cwd, pi, facts, false);
     try {
@@ -192,9 +154,7 @@ async function scanFileMajorRules(
       for (const diagnostic of evaluateRules(ctx)) {
         factRules.push(fromDispatchDiagnostic(diagnostic, "fact-rules"));
       }
-    } catch {
-      // Project scans are best-effort; one unparsable file should not abort the tool.
-    }
+    } catch {}
   };
 
   const scanAstGrepFile = (
@@ -213,7 +173,6 @@ async function scanFileMajorRules(
         astGrep.push(fromDispatchDiagnostic(diagnostic, "ast-grep-napi"));
       }
     } catch {
-      // Project scans are best-effort; one unparsable file must not abort the tool.
     } finally {
       astGrepFilesScanned++;
       astGrepDurationMs += Date.now() - startedAt;
@@ -222,8 +181,6 @@ async function scanFileMajorRules(
 
   const scan = async (): Promise<void> => {
     for (const filePath of files) {
-      // #891: a wasm-level abort poisons the shared parser for the rest of the
-      // process — stop the whole pass, don't keep feeding it files.
       if (signal?.aborted || isTreeSitterWasmAborted()) {
         wasmAborted ||= isTreeSitterWasmAborted();
         break;
@@ -238,9 +195,7 @@ async function scanFileMajorRules(
           if (fs.statSync(filePath).size <= AST_GREP_MAX_FILE_BYTES) {
             astGrepLang = astGrepGetLang(filePath, sgModule);
           }
-        } catch {
-          // A missing file is ineligible for every content consumer below.
-        }
+        } catch {}
       }
       if (!langId && !factEligible && !astGrepLang) continue;
       if (langId || factEligible) phaseOneFilesScanned++;
@@ -281,9 +236,6 @@ async function scanFileMajorRules(
         }
 
         if (signal?.aborted) {
-          // The former phase-major scan never started ast-grep after a
-          // phase-one abort. Discard earlier ast-grep work from this merged
-          // pass to preserve that partial-result contract.
           astGrep.length = 0;
           break;
         }
@@ -292,9 +244,6 @@ async function scanFileMajorRules(
         }
         if (signal?.aborted) break;
         if (content !== null && graphIr?.complete && graphIr.structural) {
-          // Publish only consumable entries (the registry also enforces
-          // this) — and hash via the shared contract so producer and
-          // consumer can never diverge (#955 review).
           publishReviewGraphFileIr(cwd, {
             filePath,
             contentHash: reviewGraphIrContentHash(content),
@@ -303,14 +252,10 @@ async function scanFileMajorRules(
         }
         filesScanned++;
       } finally {
-        // This store belongs to the scan, and every consumer of this file's
-        // content and derived facts has completed by the end of the iteration.
         facts.clearFileFactsFor(filePath);
       }
     }
     if (wasmAborted) {
-      // Mirror the phase-major #891 contract: the ast-grep phase never ran
-      // after a wasm abort, so this merged pass discards its buffer too.
       astGrep.length = 0;
     }
   };
@@ -326,9 +271,6 @@ async function scanFileMajorRules(
       scope: "project_diagnostics_scan",
       filePath: cwd,
       fileCount: phaseOneFilesScanned,
-      // The merged pass interleaves ast-grep with the phase-one consumers;
-      // subtract its share so this metric stays comparable to the historical
-      // phase-major scans.
       durationMs: Date.now() - startedAt - astGrepDurationMs,
       stats,
     });
@@ -353,11 +295,6 @@ export async function scanProjectDiagnostics(
 ): Promise<ProjectDiagnosticsSnapshot> {
   const cwd = path.resolve(options.cwd);
   const { signal } = options;
-  // #747/#250: refuse to WALK from a cwd at — or above — the home directory.
-  // The cheap tier is bounded by DEFAULT_MAX_FILES, but from $HOME it still
-  // traverses a huge unrelated tree until it happens to keep that many source
-  // files. An explicit `files` list (#461) is a caller-chosen subset, not a
-  // walk, so it is never refused here. Same ceiling as fresh-fetch.ts.
   if (!options.files && isAtOrAboveHomeDir(cwd, options.homeDir)) {
     return {
       version: PROJECT_DIAGNOSTICS_CACHE_VERSION,
@@ -371,34 +308,19 @@ export async function scanProjectDiagnostics(
     };
   }
   const maxFiles = Math.max(1, options.maxFiles ?? getProjectDiagnosticsScannerMaxFiles(cwd));
-  // #760: bound the walk by entries VISITED, not just files kept — a mixed
-  // tree with few source files among a huge pile of non-source files never
-  // trips `maxFiles`. Unlike `unsafeRoot` this is not a refusal: when the
-  // budget trips we scan the truncated best-effort list and flag the snapshot
-  // so callers don't read the partial result as a complete sweep.
-  // #1107 phase 2: typed as the full `SourceCollectionResult` (not just its
-  // `{files, entryBudgetExceeded}` shape) so the generated-skip counters
-  // below are readable through the ternary — the `options.files` branch
-  // legitimately never walked, so it leaves them `undefined`, same
-  // convention as `entryBudgetExceeded: false` above it.
   const collected: SourceCollectionResult = options.files
     ? { files: options.files.slice(0, maxFiles), entryBudgetExceeded: false }
     : await collectSourceFilesWithBudgetAsync(cwd, {
         maxFiles,
         maxScanEntries: options.maxScanEntries,
-        // #1107 phase 2 review: the actionable opt-out generatedSkipNotice
-        // points a user at.
         includeGenerated: options.includeGenerated === true,
       });
   const files = collected.files;
-  // Check cancellation before and during the file-major pass so a full-mode
-  // scan stops promptly when the agent/user aborts (#341).
   const runners: string[] = [];
   const diagnostics: ProjectDiagnostic[] = [];
   let wasmAborted = false;
   let filesScanned = files.length;
   if (!signal?.aborted) {
-    // All in-process syntax consumers share one file-major pass (#675/#896).
     const scanned = await scanFileMajorRules(cwd, files, signal);
     diagnostics.push(...scanned.treeSitter, ...scanned.factRules);
     runners.push("tree-sitter", "fact-rules");
@@ -418,12 +340,7 @@ export async function scanProjectDiagnostics(
     filesScanned,
     runners,
   };
-  // #760: only present when true — keeps existing snapshots/serializations
-  // byte-identical for the untruncated (normal) case.
   if (collected.entryBudgetExceeded) snapshot.scanTruncated = true;
-  // #1107 phase 2: only present when nonzero, same convention as the
-  // truncation flag above — a healthy scan with no generated-name skips
-  // produces a byte-identical snapshot to before this change.
   if (collected.generatedOrArtifactSkips) {
     snapshot.generatedFileSkips = collected.generatedOrArtifactSkips;
   }
@@ -449,12 +366,6 @@ export async function scanProjectDiagnostics(
       },
     });
   }
-  // A cancelled scan yields a partial snapshot; don't persist it as the
-  // authoritative cross-session cache — only a complete run is cacheable.
-  // Likewise, an explicit `files` scan (#461) only covers a caller-chosen
-  // subset (e.g. git-staged files), not the whole project — persisting it
-  // would poison the cross-session cache with a partial view that a later
-  // unscoped `refreshRunners=cached` read would wrongly trust as complete.
   if (signal?.aborted || options.files || wasmAborted) return snapshot;
   saveProjectDiagnosticsSnapshot(cwd, snapshot);
   return snapshot;

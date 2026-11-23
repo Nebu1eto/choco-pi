@@ -5,7 +5,6 @@ import { classifyViaSeam } from "./usage-limit-seam.ts";
 
 export const CONTEXT_OVERFLOW_SIGNATURE = "context_overflow";
 
-/** Host AgentSession performs one overflow compact-and-retry before giving up. */
 export const MAX_CONTEXT_COMPACTION_RETRIES = 1;
 export const HOST_OVERFLOW_RECOVERY_REASON = "recovering from context overflow";
 
@@ -73,18 +72,12 @@ export function isContextOverflowError(errorMessage: string | undefined): boolea
   );
 }
 
-/** Identifies the usage-limit policy owner and the errored model for the shared classifier seam. */
 export interface ProviderLimitClassifierContext {
   ownerSessionId: string | undefined;
   provider: string | undefined;
   modelId: string | undefined;
 }
 
-/**
- * Consults the shared usage-limit classifier first when a classifier context is supplied: `quota`
- * and `billing` are provider limits. A missing seam, a missing owner policy, an unusable context,
- * or a `transient` classification defers to the package's own provider-limit wording.
- */
 export function isProviderLimitError(
   errorMessage: string | undefined,
   classifierContext?: ProviderLimitClassifierContext,
@@ -117,11 +110,6 @@ function isNonRetryableProviderLimitError(errorMessage: string): boolean {
   return isProviderLimitError(errorMessage);
 }
 
-/**
- * Mirrors the current Pi host AgentSession retryable-error classification for transient provider failures.
- * Context overflow is not transient retryable because host compaction handles that path.
- * Terminal quota, billing, and provider-limit errors are not retryable even when they contain 429 or rate-limit wording.
- */
 export function isRetryableTransientError(errorMessage: string | undefined): boolean {
   if (!errorMessage) {
     return false;
@@ -154,7 +142,6 @@ export function failureSignature(errorMessage: string | undefined): string {
   return normalizeTransientSignature(firstLine);
 }
 
-/** Resets transient retry counters when the failure signature changes; overflow compaction attempts are independent. */
 export function countersForFailureSignature(
   counters: ErrorRecoveryCounters,
   signature: string,
@@ -210,7 +197,6 @@ export function reasonFromRecoveryPendingAttention(
   return attention?.kind === "pending" ? attention.reason : null;
 }
 
-/** Paused goals use /goal resume guidance in footer attention copy. */
 export function recoveryAttentionMessage(reason: string): string {
   return recoveryPausedAttentionMessage(reason);
 }

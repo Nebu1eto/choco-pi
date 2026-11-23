@@ -28,12 +28,6 @@ interface ViewImageParams {
   path: string;
 }
 
-/**
- * Port: describes an image for a model without image inputs. The tool stays
- * provider-neutral; a provider (the OpenAI fallback in
- * `src/providers/openai-codex/view-image-fallback.ts`) supplies the
- * implementation through the extension composition root.
- */
 export type ImageDescribeFallbackPort = (
   image: ViewImageContent,
   ctx: ExtensionContext,
@@ -42,7 +36,6 @@ export type ImageDescribeFallbackPort = (
 
 interface CreateViewImageToolOptions {
   customRustBinariesDir?: string | undefined;
-  /** Enables the text-model fallback; takes effect only with `describeImage`. */
   describeForTextModels?: boolean | undefined;
   describeImage?: ImageDescribeFallbackPort | undefined;
   customRendering?: boolean | undefined;

@@ -13,28 +13,10 @@ export interface TrailingWhitespaceStripResult {
   removedTrailingEmptyLineCount: number;
 }
 
-/**
- * Normalize text the same way the read-guard's match-counter does — now the
- * host edit tool's full fuzzy-match space (BOM + lone-CR -> LF, NFKC, smart
- * quotes/dashes/spaces, trailing-ws trim). Used as the canonical form for
- * comparing oldText against file content so the autopatch bridge resolves the
- * same span the host would apply (#257). Kept in lockstep with the gate's
- * `normalizeContent` and index.ts's `normalizeOldTextForMatch`.
- */
 export function normalizeOldTextForMatch(text: string): string {
   return normalizeForGuardMatch(text);
 }
 
-/**
- * Locate the line range of a uniquely-matching oldText inside the
- * trim-end-normalized file content. Returns `undefined` when the needle
- * is empty, not found, or matches more than once. Lines are 1-indexed.
- *
- * Used by the autopatch → synthetic-read bridge: a successful unique-match
- * autopatch (indent or trailing-ws) proves the agent's oldText reflects
- * real content at that span, so we can safely register a synthetic read
- * covering it and avoid a downstream zero_read block.
- */
 export function findUniqueMatchLineRange(
   matchNormalizedContent: string,
   oldText: string,
@@ -108,16 +90,6 @@ function stripEquivalentTrailingEmptyLines(value: string, maxCount: number): str
   return lines.join("\n");
 }
 
-/**
- * Build the safe Pass 1 oldText trailing-whitespace patch.
- *
- * Safety contract:
- * - only patch when the original raw oldText does NOT already match the file
- * - require the stripped raw candidate to match exactly once
- * - distinguish ordinary line-end whitespace from trailing empty-line removal
- * - when trailing empty lines are removed from oldText, remove the equivalent
- *   trailing empty-line suffix from newText so the replacement span is preserved
- */
 export function computeTrailingWhitespaceOldTextPatch(args: {
   oldText: string;
   newText?: string;
@@ -128,10 +100,8 @@ export function computeTrailingWhitespaceOldTextPatch(args: {
   const stripped = stripTrailingWhitespaceDetailed(args.oldText);
   if (stripped.text === original) return undefined;
 
-  // If the original already matches exactly, do not shrink the replacement span.
   if (countOccurrences(fileContentLf, original) !== 0) return undefined;
 
-  // Only patch when the exact stripped candidate is unambiguous in the real file.
   if (countOccurrences(fileContentLf, stripped.text) !== 1) return undefined;
 
   const patchedNewText =

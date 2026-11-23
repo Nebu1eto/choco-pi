@@ -58,7 +58,6 @@ const DECISION_BLOCKS = new Set<HookEventName>([
   "TaskCreated",
 ]);
 const PERMISSION_ORDER = { allow: 0, ask: 1, defer: 2, deny: 3 } as const;
-/** Events whose JSON output is discarded apart from `terminalSequence`. */
 const DISCARDS_OUTPUT = new Set<HookEventName>([
   "StopFailure",
   "Setup",
@@ -66,7 +65,6 @@ const DISCARDS_OUTPUT = new Set<HookEventName>([
   "SessionEnd",
   "WorktreeRemove",
 ]);
-/** Events that discard `systemMessage` and `continue`. */
 const DISCARDS_MESSAGE = new Set<HookEventName>([
   "Notification",
   "PreCompact",
@@ -75,9 +73,7 @@ const DISCARDS_MESSAGE = new Set<HookEventName>([
   "WorktreeCreate",
   "MessageDisplay",
 ]);
-/** Events that discard `continue` only. */
 const DISCARDS_CONTINUE = new Set<HookEventName>(["CwdChanged", "FileChanged", "DirectoryAdded"]);
-/** Exit 2 sends these events back to work; `onFailure` has no effect on them. */
 const CONTINUATION_EVENTS = new Set<HookEventName>([
   "Stop",
   "SubagentStop",
@@ -85,7 +81,6 @@ const CONTINUATION_EVENTS = new Set<HookEventName>([
   "TeammateIdle",
 ]);
 const TOOL_EVENTS = new Set<HookEventName>(["PreToolUse", "PostToolUse", "PostToolUseFailure"]);
-/** Settings files share one copy of an identical handler; plugin and skill copies stay separate. */
 const SETTINGS_KINDS = new Set<HookSource["kind"]>(["managed", "user", "project", "local"]);
 const MODEL_HANDLER_EVENTS = new Set<HookEventName>([
   "PermissionDenied",
@@ -132,11 +127,6 @@ function glob(pattern: string, value: string): boolean {
   return false;
 }
 
-/**
- * The subcommands a Bash command runs: each `&&`, `||`, `;`, `|`, or newline
- * segment, plus the commands inside `$()` and backticks, each with leading
- * `VAR=value` assignments removed.
- */
 function bashSubcommands(command: string): string[] {
   const nested = [
     ...[...command.matchAll(/\$\(([^()]*)\)/g)].map((found) => found[1] ?? ""),
@@ -151,12 +141,10 @@ function bashSubcommands(command: string): string[] {
 }
 
 function bashPatternMatches(pattern: string, subcommand: string): boolean {
-  // Legacy `prefix:*` matches the prefix alone or followed by arguments.
   if (pattern.endsWith(":*")) {
     const prefix = pattern.slice(0, -2);
     return subcommand === prefix || subcommand.startsWith(`${prefix} `);
   }
-  // `git *` covers `git` with any arguments, including none.
   if (pattern.endsWith(" *") && subcommand === pattern.slice(0, -2)) return true;
   return glob(pattern, subcommand);
 }
@@ -164,7 +152,6 @@ function bashPatternMatches(pattern: string, subcommand: string): boolean {
 function matchesBash(pattern: string, command: string): boolean {
   if (!pattern || pattern === "*") return true;
   if (bashSubcommands(command).some((part) => bashPatternMatches(pattern, part))) return true;
-  // A pattern naming more than the command runs anyway when expansion hides what runs.
   const words = pattern.replace(/:\*$/, "").trim().split(/\s+/);
   const specific = words.slice(1).some((word) => word !== "*");
   return specific && /\$\(|`|\$[A-Za-z_{]/.test(command);
@@ -187,11 +174,6 @@ function pathGlobRegex(pattern: string): RegExp {
   return new RegExp(`^${source}$`);
 }
 
-/**
- * File-tool rules use gitignore-style paths: `//abs` is absolute, `~/` is under
- * home, a pattern with a slash is relative to the working directory, and one
- * without a slash matches a file name at any depth.
- */
 function matchesFilePath(pattern: string, filePath: string, cwd: string): boolean {
   if (!pattern || pattern === "*" || pattern === "**") return true;
   const absolute = filePath.replaceAll("\\", "/");
@@ -227,7 +209,6 @@ export function matchesIf(
   const match = rule.match(/^([^()]+)(?:\((.*)\))?$/);
   if (!match) return false;
   const ruleTool = (match[1] ?? "").trim();
-  // `mcp__server` names every tool from that server.
   const toolMatches =
     ruleTool === toolName ||
     (ruleTool.startsWith("mcp__") &&
@@ -278,11 +259,6 @@ interface ModelDecision {
   modelBlock?: boolean;
 }
 
-/**
- * Translate a prompt or agent hook's `{ok, reason}` answer into the outcome
- * Claude Code gives it on each event. Agent hooks always behave as a prompt
- * hook with `continueOnBlock: true`.
- */
 function modelOutput(
   event: HookEventName,
   handler: HookHandler,
@@ -336,7 +312,6 @@ function handlerLabel(handler: HookHandler): string {
   return handler.type;
 }
 
-/** `Stop`, `SubagentStop`, and `TaskCompleted` treat a hook whose file is missing as non-blocking. */
 function missingHookFile(event: HookEventName, raw: RawExecution): boolean {
   return (
     (event === "Stop" || event === "SubagentStop" || event === "TaskCompleted") &&
@@ -348,10 +323,8 @@ function missingHookFile(event: HookEventName, raw: RawExecution): boolean {
 
 export class HookEngine {
   readonly #once = new Set<string>();
-  /** Once-hook keys whose run is in progress, so an overlapping run skips them. */
   readonly #onceRunning = new Set<string>();
   readonly #background = new Set<Promise<void>>();
-  /** Cancels background hooks still running when their session tears down. */
   #backgroundCancel = new AbortController();
   readonly sources: HookSource[];
   readonly backends: HookBackends;
@@ -419,7 +392,6 @@ export class HookEngine {
             timeouts?.get(handler),
             cancel,
           ).then(async (raw) => {
-            // A cancelled hook's output belongs to a session that is ending.
             if (cancel.aborted) return;
             try {
               const parsed = parseAsyncOutput(raw.stdout);
@@ -479,7 +451,6 @@ export class HookEngine {
             : undefined);
         let exitCode = raw.exitCode;
         let stderr = raw.stderr;
-        // A failure of a hook set to `onFailure: "block"` acts as exit code 2 on its event.
         const failed =
           raw.timedOut === true ||
           (exitCode !== 0 && exitCode !== 2) ||
@@ -504,7 +475,6 @@ export class HookEngine {
         if (raw.timedOut) status = "timeout";
         else if (blocking) status = "blocking";
         else if (validationError || (exitCode !== 0 && !output)) status = "error";
-        // A skill hook with `once: true` is removed only after its first successful run.
         this.#onceRunning.delete(key);
         if (status === "success" && source.kind === "skill" && handler.once === true)
           this.#once.add(key);
@@ -533,7 +503,6 @@ export class HookEngine {
     await Promise.all(this.#background);
   }
 
-  /** Cancel every running background hook; hooks started later are unaffected. */
   cancelBackground(): void {
     this.#backgroundCancel.abort();
     this.#backgroundCancel = new AbortController();
@@ -712,7 +681,6 @@ export function mergeResults(
     }
   }
   if (permissionDecision === "deny") blocked = true;
-  // `continue: false` takes precedence; a JSON decision's reason replaces exit-code stderr.
   const reason = continueProcessing
     ? (decisionReason ?? exitReason ?? stopReason)
     : (stopReason ?? decisionReason ?? exitReason);

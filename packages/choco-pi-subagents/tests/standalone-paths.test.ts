@@ -11,7 +11,6 @@ const ENV_KEYS = ["HOME", "PI_CODING_AGENT_DIR", "CHOCO_PI_STANDALONE", "CHOCO_P
 
 type Scratch = { home: string; chocoHome: string; cwd: string };
 
-/** Runs with HOME in a scratch dir, legacy mode, and poison legacy ~/.pi state present. */
 async function withScratch(run: (scratch: Scratch) => Promise<void>): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), "subagents-standalone-"));
   const previous = ENV_KEYS.map((key) => [key, process.env[key]] as const);

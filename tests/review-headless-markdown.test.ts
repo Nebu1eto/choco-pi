@@ -1,4 +1,3 @@
-// /review-assist in an editor that renders Markdown (Zed through the choco-pi ACP adapter).
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
@@ -10,7 +9,6 @@ const MARKER = { CHOCO_PI_ACP_NATIVE_DIFF: "1" };
 const SECRET = "SECRET-VALUE-7f3a";
 const ESC = "\u001b";
 const FENCE3 = "```";
-/** ESC colour, OSC 52 clipboard write, BEL, CR, C1 CSI, RLO, backticks, heading and link syntax. */
 const NASTY = `n${ESC}[31mred${ESC}]52;c;QUJD\u0007\r\u009b2J\u202e\`x\`# h [a](http://b).md`;
 const VISIBLE_NASTY = `n\u241b[31mred\u241b]52;c;QUJD\u2407\u240d\uFFFD2J\uFFFD\`x\`# h [a](http://b).md`;
 
@@ -77,7 +75,6 @@ type Parsed = {
   open: boolean;
 };
 
-/** CommonMark backtick fences: opened by 3+ backticks, closed by a line of at least as many. */
 function parseFences(text: string): Parsed {
   const parsed: Parsed = { outside: [], fences: [], open: false };
   let current: { marker: string; info: string; body: string[] } | undefined;
@@ -144,12 +141,10 @@ test("in the editor, each file's unified diff is a fenced diff block and nothing
   for (const line of parsed.outside) {
     assert.doesNotMatch(line, /^(?: {4}|\s{0,3}(?:[#>|<~]|\d+[.)]\s))/u, line);
   }
-  // File names are code spans whose delimiter outruns the name's own backticks.
   const span = `\`\` ${VISIBLE_NASTY} \`\``;
   assert.ok(parsed.outside.includes(`- ${span}:1`));
   assert.ok(parsed.outside.includes(span), "the name line above its diff");
   assert.ok(parsed.outside.includes("` src/app.ts `"));
-  // Prose with names in it is escaped, and the sensitive file is named, not shown.
   assert.ok(
     parsed.outside.some((line) => line.startsWith("- Sensitive files") && line.includes("\\.env")),
     "the sensitive file is named, escaped",
@@ -160,7 +155,6 @@ test("in the editor, each file's unified diff is a fenced diff block and nothing
 });
 
 type AddedFile = { path: string; lines: readonly string[] };
-/** The raw diff of some added files, and each file's expected unified diff text. */
 type AddedFixture = { raw: string; diffs: Map<string, string> };
 
 function addedFiles(files: readonly AddedFile[]): AddedFixture {
@@ -173,7 +167,6 @@ function addedFiles(files: readonly AddedFile[]): AddedFixture {
   return { raw: `${raw.join("\n")}\n`, diffs };
 }
 
-/** The notice, the file list's marks, and the fenced diffs of a clipped review. */
 function clipFacts(output: string) {
   const parsed = parseFences(output);
   const notice = parsed.outside.find((line) => line.startsWith("**Not every diff fits")) ?? "";
@@ -201,7 +194,6 @@ test("a review larger than the message keeps the head whole, shows whole diffs, 
   assert.ok(output.length <= MAX_HEADLESS_MARKDOWN_CHARS, String(output.length));
   const { parsed, notice, counts, marked, shownNames } = clipFacts(output);
   assert.equal(parsed.open, false);
-  // The notice comes before everything that can be left out, right after the summary.
   const diffsAt = parsed.outside.indexOf("**Diffs**");
   assert.ok(
     parsed.outside.indexOf(notice) >= 0 &&
@@ -210,7 +202,6 @@ test("a review larger than the message keeps the head whole, shows whole diffs, 
   );
   assert.match(notice, /run `\/review-assist` in a terminal thread/u);
   assert.match(notice, /`\/review-assist session turn <n>`/u);
-  // Every file is in the list; shown and not-shown partition it, in order.
   const listed = parsed.outside.filter((line) => /^- ` f\d\d\.ts `:1/u.test(line));
   assert.equal(listed.length, 40);
   assert.deepEqual(
@@ -222,12 +213,10 @@ test("a review larger than the message keeps the head whole, shows whole diffs, 
     shownNames,
     files.slice(0, shownNames.length).map((file) => file.path),
   );
-  // Whole blocks only: each shown fence holds that file's entire diff.
   assert.deepEqual(
     parsed.fences.map((fence) => fence.body.join("\n")),
     shownNames.map((name) => diffs.get(name)),
   );
-  // Exact counts of what was left out.
   assert.equal(number(counts?.[1]), marked.length);
   assert.equal(number(counts?.[2]), 40);
   const leftOut = marked.reduce((sum, name) => sum + (diffs.get(name)?.length ?? 0), 0);
@@ -255,7 +244,6 @@ test("one file larger than the message is named and counted, never shown in part
     parsed.fences.map((fence) => fence.body.join("\n")),
     [diffs.get("small.ts")],
   );
-  // Beyond the 32 KiB per-file bound, the count is still the whole diff's length.
   const bigChars = diffs.get("big.ts")?.length ?? 0;
   assert.ok(bigChars > 32 * 1024);
   assert.deepEqual(
@@ -357,7 +345,6 @@ test("a rename whose source is sensitive is hidden in the review, in either outp
   ].join("\n");
   const model = parseGitDiff(raw, "base", "head");
   assert.equal(model.files[0]?.oldPath, ".env");
-  // Both sides are named, so the reader sees why the file is hidden.
   const expected = new Map<Record<string, string>, string>([
     [
       MARKER,
@@ -370,7 +357,6 @@ test("a rename whose source is sensitive is hidden in the review, in either outp
     assert.equal(output.includes(SECRET), false);
     assert.ok(output.split("\n").includes(line), output);
   }
-  // A hostile source name is sanitised and escaped like any other name.
   const hostile = raw.replaceAll(".env", "[x](e)\u001b[31m/.env");
   const output = (await present(parseGitDiff(hostile, "base", "head"), MARKER))[0] ?? "";
   assert.equal(output.includes(SECRET), false);

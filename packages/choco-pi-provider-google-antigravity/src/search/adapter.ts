@@ -25,11 +25,9 @@ import { groundingResponseValidator, isGroundingFailure, normalizeGrounding } fr
 
 export const GOOGLE_SEARCH_ADAPTER_ID = "google-antigravity.grounding";
 export const GOOGLE_SEARCH_TRANSPORT = "v1internal-generate-content";
-/** Per-endpoint attempt bound; two endpoints stay inside the router's 120 s attempt deadline. */
 export const GOOGLE_SEARCH_TIMEOUT_MS = 50_000;
 const DEFAULT_RESULT_LIMIT = 20;
 
-/** The subset of Pi's ModelRegistry the adapter reads; Pi's registry satisfies it. */
 export interface GoogleSearchRegistry extends AntigravitySignInRegistry {
   getApiKeyForProvider(provider: string): Promise<string | undefined>;
 }
@@ -39,7 +37,6 @@ export interface GoogleSearchAdapterOptions {
   endpoints?: readonly string[] | undefined;
   timeoutMs?: number | undefined;
   now?: (() => number) | undefined;
-  /** Advertised web-search model ids; defaults to the refreshed catalog's. */
   getModelIds?: (() => readonly string[]) | undefined;
   getRegistry?: ((context: SearchAdapterContext) => GoogleSearchRegistry | undefined) | undefined;
 }
@@ -84,7 +81,6 @@ const ERROR_KIND_MAP = {
   malformed_response: { kind: "invalid-response", retryable: true },
 } as const satisfies Record<AntigravityErrorKind, MappedKind>;
 
-/** Maps a classified Antigravity failure onto the shared router's error kinds. */
 export function searchErrorFromAntigravity(error: AntigravityError): SearchError {
   const mapped: MappedKind = ERROR_KIND_MAP[error.kind];
   const extra: SearchErrorOptions = { retryable: mapped.retryable, cause: error };
@@ -149,11 +145,6 @@ async function resolveCredential(
   }
 }
 
-/**
- * The explicit-only google search family adapter: one v1internal:generateContent call with the
- * googleSearch tool on the catalog's web-search model, normalized from groundingMetadata.
- * Grounding URLs are returned as given; this adapter performs no other HTTP request.
- */
 export function createGoogleSearchAdapter(options: GoogleSearchAdapterOptions = {}): SearchAdapter {
   const timeoutMs = options.timeoutMs ?? GOOGLE_SEARCH_TIMEOUT_MS;
   const now = options.now ?? Date.now;
@@ -173,8 +164,6 @@ export function createGoogleSearchAdapter(options: GoogleSearchAdapterOptions = 
     family: "google",
     transport: GOOGLE_SEARCH_TRANSPORT,
     billing: "subscription",
-    // Each call spends the user's Antigravity subscription quota under Google's terms of
-    // service, so it runs only when a caller names the google family.
     explicitOnly: true,
     capabilities: {
       actions: ["search"],
@@ -198,7 +187,6 @@ export function createGoogleSearchAdapter(options: GoogleSearchAdapterOptions = 
         return unavailable("Google Antigravity sign-in status could not be read");
       }
       if (!configured) return unavailable(`Google Antigravity is not signed in; ${SIGN_IN_HINT}`);
-      // Pi's inherited Gemini API-key auth also configures `google`; only OAuth is usable.
       if (!hasAntigravitySignIn(registry)) {
         return unavailable(
           `Google is not signed in with Google Antigravity OAuth and a Gemini API key is not used; ${SIGN_IN_HINT}`,
@@ -290,17 +278,10 @@ export function createGoogleSearchAdapter(options: GoogleSearchAdapterOptions = 
 }
 
 export interface GoogleSearchRegistrationGate {
-  /** Registers while `google` has a Google Antigravity OAuth sign-in and unregisters otherwise. */
   sync(registry: AntigravitySignInRegistry | undefined): boolean;
   dispose(): void;
 }
 
-/**
- * Keeps the adapter registered only while Pi reports a stored OAuth credential for `google`, so
- * a signed-out provider, or one configured only with a Gemini API key, never appears in provider
- * availability or the curator. Reads only the auth status, never the credential, and makes no
- * network call.
- */
 export function createGoogleSearchRegistrationGate(
   scope: SearchScope,
   options: GoogleSearchAdapterOptions = {},

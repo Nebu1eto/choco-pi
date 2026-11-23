@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// zentui ships TypeScript parameter properties that Node's strip-only mode
-// cannot parse, so tests load it through the repository's shared compile
-// helper rather than importing the source file directly.
 import { loadZentuiModule, SKIP_WITHOUT_ZENTUI } from "../../../tests/zentui-build.ts";
 import {
   reinterpretHostValue,
@@ -178,18 +175,14 @@ test(
 
       type(panel, "cache");
       const results = panel.render(TEXT_WIDTH).join("\n");
-      // A row from the Session tab is found while the Appearance tab is active.
       assert.match(results, /Session: Cache miss notices/);
-      // Rows outside the query stay hidden, from any tab.
       assert.doesNotMatch(results, /Custom: Custom thing/);
       assert.match(results, /Type to filter/, "the search footer replaces the section hint");
 
-      // The selected hit changes in place; its owner sees the new value.
       panel.handleInput("\r");
       assert.deepEqual(changes, [["cache-miss-notices", "true"]]);
       assert.match(panel.render(TEXT_WIDTH).join("\n"), /Cache miss notices\s+true/);
 
-      // Esc leaves the search and returns to the section view without closing.
       panel.handleInput("\x1b");
       assert.equal(panel.hasActiveSearch(), false);
       assert.match(panel.render(TEXT_WIDTH).join("\n"), /\/ to search/);

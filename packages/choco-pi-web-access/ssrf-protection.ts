@@ -65,8 +65,6 @@ function loadConfigRoot(): JsonObject | null {
   try {
     raw = readFileSync(WEB_SEARCH_CONFIG_PATH, "utf-8");
   } catch {
-    // Do not memoize read failures: a chmod fix changes neither mtime nor size,
-    // so a cached failure would permanently fail-open the domain policy.
     return null;
   }
 
@@ -190,27 +188,12 @@ export function loadSsrfConfig(): SsrfConfig {
 
 interface ValidationOptions {
   lookup?: Lookup;
-  /** Optional hostname policy for fetch_content target URLs. */
   domainPolicy?: DomainPolicy;
-  /**
-   * CIDR ranges (e.g. "198.18.0.0/15") to exempt from the SSRF guard.
-   * Useful when a host runs a TUN/fake-IP proxy (Surge, Clash, Mihomo, ...)
-   * that resolves public domains into a reserved range. Entries are validated
-   * strictly; an invalid entry throws so misconfiguration is not silent.
-   */
   allowRanges?: string[];
-  /**
-   * When true, trust an explicitly-configured HTTP(S) proxy for hostname
-   * resolution instead of performing local DNS lookups inside the sandbox.
-   * Literal IPs and localhost remain blocked, and NO_PROXY hosts still use
-   * the local SSRF preflight. This does not configure proxy transport.
-   */
   trustEnvProxy?: boolean;
-  /** Allow loopback URLs for explicit provider base endpoints, not fetched targets. */
   allowLoopback?: boolean;
 }
 
-/** Parsed entry from `allowRanges`: a network address (4 or 16 bytes) + prefix length. */
 interface ParsedCidr {
   bytes: Uint8Array;
   prefix: number;
@@ -433,9 +416,7 @@ function getProxyForProtocol(protocol: string): string {
       const proxyUrl = new URL(value);
       if ((proxyUrl.protocol === "http:" || proxyUrl.protocol === "https:") && proxyUrl.hostname)
         return value;
-    } catch {
-      // Invalid proxy env vars should not weaken local DNS SSRF checks.
-    }
+    } catch {}
   }
   return "";
 }
@@ -445,8 +426,6 @@ function hostnameMatchesNoProxy(hostname: string, port: string, entry: string): 
   if (!trimmed) return false;
   if (trimmed === "*") return true;
 
-  // NO_PROXY entries may include a port. Strip it only after handling
-  // bracketed IPv6 literals, which can contain several colons.
   let hostEntry = trimmed;
   let entryPort: string | undefined;
   if (hostEntry.startsWith("[")) {
@@ -492,8 +471,6 @@ function assertPublicAddress(
   const normalized = normalizeHostname(address);
   const ipVersion = net.isIP(normalized);
   if (ipVersion === 0) throw new Error(`Resolved non-IP address for ${hostname}: ${address}`);
-  // Explicitly-allowed ranges bypass the private/reserved checks below. This lets
-  // users exempt synthetic ranges produced by TUN/fake-IP proxies (e.g. 198.18/15).
   if (isInAllowedRange(normalized, ipVersion, allowRanges)) return;
   if (ipVersion === 4 && isBlockedIPv4(normalized)) {
     const hint = isFakeIpProxyAddress(normalized)
@@ -575,7 +552,6 @@ function parseIPv6(address: string): number[] | null {
     : null;
 }
 
-/** Parse `allowRanges` config value into validated CIDR rules. Throws on malformed entries. */
 function parseAllowRanges(input: JsonValue | undefined): ParsedCidr[] {
   if (input === undefined || input === null) return [];
   if (!Array.isArray(input)) {
@@ -595,14 +571,11 @@ function parseAllowRanges(input: JsonValue | undefined): ParsedCidr[] {
   return rules;
 }
 
-/** Parse a single CIDR (e.g. "198.18.0.0/15", "fd00::/8") or bare host ("1.2.3.4"). Returns null if invalid. */
 function parseCidr(raw: string): ParsedCidr | null {
   if (!raw) return null;
   const slash = raw.lastIndexOf("/");
   const addrPart = slash >= 0 ? raw.slice(0, slash) : raw;
   const prefixPart = slash >= 0 ? raw.slice(slash + 1) : null;
-  // A slash must be followed by digits. Number("")/Number(" ") are 0, which
-  // would silently turn "198.18.0.0/" into /0 and exempt every address.
   if (prefixPart !== null && !/^\d+$/.test(prefixPart)) return null;
   const version = net.isIP(addrPart);
 
@@ -653,20 +626,17 @@ function ipToBytes(address: string, version: number): Uint8Array | null {
   return null;
 }
 
-/** True if `address` (already validated as `ipVersion`) falls within any allowed CIDR. */
 function isInAllowedRange(address: string, ipVersion: number, allowRanges: ParsedCidr[]): boolean {
   if (allowRanges.length === 0) return false;
   const addrBytes = ipToBytes(address, ipVersion);
   if (!addrBytes) return false;
   for (const rule of allowRanges) {
-    // Only compare same-family rules (4-byte IPv4 vs 16-byte IPv6).
     if (rule.bytes.length !== addrBytes.length) continue;
     if (bytesMatchPrefix(addrBytes, rule.bytes, rule.prefix)) return true;
   }
   return false;
 }
 
-/** Compare the leading `prefix` bits of two equal-length byte arrays. */
 function bytesMatchPrefix(addr: Uint8Array, network: Uint8Array, prefix: number): boolean {
   const fullBytes = prefix >> 3;
   const remBits = prefix & 7;

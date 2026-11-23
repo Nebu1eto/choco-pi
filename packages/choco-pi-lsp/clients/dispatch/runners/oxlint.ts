@@ -1,12 +1,3 @@
-/**
- * Oxlint runner for dispatch system
- *
- * Fast JavaScript/TypeScript linter written in Rust.
- * Drop-in replacement for ESLint with better performance.
- *
- * Requires: oxlint (npm install -g oxlint)
- */
-
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { arr, obj, opt, str, compile } from "@earendil-works/pi-schema";
@@ -69,9 +60,6 @@ const oxlintRunner: RunnerDefinition = {
     if (cmd) {
       args = ["lint", "--format", "json", ctx.filePath];
     } else {
-      // Use ctx.hasTool for async availability check — avoids the synchronous
-      // spawnSync probe that blocks the event loop on first call per cwd.
-      // FactStore caches the result for the session so subsequent writes are free.
       const oxlintCmd = resolveToolCommand(cwd, "oxlint") ?? "oxlint";
       cmd = (await ctx.hasTool(oxlintCmd))
         ? oxlintCmd
@@ -82,20 +70,14 @@ const oxlintRunner: RunnerDefinition = {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
 
-    // Run oxlint (or Vite+'s vp lint wrapper) on the file.
     const result = await safeSpawnAsync(cmd, args, {
       timeout: 30000,
     });
 
-    // Oxlint returns non-zero when issues found
     if (result.status === 0) {
       return { status: "succeeded", diagnostics: [], semantic: "none" };
     }
 
-    // Parse JSON output. Fall back to the unix-format parser if JSON parsing
-    // fails (older oxlint versions, malformed stderr noise, etc.) — keeps the
-    // runner producing diagnostics even when the structured-fix metadata is
-    // unavailable.
     const stdout = result.stdout ?? "";
     const stderr = result.stderr ?? "";
     let diagnostics = parseOxlintJson(stdout, ctx.filePath);
@@ -174,10 +156,6 @@ const OxlintJsonReportSchema = obj(
 );
 const isOxlintJsonReport = compile(OxlintJsonReportSchema).check;
 
-// Oxlint codes look like "eslint(no-debugger)" or "oxc(approx-constant)".
-// Strip the plugin prefix so the rule lines up with what users expect.
-// indexOf-based extraction avoids a regex hot-spot Sonar flagged for
-// potential super-linear backtracking on adversarial inputs.
 function extractOxlintRule(code: string | undefined): string {
   if (!code) return "unknown";
   const open = code.indexOf("(");
@@ -216,10 +194,6 @@ function parseOxlintJson(raw: string, filePath: string): Diagnostic[] {
       semantic: severity === "error" ? "blocking" : "warning",
       tool: "oxlint",
       rule,
-      // Oxlint's help text is rule-specific guidance ("Remove the debugger
-      // statement", "Consider removing this declaration"). Surface it as a
-      // fix suggestion so the warning becomes actionable instead of falling
-      // silently into code-quality.
       fixSuggestion: help && help.length > 0 ? help : undefined,
     });
   }
@@ -229,7 +203,6 @@ function parseOxlintJson(raw: string, filePath: string): Diagnostic[] {
 function parseOxlintUnix(raw: string, filePath: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   for (const line of raw.split("\n")) {
-    // Parse: file:line:column: message (rule)
     const match = line.match(/^(.+):(\d+):(\d+):\s*(.+?)\s*\(([^)]+)\)$/);
     if (match) {
       const [, _file, lineStr, _col, message, rule] = match;

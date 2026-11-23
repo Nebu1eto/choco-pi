@@ -42,7 +42,6 @@ async function readStore(path: string): Promise<ScheduleStoreData> {
   return JSON.parse(await readFile(path, "utf-8"));
 }
 
-/** A PID that belonged to a process that has exited. */
 async function deadPid(): Promise<number> {
   const { stdout } = await execFileAsync(process.execPath, [
     "-e",
@@ -60,7 +59,6 @@ test("the wx lock admits one holder at a time; a contender waits for the release
   const second = acquireScheduleLock(lockPath).then(() => {
     secondAcquired = true;
   });
-  // Several retry intervals pass: the live holder (this process) keeps the lock.
   await new Promise((resolve) => setTimeout(resolve, 180));
   assert.equal(secondAcquired, false, "a live holder is never reclaimed");
 
@@ -101,7 +99,6 @@ test("a lock left by a dead process is reclaimed", async (t) => {
 test("two stores on one file lose no update and leave no temp or lock file", async (t) => {
   const dir = await tempDir(t);
   const path = resolveStorePath(dir, "session-1");
-  // Two instances model two processes sharing the file through the PID lock.
   const [first, second] = await Promise.all([ScheduleStore.open(path), ScheduleStore.open(path)]);
   const added = await Promise.all([
     first.add(job("a")),

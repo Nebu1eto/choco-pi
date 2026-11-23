@@ -2,7 +2,6 @@ import CoreGraphics
 import Foundation
 import Observation
 
-/// Main-actor Dubins-path animation state consumed by the SwiftUI overlay.
 @Observable
 @MainActor
 final class AgentCursorRenderer {

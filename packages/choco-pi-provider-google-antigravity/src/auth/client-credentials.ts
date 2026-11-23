@@ -26,18 +26,11 @@ export interface AgyScanResult {
   clientSecrets: string[];
 }
 
-/** SHA-256 hex digests of one OAuth client's id and secret. */
 export interface ClientFingerprint {
   clientIdSha256: string;
   clientSecretSha256: string;
 }
 
-/**
- * The OAuth client agy's consumer login uses (`auth.newBrowserLogin` and
- * `(*loopbackLogin).oauthConfig` in agy 1.5.14). The binary also holds a Business client and an
- * MCP client, each loaded next to its own secret, so only these digests select the consumer pair;
- * the values themselves are never committed.
- */
 export const AGY_CONSUMER_CLIENT: ClientFingerprint = {
   clientIdSha256: "bf00c418024ba6bf606ccdc37120976e41bc429dd1d46ecf16a729aa532626ea",
   clientSecretSha256: "1d2f041093fd95aa8995a038c711d50a7960da09a505381c09a745d6ad0ecc60",
@@ -45,12 +38,9 @@ export const AGY_CONSUMER_CLIENT: ClientFingerprint = {
 
 export interface ResolveClientCredentialsOptions {
   env?: EnvLookup | undefined;
-  /** Already-read config file; omitted reads `<agentDir>/google-antigravity.json`. */
   config?: AntigravityConfigFile | undefined;
   agentDir?: string | undefined;
-  /** Scans the installed agy binary when no other source is set. Only login sets it; refresh never scans. */
   discoverFromAgy?: boolean | undefined;
-  /** The client to select from the agy scan; defaults to AGY_CONSUMER_CLIENT. */
   agyClient?: ClientFingerprint | undefined;
   findAgyBinary?:
     | ((env: EnvLookup, config: AntigravityConfigFile | undefined) => Promise<string | undefined>)
@@ -77,10 +67,6 @@ const CLIENT_ID_PATTERN = /[0-9]{6,}-[a-z0-9]{32}\.apps\.googleusercontent\.com/
 const CLIENT_SECRET_PATTERN = /GOCSPX-[A-Za-z0-9_-]{28}/gu;
 const SCAN_OVERLAP = 256;
 
-/**
- * Streams a binary once and collects distinct OAuth client ids and secrets in file order. Reads
- * in chunks with an overlap so a value split across chunks is still found; nothing is logged.
- */
 export async function scanAgyBinary(file: string, signal?: AbortSignal): Promise<AgyScanResult> {
   const clientIds = new Set<string>();
   const clientSecrets = new Set<string>();
@@ -104,7 +90,6 @@ async function isExecutable(file: string): Promise<boolean> {
   }
 }
 
-/** `CHOCO_PI_ANTIGRAVITY_AGY_PATH`, then config `agy_path`, then `agy` on PATH. */
 export async function findAgyBinary(
   env: EnvLookup,
   config: AntigravityConfigFile | undefined,
@@ -151,10 +136,6 @@ async function discoverFromAgy(
   return { clientId, clientSecret, source: "agy" };
 }
 
-/**
- * Resolves the OAuth client in order: environment, config file, then (only when login asks for
- * it) the installed agy binary. Resolves undefined when no source supplies one.
- */
 export async function resolveClientCredentials(
   options: ResolveClientCredentialsOptions = {},
 ): Promise<AntigravityClientCredentials | undefined> {

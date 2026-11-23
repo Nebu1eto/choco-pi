@@ -280,9 +280,7 @@ export class CodeModeDelegateRuntime {
             message: `Failed to serialize nested tool result: ${error instanceof Error ? error.message : String(error)}`,
           },
         });
-      } catch {
-        // Host teardown will reject the owning operation.
-      }
+      } catch {}
     }
   }
 }

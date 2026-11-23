@@ -11,7 +11,6 @@ export interface FindParams {
   app?: string;
   bundleId?: string;
   pid?: number;
-  /** Filters on the platform's best-effort presentation hint; only window vs transient is guaranteed. */
   kind?: "window" | "menu" | "sheet" | "popover" | "dialog" | "browser_page";
 }
 
@@ -34,7 +33,6 @@ export interface EvaluateBrowserParams {
 
 export interface ObserveParams extends ObserveTargetParams {
   mode?: "semantic" | "visual" | "fused";
-  /** Internal capture override; not part of the model-facing schema. */
   readText?: "auto" | "always" | "never";
 }
 

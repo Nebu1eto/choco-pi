@@ -2,7 +2,6 @@ import { bool, compile, num, str } from "@earendil-works/pi-schema";
 
 const isStringPrimitive = compile(str()).check;
 const isBooleanPrimitive = compile(bool()).check;
-// pi-schema number accepts NaN/infinities; the bounds restore finite-only, and isNumberValue re-admits them explicitly.
 const isFiniteNumber = compile(
   num({ minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE }),
 ).check;
@@ -21,7 +20,6 @@ function isSymbolValue<Value>(value: Value): boolean {
   return boxed !== value && boxed instanceof Symbol;
 }
 
-/** Finite numbers plus NaN and the infinities, like the `typeof` operator; boxed numbers are rejected. */
 function isNumberValue<Value>(value: Value): boolean {
   return (
     isFiniteNumber(value) ||
@@ -48,7 +46,6 @@ interface RuntimeTypeMap {
   undefined: undefined;
 }
 
-/** Preserve JavaScript's exact `typeof` semantics while exposing the narrowing as a type predicate. */
 export function hasRuntimeType<Value, Kind extends keyof RuntimeTypeMap>(
   value: Value,
   kind: Kind,

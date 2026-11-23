@@ -95,17 +95,14 @@ test("only an exactly matching info string is read; a near miss is invalid", () 
   }
   for (const info of ["choco-pi-verdict json", "json choco-pi-verdict", "Choco-pi-verdict"]) {
     assert.match(invalidReason(parseVerdictBlock(block(info, verdict()))), /line 1 names/, info);
-    // A near miss beside an exact block is ambiguous too.
     const both = `${block(info, verdict())}\n${block("choco-pi-verdict", verdict())}`;
     assert.match(invalidReason(parseVerdictBlock(both)), /line 1 names/, info);
   }
-  // A block of the other kind is ignored.
   assert.deepEqual(parseVerdictBlock(block("choco-pi-review", review())), { status: "missing" });
   assert.equal(
     parseStructuredBlock(block("choco-pi-review", review()), "choco-pi-review").status,
     "parsed",
   );
-  // Surrounding whitespace on the info string and up to three spaces of indentation are allowed.
   const indented = `   ${FENCE} choco-pi-verdict \n${JSON.stringify(verdict())}\n   ${FENCE}`;
   assert.equal(parseVerdictBlock(indented).status, "parsed");
 });
@@ -196,7 +193,6 @@ test("nested backticks: a quoted example of the block is ambiguous and inline fe
   const parsed = parsedValue(parseReviewBlock(block("choco-pi-review", withInlineFence)));
   assert.equal(parsed.findings[0].reproduction, inline);
 
-  // A four-backtick block may contain three-backtick lines; here they make the JSON invalid, never a pass.
   const innerFence = `${"````"}choco-pi-verdict\n{\n${FENCE}\n}\n${"````"}`;
   assert.equal(parseVerdictBlock(innerFence).status, "invalid");
 });
@@ -209,11 +205,9 @@ test("an unclosed block is invalid, not parsed", () => {
 test("extremely long input is handled without throwing", () => {
   const filler = "lorem ipsum ".repeat(400_000);
   const started = Date.now();
-  // A backtick run whose info string holds a backtick is not a fence, so the later block is still read.
   const ticks = "`".repeat(2_000_000);
   const text = `${filler}\n${ticks}x\`\n${filler}\n${block("choco-pi-verdict", verdict())}`;
   assert.equal(parseVerdictBlock(text).status, "parsed");
-  // An unclosed long fence swallows the rest of the message, so the block inside is not read as a pass.
   const swallowed = `${ticks}x\n${filler}\n${block("choco-pi-verdict", verdict())}`;
   assert.match(invalidReason(parseVerdictBlock(swallowed)), /names choco-pi-verdict/);
   const huge = rawBlock("choco-pi-verdict", `{"pad":"${"a".repeat(1_100_000)}"}`);
@@ -349,7 +343,6 @@ test("byte-order mark, CRLF, long fences and tildes follow the fence rules", () 
   assert.equal(parseVerdictBlock(text.replace(/\n/g, "\r\n")).status, "parsed");
   assert.equal(parseVerdictBlock(block("choco-pi-verdict", verdict(), "````")).status, "parsed");
   assert.equal(parseVerdictBlock(block("choco-pi-verdict", verdict(), "~~~")).status, "parsed");
-  // A byte-order mark anywhere else, a blockquote or deep indentation hides the fence: invalid, never missing.
   for (const hidden of [
     `Intro\n\uFEFF${text}`,
     text.replace(/^/gm, "> "),
@@ -358,7 +351,6 @@ test("byte-order mark, CRLF, long fences and tildes follow the fence rules", () 
   ]) {
     assert.equal(parseVerdictBlock(hidden).status, "invalid", JSON.stringify(hidden.slice(0, 40)));
   }
-  // A byte-order mark inside the body is not JSON.
   assert.match(invalidReason(parseVerdictBlock(rawBlock("choco-pi-verdict", "\uFEFF{}"))), /JSON/);
 });
 

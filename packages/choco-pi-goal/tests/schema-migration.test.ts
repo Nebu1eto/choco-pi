@@ -130,7 +130,6 @@ test("queued goal message guards keep openness, strings and finite timestamps", 
   assert.equal(toQueuedGoalContextCarrier({ role: "user" }), null);
   assert.equal(toQueuedGoalContextCarrier({ role: "user", timestamp: Number.NaN }), null);
 
-  // Open superseded details are recognised and not treated as active work.
   assert.equal(
     extensionQueuedGoalWorkMessageId({
       role: "custom",
@@ -303,7 +302,6 @@ function captureTools(): CapturedTool[] {
   registerGoalTools(
     {
       registerTool(definition) {
-        // The host schema serializes as plain JSON Schema.
         const parameters: CapturedParameters = JSON.parse(JSON.stringify(definition.parameters));
         captured.push({ name: definition.name, parameters });
       },

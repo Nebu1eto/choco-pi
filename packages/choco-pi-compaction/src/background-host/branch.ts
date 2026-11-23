@@ -4,11 +4,6 @@ import type { CommittedCandidate } from "../background/adoption.ts";
 import { CANDIDATE_RECORD_TYPE } from "../background/entry-types.ts";
 import { readAdoptionIdentity } from "./adoption-signal.ts";
 
-// ---------------------------------------------------------------------------
-// Branch helpers
-// ---------------------------------------------------------------------------
-
-/** Latest compaction on the branch with its 1-based count (the text checkpoint version). */
 export function latestCompactionOf(
   branch: readonly SessionEntry[],
 ): { readonly id: string; readonly version: number } | null {
@@ -22,7 +17,6 @@ export function latestCompactionOf(
   return latest === undefined ? null : { id: latest, version: count };
 }
 
-/** A committed compaction entry of this owner carrying the candidate's identity. */
 export function findCommittedAdoption(
   branch: readonly SessionEntry[],
   ownerKey: string,
@@ -45,7 +39,6 @@ export function findCommittedAdoption(
   return undefined;
 }
 
-/** Persisted candidate record payloads on the branch, oldest first (unvalidated). */
 export function candidateRecordsOf(branch: readonly SessionEntry[]): unknown[] {
   const records: unknown[] = [];
   for (const entry of branch) {
@@ -56,7 +49,6 @@ export function candidateRecordsOf(branch: readonly SessionEntry[]): unknown[] {
   return records;
 }
 
-/** Only the draft members the host reads; drops CompactionResult-only fields. */
 export function boundaryDraft(draft: CompactionEntryDraft): CompactionEntryDraft {
   const clean: CompactionEntryDraft = {
     type: "compaction",

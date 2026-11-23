@@ -62,8 +62,6 @@ export default async function (pi: ExtensionAPI) {
             : "pay-as-you-go";
         syncActivation();
       } catch (error) {
-        // Keep the tool inactive until a successful quota response proves
-        // subscription eligibility.
         void error;
       }
     })();

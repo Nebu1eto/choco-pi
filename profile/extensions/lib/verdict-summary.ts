@@ -1,21 +1,3 @@
-/**
- * Display summary of a structured reviewer or verifier block.
- *
- * The block is another model's output, so this module only ever summarises a
- * block the strict parser in verdict-blocks.ts accepted. Anything else is
- * reported as invalid with the parser's reason and shown as it is, never as
- * a clean result. Every string taken from a block is sanitised once, when the
- * summary is built; the two serialisations below only lay it out.
- *
- * One model, two serialisations:
- * - layoutSummary(): plain lines wrapped to a width, for the package cards that
- *   draw into a fixed number of columns and colour by line tone.
- * - summaryMarkdown(): an escaped Markdown list for transcript Markdown. Pi's
- *   Markdown renderer reflows paragraph text and strips leading indentation,
- *   so pre-wrapped lines would be reflowed again; a list item instead gets the
- *   renderer's own hanging indentation at the exact width it draws.
- * Meaning never depends on colour: severity, class and outcome are words.
- */
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { sanitizeTerminalText } from "./changes/terminal-text.ts";
 import {
@@ -31,22 +13,17 @@ import {
 export type SummaryTone = "error" | "warning" | "success" | "muted" | "normal";
 
 export interface SummaryEntry {
-  /** Words that carry the meaning without colour, e.g. "HIGH finding" or "low CANDIDATE (unconfirmed)". */
   label: string;
-  /** "path:line" for a finding, the id for a claim; sanitised. */
   location?: string;
-  /** Invariant, note or missing item; sanitised. */
   text?: string;
   tone: SummaryTone;
 }
 
 export interface VerdictSummary {
   info: typeof REVIEW_INFO | typeof VERDICT_INFO;
-  /** Verdict line: kind, verdict and counts. */
   headline: string;
   tone: SummaryTone;
   entries: SummaryEntry[];
-  /** Shortened bundle digest or snapshot, sanitised. */
   footer: string;
 }
 
@@ -58,26 +35,18 @@ export interface SummaryLine {
 
 export type BlockNotice = { info: string; reason: string };
 
-/** What a message's structured blocks allow a display to show. */
 export type VerdictTextAnalysis =
-  /** No structured block: show the text unchanged. */
   | { state: "absent" }
-  /** A structured fence is still open (streaming or truncated): show the text unchanged. */
   | { state: "unterminated" }
-  /** The parser rejected a block: show the text unchanged after one notice per rejected block. */
   | { state: "invalid"; notices: BlockNotice[] }
-  /** Every structured block parsed: summaries in message order, with each block's fence line range. */
   | { state: "parsed"; blocks: ParsedBlockDisplay[] };
 
 export interface ParsedBlockDisplay {
   summary: VerdictSummary;
-  /** Line index of the opening fence (after BOM removal and CRLF normalisation). */
   startLine: number;
-  /** Line index of the closing fence. */
   endLine: number;
 }
 
-/** Messages longer than this are shown unchanged: the parse runs on every render. */
 export const MAX_ANALYZED_CHARS = 256 * 1024;
 const MENTION = /choco-pi-(?:review|verdict)/i;
 const OPENING_FENCE = /^ {0,3}(\x60{3,}|~{3,})(.*)$/;
@@ -86,7 +55,6 @@ const STRUCTURED: readonly string[] = [REVIEW_INFO, VERDICT_INFO];
 const SEVERITY_ORDER: readonly ReviewFinding["severity"][] = ["critical", "high", "medium", "low"];
 const DIGEST_CHARS = 24;
 
-/** Display lines of a message, split the way the parser splits them. */
 export function messageLines(text: string): string[] {
   return (text.startsWith("\uFEFF") ? text.slice(1) : text)
     .split("\n")
@@ -95,7 +63,6 @@ export function messageLines(text: string): string[] {
 
 type Fence = { info: string; closed: boolean; startLine: number; endLine: number };
 
-/** The parser's top-level fence scan, kept here only to locate lines; validity is the parser's decision. */
 function topLevelFences(lines: string[]): Fence[] {
   const fences: Fence[] = [];
   let open: { fence: string; info: string; startLine: number } | undefined;
@@ -129,13 +96,8 @@ function plural(count: number, noun: string): string {
   return count + " " + noun + (count === 1 ? "" : "s");
 }
 
-/** Code units of a field examined when shortening it; the field is untrusted and may be long. */
 const SHORTEN_SCAN_UNITS = 4_096;
 
-/**
- * At most `maximum` columns of `text`, cut between grapheme clusters and measured
- * as the summary's lines are, ending in "…" when anything was left out.
- */
 function shorten(text: string, maximum: number): string {
   const scanned = text.length > SHORTEN_SCAN_UNITS ? text.slice(0, SHORTEN_SCAN_UNITS) : text;
   const clusters: Array<{ segment: string; width: number }> = [];
@@ -146,7 +108,6 @@ function shorten(text: string, maximum: number): string {
     total += width;
     if (total > maximum) break;
   }
-  // Every cluster was read and fits: unchanged. A cap-cut last cluster is never complete, so drop it.
   if (total <= maximum && scanned === text) return text;
   if (scanned !== text && total <= maximum) clusters.pop();
   let kept = "";
@@ -206,7 +167,6 @@ function findingEntry(finding: ReviewFinding): SummaryEntry {
   };
 }
 
-/** Findings first, then candidates; each by severity, in block order within a severity. */
 function orderedFindings(findings: ReviewFinding[]): ReviewFinding[] {
   const rank = (finding: ReviewFinding) =>
     (finding.class === "candidate" ? SEVERITY_ORDER.length : 0) +
@@ -311,10 +271,6 @@ export function summarizeVerdict(block: VerdictBlock): VerdictSummary {
   };
 }
 
-/**
- * Decides what a display may show for a message. Cheap when no block is named; a
- * message over MAX_ANALYZED_CHARS is reported absent, so it is shown unchanged.
- */
 export function analyzeVerdictText(text: string): VerdictTextAnalysis {
   if (text.length > MAX_ANALYZED_CHARS || !MENTION.test(text)) return { state: "absent" };
   const lines = messageLines(text);
@@ -336,7 +292,6 @@ export function analyzeVerdictText(text: string): VerdictTextAnalysis {
   ] as const) {
     if (summary === undefined) continue;
     const fence = fences.find((candidate) => candidate.closed && candidate.info === info);
-    // A parsed block is always a closed top-level fence; failing to find it is shown as invalid, not clean.
     if (!fence)
       return { state: "invalid", notices: [{ info, reason: "the block could not be located" }] };
     blocks.push({ summary, startLine: fence.startLine, endLine: fence.endLine });
@@ -346,17 +301,12 @@ export function analyzeVerdictText(text: string): VerdictTextAnalysis {
   return { state: "parsed", blocks };
 }
 
-/** One line naming the rejected block and the parser's (already sanitised) reason. */
 export function noticeText(notice: BlockNotice): string {
   return "Invalid " + notice.info + " block, not summarised: " + notice.reason;
 }
 
 const SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
-/**
- * Words between single-space clusters. A space that carries a combining mark is one
- * cluster and stays inside its word, so no word (and no wrapped line) begins with a mark.
- */
 function words(text: string): string[] {
   const found: string[] = [];
   let current = "";
@@ -370,7 +320,6 @@ function words(text: string): string[] {
   return found;
 }
 
-/** Splits one word into pieces no wider than width (a grapheme wider than width stands alone). */
 function breakWord(word: string, width: number): string[] {
   const pieces: string[] = [];
   let current = "";
@@ -389,7 +338,6 @@ function breakWord(word: string, width: number): string[] {
   return pieces;
 }
 
-/** Greedy word wrap; continuation lines carry the indent. Input holds no control characters. */
 export function wrapText(text: string, width: number, indent: string): string[] {
   const usable = Math.max(1, width);
   const hanging = visibleWidth(indent) < usable - 4 ? indent : "";
@@ -434,7 +382,6 @@ export function entryText(entry: SummaryEntry): string {
 }
 
 export interface LayoutOptions {
-  /** Show at most this many entries, then one line counting the rest. */
   maxEntries?: number;
 }
 
@@ -444,7 +391,6 @@ function hiddenLine(hidden: number): string {
   );
 }
 
-/** Plain lines, none wider than the given width in columns. */
 export function layoutSummary(
   summary: VerdictSummary,
   width: number,
@@ -466,7 +412,6 @@ export function layoutSummary(
   return lines;
 }
 
-/** Plain notice lines for a rejected block, none wider than the given width. */
 export function layoutNotice(notice: BlockNotice, width: number): SummaryLine[] {
   return wrapText(noticeText(notice), width, "  ").map((text) => ({
     text,
@@ -475,16 +420,10 @@ export function layoutNotice(notice: BlockNotice, width: number): SummaryLine[] 
   }));
 }
 
-/**
- * Escapes text for inline Markdown so it renders literally. Every ASCII punctuation character is
- * backslash-escaped except "(", ")" and "[": Pi's Markdown reads a backslash before "(" or "[" as a LaTeX
- * delimiter, and with every "]" escaped no link, image or reference can form.
- */
 export function escapeMarkdownInline(text: string): string {
   return text.replace(/[!-'*-/:-@\\\]-\x60{-~]/g, (character) => "\\" + character);
 }
 
-/** The summary as Markdown: a bold verdict line, one list item per entry, and the footer. */
 export function summaryMarkdown(summary: VerdictSummary): string {
   const parts = ["**" + escapeMarkdownInline(summary.headline) + "**"];
   if (summary.entries.length > 0) {
@@ -496,7 +435,6 @@ export function summaryMarkdown(summary: VerdictSummary): string {
   return parts.join("\n\n");
 }
 
-/** One notice as a Markdown paragraph. */
 export function noticeMarkdown(notice: BlockNotice): string {
   return "**" + escapeMarkdownInline(noticeText(notice)) + "**";
 }

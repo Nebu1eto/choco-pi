@@ -110,9 +110,7 @@ test("eligibility equals resolveCodexRuntimePlan(...).nativeCompaction across ex
       }
     }
   }
-  // The table exercises both outcomes, not only one exit.
   assert.ok(natives > 0 && natives < rows, `${natives}/${rows}`);
-  // Pinned exits.
   const on = configFor(() => {});
   assert.equal(
     resolveNativeCompactionEligibility(MODELS.alias, on, { canonicalAliasEndpointTrusted: false }),
@@ -158,7 +156,6 @@ test("the published slot makes resolveOwner local exactly when eligibility is fa
           ).nativeCompaction,
         );
         assert.equal(slot.isNativeCompactionOwner(model), eligible, `${name} / ${modelName}`);
-        // Compaction's own lanes are off here, so a non-Codex owner is local.
         const owner = resolveOwner({ model });
         assert.equal(owner === "local", !eligible, `${name} / ${modelName}: ${owner}`);
       }
@@ -227,7 +224,6 @@ test("a second (child) registration neither answers nor bumps while the first is
     parent.unpublish();
     assert.equal(seen.length, 1, "the answering source left");
     assert.equal(slot.published, false);
-    // With nothing published, ownership falls back to the snapshot heuristic.
     assert.equal(resolveOwner({ model: MODELS.codex }), "codex-native");
   } finally {
     unsubscribe();

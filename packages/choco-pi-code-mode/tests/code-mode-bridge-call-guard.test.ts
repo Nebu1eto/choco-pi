@@ -1,10 +1,3 @@
-/**
- * The exec bridge applies the calling session's published per-call guard
- * (`toolCallBlock` on the `choco-pi.tool-scope.v1` registry) on both dispatch
- * paths: `ctx.executeTool()` for callable tools and the direct `execute()`
- * fallback for reachable but inactive ones, which gets no `tool_call` hooks.
- * choco-pi-subagents publishes the guard for children without edit and write.
- */
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -24,14 +17,12 @@ import { createToolContextFixture } from "./tool-context-fixture.ts";
 const TOOL_SCOPE_SYMBOL = Symbol.for("choco-pi.tool-scope.v1");
 type Owner = ExtensionToolContext["sessionManager"];
 
-/** The tool-scope registry members this test publishes. */
 interface PublishedToolScope {
   isToolAllowed(): boolean;
   restrict(): void;
   toolCallBlock?(owner: Owner, name: string, input: BoundaryValue): string | undefined;
 }
 
-/** The guard choco-pi-subagents installs for a read-only child, reduced to the cases tested. */
 function readOnlyReason(name: string, input: BoundaryValue): string | undefined {
   if (name !== "lsp_navigation" || !isJsonObject(input)) return undefined;
   const operation = input["operation"];
@@ -41,7 +32,6 @@ function readOnlyReason(name: string, input: BoundaryValue): string | undefined 
   return undefined;
 }
 
-/** Publish a registry that guards only `guarded`'s calls; returns the restore function. */
 function publishRegistry(guarded: Owner, withGuard = true): () => void {
   const previous = Object.getOwnPropertyDescriptor(globalThis, TOOL_SCOPE_SYMBOL);
   const registry: PublishedToolScope = { isToolAllowed: () => true, restrict: () => undefined };
@@ -66,7 +56,6 @@ interface Probe {
   invoke(input: BoundaryValue): Promise<BoundaryValue>;
 }
 
-/** A bridged `lsp_navigation` in `owner`'s session, active (session-callable) or not. */
 function probe(owner: Owner, active: boolean): Probe {
   const direct: string[] = [];
   const session: string[] = [];
@@ -88,7 +77,6 @@ function probe(owner: Owner, active: boolean): Probe {
   assert.ok(tool);
   const extensionContext = createToolContextFixture({
     sessionManager: owner,
-    // Session-callable only when listed; the listed copy itself is never run.
     tools: active
       ? [{ ...definition, execute: async () => ({ content: [], details: undefined }) }]
       : [],
@@ -163,6 +151,5 @@ test("unguarded sessions and registries without a call guard are unaffected", as
   } finally {
     restore();
   }
-  // No registry at all (a root session without choco-pi-subagents).
   assert.equal(await probe(guarded, false).invoke(RENAME), "direct ran");
 });

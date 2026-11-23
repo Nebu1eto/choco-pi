@@ -68,19 +68,12 @@ export interface LaunchResult {
   code: number;
   timedOut: boolean;
   intervention?: RecordValue;
-  /** Harness-side failures (unbounded waits that timed out, sink errors); never model faults. */
   defects: string[];
 }
-/**
- * Run one Pi scenario. `deadline` aborts it: Pi gets SIGTERM, then SIGKILL after
- * KILL_GRACE_MS. Every wait after Pi's exit is bounded by WAIT_BOUND_MS and a timeout is
- * reported in `defects` instead of blocking the run.
- */
 export async function launch(
   p: Plan,
   deadline: AbortSignal,
   scenario: ScenarioId,
-  /** Tier B S5: the fixture-owned mutation that replaces the fake daemon's wire mutation. */
   mutate?: () => Promise<RecordValue>,
 ): Promise<LaunchResult> {
   if (deadline.aborted) return { code: 1, timedOut: true, defects: [] };
@@ -94,13 +87,9 @@ export async function launch(
     stdio: ["ignore", "pipe", "pipe"],
   });
   const exit = exitOf(child);
-  // Explicit writes, not pipe(): pipe() ends `err` at stderr EOF, so its `finish` can fire
-  // before this function waits for it and the wait never resolves.
   child.stderr.on("data", (chunk: Buffer) => err.stream.write(chunk));
   let stream = "";
   let injected = false;
-  // Wrapped in `within` at creation so an early wire failure is captured, never an
-  // unhandled rejection while Pi is still running.
   let intervention: Promise<Bounded<RecordValue>> | undefined;
   child.stdout.on("data", (chunk: Buffer) => {
     out.stream.write(chunk);
@@ -111,8 +100,6 @@ export async function launch(
       stream = stream.slice(newline + 1);
       try {
         const item: JsonValue = JSON.parse(line);
-        // S4 has no harness stimulus: the fake daemon holds the typeText past the transport
-        // timeout, and the TS transport itself sends the cancel. Pi is never signalled.
         if (
           isJsonObject(item) &&
           !injected &&
@@ -156,9 +143,7 @@ export async function launch(
             WAIT_BOUND_MS,
           );
         }
-      } catch {
-        /* malformed JSON is rejected during assertion */
-      }
+      } catch {}
       newline = stream.indexOf("\n");
     }
   });
@@ -172,8 +157,6 @@ export async function launch(
   const defects: string[] = [];
   let code = 1;
   try {
-    // Pi normally exits on its own; after the deadline it gets SIGTERM then SIGKILL, so this
-    // bound only trips if even SIGKILL fails to reap it.
     const ended = await exitOrDeadline(exit, deadline);
     if (!ended.ok) defects.push(`pi did not exit (${ended.error})`);
     else if (ended.value.error) defects.push(`pi spawn error (${ended.value.error})`);
@@ -190,13 +173,11 @@ export async function launch(
     cancelKill?.();
     const stop = await stopProcess(child, "pi");
     if (stop) defects.push(stop);
-    // A descendant that inherited Pi's pipes could hold them open; drain is bounded.
     const drain = await drainOutput(child, "pi");
     if (drain) defects.push(drain);
     defects.push(...(await closeSink(out, "events")), ...(await closeSink(err, "stderr")));
   }
 }
-/** Wait for exit; once the deadline fires allow the SIGKILL grace plus WAIT_BOUND_MS. */
 async function exitOrDeadline(exit: Promise<Exit>, deadline: AbortSignal): Promise<Bounded<Exit>> {
   if (!deadline.aborted) {
     const aborted = new Promise<void>((resolve) =>

@@ -68,17 +68,6 @@ export interface ActionableWarningsReport {
     files: number;
     actions: number;
     autoFixEligible: number;
-    /**
-     * Unsuppressed warnings split by tier (#1777). The dispatch path now
-     * preserves a rule's declared severity, so a hint-tier style opinion is
-     * countable instead of arriving indistinguishable from a real warning.
-     *
-     * OPTIONAL on purpose: this report is persisted to
-     * `.choco-pi-lsp/cache/actionable-warnings.json` and read back by
-     * `clients/runtime-agent-end.ts` and `tools/diagnostics-report.ts`, which
-     * can find a file written by a choco-pi-lsp build that predates the field.
-     * Every reader must tolerate its absence.
-     */
     byTier?: { warning: number; info: number; hint: number; error: number };
   };
 }
@@ -101,7 +90,6 @@ const isWarningStateFile = compile(WarningStateFileSchema).check;
 
 let beforeWarningStateLockForTests: (() => void) | null = null;
 
-/** Test seam for a sibling process commit immediately before lock acquisition. */
 export function _setBeforeWarningStateLockForTests(hook: (() => void) | null): void {
   beforeWarningStateLockForTests = hook;
 }
@@ -232,12 +220,6 @@ export function recordFromDispatchDiagnostic(
   cwd: string,
 ): ActionableWarningRecord | undefined {
   if (diagnostic.semantic !== "warning") return undefined;
-  // #1777: the old gate demanded `severity === "warning"` exactly, which was
-  // invisible while the ast-grep runner collapsed every non-error tier to
-  // "warning". Now that hint and info survive the dispatch path, admit them:
-  // a fix is a fix, and the tier governs how loudly a finding renders, not
-  // whether its fix is worth offering. `error` still routes to the blocking
-  // path, so it stays out even when a runner leaves `semantic` at "warning".
   if (diagnostic.severity === "error") return undefined;
   if (!diagnostic.fixable && !diagnostic.fixSuggestion) return undefined;
   const filePath = path.resolve(cwd, diagnostic.filePath);
@@ -384,13 +366,6 @@ export async function buildActionableWarningsReport(args: {
         });
         continue;
       }
-      // Reuse the cache primed by the dispatch pipeline's touchFile earlier in
-      // this turn — but only when it is verified current. A second open+wait
-      // here costs ~1 s/file with the LSP cold, so we pass the hash of the
-      // current file bytes: getLastKnownDiagnostics returns the entry only if
-      // it was primed for the SAME content, so a previous turn's diagnostics
-      // are never served as current. On any miss (no entry, content drift, or
-      // an entry written without content) we fall through to a fresh read.
       let diags: LSPDiagnostic[] | undefined;
       let lspSource: "cache" | "fresh" = "cache";
       const currentContent = fs.existsSync(filePath)
@@ -557,24 +532,6 @@ export function getActionableWarningsHistoryPath(cwd: string): string {
   return path.join(getProjectDataDir(cwd), "actionable-warnings.jsonl");
 }
 
-/**
- * Append every actionable warning from this turn to the project's rolling
- * NDJSON history. Mirrors `appendCodeQualityWarningsHistory` so the two
- * advisory families have the same shape of cross-turn persistence:
- *
- *   - One line per warning (not per turn).
- *   - Carries the stable `aw:<hash>` id so callers can correlate the same
- *     warning across turns / sessions.
- *   - Captures suppression state at write time so historical analyses can
- *     reconstruct what the agent actually saw.
- *   - Captures action counts (and autoFixEligible counts) — the LSP code-
- *     action enrichment is the actionable-warnings-only signal; preserving
- *     it lets later analyses ask "which warnings ship with an autofix?".
- *
- * Skips the write entirely when no warnings exist — matching the code-
- * quality history's no-op-on-empty behaviour and keeping the file from
- * accumulating 0-warning noise.
- */
 export function appendActionableWarningsHistory(
   cwd: string,
   report: ActionableWarningsReport,
@@ -619,9 +576,7 @@ export function appendActionableWarningsHistory(
       `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
       "utf8",
     );
-  } catch {
-    // Non-fatal — history write failure must never surface to the agent.
-  }
+  } catch {}
 }
 
 export interface ActionableWarningsAutofixSummary {
@@ -756,7 +711,6 @@ export async function applyConservativeActionableWarningFixes(args: {
           continue;
         }
         // SAFETY: actionSafety returned eligible only after verifying selected.edit is present;
-        // LSPCodeAction.edit is the same WorkspaceEdit input consumed by applyWorkspaceEdit.
         const edit = selected.edit as Parameters<typeof applyWorkspaceEdit>[0];
         const applied = await applyWorkspaceEdit(
           edit,
@@ -771,7 +725,6 @@ export async function applyConservativeActionableWarningFixes(args: {
       } catch (err) {
         failedCount++;
         // SAFETY: applyWorkspaceEdit's failure path attaches the exact partial result under this
-        // property; the own-property check excludes unrelated thrown values.
         const partial =
           err instanceof Error && "appliedWorkspaceEdit" in err
             ? (
@@ -821,9 +774,6 @@ export function formatActionableWarningsAdvisory(
     report.summary.autoFixEligible > 0
       ? ` ${report.summary.autoFixEligible} appear to have conservative preferred quickfixes.`
       : "";
-  // #1777: hint and info are style opinions, so say how much of the count is
-  // opinion. The line appears only when a quiet tier is actually present —
-  // an all-warning turn already says everything in the count above.
   const byTier = report.summary.byTier;
   const quiet = byTier ? byTier.hint + byTier.info : 0;
   const tierLine =

@@ -191,7 +191,6 @@ function redactUrlToken(token: string): string {
     }
   }
 
-  // Serializing an unredacted URL would normalize it (for example, appending "/"), corrupting page text and replayable selectors.
   return mutated ? parsed.toString() : token;
 }
 
@@ -202,9 +201,7 @@ function redactLooseUrlParameterText(text: string): string {
       let name = rawName;
       try {
         name = decodeURIComponent(rawName.replace(/\+/g, " "));
-      } catch {
-        // Keep the raw name when percent decoding fails.
-      }
+      } catch {}
       if (!shouldRedactQueryParam(name)) return match;
       return `${separator}${rawName}=[REDACTED]`;
     },
@@ -773,8 +770,6 @@ export function restoreManagedSessionStateFromBranch(
       restorableDetailSessionName === explicitSessionName
         ? restorableDetailSessionName
         : undefined;
-    // Sticky restore policy is session-identity state and must apply even for explicit
-    // `--session <current-managed>` rows that are not used for managed-session lifecycle replay.
     if (details.managedSessionRestoreDisabled === true && hasRuntimeType(sessionName, "string")) {
       restoreDisabledIdentities.set(getAgentBrowserSessionIdentityKey(sessionName, namespace), {
         namespace,

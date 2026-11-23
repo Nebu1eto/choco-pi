@@ -77,7 +77,6 @@ test("wait aborts, including an already-aborted signal", async () => {
     await waitForSessionFileRelease(file, { timeoutMs: 10_000, signal: controller.signal }),
     "aborted",
   );
-  // A later release after abort must not throw or resettle.
   releaseSessionFile(file, "a");
 });
 

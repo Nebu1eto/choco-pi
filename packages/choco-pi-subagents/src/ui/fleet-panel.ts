@@ -1,5 +1,3 @@
-/** Unified above-editor fleet panel for orchestrator, agents, and owned shells. */
-
 import {
   isKeyRelease,
   Key,
@@ -41,12 +39,9 @@ const MAX_SHELL_ROWS = 3;
 const TICK_MS = 100;
 const FINISHED_LINGER_MS = 4_000;
 const ERROR_LINGER_TURNS = 2;
-/** Right-hand row marker while that agent is compacting. */
 export const COMPACTING_MARKER = "Compacting...";
-/** Status-line entry while any agent, main or child, is compacting. */
 export const COMPACTION_STATUS_KEY = "compaction";
 export const COMPACTION_STATUS_TEXT = "compacting...";
-/** Background preparation publishes no events, so the status line polls. */
 const COMPACTION_POLL_MS = 250;
 
 export type FleetPanelFocusOptions = {
@@ -56,7 +51,6 @@ export type FleetPanelFocusOptions = {
   openSideConversation?: (record: AgentRecord) => boolean;
 };
 
-/** The panel's widget: Pi offers it the mouse events on its rows. */
 type FleetWidget = {
   render(width: number): string[];
   invalidate(): void;
@@ -121,23 +115,19 @@ function focusedEditorProbe(value: FocusedComponentBoundary): FocusedEditorProbe
     return undefined;
   }
   // SAFETY: The guard admits only a non-array, non-callable host object;
-  // each probed method is independently checked before use.
   return value as FocusedEditorProbe;
 }
 
-/** Integer elapsed seconds used by compact fleet rows. */
 export function formatFleetElapsed(ms: number): string {
   return `${Math.max(0, Math.floor(ms / 1_000))}s`;
 }
 
-/** Compact token total used by compact fleet rows. */
 export function formatFleetTokens(count: number): string {
   if (count >= 1_000_000) return `↓ ${(count / 1_000_000).toFixed(1)}M`;
   if (count >= 1_000) return `↓ ${(count / 1_000).toFixed(1)}k`;
   return `↓ ${count}`;
 }
 
-/** Keep right-hand stats visible while truncating the descriptive left side. */
 export function rightAlign(left: string, right: string, width: number): string {
   const rightWidth = visibleWidth(right);
   if (rightWidth >= width) return truncateToWidth(right, width);
@@ -200,7 +190,6 @@ export class FleetPanel {
   private agentSectionEnabled = true;
   private selectedKey: RowKey = "main";
   private lastIndex = 0;
-  /** The roster entry each panel line showed when it was last drawn, for the mouse. */
   private rowKeys: Array<RowKey | undefined> = [];
   private viewerClose: (() => void) | undefined;
   private viewingAgentId: string | undefined;
@@ -401,7 +390,6 @@ export class FleetPanel {
           if (
             record.status === "running" ||
             record.status === "queued" ||
-            // Parked on a usage limit: still owned and resumable, so keep it listed.
             record.status === "waiting_for_reset" ||
             record.id === this.viewingAgentId ||
             record.id === focusedId
@@ -411,8 +399,6 @@ export class FleetPanel {
           if (record.completedAt === undefined) return false;
           const age = this.finishedTurnAge.get(record.id) ?? 0;
           const maxAge = record.status === "completed" ? 1 : ERROR_LINGER_TURNS;
-          // Preserve both legacy surfaces: rows remain while either the widget's
-          // turn-age window or the below-editor switcher's 4 s window is open.
           return now - record.completedAt < FINISHED_LINGER_MS || age < maxAge;
         })
         .map((record) => record.id),
@@ -558,13 +544,6 @@ export class FleetPanel {
     return undefined;
   }
 
-  /**
-   * A click on a row selects it, as the arrow keys do: a subagent's row
-   * focuses it and `main` returns to the orchestrator. A double click is
-   * Enter on that row, which opens a shell's output. Keys go to the panel
-   * afterwards only where the arrow keys could have started that: with the
-   * editor focused and empty, so a click never turns typed text into commands.
-   */
   private handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     if (this.disposed || !this.ui || this.viewerClose) return undefined;
     if (event.button !== "left" || (event.type !== "press" && event.type !== "click")) {
@@ -572,8 +551,6 @@ export class FleetPanel {
     }
     const key = this.rowKeys[event.y];
     if (key === undefined) return undefined;
-    // A press Pi keeps starts its text selection, and the second press of a
-    // double click then selects a word instead of arriving here as a click.
     if (event.type === "press") return { handled: true, render: false };
     const roster = this.roster();
     const index = roster.findIndex((entry) => entry.key === key);
@@ -769,7 +746,6 @@ export class FleetPanel {
     this.updateCompactionStatus();
   }
 
-  /** Timer tick: a UI context replaced before dispose stops the poll instead of throwing. */
   private pollCompactionStatus(): void {
     try {
       this.updateCompactionStatus();
@@ -780,7 +756,6 @@ export class FleetPanel {
     }
   }
 
-  /** One status-line entry while any agent compacts, foreground or background; none otherwise. */
   private updateCompactionStatus(): void {
     if (this.disposed || !this.ui) return;
     const compacting =
@@ -866,7 +841,6 @@ export class FleetPanel {
       const detail = renderDetail?.(row);
       if (detail) {
         lines.push(detail);
-        // The detail line belongs to the row above it.
         keys.push(row.key);
       }
     }
@@ -948,7 +922,6 @@ export class FleetPanel {
       "dim",
       `${formatFleetElapsed(elapsed)} · ${formatFleetTokens(getLifetimeTotal(usage))}`,
     );
-    // Leading the right segment keeps the marker when a narrow row clips it.
     const compacting =
       record.status === "running" && isSessionCompacting(record.session)
         ? `${theme.fg("warning", COMPACTING_MARKER)} `
@@ -981,8 +954,6 @@ export class FleetPanel {
       );
     }
     const indent = "  ".repeat(entry.depth);
-    // Token stats embed nested colors (context %, ⇊compactions) whose ANSI resets
-    // would otherwise leave the trailing ")" unstyled against the dim row.
     return truncateToWidth(
       fgPreservingNestedStyles(theme, "dim", `      ${indent}⎿  ${parts.join(" · ")}`),
       width,

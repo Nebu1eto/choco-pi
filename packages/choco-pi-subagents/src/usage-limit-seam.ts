@@ -1,14 +1,3 @@
-/**
- * usage-limit-seam.ts — structural reader for the root usage-limit policy.
- *
- * The root choco-pi extension publishes owner-indexed policies at
- * `globalThis[Symbol.for("choco-pi.usage-limit-policy")]` as a
- * `Map<ownerSessionId, UsageLimitPolicy>`. This package may not import
- * repository-root modules, so the contract shapes are copied here with
- * identical names and every value crossing the seam is validated before use.
- * The manager only reads the slot; it never creates or mutates the map.
- */
-
 import { arr, bool, compile, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import { formatProviderLabel } from "../../choco-pi-ui/extensions/zentui/model-display.ts";
 import { finiteNum, isFiniteNumber, isString } from "./value-guards.ts";
@@ -20,16 +9,9 @@ export type OnUsageLimit = "auto-resume" | "fallback" | "none";
 export type UsageLimitKind = "quota" | "billing" | "transient";
 export type UsageLimitConfidence = "structured" | "parsed" | "inferred";
 
-/**
- * Copy of the root contract's `UsageLimitScope`: the models a limit narrower
- * than the provider account covers (Anthropic's Fable limit covers the Fable
- * and Mythos series only). A model id is covered when it equals a stem or
- * starts with the stem followed by `-`. No scope: the whole account.
- */
 export type UsageLimitScope = {
   name: string;
   models: string[];
-  /** Covers exactly the ids in `models` (an unknown scope closes only the failed model). */
   exact?: boolean;
 };
 
@@ -39,25 +21,18 @@ const UsageLimitScopeSchema = obj(
 );
 const isUsageLimitScope = compile(UsageLimitScopeSchema).check;
 
-/** Whether a limit with `scope` covers `modelId`; a provider-wide limit covers every model. */
 export function scopeCoversModel(scope: UsageLimitScope | undefined, modelId: string): boolean {
   if (scope === undefined) return true;
   if (scope.exact === true) return scope.models.includes(modelId);
   return scope.models.some((stem) => modelId === stem || modelId.startsWith(`${stem}-`));
 }
 
-/** Identity of a scope within one provider account; `""` is the provider-wide limit. */
 export function scopeKey(scope: UsageLimitScope | undefined): string {
   if (scope === undefined) return "";
   const kind = scope.exact === true ? "=" : "*";
   return `${scope.name}\u0001${kind}\u0001${[...scope.models].sort().join("\u0001")}`;
 }
 
-/**
- * Note on what a scoped limit covers, such as
- * `" (claude-fable*, claude-mythos* only; other models stay available)"`;
- * empty for a provider-wide limit.
- */
 export function scopeNote(scope: UsageLimitScope | undefined): string {
   if (scope === undefined || scope.models.length === 0) return "";
   const suffix = scope.exact === true ? "" : "*";
@@ -65,7 +40,6 @@ export function scopeNote(scope: UsageLimitScope | undefined): string {
   return ` (${models} only; other models stay available)`;
 }
 
-/** A plain copy of a validated scope, or undefined for anything else. */
 export function usageLimitScopeOf(value: HostSlotValue): UsageLimitScope | undefined {
   if (!isUsageLimitScope(value)) return undefined;
   const scope: UsageLimitScope = { name: value.name, models: [...value.models] };
@@ -73,15 +47,8 @@ export function usageLimitScopeOf(value: HostSlotValue): UsageLimitScope | undef
   return scope;
 }
 
-/** Copy of the root contract's `UNCONFIRMED_SCOPE_NAME`. */
 export const UNCONFIRMED_SCOPE_NAME = "unconfirmed";
 
-/**
- * Copy of the root contract's `closureScopeFor`: a quota limit nothing
- * confirmed (no live usage data, a stale reading, a policy that failed or
- * timed out) closes only the model whose request failed, never the account's
- * other models. A confirmed limit keeps its scope (none: the whole account).
- */
 export function closureScopeFor(
   classification: UsageLimitClassification,
   confirmed: boolean,
@@ -98,12 +65,7 @@ export type UsageLimitClassification = {
   accountId?: string;
   resetAt?: number;
   confidence: UsageLimitConfidence;
-  /**
-   * Session the failure happened in. A child classification always carries
-   * its own, so the owner's policy never enriches it from the root branch.
-   */
   sessionId?: string;
-  /** Models the limit covers; absent: the whole provider account. */
   scope?: UsageLimitScope;
 };
 
@@ -116,7 +78,6 @@ export type UsageLimitClassifyInput = {
 export type FallbackCandidateContext = {
   available: readonly { provider: string; id: string }[];
   scoped: readonly string[];
-  /** `modelId` names the candidate, so a model-scoped closure blocks only the models it covers. */
   isClosed(providerKey: string, accountId: string, modelId?: string): boolean;
 };
 
@@ -138,44 +99,25 @@ export type UsageLimitPolicy = {
     untilMs: number,
     scope?: UsageLimitScope,
   ): void;
-  /** Without `modelId` only a provider-wide closure counts. */
   isClosed(providerKey: string, accountId: string, now?: number, modelId?: string): boolean;
-  /**
-   * Optional: re-check the closures blocking `modelId` against live evidence,
-   * reopening the owner's own closures when the limit is gone. `since` is when
-   * the caller's closure was written. Absent from policies that predate it.
-   */
   recheck?(
     providerKey: string,
     accountId: string,
     since?: number,
     modelId?: string,
   ): Promise<UsageLimitRecheck>;
-  /** Optional: reopen after a request on `modelId` that started at `at` succeeded. */
   reopen?(providerKey: string, accountId: string, at?: number, modelId?: string): void;
-  /**
-   * Optional: the account the owner currently uses for `provider`, the key
-   * its own closures are written under. Absent means `"default"`.
-   */
   accountId?(provider: string): string;
 };
 
-/** Copy of the root contract's `UsageLimitRecheck`. */
 export type UsageLimitRecheck = {
   open: boolean;
   until?: number;
   detail?: string;
-  /** On a closed answer, the models the limit still covers; absent: the whole account. */
   scope?: UsageLimitScope;
-  /**
-   * On a closed answer, each checked closure still in force (no `scope`: the
-   * provider-wide one) with its end when known; a checked closure missing
-   * from the list was reopened. Absent from policies that predate it.
-   */
   inForce?: UsageLimitClosureState[];
 };
 
-/** One closure a re-check found still in force. */
 export type UsageLimitClosureState = {
   scope?: UsageLimitScope;
   until?: number;
@@ -188,7 +130,6 @@ export type SubagentUsageLimit = {
   resetAt?: number;
   suggestedModel?: string;
   status: "reported" | "waiting_for_reset" | "resumed" | "exhausted";
-  /** Models the limit covers; absent: every model on the provider account. */
   scope?: UsageLimitScope;
 };
 
@@ -199,7 +140,6 @@ export type SubagentsUsageLimitEvent = {
   status: SubagentUsageLimit["status"];
 };
 
-// Policy answers are plain data objects; every schema is open (unknown keys allowed), as before.
 const isOnUsageLimit = compile(oneOf(["auto-resume", "fallback", "none"])).check;
 
 const UsageLimitClassificationSchema = obj(
@@ -245,10 +185,8 @@ const isRecheck = compile(
   ),
 ).check;
 
-/** Any value read from a process-global slot before validation. */
 export type HostSlotValue = {} | null | undefined;
 
-/** Every contract member, typed as unvalidated host data until checked. */
 interface UsageLimitPolicyCandidate {
   owner?: HostSlotValue;
   generation?: HostSlotValue;
@@ -267,7 +205,6 @@ interface UsageLimitPolicyRegistry {
   [USAGE_LIMIT_POLICY_SYMBOL]?: HostSlotValue;
 }
 
-/** Structural check matching the root contract's `isUsageLimitPolicy`. */
 export function isUsageLimitPolicy(value: HostSlotValue): value is UsageLimitPolicy {
   if (!(value instanceof Object)) return false;
   // SAFETY: Every member of the candidate view is unvalidated host data; each is checked below.
@@ -287,10 +224,6 @@ export function isUsageLimitPolicy(value: HostSlotValue): value is UsageLimitPol
   );
 }
 
-/**
- * Policy published by the root session `owner`, or undefined when the slot is
- * absent, malformed, or holds no valid entry for that owner. Never throws.
- */
 export function readUsageLimitPolicy(owner: string | undefined): UsageLimitPolicy | undefined {
   if (owner === undefined) return undefined;
   try {
@@ -306,7 +239,6 @@ export function readUsageLimitPolicy(owner: string | undefined): UsageLimitPolic
   }
 }
 
-/** Classify through the policy; malformed or throwing policies read as "not a limit". */
 export function classifyWithPolicy(
   policy: UsageLimitPolicy,
   input: UsageLimitClassifyInput,
@@ -319,11 +251,6 @@ export function classifyWithPolicy(
   }
 }
 
-/**
- * Bound on one asynchronous policy call. The manager awaits these while a
- * failed run still holds its pool slot, so a hung corroboration must not stall
- * settlement; a timeout reads as "no answer".
- */
 export const POLICY_CALL_TIMEOUT_MS = 20_000;
 
 class PolicyTimeoutError extends Error {
@@ -342,7 +269,6 @@ function withinPolicyTimeout<Result>(call: Promise<Result>): Promise<Result> {
   return Promise.race([call, timeout]).finally(() => clearTimeout(timer));
 }
 
-/** Preference with the contract default (`none`) for malformed or failing policies. */
 export async function preferenceFromPolicy(policy: UsageLimitPolicy): Promise<OnUsageLimit> {
   try {
     const result: HostSlotValue = await withinPolicyTimeout(policy.preference());
@@ -352,11 +278,6 @@ export async function preferenceFromPolicy(policy: UsageLimitPolicy): Promise<On
   }
 }
 
-/**
- * Corroboration verdict: `confirmed` exhaustion, provider `capacity`, or
- * `unavailable` (no usable account data). Optional: policies predating the
- * field omit it, and the manager then derives a conservative verdict.
- */
 export type CorroborationEvidence = "confirmed" | "capacity" | "unavailable";
 
 export type Corroboration = {
@@ -365,7 +286,6 @@ export type Corroboration = {
   evidence?: CorroborationEvidence;
 };
 
-/** Corroboration result, or undefined when the policy fails or answers malformed data. */
 export async function corroborateWithPolicy(
   policy: UsageLimitPolicy,
   classification: UsageLimitClassification,
@@ -378,7 +298,6 @@ export async function corroborateWithPolicy(
   }
 }
 
-/** Fallback suggestion from the policy's tier table, validated structurally. */
 export function pickFallbackWithPolicy(
   policy: UsageLimitPolicy,
   current: { provider: string; id: string },
@@ -402,12 +321,9 @@ export function closeProviderWithPolicy(
   try {
     if (scope === undefined) policy.closeProvider(providerKey, accountId, untilMs);
     else policy.closeProvider(providerKey, accountId, untilMs, scope);
-  } catch {
-    /* The local provider-health closure still applies. */
-  }
+  } catch {}
 }
 
-/** Without `modelId` only a provider-wide closure counts. */
 export function isClosedWithPolicy(
   policy: UsageLimitPolicy,
   providerKey: string,
@@ -425,11 +341,6 @@ export function isClosedWithPolicy(
   }
 }
 
-/**
- * The policy's re-check of the closures blocking `modelId`, or undefined when
- * the policy has no `recheck`, fails, times out, or answers malformed data.
- * Undefined keeps the stored closure.
- */
 export async function recheckWithPolicy(
   policy: UsageLimitPolicy,
   providerKey: string,
@@ -465,10 +376,6 @@ export async function recheckWithPolicy(
   }
 }
 
-/**
- * Reopen through the policy after a success on `modelId`; a missing or
- * throwing method changes nothing.
- */
 export function reopenWithPolicy(
   policy: UsageLimitPolicy,
   providerKey: string,
@@ -480,16 +387,9 @@ export function reopenWithPolicy(
   try {
     if (modelId === undefined) policy.reopen(providerKey, accountId, at);
     else policy.reopen(providerKey, accountId, at, modelId);
-  } catch {
-    /* The manager's own closure is still reopened. */
-  }
+  } catch {}
 }
 
-/**
- * The owner's current account for `providerKey`, or undefined when the policy
- * has no `accountId` method, throws, or answers anything but a non-empty string.
- * Callers then fall back to the last classified account, then `"default"`.
- */
 export function accountIdWithPolicy(
   policy: UsageLimitPolicy,
   providerKey: string,
@@ -503,11 +403,6 @@ export function accountIdWithPolicy(
   }
 }
 
-/**
- * Structural copy of the root contract's `CodexUsageLimitEntry`: the Codex
- * provider appends it to the failing session's branch on its errored
- * `message_end`. `resetAt` and `observedAt` are epoch milliseconds.
- */
 export const CODEX_USAGE_LIMIT_ENTRY = "choco-pi-codex-usage-limit";
 export type CodexUsageLimitEntry = {
   resetAt?: number;
@@ -526,21 +421,14 @@ const isCodexUsageLimitEntry = compile(
     { open: true },
   ),
 ).check;
-/** An entry further than this from the failure describes another failure. */
 export const CODEX_ENTRY_WINDOW_MS = 60_000;
 
-/** The branch-entry fields read here; every `SessionEntry` member satisfies it. */
 export interface BranchEntryView {
   type: string;
   customType?: string;
   data?: HostSlotValue;
 }
 
-/**
- * Latest valid Codex usage-limit entry on `branch` observed within
- * `CODEX_ENTRY_WINDOW_MS` of `failedAt`, or undefined. Entries with a
- * non-finite timestamp or a reset earlier than their observation are rejected.
- */
 export function latestCodexUsageLimitEntry(
   branch: readonly BranchEntryView[],
   failedAt: number,
@@ -570,13 +458,11 @@ export function latestCodexUsageLimitEntry(
   return undefined;
 }
 
-/** ISO-8601 rendering used by every user- and model-facing reset estimate. */
 export function formatResetAt(resetAt: number | undefined): string {
   if (resetAt === undefined || !Number.isFinite(resetAt)) return "unknown";
   return new Date(resetAt).toISOString();
 }
 
-/** One-line description of a usage-limit block for error text and notifications. */
 export function describeUsageLimit(limit: SubagentUsageLimit): string {
   return (
     `${formatProviderLabel(limit.provider)} usage limit (${limit.kind})${scopeNote(limit.scope)}; resets ~${formatResetAt(limit.resetAt)}; ` +

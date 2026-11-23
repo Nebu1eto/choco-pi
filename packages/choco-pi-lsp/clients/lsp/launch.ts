@@ -1,12 +1,3 @@
-/**
- * LSP Process Launch Utilities
- *
- * Handles spawning LSP servers via various methods:
- * - Direct binary execution (using absolute paths on Windows)
- * - Node.js scripts (npx/bun)
- * - Package manager execution
- */
-
 import {
   type ChildProcess,
   execFileSync,
@@ -31,21 +22,12 @@ export interface LSPProcess {
   stdout: NodeJS.ReadableStream;
   stderr: NodeJS.ReadableStream;
   pid: number;
-  /** The actual resolved command that was spawned (post shim/global-bin/ps1
-   *  resolution) — used by the #449/#472 instance registry to identify and
-   *  re-find this LSP child process. */
   command: string;
-  /** The actual resolved args passed to `command` above. */
   args: string[];
 }
 
 const isWindows = process.platform === "win32";
 
-/**
- * Whether a resolved command must be spawned through a shell on Windows.
- * `.cmd`/`.bat` are scripts cmd.exe must interpret; extensionless or spaced-path
- * commands also go through the shell so cmd resolves/quotes them.
- */
 function computeNeedsShell(resolvedCommand: string): boolean {
   return (
     isWindows &&
@@ -66,8 +48,6 @@ function logSessionStart(msg: string): void {
   if (isTestMode()) {
     return;
   }
-  // Crash-adjacent: keep this write synchronous so a hard launch failure
-  // cannot discard the final diagnostic from an async logger queue.
   const line = redactSecrets(`[${new Date().toISOString()}] ${msg}\n`);
   try {
     fs.mkdirSync(SESSIONSTART_LOG_DIR, { recursive: true });
@@ -122,7 +102,6 @@ function resolvePathValue(env: NodeJS.ProcessEnv): string {
   return combinePathValuesForPlatform([env.PATH, env.Path, env.path]);
 }
 
-/** Read live system+user PATH from Windows registry (bypasses stale process.env.PATH). */
 function readWindowsRegistryPath(): string {
   try {
     const out = execFileSync(
@@ -151,7 +130,6 @@ function getLiveWindowsPath(): string {
 
 async function buildAugmentedPath(basePath?: string): Promise<string> {
   const candidates: string[] = [];
-  // Under Bun, execPath is bun: shebang servers need the launcher's Node first.
   const nodeDir = nodeBinDirectory();
   if (nodeDir) {
     candidates.push(nodeDir);
@@ -159,7 +137,7 @@ async function buildAugmentedPath(basePath?: string): Promise<string> {
 
   if (isWindows) {
     const home = os.homedir();
-    const driveRoot = path.parse(home).root; // e.g. "C:\"
+    const driveRoot = path.parse(home).root;
     candidates.push(path.join(home, ".cargo", "bin"));
     candidates.push(path.join(home, "go", "bin"));
     candidates.push(path.join(home, ".dotnet", "tools"));
@@ -167,17 +145,11 @@ async function buildAugmentedPath(basePath?: string): Promise<string> {
     candidates.push(CHOCO_PI_LSP_TOOLS_BIN_DIR);
     candidates.push(path.join(driveRoot, "Program Files", "Go", "bin"));
     candidates.push(path.join(driveRoot, "Go", "bin"));
-    // Ruby installer drops versioned dirs (e.g. Ruby34-x64) on the drive root.
-    // Read off the event loop and memoized once per process (#1137): a
-    // synchronous drive-root enumeration on every LSP spawn blocked the loop
-    // for the whole stall on a slow cloud/network-backed drive root.
     for (const entry of await getRubyVersionDirNamesAsync(driveRoot)) {
       candidates.push(path.join(driveRoot, entry, "bin"));
     }
   }
 
-  // On Windows, merge the live registry PATH so newly installed tools are visible
-  // even if the pi agent process started before they were installed.
   const effectiveBase = isWindows
     ? combinePathValuesForPlatform([basePath, getLiveWindowsPath()])
     : basePath;
@@ -202,52 +174,30 @@ async function buildAugmentedPath(basePath?: string): Promise<string> {
   return `${basePath}${path.delimiter}${toAppend.join(path.delimiter)}`;
 }
 
-/**
- * Validate that a .cmd shim's target JS/script exists before attempting to
- * spawn it. npm-generated .cmd files reference the actual script via a path
- * like `"%~dp0\..\yaml-language-server\bin\yaml-language-server"`. If that
- * target is missing the shim will exit immediately with code 1 after a 500ms
- * startup window — pre-checking avoids the delay.
- * Returns true if the shim is valid (or we can't determine), false if the
- * target is definitively missing.
- */
 export function isCmdShimValid(cmdPath: string): boolean {
   try {
     const content = fs.readFileSync(cmdPath, "utf-8");
-    // npm cmd shim pattern: "%~dp0\..\<relpath>" or "%~dp0/<relpath>"
-    // biome-ignore format: regex char-class \- must stay escaped — formatter strips it
     const match = content.match(/"%~dp0[/\\]\.\.[/\\]((?:[\w./@-]|\\)+\.(?:mjs|cjs|js))"/i);
-    if (!match) return true; // non-npm shim — let it through
+    if (!match) return true;
     const relPath = match[1].replace(/[/\\]/g, path.sep);
     const target = path.resolve(path.dirname(cmdPath), "..", relPath);
     return fs.existsSync(target);
   } catch {
-    return true; // can't read — be permissive
+    return true;
   }
 }
 
-/**
- * On Windows, npm creates .ps1 wrappers that hang indefinitely when PowerShell
- * execution policy is Restricted or AllSigned. Bypass by preferring the .cmd
- * sibling (runs under cmd.exe, no execution policy) or falling back to direct
- * Node.js execution of the JS entry point extracted from the PS1 script.
- * Returns undefined if no safe bypass is found.
- */
 function bypassPs1OnWindows(
   ps1Path: string,
   args: string[],
 ): { command: string; args: string[]; needsShell: boolean } | undefined {
-  // 1. Prefer the .cmd sibling — cmd.exe handles it without execution policy issues
   const cmdPath = `${ps1Path.slice(0, -4)}.cmd`;
   if (fs.existsSync(cmdPath)) {
     return { command: cmdPath, args, needsShell: true };
   }
 
-  // 2. Parse the .ps1 to find the JS entry point and invoke via node directly.
-  // npm-generated PS1 pattern: "$basedir/../<package>/bin/cli.js"
   try {
     const content = fs.readFileSync(ps1Path, "utf-8");
-    // biome-ignore format: regex char-class \- must stay escaped — formatter strips it
     const match = content.match(/"\$basedir[/\\]\.\.[/\\]((?:[\w./@-]|\\)+\.(?:mjs|cjs|js))"/i);
     if (match) {
       const relPath = match[1].replace(/[/\\]/g, path.sep);
@@ -260,9 +210,7 @@ function bypassPs1OnWindows(
         };
       }
     }
-  } catch {
-    // Can't read PS1 — no bypass available
-  }
+  } catch {}
 
   return undefined;
 }
@@ -282,15 +230,10 @@ function findBinaryOnPath(command: string, env: NodeJS.ProcessEnv): string | und
         return candidate;
       }
     }
-  } catch {
-    // ignore lookup failures
-  }
+  } catch {}
   return undefined;
 }
 
-/**
- * Try to spawn a process, throwing immediately if it fails
- */
 function trySpawn(
   command: string,
   args: string[],
@@ -301,15 +244,10 @@ function trySpawn(
   let proc: ChildProcess;
 
   if (needsShell) {
-    // Build a cmd.exe-safe command string: wrap in double quotes, escape internal
-    // quotes by doubling them, and escape cmd metacharacters (& | < > ^ ( ) !) with ^
     const escapeCmdArg = (s: string): string => {
-      // Escape cmd.exe metacharacters first, then wrap in quotes if needed
       const escaped = s.replace(/([&|<>^()!])/g, "^$1");
       return /[\s"]/.test(escaped) ? `"${escaped.replace(/"/g, '""')}"` : escaped;
     };
-    // shell:true justified: Windows .cmd/.bat LSP binaries (e.g. typescript-language-server.cmd)
-    // cannot be spawned via execFile — cmd.exe must interpret the script wrapper.
     const shellCommand = `"${command}" ${args.map(escapeCmdArg).join(" ")}`;
     proc = nodeSpawn(shellCommand, [], {
       cwd,
@@ -320,7 +258,6 @@ function trySpawn(
       shell: true,
     });
   } else {
-    // Use normal spawn without shell
     proc = nodeSpawn(command, args, {
       cwd,
       env,
@@ -334,7 +271,6 @@ function trySpawn(
     throw new Error(`Failed to spawn LSP server: ${command}`);
   }
 
-  // Check if process exited immediately (spawn failure - synchronous check)
   if (proc.exitCode !== null || proc.killed) {
     throw new Error(
       `LSP server ${command} exited immediately (code: ${proc.exitCode}). ` +
@@ -345,26 +281,17 @@ function trySpawn(
   return proc;
 }
 
-/**
- * Attach error handler to a spawned process to prevent ENOENT crashes
- * This catches "command not found" errors and other spawn failures
- * Returns a promise that rejects if an immediate error occurs
- */
 function unrefLspProcessHandles(proc: ChildProcess): void {
   try {
     proc.unref();
-  } catch {
-    // best-effort
-  }
+  } catch {}
   for (const stream of [proc.stdin, proc.stdout, proc.stderr]) {
     try {
       if (stream && "unref" in stream) {
         // SAFETY: The property check verifies this concrete child-process pipe exposes unref.
         (stream as { unref: () => void }).unref();
       }
-    } catch {
-      // best-effort
-    }
+    } catch {}
   }
 }
 
@@ -406,7 +333,6 @@ function _attachErrorHandler(
       );
     }
 
-    // Preserve intent at the boundary instead of leaking a raw errno check.
     if (rejectOnImmediateError && logContext) {
       void classifySpawnFailure(err, {
         command: logContext.command,
@@ -458,20 +384,6 @@ function _attachErrorHandler(
   });
 }
 
-/**
- * Spawn an LSP server process
- *
- * Key fixes for Windows:
- * - Uses absolute paths (relative paths fail in shell mode)
- * - Uses shell: true for .cmd files
- * - Uses windowsHide to prevent console window popup
- * - Detects immediate spawn failures (ENOENT) before returning
- *
- * @param command - Command to run (e.g., "typescript-language-server")
- * @param args - Arguments (e.g., ["--stdio"])
- * @param options - Spawn options including cwd, env
- * @returns LSPProcess handle
- */
 export async function launchLSP(
   command: string,
   args: string[] = [],
@@ -488,10 +400,6 @@ export async function launchLSP(
   };
   if (isWindows) env.Path = augmentedPath;
 
-  // Resolve command path
-  // - If already absolute, use as-is
-  // - If it's a simple command (no path separators), let system find it via PATH
-  // - Otherwise, resolve relative to cwd
   const isRelativePath =
     !isFullyQualified(command) && (command.includes(path.sep) || command.includes("/"));
   const explicitCommand = isRelativePath ? path.resolve(cwd, command) : command;
@@ -500,27 +408,18 @@ export async function launchLSP(
       ? (findBinaryOnPath(command, env) ?? explicitCommand)
       : explicitCommand;
 
-  // Compute needsShell based on command
-  // On Windows, shell: true is needed for .cmd/.bat files and extensionless binaries
-  // .exe files can be spawned directly, but .cmd/.bat require shell interpretation
   let needsShell = computeNeedsShell(resolvedCommand);
 
-  // Try to spawn the process
-  // If command not found, try npm global as fallback (handles PATH caching after install)
   let spawnCommand = resolvedCommand;
 
-  // First, try to find in npm global if it's a simple command name
   if (!isFullyQualified(command) && !command.includes(path.sep) && !command.includes("/")) {
     const globalBinPath = await findGlobalBinary(command);
     if (globalBinPath) {
       spawnCommand = globalBinPath;
-      // Recompute needsShell for the resolved global path
       needsShell = computeNeedsShell(spawnCommand);
     }
   }
 
-  // Pre-validate .cmd shims: if the underlying script is missing the shim will
-  // exit with code 1 after a 500ms wait. Catching this early avoids the delay.
   if (isWindows && /\.(cmd|bat)$/i.test(spawnCommand) && !isCmdShimValid(spawnCommand)) {
     logSessionStart(`lsp cmd-shim-invalid: ${spawnCommand} target missing — skipping candidate`);
     const cause = Object.assign(new Error(`LSP .cmd shim target not found: ${spawnCommand}`), {
@@ -529,8 +428,6 @@ export async function launchLSP(
     throw await classifySpawnFailure(cause, { command, cwd });
   }
 
-  // P0 FIX: Never spawn .ps1 wrappers on Windows — they hang when PowerShell
-  // execution policy is Restricted/AllSigned. Prefer .cmd or direct node.
   if (isWindows && /\.ps1$/i.test(spawnCommand)) {
     const bypass = bypassPs1OnWindows(spawnCommand, args);
     if (bypass) {
@@ -552,11 +449,9 @@ export async function launchLSP(
   try {
     proc = trySpawn(spawnCommand, args, cwd, env, needsShell);
   } catch (err) {
-    // If spawn failed with simple command, try npm global
     if (!isFullyQualified(command) && !command.includes(path.sep) && !command.includes("/")) {
       const globalBinPath = await findGlobalBinary(command);
       if (globalBinPath && globalBinPath !== spawnCommand) {
-        // Recompute needsShell for the resolved global path
         const needsShellGlobal = computeNeedsShell(globalBinPath);
         proc = trySpawn(globalBinPath, args, cwd, env, needsShellGlobal);
       } else {
@@ -571,7 +466,6 @@ export async function launchLSP(
     throw new Error(`Failed to spawn LSP server: ${command}`);
   }
 
-  // Check if process exited immediately (spawn failure - synchronous check)
   if (proc.exitCode !== null || proc.killed) {
     throw new Error(
       `LSP server ${command} exited immediately (code: ${proc.exitCode}). ` +
@@ -596,13 +490,10 @@ export async function launchLSP(
   };
   proc.stderr?.on("data", onStartupStderr);
 
-  // For Windows and certain spawn failures, the error is async (ENOENT)
-  // We need to wait a small tick to catch immediate spawn failures
   try {
     await new Promise<void>((resolve, reject) => {
       let settled = false;
 
-      // Attach error handler that can reject for immediate errors
       proc.on("error", (err: Error) => {
         if (!settled) {
           settled = true;
@@ -617,12 +508,9 @@ export async function launchLSP(
         }
       });
 
-      // Also listen for immediate exit
       proc.on("exit", (code: number | null) => {
         if (!settled && code !== null) {
           settled = true;
-          // On Windows, .cmd shims fail with code 1 when the underlying binary isn't installed
-          // This is different from ENOENT - the shim exists but can't find the binary
           const isWindowsCmd = isWindows && command.endsWith(".cmd");
           const errorMsg =
             isWindowsCmd && code === 1
@@ -646,8 +534,6 @@ export async function launchLSP(
         return DEFAULT_STARTUP_FAILURE_WINDOW_MS;
       })();
 
-      // Give shell-backed Windows launches a slightly longer window because
-      // npm/cmd shims can fail asynchronously after the initial spawn succeeds.
       setTimeout(() => {
         if (!settled) {
           settled = true;
@@ -659,7 +545,6 @@ export async function launchLSP(
     proc.stderr?.off("data", onStartupStderr);
   }
 
-  // Re-attach the permanent error handler now that we've passed the danger zone
   _attachErrorHandler(proc, command, {
     command: spawnCommand,
     args,
@@ -679,9 +564,6 @@ export async function launchLSP(
   };
 }
 
-/**
- * Spawn via Node.js directly
- */
 export async function launchViaNode(
   scriptPath: string,
   args: string[] = [],
@@ -690,22 +572,15 @@ export async function launchViaNode(
   return launchLSP(nodeExecutable(), [scriptPath, ...args], options);
 }
 
-/**
- * Spawn via Python module
- */
 export async function launchViaPython(
   moduleName: string,
   args: string[] = [],
   options: SpawnOptions = {},
 ): Promise<LSPProcess> {
-  // On Windows, prefer 'py' launcher, fall back to 'python'
   const pythonCmd = process.platform === "win32" ? "py" : "python3";
   return launchLSP(pythonCmd, ["-m", moduleName, ...args], options);
 }
 
-/**
- * Stop an LSP process gracefully
- */
 export async function stopLSP(handle: LSPProcess): Promise<void> {
   if (handle.process.exitCode !== null || handle.process.signalCode !== null) {
     return;
@@ -731,18 +606,8 @@ export async function stopLSP(handle: LSPProcess): Promise<void> {
 
     const killWindowsTree = (): boolean => {
       if (!isWindows || handle.pid <= 0) return false;
-      // If our child has already exited, its PID is dead and the OS may have
-      // RECYCLED it to an unrelated process. `taskkill /F /T` on a recycled PID
-      // force-kills that process AND its whole tree — in the test suite this
-      // occasionally nuked a vitest worker fork ("Worker exited unexpectedly",
-      // no fatal dump, e.g. via the "stopLSP after the process already exited"
-      // path); in production it could kill an unrelated user process. Never
-      // tree-kill a PID we no longer own — fall back to handle.process.kill(),
-      // which on Windows signals via the retained process HANDLE (not the raw
-      // PID), so it's a safe no-op on an already-exited child.
       if (handle.process.exitCode !== null || handle.process.signalCode !== null) return false;
       try {
-        // Absolute path avoids PATH-resolution substitution on Windows.
         const taskkill = `${process.env.SystemRoot ?? "C:\\Windows"}\\System32\\taskkill.exe`;
         const killer = nodeSpawn(taskkill, ["/F", "/T", "/PID", String(handle.pid)], {
           shell: false,
@@ -756,8 +621,6 @@ export async function stopLSP(handle: LSPProcess): Promise<void> {
     };
 
     try {
-      // On Windows, kill the tree first; killing the direct child can orphan
-      // grandchildren (e.g. tsserver.js behind a cmd/npm shim).
       if (!killWindowsTree()) {
         handle.process.kill("SIGTERM");
       }
@@ -776,8 +639,6 @@ export async function stopLSP(handle: LSPProcess): Promise<void> {
         done();
         return;
       }
-      // If the process had already exited before listeners were attached, no
-      // exit event will arrive. Resolve rather than hanging test cleanup forever.
       giveUpTimeout = setTimeout(done, 500);
     }, 5000);
   });

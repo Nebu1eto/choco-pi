@@ -31,7 +31,6 @@ import {
 import { rethrowUnlessStaleContext } from "./lib/lifecycle.ts";
 import { isRegisteredChildSession } from "./lib/stop-control.ts";
 
-/** Everything besides the model that decides its policy. */
 export interface ContextCapSettings {
   softCap: ContextSoftCap;
   compactionPoint: AutoCompactionPoint;
@@ -51,23 +50,13 @@ type AppliedPolicy = {
 
 let appliedPolicies: AppliedPolicy[] = [];
 let cachedSettings: ContextCapSettings | undefined;
-/** Latest known presets; updated by preference-change events between reads. */
 let currentSoftCap: ContextSoftCap = DEFAULT_CONTEXT_SOFT_CAP;
 let currentCompactionPoint: AutoCompactionPoint = DEFAULT_AUTO_COMPACTION_POINT;
-/** Bumped on every relevant preference event, so a slower file read cannot overwrite it. */
 let preferenceRevision = 0;
-/** Bumped whenever a session starts or ends, invalidating in-flight session work. */
 let sessionGeneration = 0;
 let unsubscribePreferences: (() => void) | undefined;
 let compactionRequested = false;
-/**
- * Whether this module instance serves a subagent's child session. Read at
- * session_start: the manager drops the child id before it emits the child's
- * session_shutdown, so the registry no longer answers by then.
- */
 let servesChildSession = false;
-// The interactive startup refresh replaces registry model objects a few seconds
-// after session_start, so caps are re-applied until that refresh has settled.
 const REAPPLY_DELAYS_MS = [2_000, 5_000, 10_000, 17_000];
 const pendingReapplies = new Set<NodeJS.Timeout>();
 
@@ -79,7 +68,6 @@ function nonNegativeInteger(value: RuntimeValue): number | undefined {
   return isNumber(value) && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
-/** First readable `compaction.reserveTokens`: project settings, then agent settings. */
 async function readHostReserve(cwd: string): Promise<number> {
   for (const settingsPath of [
     join(cwd, ".pi", "settings.json"),
@@ -100,11 +88,6 @@ async function readHostReserve(cwd: string): Promise<number> {
   return DEFAULT_HOST_RESERVE_TOKENS;
 }
 
-/**
- * Reads the two presets. A preference event that lands during the read is
- * newer than what the read may have seen, so the read repeats until no event
- * interleaves; an unreadable settings file falls back to the defaults.
- */
 async function readPresets(): Promise<void> {
   for (let attempt = 0; attempt < 3; attempt++) {
     const revision = preferenceRevision;
@@ -114,22 +97,15 @@ async function readPresets(): Promise<void> {
       const preferences = await readAgentPreferencesAsync();
       softCap = preferences.contextSoftCap;
       compactionPoint = preferences.autoCompactionPoint;
-    } catch {
-      // A malformed settings file leaves the defaults in force.
-    }
+    } catch {}
     if (revision === preferenceRevision) {
       currentSoftCap = softCap;
       currentCompactionPoint = compactionPoint;
       return;
     }
   }
-  // Events kept arriving; their values are already current.
 }
 
-/**
- * Effective policy for `model` from the user's presets. The compaction point
- * is lowered under a native-compaction budget when a provider publishes one.
- */
 export function resolvePolicy(
   model: Model<Api>,
   nativeWindow: number,
@@ -157,10 +133,6 @@ export function shouldRequestCompaction(
   return compactAt !== undefined && tokens !== null && tokens !== undefined && tokens > compactAt;
 }
 
-/**
- * Background-compaction adoption signal published by `choco-pi-compaction`
- * when its (default-off) background mode is enabled for this session.
- */
 const BACKGROUND_ADOPTION_SIGNAL = Symbol.for("choco-pi:compaction-background-adoption");
 interface AdoptionSignal {
   adoptReady(
@@ -174,12 +146,6 @@ function isAdoptionSignal<T>(value: T): value is T & AdoptionSignal {
   return isJsonRecord(value) && value.version === 1 && value.adoptReady instanceof Function;
 }
 
-/**
- * Hand the cap's compaction to a ready background candidate. Returns true when
- * adoption started, in which case `onSettled` runs once with the outcome; the
- * host summarizer is not invoked. Without a signal or a ready candidate this
- * returns false and the caller keeps its existing `ctx.compact()` path.
- */
 export function routeToBackgroundAdoption(
   ctx: ExtensionContext,
   onSettled: (adopted: boolean) => void,
@@ -194,9 +160,6 @@ export function routeToBackgroundAdoption(
 
 function cappedModels(ctx: ExtensionContext, extra?: Model<Api>): Model<Api>[] {
   const models = ctx.modelRegistry.getAll();
-  // A model selected before a catalog refresh stays in use even after the
-  // registry replaces its entry, so cap both the registry copy and the
-  // currently active object.
   for (const candidate of [ctx.model, extra]) {
     if (candidate && !models.includes(candidate)) models.push(candidate);
   }
@@ -212,10 +175,6 @@ function applyPolicies(
 
   for (const model of cappedModels(ctx, extra)) {
     const key = modelKey(model);
-    // The record lives on the model object and travels with its copies:
-    // registry objects outlive a reload of this extension, and the host
-    // persists capped objects, so neither a fresh module nor a restored copy
-    // may take a window it capped earlier for the native one.
     const nativeWindow = readNativeContextWindow(model) ?? model.contextWindow;
     model.contextWindow = nativeWindow;
 
@@ -229,11 +188,6 @@ function applyPolicies(
   appliedPolicies = [...applied.values()];
 }
 
-/**
- * Put every model's native window back. Runs when this session ends so a
- * reloaded module, or Pi itself once the extension is gone, sees the native
- * window rather than the previous cap.
- */
 function restoreNativeWindows(ctx: ExtensionContext): void {
   let models: Model<Api>[];
   try {
@@ -249,11 +203,6 @@ function restoreNativeWindows(ctx: ExtensionContext): void {
   appliedPolicies = [];
 }
 
-/**
- * Reads the host reserve and presets, then applies them.
- * Returns false without touching host objects when the session changed while
- * reading.
- */
 async function applyContextCaps(ctx: ExtensionContext, generation: number): Promise<boolean> {
   const hostReserve = await readHostReserve(ctx.cwd);
   if (generation !== sessionGeneration) return false;
@@ -269,11 +218,6 @@ async function applyContextCaps(ctx: ExtensionContext, generation: number): Prom
   return true;
 }
 
-/**
- * Re-apply the cached policy to model objects created after the last pass.
- * The presets are taken from the live values, never from a snapshot captured
- * when a timer was scheduled.
- */
 function reapplyContextCaps(ctx: ExtensionContext, extra?: Model<Api>): void {
   if (!cachedSettings) return;
   cachedSettings = {
@@ -284,10 +228,6 @@ function reapplyContextCaps(ctx: ExtensionContext, extra?: Model<Api>): void {
   applyPolicies(ctx, cachedSettings, extra);
 }
 
-/**
- * Follow preset changes from `/preferences` for the current session, so a
- * new cap applies without a restart.
- */
 function subscribeToPresets(ctx: ExtensionContext, generation: number): void {
   unsubscribePreferences?.();
   unsubscribePreferences = onAgentPreferenceChange((change) => {
@@ -303,10 +243,7 @@ function subscribeToPresets(ctx: ExtensionContext, generation: number): void {
     if (generation !== sessionGeneration) return;
     try {
       reapplyContextCaps(ctx);
-    } catch {
-      // A replaced session rejects its captured context; the next
-      // session_start applies the new presets.
-    }
+    } catch {}
   });
 }
 
@@ -317,7 +254,6 @@ function endSession(): void {
   unsubscribePreferences = undefined;
 }
 
-/** Cancel scheduled re-applications, whose captured context is about to expire. */
 function clearPendingReapplies(): void {
   for (const timer of pendingReapplies) clearTimeout(timer);
   pendingReapplies.clear();
@@ -331,10 +267,6 @@ function scheduleReapplies(ctx: ExtensionContext): void {
       try {
         reapplyContextCaps(ctx);
       } catch {
-        // Pi rejects a captured context once the session is replaced by a
-        // reload, fork, or switch. This runs on a timer, where an escaping
-        // error becomes an uncaught exception and ends the process, so stop
-        // retrying and leave the caps to the next session_start.
         clearPendingReapplies();
       }
     }, delay);
@@ -365,12 +297,7 @@ export default function modelContextCap(pi: ExtensionAPI): void {
   });
   pi.on("session_shutdown", (_event, ctx) => {
     endSession();
-    // A child session shares its parent's model objects. Restoring them when
-    // the child is disposed would lift the cap for the parent and for every
-    // sibling still running, which re-apply only at their next run boundary.
     if (servesChildSession) return;
-    // Pi re-evaluates extensions after this event on /reload; a switch keeps
-    // this module and its records, so only shutdown hands the windows back.
     restoreNativeWindows(ctx);
   });
   pi.on("model_select", (event, ctx) => {
@@ -380,10 +307,6 @@ export default function modelContextCap(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (_event, ctx) => {
     reapplyContextCaps(ctx);
   });
-  // The host can swap the session's model for a fresh registry object in the
-  // middle of a run (a provider registration refreshes it) without emitting
-  // model_select. Without these passes the new object keeps its native window
-  // until the run settles, which a long single run never does.
   pi.on("turn_start", (_event, ctx) => {
     reapplyContextCaps(ctx);
   });

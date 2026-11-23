@@ -1,4 +1,3 @@
-/** The changes view's header: title, totals, recorded findings, the message line and key help. */
 import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { DiffSnapshot } from "../git/model.ts";
 import { sanitizeTerminalText as safe } from "../terminal-text.ts";
@@ -9,8 +8,6 @@ import { baselineText, sourceLabel } from "./source-text.ts";
 import { TONE_COLORS, ChangesViewState } from "./changes-view-state.ts";
 
 export abstract class ChangesViewHeader extends ChangesViewState {
-  /* ------------------------------------------------------------ header */
-
   renderHeader(width: number, focused: boolean): string[] {
     if (!this.options.boxedHeader || width < HEADER_BOX_MIN_WIDTH) {
       return this.plainHeader(width, focused);
@@ -18,13 +15,6 @@ export abstract class ChangesViewHeader extends ChangesViewState {
     return this.boxedHeader(width, focused);
   }
 
-  /**
-   * The header as a box laid out like zentui's prompt frame, its facts as
-   * cells on the borders: title and source top left, totals top right,
-   * review verdicts bottom left, the branch (and `? help` while focused)
-   * bottom right. Inside: the baseline, the message, a note being written and
-   * the key list. Focus changes the border's color, never the number of rows.
-   */
   protected boxedHeader(width: number, focused: boolean): string[] {
     const styler = this.styler;
     const inner = Math.max(1, width - HEADER_BOX_CHROME);
@@ -94,7 +84,6 @@ export abstract class ChangesViewHeader extends ChangesViewState {
     return (drawn ?? themedHeaderBox(box, styler)).map((line) => truncateToWidth(line, width, ""));
   }
 
-  /** The totals as border cells: `3 files`, `+12 -4`, `1 note`, `2 comments`. */
   protected totalCells(snapshot: DiffSnapshot): string[] {
     const styler = this.styler;
     const { files, additions, deletions } = snapshot.totals;
@@ -108,7 +97,6 @@ export abstract class ChangesViewHeader extends ChangesViewState {
     ].filter((cell) => cell.length > 0);
   }
 
-  /** The header as stacked lines (the review, and the pane when too narrow for a box). */
   protected plainHeader(width: number, focused: boolean): string[] {
     const styler = this.styler;
     const source = this.state.kind === "ready" ? this.state.snapshot.source : this.source;
@@ -119,7 +107,6 @@ export abstract class ChangesViewHeader extends ChangesViewState {
     const lines = [
       `${styler.bold(this.title)} ${styler.fg("muted", sourceLabel(source))}${branch}`,
     ];
-    // Lines that must be read in full wrap; the rest truncate.
     const wrapped = new Set<number>();
     const pushWrapped = (line: string) => {
       wrapped.add(lines.length);

@@ -14,9 +14,6 @@ export const MAX_PERF_TOP_N = 50;
 export const MAX_PERF_PHASE_SAMPLES = 20_000;
 const PARSE_YIELD_EVERY = 500;
 
-// The window follows the same threshold that rotates the log out from under it.
-// Exported so a test can size a fixture to the window it means to saturate
-// rather than to a second copy of the default that can drift out of agreement.
 export function resolveLogByteBudget(): number {
   return getMaxLogSizeMB() * 1024 * 1024;
 }
@@ -266,11 +263,6 @@ async function readPhaseLogTail(
     handle = await fs.promises.open(filePath, "r");
     const stat = await handle.stat();
     if (!stat.isFile()) {
-      // POSIX rejects opening a directory with EISDIR, but Windows opens it
-      // successfully with size 0 — which would fall into the empty() branch
-      // and conflate "unreadable path" with "no data yet". Throw the same
-      // error POSIX would so both platforms surface the bad path.
-
       // SAFETY: The adjacent Error and property-presence checks establish the optional Node error code representation.
       const notAFile = new Error(
         `EISDIR: illegal operation on a directory, read '${filePath}'`,

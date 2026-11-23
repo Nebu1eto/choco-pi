@@ -1,28 +1,3 @@
-/**
- * Process-global registry of provider compaction backends.
- *
- * The built-in lanes stay wired by this package: the `text` and
- * `anthropic-native` background backends, Codex's `codex-native-v2` factory
- * (registered by the Codex package through the neutral coordinator registry),
- * and the Anthropic and xAI server-side `session_before_compact` handlers. A
- * future provider lane registers a {@link CompactionBackendProvider} here
- * instead of adding a branch to the host wiring:
- *
- * - `backendFactory`: a background backend under the provider's `id`. It is
- *   admitted by the owner's foreign-backend switch and `enabled` (default:
- *   whenever background compaction is on), and it is selected for an owner
- *   whose scope its own `capability` check supports, after the Anthropic
- *   backend and before the text backend.
- * - `foregroundCompact`: answers `session_before_compact` server-side after
- *   the built-in Anthropic and xAI handlers declined, before the local
- *   summarizer.
- *
- * An id a built-in backend uses is ignored, so registration never replaces a
- * built-in lane. With nothing registered every path behaves as before. The
- * table lives on `Symbol.for("choco-pi:compaction-backends/v1")` because each
- * extension loads through its own module instance: a `Map` from id to that
- * id's registrations, newest last.
- */
 import type {
   ExtensionContext,
   SessionBeforeCompactEvent,
@@ -40,7 +15,6 @@ import { isFunction, isNonEmptyString, isOptional, isRecord, readProperty } from
 
 export const COMPACTION_BACKENDS_SYMBOL = Symbol.for("choco-pi:compaction-backends/v1");
 
-/** Built-in lane ids a registration cannot take (`xai-native` is the xAI server-side lane). */
 const BUILT_IN_BACKEND_IDS: ReadonlySet<string> = new Set([
   TEXT_BACKEND_SETTING_ID,
   ANTHROPIC_BACKEND_SETTING_ID,
@@ -48,17 +22,14 @@ const BUILT_IN_BACKEND_IDS: ReadonlySet<string> = new Set([
   "xai-native",
 ]);
 
-/** A `session_before_compact` answer, or undefined to let the next handler answer. */
 export type ForegroundCompactHandler = (
   event: SessionBeforeCompactEvent,
   ctx: ExtensionContext,
 ) => Promise<SessionBeforeCompactResult | undefined>;
 
 export interface CompactionBackendProvider {
-  /** Stable lane id; also the background backend's id when `backendFactory` is set. */
   readonly id: string;
   readonly backendFactory?: BackendFactory;
-  /** Whether the settings enable the background backend; called only while background compaction is on. */
   readonly enabled?: (settings: Readonly<BackgroundCompactionSettings>) => boolean;
   readonly foregroundCompact?: ForegroundCompactHandler;
 }
@@ -97,10 +68,6 @@ function providerTable(): ProviderTable {
   return table;
 }
 
-/**
- * Register a provider lane. The newest registration of an id answers; the
- * returned unregister removes only this one. A built-in id throws.
- */
 export function registerCompactionBackendProvider(provider: CompactionBackendProvider): () => void {
   if (provider.id.length === 0) throw new Error("Compaction backend id must not be empty");
   if (BUILT_IN_BACKEND_IDS.has(provider.id)) {
@@ -117,7 +84,6 @@ export function registerCompactionBackendProvider(provider: CompactionBackendPro
   };
 }
 
-/** The newest registration of each non-built-in id, in first-registration order. */
 export function compactionBackendProviders(): readonly CompactionBackendProvider[] {
   const providers: CompactionBackendProvider[] = [];
   for (const [id, registrations] of providerTable()) {
@@ -127,18 +93,12 @@ export function compactionBackendProviders(): readonly CompactionBackendProvider
   return providers;
 }
 
-/** The registered provider that supplies the background backend `id`, if any. */
 export function registeredBackendProvider(id: string): CompactionBackendProvider | undefined {
   return compactionBackendProviders().find(
     (provider) => provider.id === id && provider.backendFactory !== undefined,
   );
 }
 
-/**
- * The host's backend flag mapping: the built-in settings switches, then a
- * registered backend's own `enabled` (default on) while background
- * compaction is enabled.
- */
 export function isCompactionBackendEnabled(
   id: string,
   settings: Readonly<BackgroundCompactionSettings>,
@@ -150,7 +110,6 @@ export function isCompactionBackendEnabled(
   return provider.enabled === undefined || provider.enabled(settings);
 }
 
-/** Registered `session_before_compact` handlers, in provider order. */
 export function registeredForegroundHandlers(): readonly ForegroundCompactHandler[] {
   const handlers: ForegroundCompactHandler[] = [];
   for (const provider of compactionBackendProviders()) {
@@ -159,7 +118,6 @@ export function registeredForegroundHandlers(): readonly ForegroundCompactHandle
   return handlers;
 }
 
-/** The first handler's answer; each runs only after every earlier one declined. */
 export async function firstForegroundAnswer<Event, Context, Answer>(
   handlers: readonly ((event: Event, ctx: Context) => Promise<Answer | undefined>)[],
   event: Event,

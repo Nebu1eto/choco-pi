@@ -1,10 +1,3 @@
-/**
- * Shared real-session rig for xAI server-side compaction tests: a real
- * `createAgentSession` with the INSTALLED openai-responses adapter on scripted
- * transports (no network), the compaction extension registered with injected
- * seams, recorded notices, and lane-journal access. Test-only; never imported
- * by `src`.
- */
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -45,12 +38,10 @@ import { BACKGROUND_OFF_SETTINGS_PATHS } from "./host-harness.ts";
 export const XAI_API_KEY = "xai-rig-non-secret-placeholder";
 export const XAI_NOTICE_PREFIX = "xAI server-side compaction";
 
-/** Session IDs the (fake) subagent runner reports as live children. */
 const CHILD_IDS = new Set<string>();
 const SUBAGENTS_MANAGER = Symbol.for("pi-subagents:manager");
 const childManager = { isChildSessionId: (id: string) => CHILD_IDS.has(id) };
 
-/** Publish the rig's fake subagent manager (once; only rigs that create a child need it). */
 function publishChildManager(): void {
   if (Object.getOwnPropertyDescriptor(globalThis, SUBAGENTS_MANAGER)?.value === childManager)
     return;
@@ -60,7 +51,6 @@ function publishChildManager(): void {
   });
 }
 
-/** A tool the rig registers (the auto-compaction loops' `step` tool). */
 export type RigTool = Parameters<ExtensionAPI["registerTool"]>[0];
 
 function grok(id: string): Model<"openai-responses"> {
@@ -78,11 +68,8 @@ function grok(id: string): Model<"openai-responses"> {
   };
 }
 
-/** The model the session starts on. */
 export const XAI_MODEL = grok("grok-test-1");
-/** A second admitted model of the same provider (a different checkpoint scope). */
 export const XAI_MODEL_B = grok("grok-test-2");
-/** A non-xAI Responses model (another provider, another endpoint). */
 export const OTHER_MODEL: Model<"openai-responses"> = {
   ...grok("other-test-1"),
   name: "Synthetic other",
@@ -94,7 +81,6 @@ export const XAI_ITEM = { type: "compaction", encrypted_content: "xai-rig-synthe
 
 type Frame = JsonObject & { readonly type: string };
 
-/** A streamed Responses answer with one text message. */
 export function textResponse(text: string): Response {
   const message = { type: "message", id: "msg_rig", role: "assistant" };
   const frames: Frame[] = [
@@ -140,7 +126,6 @@ export function textResponse(text: string): Response {
   );
 }
 
-/** A `POST /v1/responses/compact` success with the rig's opaque item. */
 export function compactResponse(item: JsonObject = XAI_ITEM): Response {
   return new Response(
     JSON.stringify({
@@ -187,7 +172,6 @@ export function recordingFetch(
   };
 }
 
-/** Foreground: the first answer, then recognizable local summaries. */
 export function textForeground(): RecordingFetch {
   return recordingFetch((index) =>
     textResponse(index === 0 ? "XR-ANSWER" : `XR-LOCAL-SUMMARY-${index}`),
@@ -216,22 +200,16 @@ export function assistantMessage(text: string): AssistantMessage {
   };
 }
 
-/** Resolved request auth as the registry returns it. */
 export type RigAuth = Awaited<ReturnType<ExtensionContext["modelRegistry"]["getApiKeyAndHeaders"]>>;
 
 export interface XaiRig {
   readonly session: AgentSession;
   readonly manager: SessionManager;
-  /** The session's cwd and agent dir. */
   readonly dir: string;
-  /** Every notice shown through `ctx.ui.notify`, verbatim. */
   readonly notices: string[];
-  /** Requests the non-xAI provider sent. */
   readonly other: RecordingFetch;
   readonly ctx: () => ExtensionContext;
-  /** Lane journal records on the branch. */
   records(): LaneRecord[];
-  /** Dispose the session; captures stay unless `release` (default true). */
   dispose(options?: { readonly release?: boolean; readonly keepDir?: boolean }): Promise<void>;
 }
 
@@ -239,20 +217,14 @@ export interface XaiRigOptions {
   readonly foreground: RecordingFetch;
   readonly lane: RecordingFetch;
   readonly mode?: XaiCompactionMode;
-  /** Read the xAI mode from the agent dir (overrides `mode`; e.g. the real settings reader). */
   readonly readMode?: (agentDir: string) => Promise<XaiCompactionMode>;
   readonly opaqueHistory?: OpaqueHistoryMode;
   readonly after?: readonly ExtensionFactory[];
-  /** Register the session as a subagent child before its extensions bind. */
   readonly child?: boolean;
-  /** Host auto-compaction on (threshold at turn ends). */
   readonly autoCompaction?: boolean;
-  /** Tools the rig's extension registers. */
   readonly tools?: readonly RigTool[];
-  /** Reuse a session (a new registration over the same session id); no seeding. */
   readonly manager?: SessionManager;
   readonly dir?: string;
-  /** Replace the registry's resolved auth for every model (header-only auth). */
   readonly auth?: () => RigAuth;
   readonly clock?: { now(): number; setTimer(callback: () => void, delayMs: number): () => void };
 }
@@ -270,7 +242,6 @@ export async function createXaiRig(options: XaiRigOptions): Promise<XaiRig> {
     api: "openai-responses",
     apiKey: XAI_API_KEY,
     models: [XAI_MODEL, XAI_MODEL_B],
-    // Uncaptured path: the installed adapter on the same fake transport.
     streamSimple: (active, context, streamOptions) =>
       installedStreamSimple(active.id === XAI_MODEL_B.id ? XAI_MODEL_B : XAI_MODEL, context, {
         ...streamOptions,
@@ -386,7 +357,6 @@ export function compactionsOf(manager: SessionManager): CompactionEntry[] {
     .filter((entry): entry is CompactionEntry => entry.type === "compaction");
 }
 
-/** Whether a sent request carries the rig's opaque item. */
 export function carriesItem(sent: Sent | undefined): boolean {
   return sent?.text.includes(XAI_ITEM.encrypted_content) === true;
 }

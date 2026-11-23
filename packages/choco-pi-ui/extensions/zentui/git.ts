@@ -19,25 +19,12 @@ export type GitOperationState =
   | "REVERTING"
   | "BISECTING";
 
-/**
- * Starship `git_commit`-style info derived from the existing porcelain probe.
- *
- * `oid` is the full `branch.oid` from `git status --porcelain=2 --branch`
- * (free — no extra git call). `detached` mirrors `branch.head === "(detached)"`.
- * `tag` is populated only when the caller opts into the exact-tag probe
- * (`readGitStatus({ readExactTag: true })`); `null` means no exact-match tag
- * or the probe was skipped.
- */
 export type GitCommitInfo = {
   oid: string | null;
   detached: boolean;
   tag: string | null;
 };
 
-/**
- * Starship `git_metrics`-style aggregate line-change counts.
- * See https://starship.rs/config/#git-metrics
- */
 export type GitMetricsInfo = {
   added: number;
   deleted: number;
@@ -161,8 +148,6 @@ export function parseGitStatusPorcelain(stdoutText: string, stashCount: number):
     else if (y === "T") status.typechanged += 1;
   }
 
-  // Only populate commit info when we actually saw branch headers (inside
-  // a repo with commits). An unborn branch has no oid.
   if (sawBranchHead) {
     status.commit = { oid, detached, tag: null };
   }
@@ -170,26 +155,15 @@ export function parseGitStatusPorcelain(stdoutText: string, stashCount: number):
   return status;
 }
 
-/**
- * Parse `git diff --numstat` output into aggregate added/deleted counts.
- *
- * Each line is `added\tdeleted\tpath` (or `added\tdeleted\told\tnew` for
- * renames). Binary rows carry `-` in both numeric columns and are skipped.
- * Malformed/unparseable lines are ignored rather than aborting the sum.
- *
- * See https://git-scm.com/docs/git-diff#Documentation/git-diff.txt---numstat
- */
 export function parseGitNumstat(stdoutText: string): GitMetricsInfo {
   let added = 0;
   let deleted = 0;
   for (const line of stdoutText.split(/\r?\n/)) {
     if (!line) continue;
     const parts = line.split("\t");
-    // `added\tdeleted\tpath...` — need at least 3 tab-delimited fields.
     if (parts.length < 3) continue;
     const a = parts[0];
     const d = parts[1];
-    // Binary files report `-` for both; skip.
     if (a === "-" || d === "-") continue;
     const na = Number(a);
     const nd = Number(d);
@@ -210,10 +184,6 @@ function readOptionalText(path: string | undefined): string | undefined {
   }
 }
 
-/**
- * Pure git operation-state detector. Paths that exist (truthy strings that
- * callers verified with `existsSync`) select the active state in Starship order.
- */
 export type GitStateDetection = {
   gitState?: GitOperationState;
   gitStateLabel?: string;
@@ -289,20 +259,9 @@ function isNotARepoError(error: BoundaryValue): boolean {
   return /not a git repository|outside repository|not a git repo/i.test(message);
 }
 
-/**
- * Options for the optional probes that piggyback on the existing git refresh.
- * Both default to `false` so no extra git process is spawned unless a segment
- * is enabled and needs the data.
- */
 export type ReadGitStatusOptions = {
-  /** Run `git describe --tags --exact-match HEAD` for the git_commit segment. */
   readExactTag?: boolean;
-  /**
-   * Run `git diff HEAD --numstat` for the git_metrics segment. Uses the
-   * Starship-like “total dirty” view (staged + unstaged combined).
-   */
   readMetrics?: boolean;
-  /** Add `--ignore-submodules=all` to the metrics diff when requested. */
   ignoreSubmodules?: boolean;
 };
 
@@ -375,7 +334,6 @@ export async function readGitStatus(
   } catch (error) {
     if (isNotARepoError(parseBoundaryValue(error))) return { kind: "not_a_repo" };
 
-    // Distinguish not-a-repo vs transient with a cheap rev-parse on the error path.
     try {
       const { stdout } = await execFileAsync("git", ["rev-parse", "--is-inside-work-tree"], {
         cwd,
