@@ -435,6 +435,7 @@ export async function setupCommand(options: SetupArguments): Promise<void> {
     defaultEnabledModels: [],
   });
   for (const link of result.links) log.info("{action}: {target}", link);
+  for (const seed of result.seeds ?? []) log.info("{action}: {target}", seed);
   log.info("updated: {path}", { path: result.settingsPath });
   for (const spec of result.addedPackages) log.info("added package: {path}", { path: spec });
   log.info("updated: {path}", { path: result.markerPath });

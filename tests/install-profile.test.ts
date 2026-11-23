@@ -34,6 +34,7 @@ import {
   installProfile,
   MIGRATED_SIDECARS,
   PROFILE_LINKS,
+  PROFILE_SEEDS,
   RETIRED_PROFILE_FILES,
 } from "../scripts/install-profile.ts";
 import { profileMarkerPath, readProfileMarker } from "../profile/extensions/lib/profile-marker.ts";
@@ -104,6 +105,7 @@ async function sidecarFixture(
   await writeFile(path.join(root, ".pi", "settings.json"), '{"packages":[]}\n', "utf8");
   const codex = responsesCompaction === undefined ? {} : { compaction: { responsesCompaction } };
   await writeFile(path.join(root, "profile", "choco-pi-codex.json"), JSON.stringify(codex), "utf8");
+  await writeFile(path.join(root, "profile", "zentui.json"), "{}\n", "utf8");
   await mkdir(path.join(agentDir, "extensions"), { recursive: true });
   if (compactionAnthropic !== undefined) {
     await writeFile(
@@ -214,14 +216,12 @@ test("profile installer links tracked config and is idempotent", async (context)
   await installProfile({ root: process.cwd(), agentDir });
   await installProfile({ root: process.cwd(), agentDir });
 
+  assert.ok((await lstat(path.join(agentDir, "choco-pi-ui.json"))).isFile());
   assert.equal(
-    await readlink(path.join(agentDir, "choco-pi-ui.json")),
-    path.resolve("profile/zentui.json"),
+    await readFile(path.join(agentDir, "choco-pi-ui.json"), "utf8"),
+    await readFile(path.resolve("profile/zentui.json"), "utf8"),
   );
-  assert.equal(
-    await readlink(path.join(agentDir, "choco-pi-codex.json")),
-    path.resolve("profile/choco-pi-codex.json"),
-  );
+  assert.ok((await lstat(path.join(agentDir, "choco-pi-codex.json"))).isFile());
   const codexConfig = parseJson(
     await readFile(path.join(agentDir, "choco-pi-codex.json"), "utf8"),
     CodexConfigSchema,
@@ -457,6 +457,9 @@ test("reinstalling keeps exactly one copy of the built-in extension policy", asy
   context.after(() => rm(root, { recursive: true, force: true }));
   const agentDir = path.join(root, "agent");
   await mkdir(path.join(root, ".pi"), { recursive: true });
+  await mkdir(path.join(root, "profile"), { recursive: true });
+  await writeFile(path.join(root, "profile", "choco-pi-codex.json"), "{}\n", "utf8");
+  await writeFile(path.join(root, "profile", "zentui.json"), "{}\n", "utf8");
   await mkdir(agentDir, { recursive: true });
   await writeFile(
     path.join(root, ".pi", "settings.json"),
@@ -492,14 +495,17 @@ test("profile installer preserves enabled and disabled fast preferences", async 
     await mkdir(path.join(root, ".pi"), { recursive: true });
     await writeFile(path.join(root, ".pi", "settings.json"), '{"packages":[]}\n', "utf8");
     await writeFile(sourceConfig, `${JSON.stringify({ openai: { fast } })}\n`, "utf8");
+    await writeFile(path.join(root, "profile", "zentui.json"), "{}\n", "utf8");
 
     const firstInstall = await installProfile({ root, agentDir });
     const secondInstall = await installProfile({ root, agentDir });
     const installedConfig = path.join(agentDir, "choco-pi-codex.json");
 
-    assert.equal(await readlink(installedConfig), sourceConfig);
+    assert.ok((await lstat(installedConfig)).isFile());
     assert.ok(firstInstall.links.every(({ action }) => action === "linked"));
     assert.ok(secondInstall.links.every(({ action }) => action === "unchanged"));
+    assert.ok(firstInstall.seeds.every(({ action }) => action === "seeded"));
+    assert.ok(secondInstall.seeds.every(({ action }) => action === "unchanged"));
     assert.equal(
       parseJson(await readFile(installedConfig, "utf8"), CodexConfigSchema).openai.fast,
       fast,
@@ -507,11 +513,69 @@ test("profile installer preserves enabled and disabled fast preferences", async 
   }
 });
 
+test("profile installer preserves user-modified seeded configs without --backup", async (context) => {
+  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-seed-preserve-"));
+  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  await seedProfileSettings(agentDir);
+
+  const first = await installProfile({ root: process.cwd(), agentDir });
+  assert.ok(first.seeds.every(({ action }) => action === "seeded"));
+
+  const codexPath = path.join(agentDir, "choco-pi-codex.json");
+  const uiPath = path.join(agentDir, "choco-pi-ui.json");
+  const customCodex = JSON.stringify({ openai: { fast: false } }, null, 2) + "\n";
+  const customUi = JSON.stringify({ theme: "custom" }, null, 2) + "\n";
+  await writeFile(codexPath, customCodex, { encoding: "utf8", mode: 0o600 });
+  await writeFile(uiPath, customUi, "utf8");
+
+  const second = await installProfile({ root: process.cwd(), agentDir });
+  assert.ok(second.seeds.every(({ action }) => action === "unchanged"));
+  assert.equal(await readFile(codexPath, "utf8"), customCodex);
+  assert.equal(await readFile(uiPath, "utf8"), customUi);
+});
+
+test("profile installer detaches checkout symlinks for seeded configs into regular files", async (context) => {
+  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-seed-detach-"));
+  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  await seedProfileSettings(agentDir);
+  for (const [sourceRelative, targetRelative] of PROFILE_SEEDS) {
+    await symlink(path.resolve(sourceRelative), path.join(agentDir, targetRelative));
+  }
+
+  const upgraded = await installProfile({ root: process.cwd(), agentDir });
+  assert.ok(upgraded.seeds.every(({ action }) => action === "seeded"));
+  for (const [sourceRelative, targetRelative] of PROFILE_SEEDS) {
+    const target = path.join(agentDir, targetRelative);
+    assert.ok((await lstat(target)).isFile(), `${targetRelative} should be materialized`);
+    assert.equal(
+      await readFile(target, "utf8"),
+      await readFile(path.resolve(sourceRelative), "utf8"),
+    );
+  }
+});
+
+test("profile installer preserves a foreign symlink for a seeded config", async (context) => {
+  const fixtureDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-seed-foreign-"));
+  context.after(() => rm(fixtureDir, { recursive: true, force: true }));
+  const agentDir = path.join(fixtureDir, "agent");
+  const dotfilesCodex = path.join(fixtureDir, "dotfiles-codex.json");
+  await mkdir(agentDir, { recursive: true });
+  await seedProfileSettings(agentDir);
+  await writeFile(dotfilesCodex, '{"openai":{"fast":false}}\n', "utf8");
+  const target = path.join(agentDir, "choco-pi-codex.json");
+  await symlink(dotfilesCodex, target);
+
+  const result = await installProfile({ root: process.cwd(), agentDir });
+  const codexSeed = result.seeds.find((entry) => entry.target === target);
+  assert.equal(codexSeed?.action, "unchanged");
+  assert.equal(await readlink(target), dotfilesCodex);
+});
+
 test("profile installer preserves a conflicting file unless backup is explicit", async (context) => {
   const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-conflict-"));
   context.after(() => rm(agentDir, { recursive: true, force: true }));
   await seedProfileSettings(agentDir);
-  const target = path.join(agentDir, "choco-pi-ui.json");
+  const target = path.join(agentDir, "models.json");
   await writeFile(target, "user-owned\n");
 
   await assert.rejects(
@@ -1101,5 +1165,6 @@ test("the CLI installs when its path runs through a symlinked directory", async 
   );
   assert.match(stdout, /^updated: .*settings\.json$/m);
   assert.ok((await lstat(path.join(agentDir, "settings.json"))).isFile());
-  assert.ok((await lstat(path.join(agentDir, "choco-pi-ui.json"))).isSymbolicLink());
+  assert.ok((await lstat(path.join(agentDir, "SYSTEM.md"))).isSymbolicLink());
+  assert.ok((await lstat(path.join(agentDir, "choco-pi-ui.json"))).isFile());
 });

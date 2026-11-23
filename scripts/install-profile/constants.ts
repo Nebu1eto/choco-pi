@@ -4,9 +4,7 @@ export const PROFILE_LINKS: readonly (readonly [string, string])[] = [
   ["profile/SYSTEM.md", "SYSTEM.md"],
   ["profile/writing-policy.md", "writing-policy.md"],
   ["profile/review-policy.md", "review-policy.md"],
-  ["profile/choco-pi-codex.json", "choco-pi-codex.json"],
   ["profile/subagents.json", "subagents.json"],
-  ["profile/zentui.json", "choco-pi-ui.json"],
   ["profile/models.json", "models.json"],
   ["profile/keybindings.json", "keybindings.json"],
   ["profile/agents/advisor.md", "agents/advisor.md"],
@@ -19,6 +17,11 @@ export const PROFILE_LINKS: readonly (readonly [string, string])[] = [
   ["profile/agents/explore.md", "agents/explore.md"],
   ["profile/extensions/apex-provider.json", "extensions/apex-provider.json"],
   ["profile/extensions/review.json", "extensions/review.json"],
+];
+
+export const PROFILE_SEEDS: readonly (readonly [string, string])[] = [
+  ["profile/choco-pi-codex.json", "choco-pi-codex.json"],
+  ["profile/zentui.json", "choco-pi-ui.json"],
 ];
 
 export const MIGRATED_SIDECARS: readonly string[] = ["extensions/background-compaction.json"];

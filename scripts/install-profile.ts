@@ -14,13 +14,17 @@ import {
   MIGRATED_SIDECARS,
   PRE_RECORD_BUNDLED_PACKAGE_NAMES,
   PROFILE_LINKS,
+  PROFILE_SEEDS,
   RETIRED_PROFILE_FILES,
 } from "./install-profile/constants.ts";
 import {
   classifyLink,
   installLink,
+  installSeed,
   removeRetiredProfileFiles,
+  validateSeedTarget,
   type InstallLinkResult,
+  type InstallSeedResult,
 } from "./install-profile/fs-linking.ts";
 import {
   buildGlobalSettings,
@@ -47,8 +51,10 @@ export {
   migrateBackgroundCompactionSidecar,
   PRE_RECORD_BUNDLED_PACKAGE_NAMES,
   PROFILE_LINKS,
+  PROFILE_SEEDS,
   RETIRED_PROFILE_FILES,
   type InstallLinkResult,
+  type InstallSeedResult,
   type SidecarMigrationResult,
 };
 
@@ -94,12 +100,19 @@ export async function installProfile({
       }
     }
   }
+  for (const [, targetRelative] of PROFILE_SEEDS) {
+    await validateSeedTarget(path.resolve(agentDir, targetRelative));
+  }
 
   const results = [];
   for (const [sourceRelative, targetRelative] of links) {
     results.push(
       await installLink(root, sourceRelative, path.resolve(agentDir, targetRelative), backup),
     );
+  }
+  const seeds = [];
+  for (const [sourceRelative, targetRelative] of PROFILE_SEEDS) {
+    seeds.push(await installSeed(root, sourceRelative, path.resolve(agentDir, targetRelative)));
   }
   const superseded = await supersededPackageNames(root, project);
   const foreignCheckouts = await confirmedForeignCheckouts(existingSettings, root);
@@ -123,6 +136,7 @@ export async function installProfile({
     markerPath,
     warnings,
     links: results,
+    seeds,
     migrations,
     addedPackages,
     removed,
@@ -160,6 +174,9 @@ if (await isMainModule(process.argv[1])) {
     for (const link of result.links) {
       const suffix = link.backup ? ` (backup: ${link.backup})` : "";
       console.log(`${link.action}: ${link.target}${suffix}`);
+    }
+    for (const seed of result.seeds) {
+      console.log(`${seed.action}: ${seed.target}`);
     }
     console.log(`updated: ${result.settingsPath}`);
     for (const spec of result.addedPackages) console.log(`added package: ${spec}`);

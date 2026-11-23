@@ -9,6 +9,7 @@ import {
   rm,
   stat,
   symlink,
+  writeFile,
 } from "node:fs/promises";
 import path from "node:path";
 
@@ -18,6 +19,11 @@ export type InstallLinkResult = {
   target: string;
   action: "unchanged" | "linked" | "backed-up";
   backup?: string;
+};
+
+export type InstallSeedResult = {
+  target: string;
+  action: "unchanged" | "seeded";
 };
 
 export type LinkState = "absent" | "current" | "same-file" | "legacy" | "conflict";
@@ -132,6 +138,61 @@ export async function installLink(
     throw error;
   }
   return { target, action: "backed-up", backup: saved };
+}
+
+async function writeSeedFileAtomic(source: string, target: string): Promise<void> {
+  const temporary = `${target}.${process.pid}.seed.tmp`;
+  const contents = await readFile(source);
+  await rm(temporary, { force: true });
+  try {
+    await writeFile(temporary, contents);
+    await rename(temporary, target);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
+}
+
+export async function validateSeedTarget(target: string): Promise<void> {
+  let status: Stats;
+  try {
+    status = await lstat(target);
+  } catch (error) {
+    if (error instanceof Error && isMissingPathError(error)) return;
+    throw error;
+  }
+  if (!status.isFile() && !status.isSymbolicLink()) {
+    throw new Error(`${target} already exists and is not a file or symlink`);
+  }
+}
+
+export async function installSeed(
+  root: string,
+  sourceRelative: string,
+  target: string,
+): Promise<InstallSeedResult> {
+  const source = path.resolve(root, sourceRelative);
+  await mkdir(path.dirname(target), { recursive: true });
+  let status: Stats;
+  try {
+    status = await lstat(target);
+  } catch (error) {
+    if (error instanceof Error && isMissingPathError(error)) {
+      await writeSeedFileAtomic(source, target);
+      return { target, action: "seeded" };
+    }
+    throw error;
+  }
+  if (status.isFile()) return { target, action: "unchanged" };
+  if (!status.isSymbolicLink()) {
+    throw new Error(`${target} already exists and is not a file or symlink`);
+  }
+  const state = await classifyLink(root, sourceRelative, target);
+  if (state === "current" || state === "legacy") {
+    await writeSeedFileAtomic(source, target);
+    return { target, action: "seeded" };
+  }
+  return { target, action: "unchanged" };
 }
 
 export async function removeRetiredProfileFiles(
