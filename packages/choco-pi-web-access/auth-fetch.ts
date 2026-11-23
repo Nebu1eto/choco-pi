@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { getCachedWebSearchConfig, isConfigObject } from "./config-loader.ts";
+import { normalizeHostname } from "./ssrf-protection.ts";
 import { getWebSearchConfigPath } from "./utils.ts";
 
 const WEB_SEARCH_CONFIG_PATH = getWebSearchConfigPath();
@@ -72,20 +73,9 @@ export function authFetchRedirectGuard(profile: AuthFetchProfile, from: URL, to:
 }
 
 function loadAuthFetchProfiles(): AuthFetchProfile[] {
-  if (!existsSync(WEB_SEARCH_CONFIG_PATH)) return [];
-  const raw = readFileSync(WEB_SEARCH_CONFIG_PATH, "utf-8");
-  let parsed: JsonObject;
-  try {
-    // SAFETY: JSON.parse accepts only JSON syntax, whose runtime values are exactly JsonValue.
-    const value = JSON.parse(raw) as JsonValue;
-    if (!isJsonObject(value)) throw new Error("expected a JSON object");
-    parsed = value;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to parse ${WEB_SEARCH_CONFIG_PATH}: ${message}`);
-  }
+  const parsed = getCachedWebSearchConfig();
   if (parsed.authFetch === undefined || parsed.authFetch === null) return [];
-  if (!isJsonObject(parsed.authFetch)) {
+  if (!isConfigObject(parsed.authFetch)) {
     throw new Error(`authFetch in ${WEB_SEARCH_CONFIG_PATH} must be an object`);
   }
   return Object.entries(parsed.authFetch).map(([name, value]) => parseProfile(name, value));
@@ -184,13 +174,6 @@ function parseChromeProfile(value: JsonValue | undefined, label: string): string
     );
   }
   return normalized;
-}
-
-function normalizeHostname(hostname: string): string {
-  return hostname
-    .toLowerCase()
-    .replace(/^\[|\]$/g, "")
-    .replace(/\.$/, "");
 }
 
 function hostMatches(hostname: string, allowedHost: string): boolean {

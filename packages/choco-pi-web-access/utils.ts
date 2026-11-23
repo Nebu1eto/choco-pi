@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { isRecord } from "@choco-pi/shared/value-guards";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import { legacyPiFallbacks, piAgentDir } from "@choco-pi/shared/pi-paths";
@@ -34,10 +35,6 @@ interface ApiBaseUrlOptions {
   defaultValue: string;
   environmentKey: string;
   environmentValue: string | undefined;
-}
-
-function isConfigObject(value: ConfigValue): value is ConfigObject {
-  return value !== null && Object.prototype.toString.call(value) === "[object Object]";
 }
 
 function isString(value: ConfigValue | undefined): value is string {
@@ -163,12 +160,12 @@ export function resolveCuratorNetworkConfig(): CuratorNetworkConfig {
   } catch {
     return LOCAL_CURATOR_NETWORK_DEFAULTS;
   }
-  if (!isConfigObject(raw)) return LOCAL_CURATOR_NETWORK_DEFAULTS;
+  if (!isRecord(raw)) return LOCAL_CURATOR_NETWORK_DEFAULTS;
 
   const curatorRemote = raw.curatorRemote;
   if (curatorRemote === true) return { enabled: true, host: hostname(), bind: "0.0.0.0" };
 
-  if (curatorRemote !== undefined && isConfigObject(curatorRemote)) {
+  if (curatorRemote !== undefined && isRecord(curatorRemote)) {
     return {
       enabled: true,
       host: trimmedString(curatorRemote.host) ?? hostname(),

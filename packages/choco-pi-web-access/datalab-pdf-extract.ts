@@ -1,6 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { getCachedWebSearchConfig, loadWebSearchConfig } from "./config-loader.ts";
 import { hasCredentialSource, resolveCredential, redactCredential } from "./credential-source.ts";
-import { getWebSearchConfigPath } from "./utils.ts";
 
 const DEFAULT_API_HOST = "https://www.datalab.to";
 const API_PREFIX = "/api/v1";
@@ -9,7 +8,6 @@ const DEFAULT_POLL_INTERVAL_MS = 1_500;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_ERROR_BODY_BYTES = 300;
 const CLEANUP_TIMEOUT_MS = 5_000;
-const CONFIG_PATH = getWebSearchConfigPath();
 
 export type DatalabMode = "fast" | "balanced" | "accurate";
 export type DatalabProcessingLocation = "eu" | "us";
@@ -25,10 +23,6 @@ interface JsonObject {
   [key: string]: JsonValue | undefined;
 }
 
-interface DatalabConfig {
-  datalabApiKey?: JsonValue;
-}
-
 function isJsonObject(value: JsonValue): value is JsonObject {
   return value !== null && Object.prototype.toString.call(value) === "[object Object]";
 }
@@ -41,29 +35,6 @@ function primitiveString(value: JsonValue | undefined): string | null {
   return Object.prototype.toString.call(value) === "[object String]" && Object(value) !== value
     ? String(value)
     : null;
-}
-
-let cachedConfig: DatalabConfig | null = null;
-
-function loadConfig(): DatalabConfig {
-  if (cachedConfig) return cachedConfig;
-  if (!existsSync(CONFIG_PATH)) {
-    cachedConfig = {};
-    return cachedConfig;
-  }
-
-  const rawText = readFileSync(CONFIG_PATH, "utf-8");
-  try {
-    // SAFETY: JSON.parse accepts only JSON syntax, whose runtime values are exactly JsonValue.
-    const parsed = JSON.parse(rawText) as JsonValue;
-    if (!isJsonObject(parsed)) throw new Error("expected a JSON object");
-    cachedConfig = {};
-    if (parsed.datalabApiKey !== undefined) cachedConfig.datalabApiKey = parsed.datalabApiKey;
-    return cachedConfig;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to parse ${CONFIG_PATH}: ${message}`);
-  }
 }
 
 function normalizeString(value: JsonValue | undefined): string | null {
@@ -81,15 +52,16 @@ function normalizeFileId(value: JsonValue | undefined): string | null {
 export function isDatalabApiAvailable(): boolean {
   return hasCredentialSource({
     provider: "Datalab",
-    configuredValue: loadConfig().datalabApiKey,
+    configuredValue: getCachedWebSearchConfig().datalabApiKey,
     environmentValue: process.env.DATALAB_API_KEY,
   });
 }
 
 export async function getDatalabApiKey(signal?: AbortSignal): Promise<string | null> {
+  const config = await loadWebSearchConfig();
   return resolveCredential({
     provider: "Datalab",
-    configuredValue: loadConfig().datalabApiKey,
+    configuredValue: config.datalabApiKey,
     environmentValue: process.env.DATALAB_API_KEY,
     signal,
   });

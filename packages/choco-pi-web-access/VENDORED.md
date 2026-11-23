@@ -324,3 +324,11 @@ shared router. Display-only edits so the new family type-checks and renders:
 ## 2026-11-23: adopt @choco-pi/shared
 
 - Imports of the former profile/extensions/lib helpers (pi-paths, node-runtime, and where used lifecycle, value-guards) now resolve through the workspace package `@choco-pi/shared` instead of relative paths.
+
+## 2026-11-23: unified async config loader, pluggable fetch registry, and modular decomposition
+
+- Unified duplicated `loadConfig` and `isConfigObject` copies into `config-loader.ts` using non-blocking `node:fs/promises` (`readFile`/`writeFile`) and `@choco-pi/shared/value-guards` (`isRecord`), eliminating blocking config reads in `datalab-pdf-extract.ts`, `exa.ts`, `kagi.ts`, `auth-fetch.ts`, `gemini-web-config.ts`, `feature-config.ts`, `gemini-search.ts`, `pdf-extract.ts`, `github-extract.ts`, `extract.ts`, and `index.ts`.
+- Deduplicated `normalizeHostname` (`ssrf-protection.ts` -> `auth-fetch.ts`) and `isAbortError` (`value-guards.ts` -> `extract.ts`, `gemini-search.ts`, `summary-review.ts`, `tools/*`).
+- Added `fetch-registry.ts` (`WebAccessScope`, `ContentExtractor`, `FetchTransport`, `getWebAccessScope`, `createWebAccessScope`, `registerContentExtractor`, `registerFetchTransport`, `Symbol.for("choco-pi:web-access/v1")`) and registered built-in transports (`http`, `kagi`) and extractors (`github`, `pdf`, `readability`, `rsc`) through it in `extract.ts`.
+- Decomposed the 4,537-line `index.ts` monolith into `extension-config.ts`, `search-formatting.ts`, `curator-lifecycle.ts`, `commands.ts`, and `tools/{web-search,source-check,fetch-content,get-search-content}-tool.ts`, reducing `index.ts` to a 114-line composition root preserving all public exports and tool schemas (plus `provider_options` snake_case mapping in `snake-params.ts`).
+- Tests: added `tests/fetch-registry.test.ts` covering custom `ContentExtractor` priority dispatch and custom `FetchTransport` registration/fallback.

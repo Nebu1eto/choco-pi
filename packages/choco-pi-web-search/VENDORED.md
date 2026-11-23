@@ -89,3 +89,10 @@ so `auto` and `all` never reach it. The `web_search` provider enum grows by one 
 Tests: `tests/core.test.ts` (family order; google and xai both explicit-only) and
 `tests/schema.test.ts` (`google` is now a valid provider; the unknown-value probe uses
 `bing`).
+
+## 2026-11-23 choco-pi patch: Open provider families, `providerOptions`, and modular decomposition
+
+- Opened `SearchProviderFamily` to `BuiltinSearchProviderFamily | (string & {})`, exported `BUILTIN_SEARCH_PROVIDER_FAMILIES` (aliased as `searchProviderFamilies`) and `isValidSearchProviderFamily`, and allowed any custom non-empty lowercase family id (excluding `auto`/`all`) to register and route without editing core enums. Built-in UI tool schema `searchProviderSchema()` stays a closed JSON Schema string enum.
+- Added namespaced `providerOptions?: Readonly<Record<string, JsonRecord>>` to `SearchRequest` and `canonicalSearchParams`, with legacy `exaSearchType` normalized into `providerOptions.exa.searchType`.
+- Decomposed the 1,635-line `index.ts` into `src/contract.ts`, `src/schema.ts`, `src/formatting.ts`, `src/scope.ts`, and `src/router.ts`, keeping `index.ts` as a clean public barrel.
+- Tests: `tests/extensibility.test.ts` added for custom family registration/routing and `providerOptions` passthrough/normalization.

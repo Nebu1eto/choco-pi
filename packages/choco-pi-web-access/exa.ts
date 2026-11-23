@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { getCachedWebSearchConfig, loadWebSearchConfig } from "./config-loader.ts";
 import { isNumberValue, isStringValue } from "./value-guards.ts";
 import { activityMonitor } from "./activity.ts";
 import type { ExtractedContent } from "./extract.ts";
@@ -16,11 +16,6 @@ const EXA_MCP_URL = "https://mcp.exa.ai/mcp";
 const CONFIG_PATH = getWebSearchConfigPath();
 const EXA_MCP_ADVANCED_TOOL = "web_search_advanced_exa";
 const EXA_MCP_BASIC_TOOL = "web_search_exa";
-
-interface WebSearchConfig {
-  exaApiKey?: unknown;
-  exaBaseUrl?: unknown;
-}
 
 interface ExaAnswerResponse {
   answer?: string;
@@ -96,30 +91,11 @@ interface ExaSearchArguments extends ExaDomainFilter {
 }
 type ExaMcpArguments = ExaMcpBasicArguments | ExaSearchArguments;
 
-let cachedConfig: WebSearchConfig | null = null;
-
-function loadConfig(): WebSearchConfig {
-  if (cachedConfig) return cachedConfig;
-  if (!existsSync(CONFIG_PATH)) {
-    cachedConfig = {};
-    return cachedConfig;
-  }
-
-  const raw = readFileSync(CONFIG_PATH, "utf-8");
-  try {
-    // SAFETY: WebSearchConfig intentionally leaves its two config fields unparsed for their owning credential and URL boundary parsers.
-    cachedConfig = JSON.parse(raw) as WebSearchConfig;
-    return cachedConfig;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to parse ${CONFIG_PATH}: ${message}`);
-  }
-}
-
 export async function resolveExaApiKey(signal?: AbortSignal): Promise<string | null> {
+  const config = await loadWebSearchConfig();
   return resolveCredential({
     provider: "Exa",
-    configuredValue: loadConfig().exaApiKey,
+    configuredValue: config.exaApiKey,
     environmentValue: process.env.EXA_API_KEY,
     signal,
   });
@@ -128,7 +104,7 @@ export async function resolveExaApiKey(signal?: AbortSignal): Promise<string | n
 function getApiBaseUrl(): string {
   return resolveApiBaseUrl({
     configKey: "exaBaseUrl",
-    configuredValue: loadConfig().exaBaseUrl,
+    configuredValue: getCachedWebSearchConfig().exaBaseUrl,
     defaultValue: EXA_API_BASE_URL,
     environmentKey: "EXA_BASE_URL",
     environmentValue: process.env.EXA_BASE_URL,

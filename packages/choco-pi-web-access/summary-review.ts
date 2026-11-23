@@ -328,13 +328,6 @@ function isString<Value>(value: Value): value is Value & string {
   return Object.prototype.toString.call(value) === "[object String]";
 }
 
-function isAbortError<Failure>(err: Failure): boolean {
-  if (!isObject(err)) return false;
-  const name = "name" in err && isString(err.name) ? err.name : "";
-  const message = "message" in err && isString(err.message) ? err.message : "";
-  return name === "AbortError" || message.toLowerCase().includes("abort");
-}
-
 function getTextFromContentPart<Part>(part: Part): string {
   if (!isObject(part)) return "";
   if ("text" in part && isString(part.text)) return part.text;
@@ -523,3 +516,4 @@ export async function generateSummaryDraft(
     if (signal && callerAbortListener) signal.removeEventListener("abort", callerAbortListener);
   }
 }
+import { isAbortError } from "./value-guards.ts";

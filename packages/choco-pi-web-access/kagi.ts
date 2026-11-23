@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { getCachedWebSearchConfig, loadWebSearchConfig } from "./config-loader.ts";
 import { isNumberValue, isStringValue } from "./value-guards.ts";
 import { activityMonitor } from "./activity.ts";
 import type { ExtractedContent, ExtractOptions } from "./extract.ts";
@@ -25,10 +25,6 @@ interface KagiObject {
   [key: string]: KagiValue | undefined;
 }
 
-interface WebSearchConfig extends KagiObject {
-  kagiApiKey?: KagiValue;
-}
-
 export interface KagiSearchOptions extends SearchOptions {
   includeContent?: boolean;
 }
@@ -50,33 +46,11 @@ function isKagiObject(value: KagiValue | undefined): value is KagiObject {
   return value !== null && value !== undefined && Object(value) === value && !Array.isArray(value);
 }
 
-let cachedConfig: WebSearchConfig | null = null;
-
-function loadConfig(): WebSearchConfig {
-  if (cachedConfig) return cachedConfig;
-  if (!existsSync(CONFIG_PATH)) {
-    cachedConfig = {};
-    return cachedConfig;
-  }
-  const raw = readFileSync(CONFIG_PATH, "utf-8");
-  let parsed: KagiValue;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to parse ${CONFIG_PATH}: ${message}`);
-  }
-  if (!isKagiObject(parsed)) {
-    throw new Error(`Invalid config in ${CONFIG_PATH}: expected a JSON object`);
-  }
-  cachedConfig = parsed;
-  return cachedConfig;
-}
-
 export async function resolveKagiApiKey(signal?: AbortSignal): Promise<string | null> {
+  const config = await loadWebSearchConfig();
   return resolveCredential({
     provider: "Kagi",
-    configuredValue: loadConfig().kagiApiKey,
+    configuredValue: config.kagiApiKey,
     environmentValue: process.env.KAGI_API_KEY,
     signal,
   });
@@ -207,7 +181,7 @@ function buildAnswer(results: SearchResponse["results"]): string {
 export function isKagiAvailable(): boolean {
   return hasCredentialSource({
     provider: "Kagi",
-    configuredValue: loadConfig().kagiApiKey,
+    configuredValue: getCachedWebSearchConfig().kagiApiKey,
     environmentValue: process.env.KAGI_API_KEY,
   });
 }

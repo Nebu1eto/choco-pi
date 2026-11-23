@@ -7,3 +7,15 @@ export const isNumberValue = compile(
   num({ minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE }),
 ).check;
 export const isBooleanValue = compile(bool()).check;
+
+/** True when `cause` is an abort/cancellation error (`Error` or `DOMException` named `AbortError`). */
+export function isAbortError<Failure>(cause: Failure): boolean {
+  if (
+    (cause instanceof Error && cause.name === "AbortError") ||
+    (cause instanceof DOMException && cause.name === "AbortError")
+  ) {
+    return true;
+  }
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return message.toLowerCase().includes("abort");
+}

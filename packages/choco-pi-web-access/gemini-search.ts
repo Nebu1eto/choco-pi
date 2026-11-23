@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { isBooleanValue, isStringValue } from "./value-guards.ts";
+import { getCachedWebSearchConfig, isConfigObject } from "./config-loader.ts";
+import { isAbortError, isBooleanValue, isStringValue } from "./value-guards.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   resolveSearchScope,
@@ -9,6 +9,7 @@ import {
   type SearchAttemptDiagnostic,
   type SearchBilling,
   type SearchProviderFamily,
+  type SearchProviderName,
   type SearchProviderSelection,
   type SearchCapability,
   type SearchErrorKind,
@@ -25,8 +26,8 @@ import { getWebSearchConfigPath } from "./utils.ts";
 export const RESOLVED_SEARCH_PROVIDERS = searchProviderFamilies;
 export const SEARCH_PROVIDERS = searchProviderSelections;
 
-export type ResolvedSearchProvider = (typeof RESOLVED_SEARCH_PROVIDERS)[number];
-export type SearchProvider = (typeof SEARCH_PROVIDERS)[number];
+export type ResolvedSearchProvider = SearchProviderFamily;
+export type SearchProvider = SearchProviderName;
 export type { SearchProviderSelection };
 export type SearchProviderErrorKind =
   | "transient"
@@ -106,16 +107,6 @@ type SearchConfig = {
   allowBilledApiFallback: boolean;
 };
 
-type ConfigScalar = boolean | number | string | null;
-type ConfigValue = ConfigScalar | ConfigObject | ConfigValue[];
-interface ConfigObject {
-  [key: string]: ConfigValue | undefined;
-}
-
-function isConfigObject<Value>(value: Value): value is Value & ConfigObject {
-  return value !== null && Object(value) === value && !Array.isArray(value);
-}
-
 function isResolvedSearchProvider(value: string): value is ResolvedSearchProvider {
   return RESOLVED_SEARCH_PROVIDERS.some((provider) => provider === value);
 }
@@ -132,25 +123,7 @@ let cachedSearchConfig: SearchConfig | null = null;
 
 function getSearchConfig(): SearchConfig {
   if (cachedSearchConfig) return cachedSearchConfig;
-  if (!existsSync(CONFIG_PATH)) {
-    cachedSearchConfig = {
-      searchProvider: "auto",
-      searchProviderConfigured: false,
-      allowBilledApiFallback: false,
-    };
-    return cachedSearchConfig;
-  }
-
-  const rawText = readFileSync(CONFIG_PATH, "utf-8");
-  let raw: ConfigObject;
-  try {
-    const parsed: ConfigValue = JSON.parse(rawText);
-    if (!isConfigObject(parsed)) throw new Error("expected a JSON object");
-    raw = parsed;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to parse ${CONFIG_PATH}: ${message}`);
-  }
+  const raw = getCachedWebSearchConfig();
 
   const searchProviderConfigured =
     Object.hasOwn(raw, "searchProvider") || Object.hasOwn(raw, "provider");
@@ -355,10 +328,6 @@ function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-function isAbortError(cause: unknown): boolean {
-  return errorMessage(cause).toLowerCase().includes("abort");
-}
-
 function shouldTryOpenAIInAuto(options: SearchOptions): boolean {
   if (options.recencyFilter) return false;
   return true;
@@ -473,6 +442,8 @@ function providerLabel(provider: ResolvedSearchProvider): string {
       return "Google";
     case "xai":
       return "xAI";
+    default:
+      return provider;
   }
 }
 

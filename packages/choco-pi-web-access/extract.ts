@@ -1,10 +1,18 @@
-import { existsSync, readFileSync } from "node:fs";
 import { Readability } from "@mozilla/readability";
 import { resizeImage } from "@earendil-works/pi-coding-agent";
 import { parseHTML } from "linkedom";
 import TurndownService from "turndown";
 import pLimit from "p-limit";
 import { activityMonitor } from "./activity.ts";
+import { getCachedWebSearchConfig, isConfigObject, type ConfigValue } from "./config-loader.ts";
+import {
+  getWebAccessScope,
+  type ContentExtractor,
+  type ContentExtractorContext,
+  type FetchTransport,
+  type WebAccessScope,
+} from "./fetch-registry.ts";
+import { isAbortError } from "./value-guards.ts";
 import { extractRSCContent } from "./rsc-extract.ts";
 import { extractPDFToMarkdown, isPDF, loadPDFConfig } from "./pdf-extract.ts";
 import { extractGitHub } from "./github-extract.ts";
@@ -43,13 +51,7 @@ const NON_RECOVERABLE_ERRORS = [
 const MIN_USEFUL_CONTENT = 500;
 const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const WEB_SEARCH_CONFIG_PATH = getWebSearchConfigPath();
-const FETCH_PROVIDERS = ["http", "kagi"] as const;
-type FetchProvider = (typeof FETCH_PROVIDERS)[number];
-type FetchRouting = { providers: FetchProvider[]; allowRemoteHostedProviders: boolean };
-type ConfigValue = null | boolean | number | string | ConfigValue[] | ConfigObject;
-interface ConfigObject {
-  [key: string]: ConfigValue | undefined;
-}
+type FetchRouting = { providers: string[]; allowRemoteHostedProviders: boolean };
 interface RemoteValidationOptions {
   allowRanges: string[];
   trustEnvProxy: boolean;
@@ -65,10 +67,23 @@ interface AuthRemoteValidationConfig {
 interface AuthenticatedRequestInit extends RequestInit {
   headers: Record<string, string>;
 }
-const DEFAULT_FETCH_PROVIDER_ORDER: FetchProvider[] = ["http", "kagi"];
-const REMOTE_HOSTED_FETCH_PROVIDERS = new Set<FetchProvider>(["kagi"]);
+const DEFAULT_BUILTIN_FETCH_ORDER = ["http", "kagi"] as const;
 
 export { loadSsrfConfig } from "./ssrf-protection.ts";
+export {
+  createWebAccessScope,
+  getWebAccessScope,
+  registerContentExtractor,
+  registerFetchTransport,
+  WEB_ACCESS_SCOPE_SYMBOL,
+  WebAccessScope,
+  type ContentExtractor,
+  type ContentExtractorContext,
+  type ContentExtractorStage,
+  type FetchTransport,
+  type FetchTransportContext,
+  type FetchTransportResult,
+} from "./fetch-registry.ts";
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -76,18 +91,6 @@ function errorMessage(cause: unknown): string {
 
 function isConfigParseError(cause: unknown): boolean {
   return errorMessage(cause).startsWith("Failed to parse ");
-}
-
-function isAbortError(cause: unknown): boolean {
-  return errorMessage(cause).toLowerCase().includes("abort");
-}
-
-function isConfigObject(value: ConfigValue | undefined): value is ConfigObject {
-  return (
-    value !== null &&
-    value !== undefined &&
-    Object.prototype.toString.call(value) === "[object Object]"
-  );
 }
 
 function primitiveString(value: ConfigValue | undefined): string | null {
@@ -182,24 +185,21 @@ export async function fetchAuthenticatedRemoteUrl(
   });
 }
 
-function loadFetchRouting(): FetchRouting {
-  if (!existsSync(WEB_SEARCH_CONFIG_PATH)) {
-    return { providers: DEFAULT_FETCH_PROVIDER_ORDER, allowRemoteHostedProviders: false };
-  }
+function defaultFetchOrder(scope: WebAccessScope): string[] {
+  const builtin = new Set<string>(DEFAULT_BUILTIN_FETCH_ORDER);
+  const custom = scope
+    .listFetchTransports()
+    .map((transport) => transport.id)
+    .filter((id) => !builtin.has(id));
+  return [...DEFAULT_BUILTIN_FETCH_ORDER.filter((id) => scope.getFetchTransport(id)), ...custom];
+}
 
-  let raw: ConfigObject;
-  try {
-    // SAFETY: JSON.parse accepts only JSON syntax, whose runtime values are exactly ConfigValue.
-    const parsed = JSON.parse(readFileSync(WEB_SEARCH_CONFIG_PATH, "utf-8")) as ConfigValue;
-    if (!isConfigObject(parsed)) throw new Error("expected a JSON object");
-    raw = parsed;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to parse ${WEB_SEARCH_CONFIG_PATH}: ${message}`);
-  }
+function loadFetchRouting(scope: WebAccessScope): FetchRouting {
+  const raw = getCachedWebSearchConfig();
+  const defaultOrder = defaultFetchOrder(scope);
 
   if (!Object.hasOwn(raw, "fetchRouting")) {
-    return { providers: DEFAULT_FETCH_PROVIDER_ORDER, allowRemoteHostedProviders: false };
+    return { providers: defaultOrder, allowRemoteHostedProviders: false };
   }
   const routing = raw.fetchRouting;
   if (!isConfigObject(routing)) {
@@ -208,7 +208,7 @@ function loadFetchRouting(): FetchRouting {
 
   const routingConfig = routing;
   const providersValue = routingConfig.providers;
-  let providers = DEFAULT_FETCH_PROVIDER_ORDER;
+  let providers = defaultOrder;
   if (providersValue !== undefined) {
     if (!Array.isArray(providersValue) || providersValue.length === 0) {
       throw new Error(
@@ -219,7 +219,7 @@ function loadFetchRouting(): FetchRouting {
     providers = [];
     for (const provider of providersValue) {
       const normalized = primitiveString(provider)?.trim().toLowerCase() ?? "";
-      if (normalized !== "http" && normalized !== "kagi") {
+      if (!normalized || !scope.getFetchTransport(normalized)) {
         throw new Error(
           `fetchRouting.providers in ${WEB_SEARCH_CONFIG_PATH} contains an invalid provider: ${String(provider)}`,
         );
@@ -280,7 +280,190 @@ export interface ExtractOptions {
   lookup?: Lookup;
   /** Explicit transport fixture seam; direct requests otherwise use approved DNS snapshots. */
   fetch?: typeof fetch;
+  /** Optional isolated web-access registry scope (defaults to process-shared scope). */
+  scope?: WebAccessScope;
 }
+
+function createBuiltinExtractors(): ContentExtractor[] {
+  return [
+    {
+      id: "github",
+      priority: 10,
+      stage: "pre-fetch",
+      match: () => true,
+      extract: (ctx) => extractGitHub(ctx.url, ctx.signal, ctx.options?.forceClone),
+    },
+    {
+      id: "pdf",
+      priority: 10,
+      stage: "response",
+      match: (ctx) => isPDF(ctx.url, ctx.contentType ?? ""),
+      extract: async (ctx) => {
+        const response = ctx.response;
+        if (!response) return null;
+        const pdfConfig = loadPDFConfig();
+        if (!pdfConfig.enabled) {
+          if (ctx.activityId !== undefined)
+            activityMonitor.logComplete(ctx.activityId, response.status);
+          return {
+            url: ctx.url,
+            title: "",
+            content: "",
+            error: "PDF extraction is disabled by pdf.enabled",
+            mimeType: ctx.mimeType,
+            status: response.status,
+          };
+        }
+        try {
+          const buffer = await readPDFResponseBuffer(response, pdfConfig.maxSizeMB);
+          if (ctx.signal?.aborted) return abortedResult(ctx.url);
+          const result = await extractPDFToMarkdown(buffer, ctx.url, { signal: ctx.signal });
+          if (ctx.activityId !== undefined)
+            activityMonitor.logComplete(ctx.activityId, response.status);
+          return {
+            url: ctx.url,
+            title: result.title,
+            content: `PDF extracted and saved to: ${result.outputPath}\n\nPages: ${result.pages}\nCharacters: ${result.chars}`,
+            error: null,
+          };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (ctx.activityId !== undefined) activityMonitor.logError(ctx.activityId, message);
+          if (message.startsWith("PDF exceeds configured pdf.maxSizeMB limit")) {
+            return { url: ctx.url, title: "", content: "", error: message };
+          }
+          if (err instanceof CredentialResolutionError || isConfigParseError(err)) {
+            return { url: ctx.url, title: "", content: "", error: message };
+          }
+          return {
+            url: ctx.url,
+            title: "",
+            content: "",
+            error: `PDF extraction failed: ${message}`,
+          };
+        }
+      },
+    },
+    {
+      id: "readability",
+      priority: 50,
+      stage: "response",
+      match: (ctx) => Boolean(ctx.html),
+      extract: async (ctx) => {
+        const text = ctx.html;
+        if (!text) return null;
+        const declaredLinks = ctx.declaredLinks ?? [];
+        const { document } = parseHTML(text);
+        const documentTitle = ctx.documentTitle ?? document.title?.trim() ?? "";
+        // SAFETY: linkedom implements the DOM Document API consumed by Readability.
+        const reader = new Readability(document as Document);
+        const article = reader.parse();
+        if (!article) return null;
+        const articleContent =
+          Object.prototype.toString.call(article.content) === "[object String]" &&
+          Object(article.content) !== article.content
+            ? String(article.content)
+            : null;
+        if (articleContent === null) {
+          throw new Error("Readability returned invalid article content");
+        }
+        const markdown = turndown.turndown(articleContent);
+        if (markdown.length < MIN_USEFUL_CONTENT) return null;
+        if (ctx.activityId !== undefined && ctx.response) {
+          activityMonitor.logComplete(ctx.activityId, ctx.response.status);
+        }
+        return {
+          url: ctx.url,
+          title: article.title || documentTitle,
+          content: appendDeclaredWebLinks(markdown, declaredLinks),
+          error: null,
+        };
+      },
+    },
+    {
+      id: "rsc",
+      priority: 60,
+      stage: "response",
+      match: (ctx) => Boolean(ctx.html),
+      extract: async (ctx) => {
+        const text = ctx.html;
+        if (!text) return null;
+        const declaredLinks = ctx.declaredLinks ?? [];
+        const rscResult = extractRSCContent(text);
+        if (!rscResult || rscResult.content.length < MIN_USEFUL_CONTENT) return null;
+        if (ctx.activityId !== undefined && ctx.response) {
+          activityMonitor.logComplete(ctx.activityId, ctx.response.status);
+        }
+        return {
+          url: ctx.url,
+          title: rscResult.title,
+          content: appendDeclaredWebLinks(rscResult.content, declaredLinks),
+          error: null,
+        };
+      },
+    },
+  ];
+}
+
+function createBuiltinTransports(): FetchTransport[] {
+  return [
+    {
+      id: "http",
+      hosted: false,
+      available: () => true,
+      fetch: async (ctx) => {
+        const { declaredLinks: discoveredLinks = [], ...result } = await extractViaHttp(
+          ctx.url,
+          ctx.signal,
+          ctx.options,
+          ctx.scope,
+        );
+        const nonRecoverable = Boolean(
+          result.error &&
+          (NON_RECOVERABLE_ERRORS.some((prefix) => result.error!.startsWith(prefix)) ||
+            isRedirectPolicyError(result.error) ||
+            isConfigParseError(result.error)),
+        );
+        return { content: result, declaredLinks: discoveredLinks, nonRecoverable };
+      },
+    },
+    {
+      id: "kagi",
+      hosted: true,
+      available: () => isKagiExtractAvailable(),
+      fetch: async (ctx) => {
+        const ssrf = loadSsrfConfig();
+        const kagiOptions: Parameters<typeof extractWithKagi>[2] = {
+          timeoutMs: ctx.options?.timeoutMs,
+          ssrf,
+        };
+        if (ctx.options?.lookup) kagiOptions.lookup = ctx.options.lookup;
+        const result = await extractWithKagi(ctx.url, ctx.signal, kagiOptions);
+        if (!result) return null;
+        return {
+          content: {
+            ...result,
+            content: appendDeclaredWebLinks(result.content, ctx.declaredLinks),
+          },
+        };
+      },
+    },
+  ];
+}
+
+export function ensureBuiltinFetchRegistry(
+  scope: WebAccessScope = getWebAccessScope(),
+): WebAccessScope {
+  for (const extractor of createBuiltinExtractors()) {
+    if (!scope.extractors.has(extractor.id)) scope.registerContentExtractor(extractor);
+  }
+  for (const transport of createBuiltinTransports()) {
+    if (!scope.transports.has(transport.id)) scope.registerFetchTransport(transport);
+  }
+  return scope;
+}
+
+ensureBuiltinFetchRegistry(getWebAccessScope());
 
 export async function extractContent(
   url: string,
@@ -290,6 +473,7 @@ export async function extractContent(
   if (signal?.aborted) {
     return { url, title: "", content: "", error: "Aborted" };
   }
+  const scope = ensureBuiltinFetchRegistry(options?.scope ?? getWebAccessScope());
 
   let remoteUrl: URL | null = null;
   try {
@@ -313,14 +497,14 @@ export async function extractContent(
 
   if (options?.authFetchProfile) {
     try {
-      return await extractViaHttp(url, signal, options);
+      return await extractViaHttp(url, signal, options, scope);
     } catch (err) {
       return { url, title: "", content: "", error: errorMessage(err) };
     }
   }
 
   if (options?.mode === "raw") {
-    return extractViaHttp(url, signal, options);
+    return extractViaHttp(url, signal, options, scope);
   }
 
   try {
@@ -329,15 +513,25 @@ export async function extractContent(
     return { url, title: "", content: "", error: errorMessage(err) };
   }
 
-  try {
-    const ghResult = await extractGitHub(url, signal, options?.forceClone);
-    if (ghResult) return ghResult;
-    if (signal?.aborted) return abortedResult(url);
-  } catch (err) {
-    const message = errorMessage(err);
-    if (isAbortError(err)) return abortedResult(url);
-    if (isConfigParseError(err)) {
-      return { url, title: "", content: "", error: message };
+  const preFetchCtx: ContentExtractorContext = {
+    url,
+    stage: "pre-fetch",
+  };
+  if (remoteUrl) preFetchCtx.parsedUrl = remoteUrl;
+  if (signal) preFetchCtx.signal = signal;
+  if (options) preFetchCtx.options = options;
+  for (const extractor of scope.listContentExtractors("pre-fetch")) {
+    if (!extractor.match(preFetchCtx)) continue;
+    try {
+      const extracted = await extractor.extract(preFetchCtx);
+      if (extracted) return extracted;
+      if (signal?.aborted) return abortedResult(url);
+    } catch (err) {
+      const message = errorMessage(err);
+      if (isAbortError(err)) return abortedResult(url);
+      if (isConfigParseError(err)) {
+        return { url, title: "", content: "", error: message };
+      }
     }
   }
 
@@ -345,13 +539,13 @@ export async function extractContent(
 
   let fetchRouting: FetchRouting;
   try {
-    fetchRouting = loadFetchRouting();
+    fetchRouting = loadFetchRouting(scope);
   } catch (err) {
     return { url, title: "", content: "", error: errorMessage(err) };
   }
   const providerOrder =
     remoteUrl && !fetchRouting.allowRemoteHostedProviders
-      ? fetchRouting.providers.filter((provider) => !REMOTE_HOSTED_FETCH_PROVIDERS.has(provider))
+      ? fetchRouting.providers.filter((provider) => !scope.getFetchTransport(provider)?.hosted)
       : fetchRouting.providers;
   if (providerOrder.length === 0) {
     return {
@@ -365,63 +559,54 @@ export async function extractContent(
 
   let httpResult: ExtractedContent | null = null;
   let declaredLinks: DeclaredWebLink[] = [];
-  const withDeclaredLinks = (result: ExtractedContent): ExtractedContent => ({
-    ...result,
-    content: appendDeclaredWebLinks(result.content, declaredLinks),
-  });
   const parseErrorResult = (message: string): ExtractedContent =>
     httpResult
       ? { ...httpResult, error: message }
       : { url, title: "", content: "", error: message };
-  const runHttpProvider = async (): Promise<ExtractedContent | null> => {
-    const { declaredLinks: discoveredLinks = [], ...result } = await extractViaHttp(
+  const runTransport = async (transport: FetchTransport): Promise<ExtractedContent | null> => {
+    const transportResult = await transport.fetch({
       url,
+      remoteUrl,
       signal,
       options,
-    );
-    httpResult = result;
-    declaredLinks = discoveredLinks;
+      declaredLinks,
+      scope,
+    });
     if (signal?.aborted) return abortedResult(url);
-    if (!httpResult.error) return httpResult;
-    if (
-      NON_RECOVERABLE_ERRORS.some((prefix) => httpResult!.error!.startsWith(prefix)) ||
-      isRedirectPolicyError(httpResult.error) ||
-      isConfigParseError(httpResult.error)
-    ) {
-      return httpResult;
+    if (!transportResult) return null;
+    if (transport.id === "http") {
+      httpResult = transportResult.content;
+      declaredLinks = transportResult.declaredLinks ?? [];
+    }
+    if (!transportResult.content.error || transportResult.nonRecoverable) {
+      return transportResult.content;
     }
     return null;
   };
 
-  let kagiError: string | null = null;
+  const transportErrors: Array<{ id: string; message: string }> = [];
 
   if (remoteUrl && providerOrder[0] !== "http") {
-    const httpGateResult = await runHttpProvider();
-    if (httpGateResult) return httpGateResult;
+    const httpTransport = scope.getFetchTransport("http");
+    if (httpTransport) {
+      const httpGateResult = await runTransport(httpTransport);
+      if (httpGateResult) return httpGateResult;
+    }
   }
 
   for (const provider of providerOrder) {
     if (signal?.aborted) return abortedResult(url);
-    if (provider === "http") {
-      const result = await runHttpProvider();
-      if (result) return result;
-      continue;
-    }
+    const transport = scope.getFetchTransport(provider);
+    if (!transport) continue;
     try {
-      if (isKagiExtractAvailable()) {
-        const ssrf = loadSsrfConfig();
-        const kagiOptions: Parameters<typeof extractWithKagi>[2] = {
-          timeoutMs: options?.timeoutMs,
-          ssrf,
-        };
-        if (options?.lookup) kagiOptions.lookup = options.lookup;
-        const result = await extractWithKagi(url, signal, kagiOptions);
-        if (result) return withDeclaredLinks(result);
-      }
+      if (!(await transport.available())) continue;
+      const result = await runTransport(transport);
+      if (result) return result;
     } catch (err) {
       if (isAbortError(err)) return abortedResult(url);
-      kagiError = errorMessage(err);
-      if (isConfigParseError(err)) return parseErrorResult(kagiError);
+      const message = errorMessage(err);
+      transportErrors.push({ id: provider, message });
+      if (isConfigParseError(err)) return parseErrorResult(message);
     }
   }
 
@@ -429,9 +614,14 @@ export async function extractContent(
   const getHttpResult = (): ExtractedContent | null => httpResult;
   const finalHttpResult = getHttpResult();
   if (finalHttpResult && declaredLinks.length > 0) return { ...finalHttpResult, error: null };
+  const kagiError = transportErrors.find((entry) => entry.id === "kagi")?.message ?? null;
+  const otherErrors = transportErrors
+    .filter((entry) => entry.id !== "kagi")
+    .map((entry) => `${entry.id} fallback failed: ${entry.message}`);
   const guidance = [
     finalHttpResult?.error ?? "No fetch_content provider returned content",
     ...(kagiError ? [`Kagi fallback failed: ${kagiError}`] : []),
+    ...otherErrors,
     "",
     "Fallback options:",
     `  • Set kagiApiKey in ${WEB_SEARCH_CONFIG_PATH} or KAGI_API_KEY`,
@@ -550,6 +740,7 @@ async function extractViaHttp(
   url: string,
   signal?: AbortSignal,
   options?: ExtractOptions,
+  scope: WebAccessScope = ensureBuiltinFetchRegistry(),
 ): Promise<HttpExtractedContent> {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const activityId = activityMonitor.logStart({ type: "fetch", url });
@@ -697,27 +888,21 @@ async function extractViaHttp(
     }
 
     if (isPDFContent && pdfConfig) {
-      try {
-        const buffer = await readPDFResponseBuffer(response, pdfConfig.maxSizeMB);
-        if (signal?.aborted) return abortedResult(url);
-        const result = await extractPDFToMarkdown(buffer, url, { signal });
-        activityMonitor.logComplete(activityId, response.status);
-        return {
-          url,
-          title: result.title,
-          content: `PDF extracted and saved to: ${result.outputPath}\n\nPages: ${result.pages}\nCharacters: ${result.chars}`,
-          error: null,
-        };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        activityMonitor.logError(activityId, message);
-        if (message.startsWith("PDF exceeds configured pdf.maxSizeMB limit")) {
-          return { url, title: "", content: "", error: message };
-        }
-        if (err instanceof CredentialResolutionError || isConfigParseError(err)) {
-          return { url, title: "", content: "", error: message };
-        }
-        return { url, title: "", content: "", error: `PDF extraction failed: ${message}` };
+      const pdfCtx: ContentExtractorContext = {
+        url,
+        stage: "response",
+        response,
+        contentType,
+        mimeType,
+        maxResponseSize,
+        activityId,
+      };
+      if (signal) pdfCtx.signal = signal;
+      if (options) pdfCtx.options = options;
+      for (const extractor of scope.listContentExtractors("response")) {
+        if (!extractor.match(pdfCtx)) continue;
+        const extracted = await extractor.extract(pdfCtx);
+        if (extracted) return extracted;
       }
     }
 
@@ -756,75 +941,46 @@ async function extractViaHttp(
       response.headers.get("link"),
       response.url || url,
     );
+    const htmlCtx: ContentExtractorContext = {
+      url,
+      stage: "response",
+      response,
+      contentType,
+      mimeType,
+      html: text,
+      documentTitle,
+      declaredLinks,
+      maxResponseSize,
+      activityId,
+    };
+    if (signal) htmlCtx.signal = signal;
+    if (options) htmlCtx.options = options;
+    for (const extractor of scope.listContentExtractors("response")) {
+      if (!extractor.match(htmlCtx)) continue;
+      const extracted = await extractor.extract(htmlCtx);
+      if (extracted) return { ...extracted, declaredLinks };
+    }
+
+    activityMonitor.logComplete(activityId, response.status);
+    const jsRendered = isLikelyJSRendered(text);
     const reader = new Readability(domDocument);
     const article = reader.parse();
-
-    if (!article) {
-      const rscResult = extractRSCContent(text);
-      if (rscResult && rscResult.content.length >= MIN_USEFUL_CONTENT) {
-        activityMonitor.logComplete(activityId, response.status);
-        return {
-          url,
-          title: rscResult.title,
-          content: appendDeclaredWebLinks(rscResult.content, declaredLinks),
-          error: null,
-          declaredLinks,
-        };
-      }
-
-      activityMonitor.logComplete(activityId, response.status);
-      const jsRendered = isLikelyJSRendered(text);
-      const errorMsg = jsRendered
-        ? "Page appears to be JavaScript-rendered (content loads dynamically)"
-        : "Could not extract readable content from HTML structure";
-
-      return {
-        url,
-        title: documentTitle,
-        content: appendDeclaredWebLinks("", declaredLinks),
-        error: errorMsg,
-        declaredLinks,
-      };
-    }
-
-    const articleContent =
+    const partialMarkdown =
+      article &&
       Object.prototype.toString.call(article.content) === "[object String]" &&
       Object(article.content) !== article.content
-        ? String(article.content)
-        : null;
-    if (articleContent === null) {
-      throw new Error("Readability returned invalid article content");
-    }
-    const markdown = turndown.turndown(articleContent);
-    activityMonitor.logComplete(activityId, response.status);
-
-    if (markdown.length < MIN_USEFUL_CONTENT) {
-      const rscResult = extractRSCContent(text);
-      if (rscResult && rscResult.content.length >= MIN_USEFUL_CONTENT) {
-        return {
-          url,
-          title: rscResult.title,
-          content: appendDeclaredWebLinks(rscResult.content, declaredLinks),
-          error: null,
-          declaredLinks,
-        };
-      }
-      return {
-        url,
-        title: article.title || documentTitle,
-        content: appendDeclaredWebLinks(markdown, declaredLinks),
-        error: isLikelyJSRendered(text)
-          ? "Page appears to be JavaScript-rendered (content loads dynamically)"
-          : "Extracted content appears incomplete",
-        declaredLinks,
-      };
-    }
-
+        ? turndown.turndown(String(article.content))
+        : "";
+    const errorMsg = jsRendered
+      ? "Page appears to be JavaScript-rendered (content loads dynamically)"
+      : article
+        ? "Extracted content appears incomplete"
+        : "Could not extract readable content from HTML structure";
     return {
       url,
-      title: article.title || documentTitle,
-      content: appendDeclaredWebLinks(markdown, declaredLinks),
-      error: null,
+      title: article?.title || documentTitle,
+      content: appendDeclaredWebLinks(partialMarkdown, declaredLinks),
+      error: errorMsg,
       declaredLinks,
     };
   } catch (err) {

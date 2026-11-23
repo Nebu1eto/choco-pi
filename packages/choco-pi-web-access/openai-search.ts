@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { loadWebSearchConfig } from "./config-loader.ts";
 import { isNumberValue, isStringValue } from "./value-guards.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { activityMonitor } from "./activity.ts";
@@ -102,37 +102,13 @@ function isJsonObject<Value>(value: Value): value is Value & OpenAIJsonObject {
   return value !== null && Object(value) === value && !Array.isArray(value);
 }
 
-let cachedConfig: Promise<WebSearchConfig> | null = null;
-
 async function loadConfig(): Promise<WebSearchConfig> {
-  if (cachedConfig) return cachedConfig;
-  cachedConfig = (async () => {
-    let raw: string;
-    try {
-      raw = await readFile(CONFIG_PATH, "utf8");
-    } catch (err) {
-      if (isJsonObject(err) && err.code === "ENOENT") return {};
-      const message = err instanceof Error ? err.message : String(err);
-      throw new SearchTransportError(
-        "OpenAI Responses",
-        "config",
-        `Failed to read ${CONFIG_PATH}: ${message}`,
-      );
-    }
-    try {
-      const parsed: OpenAIJsonValue = JSON.parse(raw);
-      if (!isJsonObject(parsed)) throw new Error("expected a JSON object");
-      return parsed;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new SearchTransportError(
-        "OpenAI Responses",
-        "config",
-        `Failed to parse ${CONFIG_PATH}: ${message}`,
-      );
-    }
-  })();
-  return cachedConfig;
+  try {
+    return await loadWebSearchConfig();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new SearchTransportError("OpenAI Responses", "config", message);
+  }
 }
 
 function normalizeDomain(value: string): string | null {

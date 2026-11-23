@@ -386,7 +386,7 @@ function parseRemoteUrl(rawUrl: string): URL {
   }
 }
 
-function normalizeHostname(hostname: string): string {
+export function normalizeHostname(hostname: string): string {
   return hostname
     .toLowerCase()
     .replace(/^\[|\]$/g, "")

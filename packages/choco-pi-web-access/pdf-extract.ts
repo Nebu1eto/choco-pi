@@ -6,7 +6,12 @@
  * fallback; the chain can also be pinned with `pdf.provider`.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import {
+  getCachedWebSearchConfig,
+  isConfigObject,
+  type ConfigObject,
+  type ConfigValue,
+} from "./config-loader.ts";
 import { writeFile, mkdir } from "node:fs/promises";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
@@ -18,7 +23,6 @@ import {
   extractPDFViaDatalab,
   type DatalabMode,
 } from "./datalab-pdf-extract.ts";
-import { getWebSearchConfigPath } from "./utils.ts";
 
 export interface PDFExtractResult {
   title: string;
@@ -52,22 +56,9 @@ export const MAX_PDF_MAX_SIZE_MB = 50;
 export const MAX_DATALAB_TIMEOUT_MS = 300_000;
 const DEFAULT_MAX_PAGES = 100;
 const DEFAULT_OUTPUT_DIR = join(tmpdir(), "pi-web-pdf");
-const CONFIG_PATH = getWebSearchConfigPath();
 
-type ConfigValue = null | boolean | number | string | ConfigValue[] | ConfigObject;
-interface ConfigObject {
-  [key: string]: ConfigValue | undefined;
-}
 interface PromiseConstructorWithTry extends PromiseConstructor {
   try?: (...args: never[]) => Promise<never>;
-}
-
-function isConfigObject(value: ConfigValue | undefined): value is ConfigObject {
-  return (
-    value !== null &&
-    value !== undefined &&
-    Object.prototype.toString.call(value) === "[object Object]"
-  );
 }
 
 function isNumber(value: ConfigValue | undefined): value is number {
@@ -81,28 +72,7 @@ function primitiveString(value: ConfigValue | undefined): string | undefined {
 }
 
 export function loadPDFConfig(): PDFConfig {
-  if (!existsSync(CONFIG_PATH)) {
-    return {
-      enabled: true,
-      maxSizeMB: DEFAULT_PDF_MAX_SIZE_MB,
-      maxPages: DEFAULT_MAX_PAGES,
-      provider: "auto",
-      datalabMode: normalizeDatalabMode(process.env.DATALAB_MODE),
-      datalabTimeoutMs: DEFAULT_DATALAB_TIMEOUT_MS,
-    };
-  }
-
-  const rawText = readFileSync(CONFIG_PATH, "utf-8");
-  let raw: ConfigValue;
-  try {
-    // SAFETY: JSON.parse accepts only JSON syntax, whose runtime values are exactly ConfigValue.
-    raw = JSON.parse(rawText) as ConfigValue;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to parse ${CONFIG_PATH}: ${message}`);
-  }
-
-  const root: ConfigObject = isConfigObject(raw) ? raw : {};
+  const root: ConfigObject = getCachedWebSearchConfig();
   const pdf: ConfigObject = isConfigObject(root.pdf) ? root.pdf : {};
   const enabled = pdf.enabled !== false;
   const configured = pdf.maxSizeMB;

@@ -25,10 +25,6 @@ import {
 import { activityMonitor } from "./activity.ts";
 import type { ExtractedContent } from "./extract.ts";
 import { checkGhAvailable, checkRepoSize, fetchViaApi, showGhHint } from "./github-api.ts";
-import { getWebSearchConfigPath } from "./utils.ts";
-
-const CONFIG_PATH = getWebSearchConfigPath();
-
 const BINARY_EXTENSIONS = new Set([
   ".png",
   ".jpg",
@@ -152,19 +148,6 @@ const cloneCache = new Map<string, CachedClone>();
 
 let cachedConfig: GitHubCloneConfig | null = null;
 
-type ConfigValue = null | boolean | number | string | ConfigValue[] | ConfigObject;
-interface ConfigObject {
-  [key: string]: ConfigValue | undefined;
-}
-
-function isConfigObject(value: ConfigValue | undefined): value is ConfigObject {
-  return (
-    value !== null &&
-    value !== undefined &&
-    Object.prototype.toString.call(value) === "[object Object]"
-  );
-}
-
 function isNumber(value: ConfigValue | undefined): value is number {
   return Object.prototype.toString.call(value) === "[object Number]";
 }
@@ -212,22 +195,7 @@ function loadGitHubConfig(): GitHubCloneConfig {
     clonePath: "/tmp/pi-github-repos",
   };
 
-  if (!existsSync(CONFIG_PATH)) {
-    cachedConfig = defaults;
-    return cachedConfig;
-  }
-
-  const rawText = readFileSync(CONFIG_PATH, "utf-8");
-  let raw: ConfigObject;
-  try {
-    // SAFETY: JSON.parse accepts only JSON syntax, whose runtime values are exactly ConfigValue.
-    const parsed = JSON.parse(rawText) as ConfigValue;
-    if (!isConfigObject(parsed)) throw new Error("expected a JSON object");
-    raw = parsed;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to parse ${CONFIG_PATH}: ${message}`);
-  }
+  const raw = getCachedWebSearchConfig();
 
   const gc = isConfigObject(raw.githubClone) ? raw.githubClone : {};
   cachedConfig = {
@@ -922,3 +890,4 @@ export function clearCloneCache(): void {
   cloneCache.clear();
   cachedConfig = null;
 }
+import { getCachedWebSearchConfig, isConfigObject, type ConfigValue } from "./config-loader.ts";

@@ -60,6 +60,7 @@ export type SnakeWebSearchParams = Omit<
   | "answerMode"
   | "searchContextSize"
   | "requiredCapabilities"
+  | "providerOptions"
 > & {
   image_query?: CanonicalSearchParams["imageQuery"];
   response_length?: CanonicalSearchParams["responseLength"];
@@ -72,6 +73,7 @@ export type SnakeWebSearchParams = Omit<
   answer_mode?: CanonicalSearchParams["answerMode"];
   search_context_size?: CanonicalSearchParams["searchContextSize"];
   required_capabilities?: string[];
+  provider_options?: CanonicalSearchParams["providerOptions"];
   workflow?: "none" | "summary-review" | "auto-summary";
 };
 
@@ -88,6 +90,7 @@ export const LEGACY_WEB_SEARCH_PARAMS: readonly string[] = [
   "answerMode",
   "searchContextSize",
   "requiredCapabilities",
+  "providerOptions",
 ];
 
 /** Reject pre-snake_case parameter names so they never act as aliases. */
@@ -119,6 +122,7 @@ export function toCanonicalSearchParams(
     answer_mode,
     search_context_size,
     required_capabilities,
+    provider_options,
     ...rest
   } = params;
   return {
@@ -136,5 +140,6 @@ export function toCanonicalSearchParams(
     ...(required_capabilities !== undefined && {
       requiredCapabilities: required_capabilities.map(internalCapability),
     }),
+    ...(provider_options !== undefined && { providerOptions: provider_options }),
   };
 }

@@ -15,7 +15,12 @@ import {
 import { generateSummaryDraft, SUMMARY_GENERATION_DEADLINE_MS } from "../summary-review.ts";
 
 const indexUrl = new URL("../index.ts", import.meta.url).href;
-const indexSrc = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
+const indexSrc =
+  readFileSync(new URL("../extension-config.ts", import.meta.url), "utf8") +
+  "\n" +
+  readFileSync(new URL("../curator-lifecycle.ts", import.meta.url), "utf8") +
+  "\n" +
+  readFileSync(new URL("../tools/web-search-tool.ts", import.meta.url), "utf8");
 const summarySrc = readFileSync(new URL("../summary-review.ts", import.meta.url), "utf8");
 const queryRewriteSrc = readFileSync(new URL("../query-rewrite.ts", import.meta.url), "utf8");
 
