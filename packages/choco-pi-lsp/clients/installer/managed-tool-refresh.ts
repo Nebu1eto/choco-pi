@@ -505,8 +505,9 @@ async function refreshOne(
  * the next session. Without this, two runs raced through the budget check and
  * both spawned a package manager into the same unlocked managed
  * `node_modules`. The join is the same shape `ensureTool` uses for its own
- * duplicate startup requests (`clients/installer/index.ts:4175-4182`, cleared
- * at `:4314-4318`).
+ * duplicate startup requests (the `ensureInFlight` join in
+ * `ensureToolResolved`, `clients/installer/install-orchestration.ts`, cleared
+ * when the ensure settles).
  *
  * This is the local form of the single-flight primitive #1753 proposes. When
  * that lands, this is one of its callers.

@@ -20,7 +20,7 @@
  * WASM linear-memory byte length gap (documented, not silently dropped): the
  * #1126 spec asked for `Module.wasmMemory.buffer.byteLength` off the
  * web-tree-sitter parser runtime. Inspecting the installed web-tree-sitter
- * 0.25.10 package (see `clients/tree-sitter-client.ts#getRuntimeStats`'s
+ * 0.25.10 package (see `TreeSitterClient#getRuntimeStats`'s
  * docstring) confirmed that value is not reachable through any public export
  * — only through package-internal reflection or by overriding Emscripten's
  * `wasmMemory` module option with a hand-built `WebAssembly.Memory` (a

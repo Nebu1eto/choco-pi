@@ -11,7 +11,7 @@ note: |
   regardless of the surrounding keyword.
   A `SCREAMING_SNAKE_CASE` name is the project-wide convention for a
   deliberate, named constant (see e.g. `check_secret_pattern` in
-  tree-sitter-client.ts, which trusts the same convention for secrets).
+  clients/tree-sitter/post-filters.ts, which trusts the same convention for secrets).
   Provider/integration endpoint constants (`BASE_URL_CLINE`, `URL_KILO_TOS`,
   …) are declared this way on purpose — they are configuration, just
   expressed as a TS constant instead of an env var — so exempting that

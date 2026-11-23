@@ -167,7 +167,7 @@ export function auxNotifyBacklogAtCeiling(
  * Under the limit there is nothing to prove, so the common case returns without
  * awaiting anything and the sweep runs at full speed. At the limit the gate
  * sends ONE request round-trip (`pingLiveness`, #1277,
- * clients/lsp/client.ts:2577).
+ * `clientPingLiveness` in clients/lsp/client/navigation.ts).
  *
  * WHY A REPLY PROVES PROCESSING, measured rather than assumed. ast-grep-lsp is
  * tower-lsp-server and drains its message stream in order on one task, so a
@@ -208,7 +208,8 @@ export function auxNotifyBacklogAtCeiling(
  *
  * Fails OPEN for a client with no liveness round-trip: unmeasurable is not the
  * same as backlogged, and the codebase already reads this capability as
- * `pingLiveness?.() ?? true` (clients/lsp/client.ts:281). Every real client
+ * `pingLiveness?.() ?? true` (`LSPClientInfo.pingLiveness`,
+ * clients/lsp/client/types.ts). Every real client
  * provides it.
  */
 export async function paceAuxNotify(
