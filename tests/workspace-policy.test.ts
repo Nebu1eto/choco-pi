@@ -10,7 +10,7 @@ import { compareVersions } from "../scripts/standalone/provision.ts";
 
 const run = promisify(execFile);
 const ROOT = new URL("../", import.meta.url);
-const MEMBER_COUNT = 19;
+const MEMBER_COUNT = 20;
 
 const ManifestSchema = obj(
   { packageManager: opt(str()), scripts: opt(map(str())) },

@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@choco-pi/shared": "workspace:*",
     "@mozilla/readability": "0.6.0",
     "linkedom": "0.16.11",
     "p-limit": "6.2.0",

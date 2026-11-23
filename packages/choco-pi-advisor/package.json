@@ -10,6 +10,9 @@
     "test": "node --test tests/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@choco-pi/shared": "workspace:*"
+  },
   "peerDependencies": {
     "@earendil-works/pi-ai": "~1.6.0",
     "@earendil-works/pi-coding-agent": "~1.6.0",

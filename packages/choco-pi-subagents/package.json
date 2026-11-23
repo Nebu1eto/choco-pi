@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@choco-pi/shared": "workspace:*",
     "croner": "10.0.1",
     "nanoid": "5.1.16"
   },

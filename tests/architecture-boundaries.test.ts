@@ -454,3 +454,11 @@ test("relative imports do not escape the scanned buckets beyond the baseline", a
     "Relative imports must stay inside packages/* and profile/; shrink KNOWN_OUT_OF_BUCKET_IMPORTS when one goes away",
   );
 });
+
+test("choco-pi-shared has zero outgoing dependencies on packages or profile", async () => {
+  const graph = await graphPromise;
+  const outgoing = uniqueSorted(
+    graph.edges.filter((edge) => edge.from === "packages/choco-pi-shared").map((edge) => edge.to),
+  );
+  assert.deepEqual(outgoing, [], "@choco-pi/shared must remain a zero-dependency bottom layer");
+});

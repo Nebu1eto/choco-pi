@@ -36,7 +36,8 @@
   },
   "dependencies": {
     "@aliou/pi-utils-settings": "^0.15.0",
-    "@aliou/pi-utils-ui": "^0.4.0"
+    "@aliou/pi-utils-ui": "^0.4.0",
+    "@choco-pi/shared": "workspace:*"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.11",

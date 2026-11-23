@@ -30,6 +30,9 @@
     "pack:check": "npm pack --dry-run",
     "prepublishOnly": "npm run verify && npm run pack:check"
   },
+  "dependencies": {
+    "@choco-pi/shared": "workspace:*"
+  },
   "devDependencies": {
     "@earendil-works/pi-ai": "~1.6.0",
     "@earendil-works/pi-coding-agent": "~1.6.0",

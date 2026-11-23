@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@ast-grep/napi": "0.45.1",
+    "@choco-pi/shared": "workspace:*",
     "js-yaml": "5.2.3",
     "minimatch": "10.2.6",
     "pidusage": "4.0.1",

@@ -1,0 +1,29 @@
+{
+  "name": "@choco-pi/shared",
+  "version": "1.0.0-alpha.1",
+  "private": true,
+  "description": "Stateless cross-package contracts, runtime guards, lifecycle, and path utilities for choco-pi.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./lifecycle": "./src/lifecycle.ts",
+    "./node-runtime": "./src/node-runtime.ts",
+    "./pi-paths": "./src/pi-paths.ts",
+    "./print-settle-wait": "./src/print-settle-wait.ts",
+    "./runtime-values": "./src/runtime-values.ts",
+    "./stop-control": "./src/stop-control.ts",
+    "./symbols": "./src/symbols.ts",
+    "./value-guards": "./src/value-guards.ts"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@earendil-works/pi-schema": "~1.6.0"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}

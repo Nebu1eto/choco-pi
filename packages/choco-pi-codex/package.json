@@ -19,6 +19,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@choco-pi/shared": "workspace:*",
     "base64-js": "1.5.1",
     "jpeg-js": "0.4.4",
     "js-tiktoken": "1.0.21",

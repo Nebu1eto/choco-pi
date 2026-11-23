@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.26.0",
+    "@choco-pi/shared": "workspace:*",
     "zod": "^3.25.0"
   },
   "engines": {
