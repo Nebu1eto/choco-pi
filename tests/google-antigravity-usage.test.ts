@@ -141,10 +141,10 @@ test("the captured quota summary becomes four used-share windows with resets", a
       window.scope,
     ]),
     [
-      ["Gemini Models 5h", 0, "used", "2026-11-21T20:06:23.000Z", 18_000, "Gemini Models"],
-      ["Gemini Models weekly", 0, "used", "2026-11-28T15:06:23.000Z", 604_800, "Gemini Models"],
+      ["Gemini Models 5-hours", 0, "used", "2026-11-21T20:06:23.000Z", 18_000, "Gemini Models"],
+      ["Gemini Models Weekly", 0, "used", "2026-11-28T15:06:23.000Z", 604_800, "Gemini Models"],
       [
-        "Claude and GPT models 5h",
+        "Claude and GPT models 5-hours",
         0,
         "used",
         "2026-11-21T20:06:23.000Z",
@@ -152,7 +152,7 @@ test("the captured quota summary becomes four used-share windows with resets", a
         "Claude and GPT models",
       ],
       [
-        "Claude and GPT models weekly",
+        "Claude and GPT models Weekly",
         0,
         "used",
         "2026-11-28T15:06:23.000Z",
@@ -164,7 +164,7 @@ test("the captured quota summary becomes four used-share windows with resets", a
   // A full bucket is fresh capacity, never "exhausted".
   const now = Date.parse("2026-11-21T15:06:23Z");
   const text = formatProviderUsage(usage, undefined, now);
-  assert.match(text, /^Google\n {2}Gemini Models 5h\n.* 0% used\n {2}resets in /);
+  assert.match(text, /^Google\n {2}Gemini Models 5-hours\n.* 0% used\n {2}resets in /);
 });
 
 test("Google usage places Gemini groups before other models and 5h before weekly regardless of API order", () => {
@@ -189,10 +189,10 @@ test("Google usage places Gemini groups before other models and 5h before weekly
   assert.deepEqual(
     usage.windows.map((window) => [window.label, window.percent]),
     [
-      ["Gemini Models 5h", 100],
-      ["Gemini Models weekly", 75],
-      ["Claude and GPT models 5h", 50],
-      ["Claude and GPT models weekly", 25],
+      ["Gemini Models 5-hours", 100],
+      ["Gemini Models Weekly", 75],
+      ["Claude and GPT models 5-hours", 50],
+      ["Claude and GPT models Weekly", 25],
     ],
   );
 });
@@ -215,8 +215,8 @@ test("remaining fractions convert to used shares; disabled and amount-only bucke
   assert.deepEqual(
     usage.windows.map((window) => [window.label, window.percent, window.windowSeconds]),
     [
-      ["Gemini Models 5h", 75, 18_000],
-      ["Gemini Models weekly", 100, 604_800],
+      ["Gemini Models 5-hours", 75, 18_000],
+      ["Gemini Models Weekly", 100, 604_800],
     ],
   );
   assert.deepEqual(normalizeGoogleAntigravityUsage(undefined).windows, []);

@@ -481,6 +481,53 @@ test("Claude windows carry the length their reset time is measured against", () 
   );
 });
 
+test("provider window labels standardize 5h to 5-hours and 7d/weekly to Weekly", () => {
+  const claude = normalizeClaudeUsage({
+    five_hour: { utilization: 10 },
+    seven_day: { utilization: 20 },
+    seven_day_sonnet: { utilization: 30 },
+    seven_day_opus: { utilization: 40 },
+    seven_day_fable: { utilization: 50 },
+  });
+  assert.deepEqual(
+    claude.windows.map((window) => window.label),
+    ["5-hours", "Weekly", "Sonnet Weekly", "Opus Weekly", "Fable Weekly"],
+  );
+
+  const codexDefault = normalizeCodexUsage({
+    rate_limit: {
+      primary_window: { used_percent: 12 },
+      secondary_window: { used_percent: 34 },
+    },
+  });
+  assert.deepEqual(
+    codexDefault.windows.map((window) => window.label),
+    ["5-hours", "Weekly"],
+  );
+
+  const codexTimed = normalizeCodexUsage({
+    rate_limit: {
+      primary_window: { used_percent: 12, limit_window_seconds: 5 * 3_600 },
+      secondary_window: { used_percent: 34, limit_window_seconds: 7 * 86_400 },
+    },
+  });
+  assert.deepEqual(
+    codexTimed.windows.map((window) => window.label),
+    ["5-hours", "Weekly"],
+  );
+
+  const codexCustom = normalizeCodexUsage({
+    rate_limit: {
+      primary_window: { used_percent: 5, limit_window_seconds: 2 * 3_600 },
+      secondary_window: { used_percent: 10, limit_window_seconds: 3 * 86_400 },
+    },
+  });
+  assert.deepEqual(
+    codexCustom.windows.map((window) => window.label),
+    ["2h", "3d"],
+  );
+});
+
 test("a refilling bucket is paced by how its level moved, not by a clock", () => {
   const previous = { capacity: 1_000, remaining: 800 };
   const minute = 60_000;

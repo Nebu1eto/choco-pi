@@ -176,6 +176,13 @@ function quotaWindow(value: RuntimeValue): QuotaWindow | undefined {
   };
 }
 
+function usageWindowPeriodLabel(raw: string): string {
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "5h") return "5-hours";
+  if (normalized === "7d" || normalized === "weekly") return "Weekly";
+  return raw;
+}
+
 function structuredClaudeWindow(value: RuntimeValue): UsageWindow | undefined {
   if (!isRecord(value)) return undefined;
   const percent = numberValue(value.percent);
@@ -186,16 +193,16 @@ function structuredClaudeWindow(value: RuntimeValue): UsageWindow | undefined {
   let windowSeconds: number;
   let scope: string | undefined;
   if (kind === "session") {
-    label = "5h";
+    label = "5-hours";
     windowSeconds = 5 * HOUR_SECONDS;
   } else if (kind === "weekly_all") {
-    label = "7d";
+    label = "Weekly";
     windowSeconds = 7 * DAY_SECONDS;
   } else if (kind === "weekly_scoped") {
     const scopeRecord = isRecord(value.scope) ? value.scope : undefined;
     const model = scopeRecord && isRecord(scopeRecord.model) ? scopeRecord.model : undefined;
     const name = stringValue(model?.display_name);
-    label = `${name ?? "Scoped"} 7d`;
+    label = `${name ?? "Scoped"} Weekly`;
     // An unnamed scope still limits only some models; keep it scoped.
     scope = name ?? stringValue(model?.id) ?? "Scoped";
     windowSeconds = 7 * DAY_SECONDS;
@@ -269,11 +276,11 @@ export function normalizeClaudeUsage(payload: RuntimeValue, profile?: RuntimeVal
       })
     : [];
   const definitions: Array<[string, string, number, string | undefined]> = [
-    ["five_hour", "5h", 5 * HOUR_SECONDS, undefined],
-    ["seven_day", "7d", 7 * DAY_SECONDS, undefined],
-    ["seven_day_sonnet", "Sonnet 7d", 7 * DAY_SECONDS, "Sonnet"],
-    ["seven_day_opus", "Opus 7d", 7 * DAY_SECONDS, "Opus"],
-    ["seven_day_fable", "Fable 7d", 7 * DAY_SECONDS, "Fable"],
+    ["five_hour", "5-hours", 5 * HOUR_SECONDS, undefined],
+    ["seven_day", "Weekly", 7 * DAY_SECONDS, undefined],
+    ["seven_day_sonnet", "Sonnet Weekly", 7 * DAY_SECONDS, "Sonnet"],
+    ["seven_day_opus", "Opus Weekly", 7 * DAY_SECONDS, "Opus"],
+    ["seven_day_fable", "Fable Weekly", 7 * DAY_SECONDS, "Fable"],
   ];
   const legacyWindows = definitions.flatMap(([key, label, windowSeconds, scope]) => {
     const value = quotaWindow(payload[key]);
@@ -311,7 +318,7 @@ function codexWindow(value: RuntimeValue, label: string): UsageWindow | undefine
   const percent = numberValue(value.used_percent);
   if (percent === undefined) return undefined;
   const seconds = numberValue(value.limit_window_seconds);
-  const resolvedLabel =
+  const rawLabel =
     seconds === undefined
       ? label
       : seconds % DAY_SECONDS === 0
@@ -319,6 +326,7 @@ function codexWindow(value: RuntimeValue, label: string): UsageWindow | undefine
         : seconds % HOUR_SECONDS === 0
           ? `${seconds / HOUR_SECONDS}h`
           : label;
+  const resolvedLabel = usageWindowPeriodLabel(rawLabel);
   const window: UsageWindow = {
     label: resolvedLabel,
     percent: clampPercent(percent),
@@ -373,8 +381,8 @@ export function normalizeCodexUsage(payload: RuntimeValue): ProviderUsage {
   if (!isRecord(payload)) throw new Error("Unexpected response");
   const rateLimit = isRecord(payload.rate_limit) ? payload.rate_limit : {};
   const windows = [
-    codexWindow(rateLimit.primary_window, "5h"),
-    codexWindow(rateLimit.secondary_window, "7d"),
+    codexWindow(rateLimit.primary_window, "5-hours"),
+    codexWindow(rateLimit.secondary_window, "Weekly"),
   ].filter((window): window is UsageWindow => window !== undefined);
   const plan = codexPlanLabel(stringValue(payload.plan_type));
   const credits = isRecord(payload.credits) ? payload.credits : undefined;
@@ -596,7 +604,7 @@ export function grokPeriodLabel(type: string | undefined): string {
   const name = type.startsWith(GROK_PERIOD_PREFIX) ? type.slice(GROK_PERIOD_PREFIX.length) : type;
   const key = name.toLowerCase();
   if (key.length === 0 || key === "unspecified") return "Credits";
-  return titleCase(key);
+  return usageWindowPeriodLabel(titleCase(key));
 }
 
 /** Prepaid balance in cents; proto int64 values may arrive as numeric strings. */
@@ -977,8 +985,9 @@ export function normalizeGoogleAntigravityUsage(payload: RuntimeValue): Provider
       const remaining = numberValue(bucket.remainingFraction);
       const windowName = stringValue(bucket.window) ?? stringValue(bucket.displayName);
       if (remaining === undefined || windowName === undefined) continue;
+      const windowLabel = usageWindowPeriodLabel(windowName);
       const window: UsageWindow = {
-        label: groupName === undefined ? windowName : `${groupName} ${windowName}`,
+        label: groupName === undefined ? windowLabel : `${groupName} ${windowLabel}`,
         percent: clampPercent((1 - remaining) * 100),
         qualifier: "used",
         eventAt: dateValue(bucket.resetTime),

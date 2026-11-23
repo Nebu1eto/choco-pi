@@ -67,9 +67,9 @@ test("the Anthropic usage payload marks the Fable window as scoped, live and leg
   assert.deepEqual(
     live.windows.map((entry) => [entry.label, entry.scope]),
     [
-      ["5h", undefined],
-      ["7d", undefined],
-      ["Fable 7d", "Fable"],
+      ["5-hours", undefined],
+      ["Weekly", undefined],
+      ["Fable Weekly", "Fable"],
     ],
   );
   const legacy = normalizeClaudeUsage({
@@ -79,8 +79,8 @@ test("the Anthropic usage payload marks the Fable window as scoped, live and leg
   assert.deepEqual(
     legacy.windows.map((entry) => [entry.label, entry.scope]),
     [
-      ["5h", undefined],
-      ["Fable 7d", "Fable"],
+      ["5-hours", undefined],
+      ["Fable Weekly", "Fable"],
     ],
   );
 });
