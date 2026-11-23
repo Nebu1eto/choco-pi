@@ -1,5 +1,5 @@
 import { isStaleContextError } from "@choco-pi/shared/lifecycle";
-import { isBoundaryValue, type BoundaryValue } from "../adapter/runtime-values.ts";
+import { isBoundaryValue, type BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 
 export function isStaleExtensionContextError(error: BoundaryValue): boolean {
   return isStaleContextError(error);

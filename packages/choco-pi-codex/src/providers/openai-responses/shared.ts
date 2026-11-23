@@ -1,5 +1,5 @@
-import { isString } from "../../value-guards.ts";
-import { isJsonObject, type JsonObject } from "../../adapter/runtime-values.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
+import { isJsonObject, type JsonObject } from "@choco-pi/code-mode/runtime-values";
 import {
   getCurrentTools,
   getInitialSystemMessage,

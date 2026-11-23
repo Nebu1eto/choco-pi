@@ -64,6 +64,7 @@ const BUNDLED_PACKAGES = [
   "choco-pi-lsp",
   "choco-pi-compaction",
   "choco-pi-codex",
+  "choco-pi-code-mode",
   "choco-pi-agents-md",
   "choco-pi-agent-browser",
   "choco-pi-computer-use",

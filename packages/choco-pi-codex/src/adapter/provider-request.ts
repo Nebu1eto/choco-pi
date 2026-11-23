@@ -1,7 +1,7 @@
 import { arr, compile, obj, str, unknown } from "@earendil-works/pi-schema";
-import { isString } from "../value-guards.ts";
-import { isJsonObject } from "./runtime-values.ts";
-import type { JsonObject, BoundaryValue } from "./runtime-values.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
+import { isJsonObject } from "@choco-pi/code-mode/runtime-values";
+import type { JsonObject, BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 
 const responsesLiteCompatibleBodyValidator = compile(
   obj({ model: str(), input: arr(unknown()) }, { open: true }),

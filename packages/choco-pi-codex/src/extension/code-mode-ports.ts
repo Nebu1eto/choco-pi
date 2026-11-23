@@ -15,17 +15,16 @@ import {
   usesCodexProviderFallback,
 } from "../adapter/activation/runtime-plan.ts";
 import type { AdapterState } from "../adapter/activation/state.ts";
-import { provideCodeModeWebSearchToolFactory } from "../adapter/code-mode.ts";
 import {
   codeModeImageResult,
   codeModeWebResult,
   toNestedTool,
-} from "../adapter/code-mode/nested-tool-adapter.ts";
-import type { CodeModePorts } from "../adapter/code-mode/ports.ts";
+} from "@choco-pi/code-mode/adapter/code-mode/nested-tool-adapter";
+import type { CodeModePorts } from "@choco-pi/code-mode/ports";
 import { supportsNativeImageGeneration } from "../adapter/tool-support.ts";
 import { consumeAsyncCodeModeCall } from "../providers/openai-codex/native-features.ts";
 import { openAIImageDescribeFallback } from "../providers/openai-codex/view-image-fallback.ts";
-import type { ProgrammaticCodeModeToolDefinition } from "../tools/code-mode/types.ts";
+import type { ProgrammaticCodeModeToolDefinition } from "@choco-pi/code-mode/tools/code-mode/types";
 import { createImageGenerationTool } from "../tools/imagegen/tool.ts";
 import { createWebSearchTool, type WebSearchToolOptions } from "../tools/web-run/tool.ts";
 
@@ -48,8 +47,6 @@ export function createCodeModeWebSearchTool(
     customRendering: config.ui.toolRenaming,
   });
 }
-
-provideCodeModeWebSearchToolFactory(createCodeModeWebSearchTool);
 
 /** Codex nested tools appended after the core tools, in their established order. */
 export function createCodexOptionalNestedTools(

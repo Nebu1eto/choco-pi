@@ -1,13 +1,13 @@
-import { memoizedImport } from "../../memoized-import.ts";
-import { isStringValue } from "../boundary.ts";
+import { memoizedImport } from "@choco-pi/code-mode/memoized-import";
+import { isStringValue } from "@choco-pi/code-mode/tools/boundary";
 import type {
   ExtensionAPI,
   ExtensionContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { arr, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
-import { hostParams } from "../../schema-bridge.ts";
-import { isString } from "../../value-guards.ts";
+import { hostParams } from "@choco-pi/code-mode/schema-bridge";
+import { isString } from "@choco-pi/code-mode/value-guards";
 import { Text } from "@earendil-works/pi-tui";
 import { IMAGE_GENERATION_TOOL_NAME } from "../../adapter/activation/tool-set.ts";
 import { supportsNativeImageGeneration } from "../../adapter/tool-support.ts";
@@ -18,11 +18,12 @@ import {
   imagegenOutputFromJson,
   type ImagegenOutput,
 } from "./output.ts";
-import { renderTextWithImages } from "../../ui/tool-rendering/media.ts";
-import { renderCodexToolCell } from "../../ui/tool-rendering/codex-tool-cell.ts";
+import { renderTextWithImages } from "@choco-pi/code-mode/tool-rendering/media";
+import { renderCodexToolCell } from "@choco-pi/code-mode/tool-rendering/codex-tool-cell";
+import { CODEX_TOOLS_ROOT_DIR } from "../codex-binary.ts";
 
-const loadNativeBinary = memoizedImport(() => import("../native/binary.ts"));
-const loadNativeRunner = memoizedImport(() => import("../native/runner.ts"));
+const loadNativeBinary = memoizedImport(() => import("@choco-pi/code-mode/tools/native/binary"));
+const loadNativeRunner = memoizedImport(() => import("@choco-pi/code-mode/tools/native/runner"));
 const loadToolProvider = memoizedImport(() => import("../../adapter/codex-tool-provider.ts"));
 
 export const IMAGE_GENERATION_UNSUPPORTED_MESSAGE =
@@ -101,7 +102,12 @@ async function executeRustImagegen(
     { runBundledTool },
     { codexToolProviderEnv, resolveCodexToolProvider },
   ] = await Promise.all([loadNativeBinary(), loadNativeRunner(), loadToolProvider()]);
-  const binary = getBundledToolBinaryPath("imagegen", {}, options.customRustBinariesDir);
+  const binary = getBundledToolBinaryPath(
+    "imagegen",
+    {},
+    options.customRustBinariesDir,
+    CODEX_TOOLS_ROOT_DIR,
+  );
   if (!binary)
     throw new Error(`imagegen binary is not bundled for ${process.platform}-${process.arch}`);
   const provider = await resolveCodexToolProvider(ctx, options.allowConfiguredProvider);

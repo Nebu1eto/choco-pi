@@ -1,4 +1,4 @@
-import { memoizedImport } from "../memoized-import.ts";
+import { memoizedImport } from "@choco-pi/code-mode/memoized-import";
 import {
   createAssistantMessageEventStream,
   type Api,

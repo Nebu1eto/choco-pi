@@ -1,4 +1,4 @@
-import { isString } from "../src/value-guards.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
 import assert from "node:assert/strict";
 import { promisify } from "node:util";
 import zlib from "node:zlib";

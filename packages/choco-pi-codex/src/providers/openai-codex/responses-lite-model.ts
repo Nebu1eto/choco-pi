@@ -1,4 +1,4 @@
-import { isString } from "../../value-guards.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
 
 type ResponsesLiteModel = string | { id: string } | undefined;
 

@@ -1,6 +1,6 @@
-import { isNumber, isString } from "../../value-guards.ts";
-import { isJsonObject } from "../runtime-values.ts";
-import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
+import { isNumber, isString } from "@choco-pi/code-mode/value-guards";
+import { isJsonObject } from "@choco-pi/code-mode/runtime-values";
+import type { JsonObject, BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 import type { NativeCompactionRequestBody, ResponsesInputItem } from "./serializer.ts";
 import { supportsResponsesLiteModel } from "../../providers/openai-codex/responses-lite-model.ts";
 

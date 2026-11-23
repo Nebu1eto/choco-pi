@@ -1,7 +1,7 @@
-import { isString } from "../../value-guards.ts";
-import { conditionalProperties } from "../runtime-values.ts";
-import { jsonValueType, isJsonObject } from "../runtime-values.ts";
-import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
+import { conditionalProperties } from "@choco-pi/code-mode/runtime-values";
+import { jsonValueType, isJsonObject } from "@choco-pi/code-mode/runtime-values";
+import type { JsonObject, BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";

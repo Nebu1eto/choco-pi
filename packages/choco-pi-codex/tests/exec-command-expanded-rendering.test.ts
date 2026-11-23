@@ -2,16 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Container } from "@earendil-works/pi-tui";
 import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../src/adapter/activation/config.ts";
-import { createNestedTools } from "../src/adapter/code-mode.ts";
-import { toNestedTool } from "../src/adapter/code-mode/nested-tool-adapter.ts";
+import { createNestedTools } from "@choco-pi/code-mode/adapter/code-mode";
+import { toNestedTool } from "@choco-pi/code-mode/adapter/code-mode/nested-tool-adapter";
 import type { CodexExtensionRuntime } from "../src/extension/runtime.ts";
 import { createCodexCodeModePorts } from "../src/extension/code-mode-ports.ts";
 import { createCodexTurnState } from "../src/providers/openai-codex/turn-state.ts";
-import { renderTraceAndOutput } from "../src/tools/code-mode/trace-rendering.ts";
-import { createExecCommandTracker } from "../src/tools/exec/command-state.ts";
-import { createExecCommandTool } from "../src/tools/exec/command-tool.ts";
-import { createLazyExecSessionManager } from "../src/tools/exec/lazy-session-manager.ts";
-import { renderExecCommandCall } from "../src/ui/tool-rendering/codex-rendering.ts";
+import { renderTraceAndOutput } from "@choco-pi/code-mode/tools/code-mode/trace-rendering";
+import { createExecCommandTracker } from "@choco-pi/code-mode/tools/exec/command-state";
+import { createExecCommandTool } from "@choco-pi/code-mode/tools/exec/command-tool";
+import { createLazyExecSessionManager } from "@choco-pi/code-mode/tools/exec/lazy-session-manager";
+import { renderExecCommandCall } from "@choco-pi/code-mode/tool-rendering/codex-rendering";
 
 const PLAIN_THEME = {
   fg: (_role: string, text: string) => text,

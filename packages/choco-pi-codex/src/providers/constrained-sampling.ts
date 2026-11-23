@@ -1,5 +1,9 @@
-import { isString } from "../value-guards.ts";
-import { isJsonObject, type BoundaryValue, type JsonObject } from "../adapter/runtime-values.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
+import {
+  isJsonObject,
+  type BoundaryValue,
+  type JsonObject,
+} from "@choco-pi/code-mode/runtime-values";
 import type { Tool } from "@earendil-works/pi-ai";
 
 // Pi's extension loader exposes pi-ai root modules, not api/* subpaths.

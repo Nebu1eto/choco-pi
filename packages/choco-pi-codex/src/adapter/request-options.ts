@@ -1,5 +1,5 @@
-import { conditionalProperties } from "./runtime-values.ts";
-import type { BoundaryValue } from "./runtime-values.ts";
+import { conditionalProperties } from "@choco-pi/code-mode/runtime-values";
+import type { BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 import { isObject, type CodexConversionConfig } from "./activation/config.ts";
 
 export function applyCodexRequestOptions(

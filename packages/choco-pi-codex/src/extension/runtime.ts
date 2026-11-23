@@ -1,9 +1,9 @@
-import { memoizedImport } from "../memoized-import.ts";
+import { memoizedImport } from "@choco-pi/code-mode/memoized-import";
 import {
   conditionalProperties,
   isBoundaryValue,
   type BoundaryValue,
-} from "../adapter/runtime-values.ts";
+} from "@choco-pi/code-mode/runtime-values";
 import {
   buildSessionContext,
   convertToLlm,
@@ -23,7 +23,7 @@ import {
   resolveCodexRuntimePlanForState,
 } from "../adapter/activation/runtime-plan.ts";
 import type { AdapterState } from "../adapter/activation/state.ts";
-import { getPiCodexRuntimeShell } from "../adapter/prompt/runtime-shell.ts";
+import { getPiCodexRuntimeShell } from "@choco-pi/code-mode/runtime-shell";
 import { isProviderContextExcludedMessage } from "../adapter/prompt/context-filter.ts";
 import {
   buildCodexSystemPrompt,
@@ -39,16 +39,16 @@ import type {
   OpenAICodexStreamOptions,
   ResponsesBody,
 } from "../providers/openai-codex/types.ts";
-import { createExecCommandTracker } from "../tools/exec/command-state.ts";
-import { createLazyExecSessionManager } from "../tools/exec/lazy-session-manager.ts";
-import type { ExecSessionManager } from "../tools/exec/session-manager.ts";
-import { getBundledToolBinaryPath } from "../tools/native/binary.ts";
+import { createExecCommandTracker } from "@choco-pi/code-mode/tools/exec/command-state";
+import { createLazyExecSessionManager } from "@choco-pi/code-mode/tools/exec/lazy-session-manager";
+import type { ExecSessionManager } from "@choco-pi/code-mode/tools/exec/session-manager";
+import { getBundledToolBinaryPath } from "@choco-pi/code-mode/tools/native/binary";
 import { getActiveToolsInActiveOrder } from "../adapter/active-tools.ts";
 import { createLazyCodexDiagnostics } from "../diagnostics/lazy.ts";
 import type { CodexDiagnosticsSink } from "../providers/openai-codex/types.ts";
 import { withLiveCtx } from "./live-context.ts";
 import { projectForcedPromptContext } from "../adapter/forced-prompt-projection.ts";
-import type { CodeModePorts } from "../adapter/code-mode/ports.ts";
+import type { CodeModePorts } from "@choco-pi/code-mode/ports";
 import { createCodexCodeModePorts } from "./code-mode-ports.ts";
 
 export type CodexContext = ExtensionContext;

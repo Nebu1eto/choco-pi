@@ -19,10 +19,10 @@ import {
   bridgedToolUsage,
   collectBridgedTools,
   type RegisteredToolSource,
-} from "../packages/choco-pi-codex/src/tools/code-mode/registered-tool-bridge.ts";
-import { buildBridgedToolsLine } from "../packages/choco-pi-codex/src/tools/code-mode/custom-tool-prompt.ts";
-import { scopeAllToolsToDeferredCustom } from "../packages/choco-pi-codex/src/tools/code-mode/tool-source.ts";
-import type { CodeModeToolDefinition } from "../packages/choco-pi-codex/src/tools/code-mode/types.ts";
+} from "../packages/choco-pi-code-mode/src/tools/code-mode/registered-tool-bridge.ts";
+import { buildBridgedToolsLine } from "../packages/choco-pi-code-mode/src/tools/code-mode/custom-tool-prompt.ts";
+import { scopeAllToolsToDeferredCustom } from "../packages/choco-pi-code-mode/src/tools/code-mode/tool-source.ts";
+import type { CodeModeToolDefinition } from "../packages/choco-pi-code-mode/src/tools/code-mode/types.ts";
 import {
   createToolSearchToolDefinition,
   EXEC_DIRECT_ONLY_TOOL_NAMES,

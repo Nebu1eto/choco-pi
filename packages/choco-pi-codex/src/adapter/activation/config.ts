@@ -1,7 +1,7 @@
-import { isBoolean, isNumber, isString } from "../../value-guards.ts";
-import { conditionalProperties } from "../runtime-values.ts";
-import { isJsonObject } from "../runtime-values.ts";
-import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
+import { isBoolean, isNumber, isString } from "@choco-pi/code-mode/value-guards";
+import { conditionalProperties } from "@choco-pi/code-mode/runtime-values";
+import { isJsonObject } from "@choco-pi/code-mode/runtime-values";
+import type { JsonObject, BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 import { normalizeExecutionMode, type ExecutionMode } from "./execution-mode.ts";
 
 export type CodexVerbosity = "low" | "medium" | "high";

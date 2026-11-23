@@ -17,8 +17,8 @@ import {
   str,
   union,
 } from "@earendil-works/pi-schema";
-import { toCodeModeToolResult } from "../../choco-pi-codex/src/tools/code-mode/tool-result.ts";
-import type { RuntimeToolTrace } from "../../choco-pi-codex/src/tools/code-mode/types.ts";
+import { toCodeModeToolResult } from "../../choco-pi-code-mode/src/tools/code-mode/tool-result.ts";
+import type { RuntimeToolTrace } from "../../choco-pi-code-mode/src/tools/code-mode/types.ts";
 import type { AgentMessageParams } from "../../choco-pi-subagents/src/agent-message.ts";
 import { AGENT_MESSAGE_TYPES as SUBAGENT_MESSAGE_TYPES } from "../../choco-pi-subagents/src/messaging.ts";
 import {

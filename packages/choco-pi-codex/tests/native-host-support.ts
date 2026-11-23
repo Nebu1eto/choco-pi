@@ -20,8 +20,11 @@ import {
   createOpenAICodexProviderStream,
   closeOpenAICodexWebSocketSessions,
 } from "../src/providers/openai-codex-custom-provider.ts";
-import { registerCodeModeTools, type CodeModeRegistration } from "../src/tools/code-mode/tools.ts";
-import { codeModeHostBinaryPath } from "../src/tools/code-mode/binary.ts";
+import {
+  registerCodeModeTools,
+  type CodeModeRegistration,
+} from "@choco-pi/code-mode/tools/code-mode/tools";
+import { codeModeHostBinaryPath } from "@choco-pi/code-mode/tools/code-mode/binary";
 
 /** GPT-6 model the live native probes target; CHOCO_PI_NATIVE_MODEL selects Sol or Luna. */
 export const NATIVE_LIVE_MODEL = process.env.CHOCO_PI_NATIVE_MODEL ?? "gpt-6-astra";

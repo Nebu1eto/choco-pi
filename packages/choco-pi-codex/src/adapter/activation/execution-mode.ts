@@ -1,4 +1,4 @@
-import type { BoundaryValue } from "../runtime-values.ts";
+import type { BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 // Retained only so old session entries remain display-only during replay.
 export const EXECUTION_MODE_SESSION_ENTRY = "pi-codex-conversion-execution-mode";
 

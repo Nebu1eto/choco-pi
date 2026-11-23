@@ -442,3 +442,23 @@ test("choco-pi-shared has zero outgoing dependencies on packages or profile", as
   );
   assert.deepEqual(outgoing, [], "@choco-pi/shared must remain a zero-dependency bottom layer");
 });
+
+test("choco-pi-code-mode imports neither choco-pi-codex nor profile/", async () => {
+  const graph = await graphPromise;
+  assert.ok(graph.buckets.includes("packages/choco-pi-code-mode"));
+  const outgoing = uniqueSorted(
+    graph.edges
+      .filter((edge) => edge.from === "packages/choco-pi-code-mode")
+      .map((edge) => edge.to),
+  );
+  assert.deepEqual(
+    outgoing.filter((bucket) => bucket === "packages/choco-pi-codex" || bucket === "profile"),
+    [],
+    "Universal Code Mode must load without the Codex provider and the profile tree",
+  );
+  assert.deepEqual(
+    outgoing,
+    ["packages/choco-pi-shared"],
+    "choco-pi-code-mode depends only on @choco-pi/shared among first-party buckets",
+  );
+});

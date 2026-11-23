@@ -1,0 +1,71 @@
+{
+  "name": "@choco-pi/code-mode",
+  "version": "1.0.0-alpha.1",
+  "private": true,
+  "description": "choco-pi universal Code Mode: the exec/wait programmatic tool host, apply_patch, exec_command/write_stdin, view_image and their patch/shell engines, for every Pi provider.",
+  "keywords": [
+    "apply-patch",
+    "code-mode",
+    "pi",
+    "pi-extension",
+    "pi-package"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./extension": "./src/extension.ts",
+    "./host-slot": "./src/host-slot.ts",
+    "./ports": "./src/adapter/code-mode/ports.ts",
+    "./adapter/code-mode": "./src/adapter/code-mode.ts",
+    "./adapter/code-mode/*": "./src/adapter/code-mode/*.ts",
+    "./patch/*": "./src/patch/*.ts",
+    "./shell/*": "./src/shell/*.ts",
+    "./tools/*": "./src/tools/*.ts",
+    "./preflight": "./src/code-mode-preflight.ts",
+    "./tool-signature": "./src/tools/code-mode/tool-signature.ts",
+    "./patch-paths": "./src/patch/paths.ts",
+    "./runtime-values": "./src/adapter/runtime-values.ts",
+    "./value-guards": "./src/value-guards.ts",
+    "./tool-rendering/*": "./src/ui/tool-rendering/*.ts",
+    "./tool-support": "./src/adapter/tool-support.ts",
+    "./runtime-shell": "./src/adapter/prompt/runtime-shell.ts",
+    "./memoized-import": "./src/memoized-import.ts",
+    "./native-binary-error": "./src/native-binary-error.ts",
+    "./apply-patch-display": "./src/apply-patch-display.ts",
+    "./schema-bridge": "./src/schema-bridge.ts"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@choco-pi/shared": "workspace:*",
+    "jpeg-js": "0.4.4",
+    "pngjs": "7.0.0",
+    "smol-toml": "1.7.1",
+    "tree-sitter-bash": "0.25.1",
+    "web-tree-sitter": "0.26.12"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "~1.6.0",
+    "@earendil-works/pi-ai": "~1.6.0",
+    "@earendil-works/pi-coding-agent": "~1.6.0",
+    "@earendil-works/pi-schema": "~1.6.0",
+    "@earendil-works/pi-tui": "~1.6.0",
+    "typebox": "^1.3.29"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "chocoPi": {
+    "supersedes": []
+  },
+  "pi": {
+    "extensions": [
+      "./src/extension.ts"
+    ]
+  }
+}

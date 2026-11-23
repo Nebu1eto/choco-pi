@@ -1,8 +1,8 @@
-import type { JsonObject } from "../../adapter/runtime-values.ts";
+import type { JsonObject } from "@choco-pi/code-mode/runtime-values";
 import { createServer, type Server } from "node:http";
 import { randomBytes, createHash } from "node:crypto";
 import type { OAuthDeviceCodeInfo } from "@earendil-works/pi-ai/oauth";
-import { isString } from "../../value-guards.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { compile, map, num, obj, opt, str, union, unknown } from "@earendil-works/pi-schema";

@@ -5,10 +5,10 @@ import {
   buildCodeModeToolsPrompt,
   EXEC_DESCRIPTION,
   injectCodeModeToolsPrompt,
-} from "../packages/choco-pi-codex/src/tools/code-mode/custom-tool-prompt.ts";
-import { codeModeHostBinaryPath } from "../packages/choco-pi-codex/src/tools/code-mode/binary.ts";
-import { CodeModeHostClient } from "../packages/choco-pi-codex/src/tools/code-mode/host-client.ts";
-import { unavailableToolsGuardPreamble } from "../packages/choco-pi-codex/src/tools/code-mode/tools-namespace.ts";
+} from "../packages/choco-pi-code-mode/src/tools/code-mode/custom-tool-prompt.ts";
+import { codeModeHostBinaryPath } from "../packages/choco-pi-code-mode/src/tools/code-mode/binary.ts";
+import { CodeModeHostClient } from "../packages/choco-pi-code-mode/src/tools/code-mode/host-client.ts";
+import { unavailableToolsGuardPreamble } from "../packages/choco-pi-code-mode/src/tools/code-mode/tools-namespace.ts";
 
 const CONTRACT_SENTENCES = [
   "notify(value) rejects empty or whitespace-only text; guard before calling.",

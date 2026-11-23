@@ -82,6 +82,7 @@ const NATIVE_ENTRIES: ReadonlySet<string> = new Set<string>([
   "packages/choco-pi-lsp/index.ts",
   "packages/choco-pi-compaction/src/index.ts",
   "packages/choco-pi-codex/src/index.ts",
+  "packages/choco-pi-code-mode/src/extension.ts",
   "packages/choco-pi-agents-md/index.ts",
   "packages/choco-pi-agent-browser/extensions/agent-browser/index.ts",
   "packages/choco-pi-computer-use/extensions/computer-use.ts",

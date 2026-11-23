@@ -1,5 +1,5 @@
-import { isString } from "../value-guards.ts";
-import { conditionalProperties } from "./runtime-values.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
+import { conditionalProperties } from "@choco-pi/code-mode/runtime-values";
 import type { ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import { DEFAULT_CODEX_BASE_URL } from "../providers/openai-codex/constants.ts";

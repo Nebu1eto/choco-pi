@@ -1,5 +1,5 @@
-import { isString } from "../../value-guards.ts";
-import type { BoundaryValue } from "../runtime-values.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
+import type { BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 import type { CustomMessageEntry } from "@earendil-works/pi-coding-agent";
 import { NATIVE_COMPACTION_DISPLAY_MESSAGE_TYPE } from "../compaction/types.ts";
 import { EXECUTION_MODE_SESSION_ENTRY } from "../activation/execution-mode.ts";

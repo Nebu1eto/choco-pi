@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
-import { isJsonObject } from "../../adapter/runtime-values.ts";
-import { isString } from "../../value-guards.ts";
-import type { ViewImageContent } from "../view-image/output.ts";
+import { isJsonObject } from "@choco-pi/code-mode/runtime-values";
+import { isString } from "@choco-pi/code-mode/value-guards";
+import type { ViewImageContent } from "@choco-pi/code-mode/tools/view-image/output";
 
 // The binary protocol requires only `path`; optional fields are consumed defensively below.
 

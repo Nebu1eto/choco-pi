@@ -1,4 +1,4 @@
-import type { BoundaryValue } from "../adapter/runtime-values.ts";
+import type { BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { withLiveCtx } from "../extension/live-context.ts";
 import type { CacheDiagnosticsMode } from "../adapter/activation/config.ts";

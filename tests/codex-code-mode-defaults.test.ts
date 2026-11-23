@@ -29,10 +29,8 @@ import {
   type CodexToolProviderModelRegistry,
   resolveOpenAICodexToolProvider,
 } from "../packages/choco-pi-codex/src/adapter/codex-tool-provider.ts";
-import {
-  createCodeModeWebSearchTool,
-  createNestedTools,
-} from "../packages/choco-pi-codex/src/adapter/code-mode.ts";
+import { createNestedTools } from "../packages/choco-pi-code-mode/src/adapter/code-mode.ts";
+import { createCodeModeWebSearchTool } from "../packages/choco-pi-codex/src/extension/code-mode-ports.ts";
 import {
   createCodexWebRunSearchAdapter,
   registerCodexWebRunSearchAdapter,
@@ -44,8 +42,8 @@ import { createCodexTurnState } from "../packages/choco-pi-codex/src/providers/o
 import { createCodexExtensionRuntime } from "../packages/choco-pi-codex/src/extension/runtime.ts";
 import { openAICodexModelsWithDaybreak } from "../packages/choco-pi-codex/src/providers/openai-codex/model-catalog.ts";
 import { buildCodexSystemPrompt } from "../packages/choco-pi-codex/src/prompt/build-system-prompt.ts";
-import { buildCodeModeToolsPrompt } from "../packages/choco-pi-codex/src/tools/code-mode/custom-tool-prompt.ts";
-import type { CodeModeToolDefinition } from "../packages/choco-pi-codex/src/tools/code-mode/types.ts";
+import { buildCodeModeToolsPrompt } from "../packages/choco-pi-code-mode/src/tools/code-mode/custom-tool-prompt.ts";
+import type { CodeModeToolDefinition } from "../packages/choco-pi-code-mode/src/tools/code-mode/types.ts";
 import {
   CodexWebRunTransportError,
   executeOpenAICodexWebRun,
@@ -68,9 +66,9 @@ import {
   BRIDGE_EXCLUDED_TOOLS,
   collectBridgedTools,
   type RegisteredToolSource,
-} from "../packages/choco-pi-codex/src/tools/code-mode/registered-tool-bridge.ts";
+} from "../packages/choco-pi-code-mode/src/tools/code-mode/registered-tool-bridge.ts";
 import { snapshotCodexSSEBody } from "../packages/choco-pi-codex/src/providers/openai-codex/transport-recovery.ts";
-import { isObjectValue } from "../packages/choco-pi-codex/src/tools/boundary.ts";
+import { isObjectValue } from "../packages/choco-pi-code-mode/src/tools/boundary.ts";
 
 test("Code Mode is the append-style default for every OpenAI Codex model", () => {
   const config = structuredClone(DEFAULT_CODEX_CONVERSION_CONFIG);

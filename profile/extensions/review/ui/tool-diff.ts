@@ -48,7 +48,7 @@ import { computeHunkId, parseGitDiff } from "../../lib/changes/patch.ts";
 import { renderDiffFile } from "../../lib/changes/render/diff-render.ts";
 import { createHighlight, DEFAULT_HIGHLIGHT } from "../../lib/changes/render/highlight.ts";
 import type { DiffFile, DiffHunk, DiffLine, ResolvedReviewConfig } from "../core/types.ts";
-import { normalizePatchPath } from "../../../../packages/choco-pi-codex/src/patch/paths.ts";
+import { normalizePatchPath } from "@choco-pi/code-mode/patch-paths";
 
 /* ------------------------------------------------------------------ types */
 

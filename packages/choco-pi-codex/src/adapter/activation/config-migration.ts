@@ -1,5 +1,5 @@
-import { isBoolean } from "../../value-guards.ts";
-import type { BoundaryValue } from "../runtime-values.ts";
+import { isBoolean } from "@choco-pi/code-mode/value-guards";
+import type { BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 import {
   DEFAULT_CODEX_CONVERSION_CONFIG,
   isObject,

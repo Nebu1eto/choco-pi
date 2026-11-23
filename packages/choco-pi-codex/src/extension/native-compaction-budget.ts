@@ -1,6 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { compile, obj, str } from "@earendil-works/pi-schema";
-import { finiteNum } from "../value-guards.ts";
+import { finiteNum } from "@choco-pi/code-mode/value-guards";
 import { resolveCodexRuntimePlanForState } from "../adapter/activation/runtime-plan.ts";
 import type { AdapterState } from "../adapter/activation/state.ts";
 import { resolveNativeCompactionRequestBudget } from "../adapter/compaction/request-shrink.ts";

@@ -5,9 +5,12 @@
 // Voice, Notebook Mode, and the background-shell widget were removed.
 import { createRequire } from "node:module";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { HostSchema } from "./schema-bridge.ts";
-import type { ApplyPatchToolDetails, ApplyPatchToolOptions } from "./tools/apply-patch/tool.ts";
-import type { BoundaryValue } from "./tools/boundary.ts";
+import type { HostSchema } from "@choco-pi/code-mode/schema-bridge";
+import type {
+  ApplyPatchToolDetails,
+  ApplyPatchToolOptions,
+} from "@choco-pi/code-mode/tools/apply-patch/tool";
+import type { BoundaryValue } from "@choco-pi/code-mode/tools/boundary";
 import { registerCodexConversion } from "./extension/register.ts";
 
 interface ActivationModule {
@@ -46,7 +49,8 @@ const getActivationModule = () => {
 };
 const getApplyPatchModule = () => {
   // SAFETY: This fixed local module exports the ApplyPatchModule functions declared above.
-  return (applyPatchModule ??= require("./tools/apply-patch/tool.ts") as ApplyPatchModule);
+  return (applyPatchModule ??=
+    require("@choco-pi/code-mode/tools/apply-patch/tool") as ApplyPatchModule);
 };
 const getSkillsModule = () => {
   // SAFETY: This fixed local module exports getCodexSkillPaths with the declared signature.
@@ -65,7 +69,7 @@ export type {
   ApplyPatchToolDetails,
   ApplyPatchToolOptions,
   ExecutePatchResult,
-} from "./tools/apply-patch/tool.ts";
+} from "@choco-pi/code-mode/tools/apply-patch/tool";
 
 export const createApplyPatchTool: ApplyPatchModule["createApplyPatchTool"] = (options) =>
   getApplyPatchModule().createApplyPatchTool(options);

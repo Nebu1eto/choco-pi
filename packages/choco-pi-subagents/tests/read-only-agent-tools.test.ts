@@ -37,7 +37,7 @@ import {
 import { obj } from "@earendil-works/pi-schema";
 
 import { publishLeanSurface } from "../../../profile/extensions/lib/tool-surface.ts";
-import { collectBridgedTools } from "../../choco-pi-codex/src/tools/code-mode/registered-tool-bridge.ts";
+import { collectBridgedTools } from "../../choco-pi-code-mode/src/tools/code-mode/registered-tool-bridge.ts";
 import { getAgentConfigIn, registerAgents } from "../src/agent-types.ts";
 import {
   getRememberAgents,

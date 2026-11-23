@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { arr, compile, obj, opt, str, type Static } from "@earendil-works/pi-schema";
-import { isString } from "../src/value-guards.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -30,7 +30,7 @@ import {
 import { streamCodeModeResponsesProxy } from "../src/providers/code-mode-proxy-provider.ts";
 import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../src/adapter/activation/config.ts";
 import type { AdapterState } from "../src/adapter/activation/state.ts";
-import type { BoundaryValue } from "../src/adapter/runtime-values.ts";
+import type { BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 import { createCodexTurnState } from "../src/providers/openai-codex/turn-state.ts";
 import {
   isOpenAIPlatformModel,

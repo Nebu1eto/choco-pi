@@ -1,7 +1,7 @@
 import {
   CODE_MODE_DEFAULT_ROUTING,
   CODE_MODE_DIRECT_EXCEPTIONS,
-} from "../tools/code-mode/custom-tool-prompt.ts";
+} from "@choco-pi/code-mode/tools/code-mode/custom-tool-prompt";
 
 export interface PromptSkill {
   name: string;

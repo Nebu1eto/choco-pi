@@ -10,8 +10,8 @@ import {
   type Schema,
   type Static,
 } from "@earendil-works/pi-schema";
-import { isJsonObject } from "../../adapter/runtime-values.ts";
-import { isBoolean, isNumber, isString } from "../../value-guards.ts";
+import { isJsonObject } from "@choco-pi/code-mode/runtime-values";
+import { isBoolean, isNumber, isString } from "@choco-pi/code-mode/value-guards";
 import type {
   ResponseCreateParamsStreaming,
   ResponseOutputItem,

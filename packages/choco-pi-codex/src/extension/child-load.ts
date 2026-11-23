@@ -1,4 +1,4 @@
-import { isJsonObject, type BoundaryValue } from "../adapter/runtime-values.ts";
+import { isJsonObject, type BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 
 interface ChildContextRegistry {
   isChildSessionContext(): BoundaryValue;

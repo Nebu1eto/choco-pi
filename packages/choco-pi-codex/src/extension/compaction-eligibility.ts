@@ -16,8 +16,8 @@
  * `nativeCompaction` decision of the runtime plan, evaluated per call against
  * the registration's live adapter state; no tool lists are built.
  */
-import { isJsonObject } from "../adapter/runtime-values.ts";
-import { isNonNegativeInteger } from "../value-guards.ts";
+import { isJsonObject } from "@choco-pi/code-mode/runtime-values";
+import { isNonNegativeInteger } from "@choco-pi/code-mode/value-guards";
 import {
   CODEX_ELIGIBILITY_SLOT,
   type CodexEligibility,

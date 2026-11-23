@@ -1,5 +1,5 @@
-import { isFunction, isNumber, isString } from "../../value-guards.ts";
-import { isJsonObject, type JsonObject } from "../../adapter/runtime-values.ts";
+import { isFunction, isNumber, isString } from "@choco-pi/code-mode/value-guards";
+import { isJsonObject, type JsonObject } from "@choco-pi/code-mode/runtime-values";
 import {
   DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS,
   WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE,

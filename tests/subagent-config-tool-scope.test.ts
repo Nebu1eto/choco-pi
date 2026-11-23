@@ -33,7 +33,7 @@ import {
 import { obj, str } from "@earendil-works/pi-schema";
 import { hostParams } from "../profile/extensions/lib/schema-bridge.ts";
 import { publishLeanSurface } from "../profile/extensions/lib/tool-surface.ts";
-import { toNestedTool } from "../packages/choco-pi-codex/src/adapter/code-mode/nested-tool-adapter.ts";
+import { toNestedTool } from "../packages/choco-pi-code-mode/src/adapter/code-mode/nested-tool-adapter.ts";
 import {
   createChildToolSearchExtension,
   installExtensionToolScope,

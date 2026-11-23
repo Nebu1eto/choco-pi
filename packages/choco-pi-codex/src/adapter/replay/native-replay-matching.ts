@@ -1,4 +1,4 @@
-import type { BoundaryValue } from "../runtime-values.ts";
+import type { BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";

@@ -1,4 +1,4 @@
-import { memoizedImport } from "../memoized-import.ts";
+import { memoizedImport } from "@choco-pi/code-mode/memoized-import";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   getSearchScope,
@@ -15,19 +15,25 @@ import {
 } from "../../../choco-pi-web-search/index.ts";
 import type { CodexConversionConfig } from "../adapter/activation/config.ts";
 import type { AdapterState } from "../adapter/activation/state.ts";
-import type { BoundaryRecord, BoundaryValue } from "../tools/boundary.ts";
-import { isBooleanValue, isNumberValue, isObjectValue, isStringValue } from "../tools/boundary.ts";
+import type { BoundaryRecord, BoundaryValue } from "@choco-pi/code-mode/tools/boundary";
+import {
+  isBooleanValue,
+  isNumberValue,
+  isObjectValue,
+  isStringValue,
+} from "@choco-pi/code-mode/tools/boundary";
 import type {
   CodexWebRunTransportErrorKind,
   OpenAICodexWebRunResult,
 } from "../tools/web-run/backend.ts";
 import type { CodexToolProviderErrorKind } from "../adapter/codex-tool-provider.ts";
-import { conditionalProperties } from "../adapter/runtime-values.ts";
+import { conditionalProperties } from "@choco-pi/code-mode/runtime-values";
+import { CODEX_TOOLS_ROOT_DIR } from "../tools/codex-binary.ts";
 
 export const CODEX_WEB_RUN_SEARCH_ADAPTER_ID = "codex.web_run";
 export const CODEX_WEB_RUN_SEARCH_TRANSPORT = "codex-native";
 
-const loadNativeBinary = memoizedImport(() => import("../tools/native/binary.ts"));
+const loadNativeBinary = memoizedImport(() => import("@choco-pi/code-mode/tools/native/binary"));
 const loadToolProvider = memoizedImport(() => import("../adapter/codex-tool-provider.ts"));
 const loadWebRunBackend = memoizedImport(() => import("../tools/web-run/backend.ts"));
 
@@ -350,7 +356,7 @@ export function createCodexWebRunSearchAdapter(
       assertCurrent(context);
       const binaryPath =
         process.env["PI_CODEX_WEB_RUN_BIN"]?.trim() ||
-        getBundledToolBinaryPath("web_run", {}, customRustBinariesDir);
+        getBundledToolBinaryPath("web_run", {}, customRustBinariesDir, CODEX_TOOLS_ROOT_DIR);
       if (!binaryPath)
         return {
           status: "unavailable",
@@ -413,7 +419,7 @@ export function createCodexWebRunSearchAdapter(
       assertCurrent(context);
       const binaryPath =
         process.env["PI_CODEX_WEB_RUN_BIN"]?.trim() ||
-        getBundledToolBinaryPath("web_run", {}, customRustBinariesDir);
+        getBundledToolBinaryPath("web_run", {}, customRustBinariesDir, CODEX_TOOLS_ROOT_DIR);
       let provider;
       try {
         provider = await providerModule.resolveOpenAICodexToolProvider(modelRegistry);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createCodeModeRenderTracker } from "../packages/choco-pi-codex/src/tools/code-mode/render-tracker.ts";
-import { renderTrackedCodeModeResult } from "../packages/choco-pi-codex/src/tools/code-mode/result-rendering.ts";
+import { createCodeModeRenderTracker } from "../packages/choco-pi-code-mode/src/tools/code-mode/render-tracker.ts";
+import { renderTrackedCodeModeResult } from "../packages/choco-pi-code-mode/src/tools/code-mode/result-rendering.ts";
 import { Text } from "@earendil-works/pi-tui";
 
 const PLAIN_THEME = {

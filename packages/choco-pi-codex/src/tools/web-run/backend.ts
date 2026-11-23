@@ -1,12 +1,15 @@
 import { spawn } from "node:child_process";
-import { formatNativeBinaryError, nativeBinaryRecoveryMessage } from "../../native-binary-error.ts";
+import {
+  formatNativeBinaryError,
+  nativeBinaryRecoveryMessage,
+} from "@choco-pi/code-mode/native-binary-error";
 import type { CodexToolProvider } from "../../adapter/codex-tool-provider.ts";
 import {
   codexToolProviderEnv,
   OPENAI_PLATFORM_WEB_RUN_UNSUPPORTED_REASON,
 } from "../../adapter/codex-tool-provider.ts";
-import type { BoundaryRecord, BoundaryValue } from "../boundary.ts";
-import { isNumberValue, isObjectValue, isStringValue } from "../boundary.ts";
+import type { BoundaryRecord, BoundaryValue } from "@choco-pi/code-mode/tools/boundary";
+import { isNumberValue, isObjectValue, isStringValue } from "@choco-pi/code-mode/tools/boundary";
 
 export type CodexWebRunTransportErrorKind =
   | "missing_binary"

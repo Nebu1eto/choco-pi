@@ -1,4 +1,4 @@
-import { isString } from "../../value-guards.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
 import {
   appendAssistantMessageDiagnostic,
   createAssistantMessageDiagnostic,
@@ -12,7 +12,7 @@ import {
   type Transport,
 } from "@earendil-works/pi-ai";
 import { compile, lit, obj } from "@earendil-works/pi-schema";
-import { conditionalProperties } from "../../adapter/runtime-values.ts";
+import { conditionalProperties } from "@choco-pi/code-mode/runtime-values";
 import type { CodexConversionConfig } from "../../adapter/activation/config.ts";
 import { createGrammarToolInputProperties } from "../constrained-sampling.ts";
 import {

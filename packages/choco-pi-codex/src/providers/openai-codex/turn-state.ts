@@ -1,4 +1,4 @@
-import { isString } from "../../value-guards.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
 import { compile, map, obj, oneOf, unknown } from "@earendil-works/pi-schema";
 import type { CodexStreamEvent } from "./types.ts";
 

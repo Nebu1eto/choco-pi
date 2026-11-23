@@ -1,4 +1,4 @@
-import { isJsonObject } from "../../adapter/runtime-values.ts";
+import { isJsonObject } from "@choco-pi/code-mode/runtime-values";
 import type { NativeSteeringConnection } from "./native-steering.ts";
 import type { WebSocketLike } from "./types.ts";
 

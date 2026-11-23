@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { compile, obj, opt, str, type Static } from "@earendil-works/pi-schema";
-import { isBoundaryValue, type BoundaryValue } from "./runtime-values.ts";
+import { isBoundaryValue, type BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 
 const PACKAGE_NAME = "@howaboua/pi-codex-conversion";
 const NPM_REGISTRY_URL = "https://registry.npmjs.org/@howaboua%2Fpi-codex-conversion";

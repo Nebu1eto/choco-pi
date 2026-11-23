@@ -1,10 +1,12 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { claimCodeModeHost, probeCodeModeHostOwner } from "@choco-pi/code-mode/host-slot";
+import type { CodeModeRegistration } from "@choco-pi/code-mode/tools/code-mode/tools";
 import { registerNativeFeatures } from "./native-features.ts";
 import { registerCodeModeProxyProvider } from "../providers/code-mode-proxy-provider.ts";
 import { registerOpenAICodexCustomProvider } from "../providers/openai-codex-provider-registration.ts";
-import { registerApplyPatchDisplayBroker } from "../tools/apply-patch/display-broker.ts";
+import { registerApplyPatchDisplayBroker } from "@choco-pi/code-mode/tools/apply-patch/display-broker";
 import { registerCodexCommand } from "../ui/settings/command.ts";
-import { registerCodexCodeMode } from "../adapter/code-mode.ts";
+import { registerCodexCodeMode } from "@choco-pi/code-mode/adapter/code-mode";
 import {
   prepareCodeModeHost,
   registerCanonicalAliasEndpointPreflight,
@@ -28,10 +30,49 @@ import {
   publishNativeCompactionBudgetHook,
 } from "./native-compaction-budget.ts";
 
+export const CODEX_PACKAGE_NAME = "choco-pi-codex";
+
+/**
+ * Stand-in for Code Mode when the standalone choco-pi-code-mode extension
+ * loaded first and already owns it: that extension prepares, prompts and
+ * shuts down its own host, so Codex must not drive it a second time.
+ */
+function standaloneOwnedCodeMode(): CodeModeRegistration {
+  return {
+    prepare: () => undefined,
+    refreshPromptTools: (systemPrompt) => systemPrompt,
+    checkpointNotebook: async () => {},
+    shutdownHost: async () => {},
+    shutdown: async () => {},
+  };
+}
+
+function warnStandaloneCodeModeOwner(pi: ExtensionAPI): void {
+  let warned = false;
+  pi.on("session_start", (_event, ctx: ExtensionContext) => {
+    if (warned || !ctx.hasUI) return;
+    warned = true;
+    withLiveCtx(() =>
+      ctx.ui.notify(
+        "choco-pi-code-mode loaded before choco-pi-codex, so Code Mode runs without the Codex ports. Load choco-pi-codex first (choco-pi self setup restores the order).",
+        "warning",
+      ),
+    );
+  });
+}
+
 export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
+  // Code Mode ownership on this Pi runtime: Codex composes it with its ports
+  // unless the standalone choco-pi-code-mode extension loaded first and owns it.
+  const codeModeOwner = probeCodeModeHostOwner(pi);
+  const standaloneCodeMode = codeModeOwner?.kind === "standalone";
+  const releaseCodeModeClaim = codeModeOwner
+    ? () => {}
+    : claimCodeModeHost(pi, { kind: "provider", name: CODEX_PACKAGE_NAME });
+  if (standaloneCodeMode) warnStandaloneCodeModeOwner(pi);
   registerCodexTransportCleanup();
   registerNativeSteeringBridge();
-  registerApplyPatchDisplayBroker(pi);
+  if (!standaloneCodeMode) registerApplyPatchDisplayBroker(pi);
   const runtime = createCodexExtensionRuntime(pi);
   // The budget follows the live adapter config, so a compaction-row change
   // (which also resets the transport below) applies on the consumer's next read.
@@ -68,10 +109,13 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
   registerCanonicalAliasEndpointPreflight(pi, runtime);
   const searchAdapter = registerCodexWebRunSearchAdapter(pi, runtime);
   pi.on("session_shutdown", () => searchAdapter.unregister());
-  let codeMode: Awaited<ReturnType<typeof registerCodexCodeMode>>;
+  let codeMode: CodeModeRegistration;
   try {
-    codeMode = await registerCodexCodeMode(pi, runtime);
+    codeMode = standaloneCodeMode
+      ? standaloneOwnedCodeMode()
+      : await registerCodexCodeMode(pi, runtime);
   } catch (error) {
+    releaseCodeModeClaim();
     searchAdapter.unregister();
     unpublishBudget?.();
     throw error;
@@ -107,7 +151,7 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
       () => runtime.state.executionMode,
     );
     cleanupProxyProvider = proxyProvider;
-    const tools = registerCodexTools(pi, runtime);
+    const tools = registerCodexTools(pi, runtime, { coreTools: !standaloneCodeMode });
     const ui = registerCodexUi(pi, runtime);
     registerCodexCommand(pi, runtime.state, (config, ctx, previousConfig) => {
       // Compaction, scope, voice-only or tool-only switches change native-compaction ownership.
@@ -169,6 +213,7 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
     configReaderPublished = true;
     unpublishConfigReader = publishCodexCompactionConfigReaderIfVacant();
   } catch (registrationError) {
+    releaseCodeModeClaim();
     configReaderPublished = false;
     unpublishConfigReader?.();
     unpublishConfigReader = undefined;

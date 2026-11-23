@@ -1,6 +1,6 @@
-import { isString } from "../../value-guards.ts";
-import { isJsonObject } from "../runtime-values.ts";
-import type { BoundaryValue } from "../runtime-values.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
+import { isJsonObject } from "@choco-pi/code-mode/runtime-values";
+import type { BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isCanonicalCodexSubscriptionModel, isOpenAICodexModel } from "../prompt/codex-model.ts";

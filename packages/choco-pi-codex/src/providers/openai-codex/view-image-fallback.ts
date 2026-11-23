@@ -6,12 +6,12 @@
  * Responses endpoint the Codex tool provider resolves, and the extension
  * composition root (`src/extension/`) wires it in.
  */
-import { memoizedImport } from "../../memoized-import.ts";
-import type { BoundaryValue } from "../../tools/boundary.ts";
-import { isObjectValue, isStringValue } from "../../tools/boundary.ts";
+import { memoizedImport } from "@choco-pi/code-mode/memoized-import";
+import type { BoundaryValue } from "@choco-pi/code-mode/tools/boundary";
+import { isObjectValue, isStringValue } from "@choco-pi/code-mode/tools/boundary";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { ViewImageContent } from "../../tools/view-image/output.ts";
-import type { ImageDescribeFallbackPort } from "../../tools/view-image/tool.ts";
+import type { ViewImageContent } from "@choco-pi/code-mode/tools/view-image/output";
+import type { ImageDescribeFallbackPort } from "@choco-pi/code-mode/tools/view-image/tool";
 import { OPENAI_PLATFORM_BASE_URL } from "../../adapter/openai-sign-in.ts";
 
 const loadSse = memoizedImport(() => import("./sse.ts"));

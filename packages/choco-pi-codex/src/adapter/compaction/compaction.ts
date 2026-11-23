@@ -1,7 +1,7 @@
-import { isString } from "../../value-guards.ts";
-import { conditionalProperties } from "../runtime-values.ts";
-import { isJsonObject } from "../runtime-values.ts";
-import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
+import { conditionalProperties } from "@choco-pi/code-mode/runtime-values";
+import { isJsonObject } from "@choco-pi/code-mode/runtime-values";
+import type { JsonObject, BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 import {
   buildSessionContext,
   convertToLlm,
@@ -67,7 +67,7 @@ import { isCodeModeRuntime, resolveCodexRuntimePlanForState } from "../activatio
 import type { AdapterState } from "../activation/state.ts";
 import { executeRemoteCompactionV2, type RemoteCompactionV2Result } from "./remote-v2-client.ts";
 import { buildRemoteCompactionV2Window } from "./remote-v2-history.ts";
-import { CODE_MODE_EXEC_GRAMMAR_INPUTS } from "../../tools/code-mode/exec-contract.ts";
+import { CODE_MODE_EXEC_GRAMMAR_INPUTS } from "@choco-pi/code-mode/tools/code-mode/exec-contract";
 import { getActiveToolsInActiveOrder } from "../active-tools.ts";
 import { isProviderContextExcludedMessage } from "../prompt/context-filter.ts";
 import { resolveCanonicalCompactionPromptInput } from "../../providers/openai-codex/session-continuity.ts";

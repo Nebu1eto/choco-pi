@@ -19,18 +19,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@choco-pi/code-mode": "workspace:*",
     "@choco-pi/shared": "workspace:*",
     "base64-js": "1.5.1",
-    "jpeg-js": "0.4.4",
     "js-tiktoken": "1.0.21",
     "openai": "6.26.0",
     "partial-json": "0.1.7",
-    "pngjs": "7.0.0",
     "proxy-from-env": "1.1.0",
-    "smol-toml": "1.7.1",
-    "tree-sitter-bash": "0.25.1",
-    "undici": "8.10.0",
-    "web-tree-sitter": "0.26.12"
+    "undici": "8.10.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "~1.6.0",

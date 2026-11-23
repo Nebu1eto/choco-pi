@@ -36,8 +36,8 @@ import codexConversion from "../packages/choco-pi-codex/src/index.ts";
 import { syncAdapter } from "../packages/choco-pi-codex/src/adapter/activation/activation.ts";
 import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../packages/choco-pi-codex/src/adapter/activation/config.ts";
 import { resolveCodexRuntimePlan } from "../packages/choco-pi-codex/src/adapter/activation/runtime-plan.ts";
-import { createNestedTools } from "../packages/choco-pi-codex/src/adapter/code-mode.ts";
-import { activeRegisteredSessionToolNames } from "../packages/choco-pi-codex/src/adapter/code-mode/session-tool-permissions.ts";
+import { createNestedTools } from "../packages/choco-pi-code-mode/src/adapter/code-mode.ts";
+import { activeRegisteredSessionToolNames } from "../packages/choco-pi-code-mode/src/adapter/code-mode/session-tool-permissions.ts";
 import {
   createCodexExtensionRuntime,
   type CodexExtensionRuntime,
@@ -45,7 +45,7 @@ import {
 import { registerCodexTools } from "../packages/choco-pi-codex/src/extension/tools.ts";
 import { buildCodexSystemPrompt } from "../packages/choco-pi-codex/src/prompt/build-system-prompt.ts";
 import { openAICodexModelsWithDaybreak } from "../packages/choco-pi-codex/src/providers/openai-codex/model-catalog.ts";
-import { buildCodeModeToolsPrompt } from "../packages/choco-pi-codex/src/tools/code-mode/custom-tool-prompt.ts";
+import { buildCodeModeToolsPrompt } from "../packages/choco-pi-code-mode/src/tools/code-mode/custom-tool-prompt.ts";
 import { googleAntigravityProviderConfig } from "../packages/choco-pi-provider-google-antigravity/extensions/provider/index.ts";
 import { PROVIDER_ID as GOOGLE_ANTIGRAVITY_PROVIDER_ID } from "../packages/choco-pi-provider-google-antigravity/src/config.ts";
 

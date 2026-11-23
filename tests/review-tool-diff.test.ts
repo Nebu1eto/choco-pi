@@ -30,7 +30,7 @@ import {
   TOOL_DIFF_TOOLS,
 } from "../profile/extensions/review/ui/tool-diff.ts";
 
-import { parsePatchActions } from "../packages/choco-pi-codex/src/patch/parser.ts";
+import { parsePatchActions } from "../packages/choco-pi-code-mode/src/patch/parser.ts";
 
 /* ------------------------------------------------------------------ setup */
 

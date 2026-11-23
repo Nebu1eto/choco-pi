@@ -1,8 +1,8 @@
-import { conditionalProperties } from "./runtime-values.ts";
+import { conditionalProperties } from "@choco-pi/code-mode/runtime-values";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Tool } from "@earendil-works/pi-ai";
-import { CODE_MODE_EXEC_CONSTRAINED_SAMPLING } from "../tools/code-mode/exec-contract.ts";
-import { getExperimentalToolSampling } from "../tools/tool-sampling.ts";
+import { CODE_MODE_EXEC_CONSTRAINED_SAMPLING } from "@choco-pi/code-mode/tools/code-mode/exec-contract";
+import { getExperimentalToolSampling } from "@choco-pi/code-mode/tools/tool-sampling";
 
 export function getActiveToolsInActiveOrder(
   pi: Pick<ExtensionAPI, "getActiveTools" | "getAllTools">,

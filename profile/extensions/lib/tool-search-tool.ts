@@ -18,8 +18,8 @@
 import type { ExtensionAPI, ToolDefinition, ToolExposure } from "@earendil-works/pi-coding-agent";
 import { num, obj, opt, str } from "@earendil-works/pi-schema";
 import { hostParams } from "./schema-bridge.ts";
-import { toolCallSignature } from "../../../packages/choco-pi-codex/src/tools/code-mode/tool-signature.ts";
-import { isBoundaryValue } from "../../../packages/choco-pi-codex/src/adapter/runtime-values.ts";
+import { toolCallSignature } from "@choco-pi/code-mode/tool-signature";
+import { isBoundaryValue } from "@choco-pi/code-mode/runtime-values";
 
 export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 export const DEFAULT_TOOL_SEARCH_LIMIT = 8;

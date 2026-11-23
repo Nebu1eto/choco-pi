@@ -1,5 +1,5 @@
-import { isString } from "../value-guards.ts";
-import type { BoundaryValue } from "../adapter/runtime-values.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
+import type { BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 import { mkdir, open } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { CodexDiagnosticsEvent } from "../providers/openai-codex/types.ts";

@@ -1,6 +1,10 @@
-import { memoizedImport } from "../memoized-import.ts";
-import { isBoundaryValue, isJsonObject, type BoundaryValue } from "../adapter/runtime-values.ts";
-import { isNonNegativeInteger, isString } from "../value-guards.ts";
+import { memoizedImport } from "@choco-pi/code-mode/memoized-import";
+import {
+  isBoundaryValue,
+  isJsonObject,
+  type BoundaryValue,
+} from "@choco-pi/code-mode/runtime-values";
+import { isNonNegativeInteger, isString } from "@choco-pi/code-mode/value-guards";
 
 import {
   buildSessionContext,
@@ -27,8 +31,8 @@ import { isProviderContextExcludedMessage } from "../adapter/prompt/context-filt
 import { hasNoSkillsFlag } from "../adapter/prompt/skills.ts";
 
 import type { CodeModeProxyProviderRegistration } from "../providers/code-mode-proxy-provider.ts";
-import { clearApplyPatchRenderState } from "../tools/apply-patch/render-state.ts";
-import type { CodeModeRegistration } from "../tools/code-mode/tools.ts";
+import { clearApplyPatchRenderState } from "@choco-pi/code-mode/tools/apply-patch/render-state";
+import type { CodeModeRegistration } from "@choco-pi/code-mode/tools/code-mode/tools";
 import { formatCompactionCacheDiagnostic } from "../adapter/compaction/diagnostics.ts";
 import type { CodexExtensionRuntime } from "./runtime.ts";
 import type { CodexToolRegistration } from "./tools.ts";
@@ -51,7 +55,7 @@ import {
   type CodexBackgroundElisionState,
 } from "./background-compaction.ts";
 import { registerCodexDaybreakProbe } from "./daybreak-probe.ts";
-import { resetRegisteredToolCapture } from "../tools/code-mode/registered-tool-bridge.ts";
+import { resetRegisteredToolCapture } from "@choco-pi/code-mode/tools/code-mode/registered-tool-bridge";
 import { isNativeSteerPending } from "../providers/openai-codex/native-steering.ts";
 import { initializeCodexFastModeDefault } from "../providers/openai-codex/fast-mode-decision.ts";
 import {
@@ -63,7 +67,7 @@ import {
 
 const CONTEXT_ELISION_ENTRY = "codex-context-elision";
 
-const loadBash = memoizedImport(() => import("../shell/bash.ts"));
+const loadBash = memoizedImport(() => import("@choco-pi/code-mode/shell/bash"));
 const loadCompaction = memoizedImport(() => import("../adapter/compaction/compaction.ts"));
 const loadCompactionDetails = memoizedImport(
   () => import("../adapter/compaction/details-store.ts"),

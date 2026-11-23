@@ -1,7 +1,7 @@
-import { isString } from "../../value-guards.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
 import { calculateCost, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
 import { compile } from "@earendil-works/pi-schema";
-import { isJsonObject } from "../../adapter/runtime-values.ts";
+import { isJsonObject } from "@choco-pi/code-mode/runtime-values";
 import type { ResponseStreamEvent } from "openai/resources/responses/responses.js";
 import type { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import {

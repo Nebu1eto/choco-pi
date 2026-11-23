@@ -1,6 +1,6 @@
-import { memoizedImport } from "../../memoized-import.ts";
-import type { BoundaryRecord, BoundaryValue } from "../boundary.ts";
-import { isFunctionValue, isObjectValue, isStringValue } from "../boundary.ts";
+import { memoizedImport } from "@choco-pi/code-mode/memoized-import";
+import type { BoundaryRecord, BoundaryValue } from "@choco-pi/code-mode/tools/boundary";
+import { isFunctionValue, isObjectValue, isStringValue } from "@choco-pi/code-mode/tools/boundary";
 import { randomUUID } from "node:crypto";
 import type {
   ExtensionAPI,
@@ -8,15 +8,16 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { arr, num, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
-import { hostParams } from "../../schema-bridge.ts";
+import { hostParams } from "@choco-pi/code-mode/schema-bridge";
 import { Container, Text } from "@earendil-works/pi-tui";
 import { WEB_SEARCH_TOOL_NAME } from "../../adapter/activation/tool-set.ts";
 import { supportsNativeWebSearch } from "../../adapter/tool-support.ts";
 import { isOpenAIPlatformModel } from "../../adapter/openai-sign-in.ts";
-import { renderCodexToolCell } from "../../ui/tool-rendering/codex-tool-cell.ts";
+import { renderCodexToolCell } from "@choco-pi/code-mode/tool-rendering/codex-tool-cell";
 import { buildWebSearchInput } from "./history.ts";
+import { CODEX_TOOLS_ROOT_DIR } from "../codex-binary.ts";
 
-const loadNativeBinary = memoizedImport(() => import("../native/binary.ts"));
+const loadNativeBinary = memoizedImport(() => import("@choco-pi/code-mode/tools/native/binary"));
 const loadToolProvider = memoizedImport(() => import("../../adapter/codex-tool-provider.ts"));
 const loadWebRunBackend = memoizedImport(() => import("./backend.ts"));
 
@@ -148,7 +149,7 @@ export async function executeCodexWebSearch(
   if (!isSessionCurrent()) throw new Error("web_run session is no longer current");
   const webRunPath =
     process.env["PI_CODEX_WEB_RUN_BIN"]?.trim() ||
-    getBundledToolBinaryPath("web_run", {}, customRustBinariesDir);
+    getBundledToolBinaryPath("web_run", {}, customRustBinariesDir, CODEX_TOOLS_ROOT_DIR);
   if (!webRunPath)
     throw new CodexWebRunTransportError(
       "missing_binary",

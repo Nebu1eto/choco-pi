@@ -244,13 +244,8 @@ upstream 3.0.x:
   import `js-tiktoken/lite` + `js-tiktoken/ranks/o200k_base` instead of the
   ~11 MB all-encodings root bundle (equivalent encoder)
 - `partial-json@0.1.7` (responses stream parsing)
-- `smol-toml@1.7.1` (code-mode custom tools)
-- `web-tree-sitter@0.26.12` (pruned: `debug/` build dropped) +
-  `tree-sitter-bash@0.25.1` (pruned to `tree-sitter-bash.wasm` + metadata; the
-  native prebuilds are unused — `shell/bash.ts` loads only the wasm)
-- `pngjs@7.0.0` + `jpeg-js@0.4.4` (pure-JS PNG/JPEG decoders for the ANSI
-  half-block image fallback; `pngjs` ships no declarations, so the retained
-  synchronous decoder shape is declared locally in `src/types/pngjs.d.ts`)
+- `smol-toml`, `web-tree-sitter`, `tree-sitter-bash`, `pngjs` and `jpeg-js`
+  moved to `@choco-pi/code-mode` with the code that uses them (2026-11-24).
 
 Dropped upstream dependencies (only used by removed features): `ws`,
 `selfsigned` (voice LAN server), `zeromq`, `unzipper` (notebook mode).
@@ -410,6 +405,9 @@ are the upstream prebuilt Rust binaries for those tools (same tarball provenance
 ~10.5 MB). Only darwin-arm64 is vendored; add other platforms the same way or set
 `tools.customRustBinariesDir`. The fork's resolver
 (`src/tools/native/binary.ts`) finds them automatically when the config is empty.
+Since the 2026-11-24 split, `apply_patch`, `exec_bridge` and `view_image` live
+in `packages/choco-pi-code-mode/src/tools/*/bin/`; `imagegen` and `web_run`
+stay here and resolve through `CODEX_TOOLS_ROOT_DIR` (`src/tools/codex-binary.ts`).
 
 ## Deferred runtime imports (choco-pi addition)
 
@@ -1417,3 +1415,43 @@ Prepares extraction of the provider-neutral Code Mode layer: nothing under `src/
 - Transitional: `createCodeModeWebSearchTool` stays exported from `src/adapter/code-mode.ts` because root `tests/codex-code-mode-defaults.test.ts` imports it there. It is a shim over a factory that `src/extension/code-mode-ports.ts` registers at module load (`provideCodeModeWebSearchToolFactory`) and throws if none is registered. Remove the shim (and the type-only `CodexConversionConfig` import it needs) when that test imports `src/extension/code-mode-ports.ts` directly.
 - Config (D4): `voice.*` and `ui.backgroundShell*` leave `CodexConversionConfig`, its defaults, normalizer and the legacy migration, together with the voice-only types and normalizers. Reads ignore them; writes merge into the existing document, so a legacy file keeps them. `voice` stays a retired owned key for folder-config detection and folder clear. The `audioSetupCompleted` read fixup and `clearAbsentOwnedOptionals` are gone. `voiceFeaturesOnly` (the "extra tools only" mode) and `notebook.*` remain: both are still read by runtime planning, tool registration, status UI and Code Mode notebook options.
 - Tests: new `tests/universal-layer-boundary.test.ts` (async scan of the universal tree for forbidden and `extension/` imports, exec-contract purity, scanner self-check) and `tests/retired-config-keys.test.ts`; `tests/exec-command-expanded-rendering.test.ts` supplies `codeMode` ports; `tests/codex-tool-provider-openai.test.ts` imports the fallback from its new module.
+
+## 2026-11-24 choco-pi patch: extract @choco-pi/code-mode
+
+The provider-neutral layer moved (`git mv`, layout unchanged) to the new
+workspace package `packages/choco-pi-code-mode` (`@choco-pi/code-mode`; see its
+`VENDORED.md` for the file list). This package keeps the OpenAI Codex /
+Responses provider and its adapters: activation and config, compaction v2,
+Responses Lite proxy, codex usage, Daybreak, `imagegen`, `web_run`, the OpenAI
+`view_image` text-model fallback and the Code Mode ports in
+`src/extension/code-mode-ports.ts`. Tool names, registration order, nested
+namespaces and prompt text are unchanged.
+
+- Imports of moved modules use `@choco-pi/code-mode/<subpath>` (explicit
+  `exports` in that package); `src/index.ts` lazily `require`s
+  `@choco-pi/code-mode/tools/apply-patch/tool`. `@choco-pi/code-mode` joins
+  `dependencies`; `jpeg-js`, `pngjs`, `smol-toml`, `tree-sitter-bash` and
+  `web-tree-sitter` leave them (no remaining import here).
+- `src/adapter/tool-support.ts` keeps `supportsNativeWebSearch` and
+  `supportsNativeImageGeneration`; `supportsViewImageInputs` comes from
+  `@choco-pi/code-mode/tool-support`.
+- New `src/tools/codex-binary.ts` (`CODEX_TOOLS_ROOT_DIR`): `imagegen` and
+  `web_run` (tool and search adapter) pass it to `getBundledToolBinaryPath`.
+- Transitional shim removed: `createCodeModeWebSearchTool` lives only in
+  `src/extension/code-mode-ports.ts` (no `provideCodeModeWebSearchToolFactory`);
+  root `tests/codex-code-mode-defaults.test.ts` imports it there.
+- Code Mode ownership (`src/extension/register.ts`): before registering, Codex
+  probes the `@choco-pi/code-mode/host-slot` channel. With no owner it claims
+  the slot as `provider` and registers Code Mode with its ports exactly as
+  before, so a later standalone choco-pi-code-mode registers nothing. If the
+  standalone already owns it (choco-pi-code-mode loaded first), Codex skips the
+  display broker, its Code Mode registration (an inert stand-in drives the
+  lifecycle hooks) and the core tools (`registerCodexTools(..., { coreTools:
+false })`), and warns once per extension load.
+- Tests moved with the code: `bridged-tool-usage-memo`, `code-mode-bridge-*`,
+  `code-mode-{guidance,nested-tool-dispatch,preflight,trace-arrays,wait-cap}`,
+  `custom-tools-node-runtime`, `exec-bridge-*`, `exec-command-session-env`,
+  `exec-session-buffer-bound` (+ `exec-heap-probe.ts`), `halfblock-image`,
+  `runtime-values-guards`, `trace-rendering`, `wait-missing-cell` and
+  `universal-layer-boundary` (now a package-level scan).
+  `tool-context-fixture.ts` is copied, since tests here still use it.

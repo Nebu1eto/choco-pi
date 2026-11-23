@@ -1,5 +1,9 @@
-import { isBoolean, isNonEmptyString, isNonNegativeInteger } from "../value-guards.ts";
-import { isJsonObject } from "../adapter/runtime-values.ts";
+import {
+  isBoolean,
+  isNonEmptyString,
+  isNonNegativeInteger,
+} from "@choco-pi/code-mode/value-guards";
+import { isJsonObject } from "@choco-pi/code-mode/runtime-values";
 import { jsonEqual } from "../../../choco-pi-compaction/src/background/json-equal.ts";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";

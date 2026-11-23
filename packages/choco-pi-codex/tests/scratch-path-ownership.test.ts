@@ -9,10 +9,10 @@ import {
   scratchDirFor,
   unregisterScratchRoot,
 } from "../../../profile/extensions/lib/scratch-path.ts";
-import { createExecCommandTracker } from "../src/tools/exec/command-state.ts";
-import { createExecCommandTool } from "../src/tools/exec/command-tool.ts";
-import { createLazyExecSessionManager } from "../src/tools/exec/lazy-session-manager.ts";
-import { registerCodeModePreflightBroker } from "../src/tools/code-mode/nested-tool-preflight.ts";
+import { createExecCommandTracker } from "@choco-pi/code-mode/tools/exec/command-state";
+import { createExecCommandTool } from "@choco-pi/code-mode/tools/exec/command-tool";
+import { createLazyExecSessionManager } from "@choco-pi/code-mode/tools/exec/lazy-session-manager";
+import { registerCodeModePreflightBroker } from "@choco-pi/code-mode/tools/code-mode/nested-tool-preflight";
 import { createSdkFixture } from "./sdk-fixture.ts";
 import { createToolContextFixture } from "./tool-context-fixture.ts";
 

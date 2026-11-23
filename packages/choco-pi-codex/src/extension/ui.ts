@@ -1,4 +1,4 @@
-import { isString } from "../value-guards.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import type { CodexConversionConfig } from "../adapter/activation/config.ts";

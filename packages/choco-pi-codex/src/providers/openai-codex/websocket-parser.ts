@@ -1,5 +1,5 @@
-import { isFunction, isString } from "../../value-guards.ts";
-import { isJsonObject } from "../../adapter/runtime-values.ts";
+import { isFunction, isString } from "@choco-pi/code-mode/value-guards";
+import { isJsonObject } from "@choco-pi/code-mode/runtime-values";
 import {
   isCodexStreamEvent,
   type CodexStreamEvent,

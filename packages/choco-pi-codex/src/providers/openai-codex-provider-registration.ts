@@ -1,4 +1,4 @@
-import { memoizedImport } from "../memoized-import.ts";
+import { memoizedImport } from "@choco-pi/code-mode/memoized-import";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
 import { DEFAULT_CODEX_BASE_URL } from "./openai-codex/constants.ts";

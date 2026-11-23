@@ -1,7 +1,7 @@
-import { isFunction, isString } from "../value-guards.ts";
-import { conditionalProperties } from "../adapter/runtime-values.ts";
-import { isJsonObject } from "../adapter/runtime-values.ts";
-import type { JsonObject, BoundaryValue } from "../adapter/runtime-values.ts";
+import { isFunction, isString } from "@choco-pi/code-mode/value-guards";
+import { conditionalProperties } from "@choco-pi/code-mode/runtime-values";
+import { isJsonObject } from "@choco-pi/code-mode/runtime-values";
+import type { JsonObject, BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 import { createHash } from "node:crypto";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";

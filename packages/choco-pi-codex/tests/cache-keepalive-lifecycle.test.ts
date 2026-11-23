@@ -20,7 +20,7 @@ import {
   installRegisteredToolCapture,
   registeredToolRunner,
   resetRegisteredToolCapture,
-} from "../src/tools/code-mode/registered-tool-bridge.ts";
+} from "@choco-pi/code-mode/tools/code-mode/registered-tool-bridge";
 
 type HostBoundaryValue = {} | null | undefined;
 type RegisteredHandler = (

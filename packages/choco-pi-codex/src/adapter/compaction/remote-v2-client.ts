@@ -1,8 +1,8 @@
 import { compile, nullable, obj, opt, str } from "@earendil-works/pi-schema";
 import { jsonEqual } from "../../../../choco-pi-compaction/src/background/json-equal.ts";
-import { isNonEmptyString, isNonNegativeInteger, isString } from "../../value-guards.ts";
-import { conditionalProperties, isJsonObject } from "../runtime-values.ts";
-import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
+import { isNonEmptyString, isNonNegativeInteger, isString } from "@choco-pi/code-mode/value-guards";
+import { conditionalProperties, isJsonObject } from "@choco-pi/code-mode/runtime-values";
+import type { JsonObject, BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 import type {
   Api,
   AssistantMessage,

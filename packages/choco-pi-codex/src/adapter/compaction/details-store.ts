@@ -5,8 +5,8 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { LaneRoute } from "../../../../choco-pi-compaction/src/background/lane-journal.ts";
 import { jsonEqual } from "../../../../choco-pi-compaction/src/background/json-equal.ts";
-import { isBoolean, isNumber, isString } from "../../value-guards.ts";
-import { isJsonObject, type BoundaryValue } from "../runtime-values.ts";
+import { isBoolean, isNumber, isString } from "@choco-pi/code-mode/value-guards";
+import { isJsonObject, type BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 import { isCanonicalCodexBaseUrl } from "../prompt/codex-model.ts";
 import {
   isJsonRecord,

@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { obj, str } from "@earendil-works/pi-schema";
-import { toNestedTool } from "../src/adapter/code-mode/nested-tool-adapter.ts";
+import { toNestedTool } from "@choco-pi/code-mode/adapter/code-mode/nested-tool-adapter";
 import { cloneCodexCompactionJson } from "../src/adapter/compaction/details-store.ts";
-import { hostParams } from "../src/schema-bridge.ts";
+import { hostParams } from "@choco-pi/code-mode/schema-bridge";
 import { createToolContextFixture } from "./tool-context-fixture.ts";
 
 const extensionContext = createToolContextFixture();

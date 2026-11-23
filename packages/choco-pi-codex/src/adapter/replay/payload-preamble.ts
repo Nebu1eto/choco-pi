@@ -1,6 +1,6 @@
-import { isString } from "../../value-guards.ts";
-import { conditionalProperties } from "../runtime-values.ts";
-import type { BoundaryValue } from "../runtime-values.ts";
+import { isString } from "@choco-pi/code-mode/value-guards";
+import { conditionalProperties } from "@choco-pi/code-mode/runtime-values";
+import type { BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 import type { ResponsesCompatibleRequestPayload } from "../compaction/compaction-runtime.ts";
 import type { ResponsesInputMessageItem } from "../compaction/serializer.ts";
 import {

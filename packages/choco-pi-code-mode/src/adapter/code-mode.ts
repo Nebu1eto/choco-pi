@@ -6,9 +6,7 @@ import {
   getAgentDir,
   type ExtensionAPI,
   type ExtensionContext,
-  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { CodexConversionConfig } from "./activation/config.ts";
 import { formatRunningExecSessionGuidance } from "../tools/code-mode/tool-result.ts";
 import {
   type CodeModeRegistration,
@@ -47,36 +45,6 @@ export type {
 } from "./code-mode/ports.ts";
 
 const LONG_RUNNING_TOOL_OUTER_YIELD_MS = MAX_CODE_MODE_WAIT_MS;
-
-/** The provider-owned standalone `web__run` factory behind the transitional shim below. */
-export type CodeModeWebSearchToolFactory = (
-  config: CodexConversionConfig,
-  allowConfiguredProvider: (model: ExtensionContext["model"]) => boolean,
-) => ToolDefinition;
-
-let codeModeWebSearchToolFactory: CodeModeWebSearchToolFactory | undefined;
-
-/**
- * Transitional seam: the web__run factory is OpenAI Codex code
- * (`src/extension/code-mode-ports.ts` provides it at module load). Remove with
- * `createCodeModeWebSearchTool` once callers import the provider module.
- */
-export function provideCodeModeWebSearchToolFactory(factory: CodeModeWebSearchToolFactory): void {
-  codeModeWebSearchToolFactory = factory;
-}
-
-/**
- * Transitional compatibility shim; delegates to the provider-registered
- * factory and throws when no provider composed one.
- */
-export function createCodeModeWebSearchTool(
-  config: CodexConversionConfig,
-  allowConfiguredProvider: (model: ExtensionContext["model"]) => boolean,
-): ToolDefinition {
-  if (!codeModeWebSearchToolFactory)
-    throw new Error("No provider registered the Code Mode web__run tool factory");
-  return codeModeWebSearchToolFactory(config, allowConfiguredProvider);
-}
 
 export async function registerCodexCodeMode(
   pi: ExtensionAPI,
@@ -134,6 +102,9 @@ export async function registerCodexCodeMode(
     },
   };
 }
+
+/** Provider-neutral name of {@link registerCodexCodeMode}; the Codex name stays for existing callers. */
+export const registerCodeMode = registerCodexCodeMode;
 
 export function createNestedTools(
   runtime: CodeModeHost,

@@ -10,7 +10,7 @@ import {
   type Model,
 } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { JsonObject } from "../src/adapter/runtime-values.ts";
+import type { JsonObject } from "@choco-pi/code-mode/runtime-values";
 import { compile, lit, map, obj, str, unknown } from "@earendil-works/pi-schema";
 import {
   DAYBREAK_BRIDGE_SYMBOL,

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { codexBackgroundAccountScope } from "@choco-pi/shared/codex-model";
 import { CODEX_TURN_STATE_HEADER } from "../../providers/openai-codex/turn-state.ts";
 import { compile, obj, str } from "@earendil-works/pi-schema";
-import { isNonEmptyString, isString } from "../../value-guards.ts";
+import { isNonEmptyString, isString } from "@choco-pi/code-mode/value-guards";
 import { normalizeContext } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import {

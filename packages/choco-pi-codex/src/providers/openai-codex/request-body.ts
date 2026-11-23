@@ -1,4 +1,4 @@
-import { isJsonObject } from "../../adapter/runtime-values.ts";
+import { isJsonObject } from "@choco-pi/code-mode/runtime-values";
 import {
   clampThinkingLevel,
   getCurrentSystemPrompt,

@@ -7,11 +7,11 @@ import { isResponsesModel } from "../adapter/prompt/codex-model.ts";
 import {
   registerApplyPatchResultEvent,
   registerApplyPatchTool,
-} from "../tools/apply-patch/tool.ts";
-import { registerExecCommandTool } from "../tools/exec/command-tool.ts";
-import { registerWriteStdinTool } from "../tools/exec/write-stdin-tool.ts";
+} from "@choco-pi/code-mode/tools/apply-patch/tool";
+import { registerExecCommandTool } from "@choco-pi/code-mode/tools/exec/command-tool";
+import { registerWriteStdinTool } from "@choco-pi/code-mode/tools/exec/write-stdin-tool";
 import { registerImageGenerationTool } from "../tools/imagegen/tool.ts";
-import { registerViewImageTool } from "../tools/view-image/tool.ts";
+import { registerViewImageTool } from "@choco-pi/code-mode/tools/view-image/tool";
 import { registerWebSearchTool } from "../tools/web-run/tool.ts";
 import { openAIImageDescribeFallback } from "../providers/openai-codex/view-image-fallback.ts";
 import type { CodexExtensionRuntime } from "./runtime.ts";
@@ -36,8 +36,16 @@ export function isExplicitlyConfiguredToolProvider(
 export function registerCodexTools(
   pi: ExtensionAPI,
   runtime: CodexExtensionRuntime,
+  options: {
+    /**
+     * Register apply_patch, exec_command, write_stdin and view_image. False when
+     * the standalone choco-pi-code-mode extension already registered them.
+     */
+    coreTools?: boolean;
+  } = {},
 ): CodexToolRegistration {
-  registerApplyPatchResultEvent(pi);
+  const coreTools = options.coreTools ?? true;
+  if (coreTools) registerApplyPatchResultEvent(pi);
   const renderOptions = (config: CodexConversionConfig) => ({
     customRendering: config.ui.toolRenaming,
   });
@@ -54,6 +62,7 @@ export function registerCodexTools(
       ...renderOptions(config),
     });
   const registerCore = (config: CodexConversionConfig) => {
+    if (!coreTools) return;
     registerApplyPatch(config);
     registerExecCommandTool(pi, runtime.tracker, runtime.sessions, {
       ...renderOptions(config),
@@ -64,8 +73,8 @@ export function registerCodexTools(
   };
   const ensureOptionalTools = (config = runtime.state.config) => {
     if (config.voiceFeaturesOnly) {
-      if (config.tools.applyPatchOnly) registerApplyPatch(config);
-      if (config.tools.viewImageOnly) registerViewImage(config);
+      if (coreTools && config.tools.applyPatchOnly) registerApplyPatch(config);
+      if (coreTools && config.tools.viewImageOnly) registerViewImage(config);
     }
     const allowConfiguredProvider = (model: Model<Api> | undefined): boolean =>
       isExplicitlyConfiguredToolProvider(model, config);

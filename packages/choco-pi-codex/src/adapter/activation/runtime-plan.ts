@@ -1,9 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import {
-  supportsNativeImageGeneration,
-  supportsNativeWebSearch,
-  supportsViewImageInputs,
-} from "../tool-support.ts";
+import { supportsViewImageInputs } from "@choco-pi/code-mode/tool-support";
+import { supportsNativeImageGeneration, supportsNativeWebSearch } from "../tool-support.ts";
 import {
   canonicalCodexAliasModelKey,
   type CodexLikeModelDescriptor,

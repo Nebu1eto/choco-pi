@@ -129,7 +129,9 @@ export const RETIRED_PROFILE_FILES: readonly string[] = ["extensions/context-cap
 
 /**
  * Bundled packages Pi loads, in load order, named relative to the checkout root. Order is
- * load-bearing: `choco-pi-web-search` must precede `choco-pi-web-access`.
+ * load-bearing: `choco-pi-web-search` must precede `choco-pi-web-access`, and
+ * `choco-pi-codex` must precede `choco-pi-code-mode` so Codex owns Code Mode and
+ * attaches its ports (the standalone extension then stands down).
  * `choco-pi-acp` is absent because Pi never loads it. A test fails until a new
  * bundled Pi package joins this list.
  */
@@ -148,6 +150,7 @@ export const DEFAULT_PROFILE_PACKAGES: readonly string[] = [
   "./packages/choco-pi-lsp",
   "./packages/choco-pi-compaction",
   "./packages/choco-pi-codex",
+  "./packages/choco-pi-code-mode",
   "./packages/choco-pi-agents-md",
   "./packages/choco-pi-agent-browser",
   "./packages/choco-pi-computer-use",

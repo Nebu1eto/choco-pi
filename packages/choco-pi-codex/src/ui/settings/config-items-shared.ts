@@ -1,4 +1,4 @@
-import { conditionalProperties } from "../../adapter/runtime-values.ts";
+import { conditionalProperties } from "@choco-pi/code-mode/runtime-values";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
   Container,

@@ -1,5 +1,5 @@
-import { conditionalProperties } from "../runtime-values.ts";
-import type { BoundaryValue } from "../runtime-values.ts";
+import { conditionalProperties } from "@choco-pi/code-mode/runtime-values";
+import type { BoundaryValue } from "@choco-pi/code-mode/runtime-values";
 import { getCurrentTools, type Api, type Model, type Tool } from "@earendil-works/pi-ai";
 import {
   buildSessionContext,

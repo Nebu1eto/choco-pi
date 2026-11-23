@@ -1,4 +1,4 @@
-import { memoizedImport } from "../../memoized-import.ts";
+import { memoizedImport } from "@choco-pi/code-mode/memoized-import";
 import { createHash } from "node:crypto";
 import type { AcquiredWebSocket, ProviderEnv, SessionWebSocketCacheEntry } from "./types.ts";
 import { clearCanonicalSessions } from "./session-continuity.ts";

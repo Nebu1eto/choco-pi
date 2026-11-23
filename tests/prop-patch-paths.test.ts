@@ -5,20 +5,20 @@ import path from "node:path";
 import test from "node:test";
 import fc from "fast-check";
 
-import { parsePatchActions } from "../packages/choco-pi-codex/src/patch/parser.ts";
+import { parsePatchActions } from "../packages/choco-pi-code-mode/src/patch/parser.ts";
 import {
   normalizePatchPath,
   resolvePatchPath,
-} from "../packages/choco-pi-codex/src/patch/paths.ts";
+} from "../packages/choco-pi-code-mode/src/patch/paths.ts";
 import {
   DiffError,
   ExecutePatchError,
   type ParsedPatchAction,
-} from "../packages/choco-pi-codex/src/patch/types.ts";
-import { getBundledApplyPatchBinaryPath } from "../packages/choco-pi-codex/src/tools/apply-patch/binary.ts";
-import { enrichApplyPatchContextFailure } from "../packages/choco-pi-codex/src/tools/apply-patch/context-preflight.ts";
-import { touchedPatchPaths } from "../packages/choco-pi-codex/src/tools/apply-patch/execute.ts";
-import { executePatchWithRust } from "../packages/choco-pi-codex/src/tools/apply-patch/executor.ts";
+} from "../packages/choco-pi-code-mode/src/patch/types.ts";
+import { getBundledApplyPatchBinaryPath } from "../packages/choco-pi-code-mode/src/tools/apply-patch/binary.ts";
+import { enrichApplyPatchContextFailure } from "../packages/choco-pi-code-mode/src/tools/apply-patch/context-preflight.ts";
+import { touchedPatchPaths } from "../packages/choco-pi-code-mode/src/tools/apply-patch/execute.ts";
+import { executePatchWithRust } from "../packages/choco-pi-code-mode/src/tools/apply-patch/executor.ts";
 
 // Fixed seed and run count keep the suite deterministic; fast-check prints the
 // seed, path, and shrunk counterexample when a property fails.

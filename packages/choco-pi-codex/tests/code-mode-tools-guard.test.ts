@@ -7,12 +7,12 @@ import {
   codeModeExecutionKindForPermissions,
   scopeCodeModeToolsToSessionPermissions,
   type SessionToolSource,
-} from "../src/adapter/code-mode/session-tool-permissions.ts";
+} from "@choco-pi/code-mode/adapter/code-mode/session-tool-permissions";
 import { buildCodexSystemPrompt } from "../src/prompt/build-system-prompt.ts";
-import { buildCodeModeToolsPrompt } from "../src/tools/code-mode/custom-tool-prompt.ts";
-import { scopeAllToolsToDeferredCustom } from "../src/tools/code-mode/tool-source.ts";
-import { unavailableToolsGuardPreamble } from "../src/tools/code-mode/tools-namespace.ts";
-import type { ProgrammaticCodeModeToolDefinition } from "../src/tools/code-mode/types.ts";
+import { buildCodeModeToolsPrompt } from "@choco-pi/code-mode/tools/code-mode/custom-tool-prompt";
+import { scopeAllToolsToDeferredCustom } from "@choco-pi/code-mode/tools/code-mode/tool-source";
+import { unavailableToolsGuardPreamble } from "@choco-pi/code-mode/tools/code-mode/tools-namespace";
+import type { ProgrammaticCodeModeToolDefinition } from "@choco-pi/code-mode/tools/code-mode/types";
 
 const CODE_MODE_TOOL_NAMES = [
   "apply_patch",
