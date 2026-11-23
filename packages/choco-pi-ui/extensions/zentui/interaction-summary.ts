@@ -1,10 +1,10 @@
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import type { ColorSource, ColorSpec } from "./config";
-import { formatCount, formatElapsedDuration } from "./format";
-import { isSafeSgrStylePrefix } from "./style";
-import { renderWorkingLineHigh } from "./working-line";
+import type { ColorSource, ColorSpec } from "./config.ts";
+import { formatCount, formatElapsedDuration } from "./format.ts";
+import { isSafeSgrStylePrefix } from "./style.ts";
+import { renderWorkingLineHigh } from "./working-line.ts";
 import {
   type BoundaryRecord,
   type BoundaryValue,
@@ -12,7 +12,7 @@ import {
   isNumber,
   isObjectValue,
   isString,
-} from "./runtime-values";
+} from "./runtime-values.ts";
 
 export const TURN_SUMMARY_ENTRY_TYPE = "zentui-turn-summary";
 const TURN_SUMMARY_VERSION = 3;

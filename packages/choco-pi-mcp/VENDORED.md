@@ -334,3 +334,9 @@ Standalone mode is the `choco-pi` launcher's env contract (`CHOCO_PI_STANDALONE=
 ## 2026-11-20 choco-pi patch: Pi SDK range ~1.6.0
 
 Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`), so later 1.6 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
+
+## 2026-11-23 choco-pi patch: remove unused legacy MCP dependencies and deduplicate Figma helpers
+
+- `package.json`: removed the unused `dependencies` block left over from the retired `pi-mcp-adapter` fork (`@modelcontextprotocol/client`, `@modelcontextprotocol/core`, `@modelcontextprotocol/ext-apps`, `@napi-rs/keyring`, `@standard-schema/spec`, `cross-spawn`, `open`, `recheck`, `smol-toml`, `strip-json-comments`) and the unused `@types/cross-spawn` devDependency. Peer and remaining devDependencies (`@earendil-works/pi-*`, `typebox`, `@types/node`, `tsx`, `typescript`) are unchanged.
+- `figma/src/figma-implementation.ts` and `figma/src/figma-component-hints.ts`: exported `flatten` and `toPascalCase` from `figma-implementation.ts` and removed the identical duplicate definitions from `figma-component-hints.ts`.
+- `figma/src/figma-client.ts` and `figma/src/figma-cache.ts`: inlined the module-level `figmaCache` (`createTtlCache<unknown>({ defaultTtlMs: 5 * 60 * 1000, maxEntries: 100 })`) into `figma-client.ts` (its sole importer) and deleted `figma-cache.ts`.

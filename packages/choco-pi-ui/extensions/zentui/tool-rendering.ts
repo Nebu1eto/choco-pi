@@ -13,8 +13,8 @@ import {
   isNumber,
   isString,
   parseBoundaryValue,
-} from "./runtime-values";
-import { DEFAULT_TOOL_LABELS, resolveFinishedToolLabel, resolveToolLabel } from "./tool-labels";
+} from "./runtime-values.ts";
+import { DEFAULT_TOOL_LABELS, resolveFinishedToolLabel, resolveToolLabel } from "./tool-labels.ts";
 
 type RenderContextLike = {
   isPartial?: boolean | undefined;

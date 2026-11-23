@@ -1,10 +1,10 @@
 import { stripVTControlCharacters } from "node:util";
-import type { ExtensionStatusColorMode, ExtensionStatusPlacement, ZentuiConfig } from "./config";
+import type { ExtensionStatusColorMode, ExtensionStatusPlacement, ZentuiConfig } from "./config.ts";
 import {
   getExtensionStatusColorMode,
   getExtensionStatusPlacement,
   isExtensionStatusPlacement,
-} from "./config";
+} from "./config.ts";
 
 export type ExtensionStatusSegment = {
   key: string;

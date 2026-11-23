@@ -7,7 +7,7 @@ import {
   isBoundaryValue,
   isString,
   parseBoundaryValue,
-} from "./runtime-values";
+} from "./runtime-values.ts";
 
 const execFileAsync = promisify(execFile);
 const GIT_COMMAND_TIMEOUT_MS = 2_000;

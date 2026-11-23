@@ -1,0 +1,17 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+interface LazyRuntime {
+  default(pi: ExtensionAPI): void | Promise<void>;
+}
+
+/** Defer loading an extension runtime until Pi activates it; load once and reuse. */
+export function createLazyExtension(
+  load: () => Promise<LazyRuntime>,
+): (pi: ExtensionAPI) => Promise<void> {
+  let runtimePromise: Promise<LazyRuntime> | undefined;
+  return async (pi) => {
+    runtimePromise ??= load();
+    const runtime = await runtimePromise;
+    await runtime.default(pi);
+  };
+}

@@ -322,3 +322,7 @@ Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`),
 ## 2026-11-20 choco-pi patch: readonly render types in the @aliou runtime deps
 
 Pi 1.6.0 types `Component.render()` as `readonly string[]`. The runtime deps `@aliou/pi-utils-settings@0.15.1` and `@aliou/pi-utils-ui@0.4.1` ship TypeScript sources that this package's typecheck compiles, and four of their `render()` methods return a child component's result under a mutable `string[]` signature: `SectionedSettings` and `SettingsDetailEditor` (settings), `DataTable` and `ToolCallHeader` (ui). None of them mutates that array, so behavior is unchanged; only the declared return type is wrong. The latest releases (settings 0.24.2, ui 0.6.0) still return a child result from a `string[]` signature. The root `pnpm-workspace.yaml` `patchedDependencies` applies `patches/@aliou__pi-utils-settings@0.15.1.patch` and `patches/@aliou__pi-utils-ui@0.4.1.patch`, which change only those four signatures to `readonly string[]`. Drop each patch once an upstream release declares the readonly return and this package moves to it.
+
+## 2026-11-21 choco-pi patch: shared lazy extension entry
+
+The `command-quotas`, `quota-warnings` and `usage-status` extension entries each repeated the same lazy `import("./runtime.ts")` proxy. They now call `createLazyExtension` from `extensions/_shared/lazy-extension.ts`, which loads the runtime once on first activation and forwards `pi` to its default export. Behavior is unchanged.

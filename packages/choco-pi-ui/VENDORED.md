@@ -530,3 +530,7 @@ Tool arguments and tool result text are snake_case (user decision; no aliases). 
 Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`), so later 1.6 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
 
 - 2026-11-20: Zentui treats Pi editor, Markdown, settings, and selector render rows as readonly. Decorations that write rows continue to use their own arrays.
+
+## 2026-11-23 choco-pi patch: explicit `.ts` relative imports
+
+All relative TypeScript `import` and `export` specifiers across `extensions/zentui/*.ts` (120 specifiers in 27 files) now include explicit `.ts` extensions to comply with Node-erasable TypeScript source rules. Semantics are unchanged.

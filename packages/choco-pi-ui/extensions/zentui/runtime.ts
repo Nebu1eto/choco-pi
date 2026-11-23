@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { isString } from "./runtime-values";
+import { isString } from "./runtime-values.ts";
 
 const execFileAsync = promisify(execFile);
 const VERSION_TIMEOUT_MS = 2500;

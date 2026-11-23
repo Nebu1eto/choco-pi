@@ -1,4 +1,4 @@
-import { type BoundaryValue, isCallable, isString } from "./runtime-values";
+import { type BoundaryValue, isCallable, isString } from "./runtime-values.ts";
 export type EditorComponentFactory = (...args: never[]) => BoundaryValue;
 
 export type EditorTransferUi<Factory = EditorComponentFactory> = {

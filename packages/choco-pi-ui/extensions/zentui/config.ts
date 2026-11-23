@@ -23,10 +23,10 @@ import {
   normalizeIconMode,
   type ResolvedIcons,
   resolveConfiguredIcons,
-} from "./icons";
-import { isSupportedColorSpec } from "./style";
-import { normalizeWorkingLineMessages } from "./working-line";
-import { PI_WORKING_LINE_MESSAGES } from "./working-line-messages";
+} from "./icons.ts";
+import { isSupportedColorSpec } from "./style.ts";
+import { normalizeWorkingLineMessages } from "./working-line.ts";
+import { PI_WORKING_LINE_MESSAGES } from "./working-line-messages.ts";
 import {
   type BoundaryRecord,
   type BoundaryValue,
@@ -36,11 +36,11 @@ import {
   isObjectValue,
   isString,
   parseBoundaryValue,
-} from "./runtime-values";
+} from "./runtime-values.ts";
 
 export type ColorSpec = string;
 export type ColorSource = "theme" | "terminal";
-export type { IconMode } from "./icons";
+export type { IconMode } from "./icons.ts";
 
 export type ContextStyle = "text" | "gauge" | "text+gauge";
 export type SeparatorStyle = "pipe" | "dot" | "chevron" | "none";

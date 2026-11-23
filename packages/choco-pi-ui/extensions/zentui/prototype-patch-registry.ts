@@ -3,7 +3,7 @@ import {
   type BoundaryValue,
   invokeWithReceiver,
   isCallable,
-} from "./runtime-values";
+} from "./runtime-values.ts";
 export const ZENTUI_PROTOTYPE_PATCH_REGISTRY = Symbol.for("pi-zentui.prototype-patch-registry");
 
 type PrototypePatchAdapter =

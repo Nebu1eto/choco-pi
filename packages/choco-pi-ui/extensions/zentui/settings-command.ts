@@ -51,23 +51,23 @@ import {
   type WorkingLineComponentPatch,
   type WorkingLineSpinner,
   type WorkingLineTextAnimation,
-} from "./config";
-import { sanitizeExtensionStatusText } from "./extension-status";
-import { inSubagentChildLoad } from "./child-load";
-import { isIconMode } from "./icons";
-import type { SessionLifecycle } from "./session-lifecycle";
+} from "./config.ts";
+import { sanitizeExtensionStatusText } from "./extension-status.ts";
+import { inSubagentChildLoad } from "./child-load.ts";
+import { isIconMode } from "./icons.ts";
+import type { SessionLifecycle } from "./session-lifecycle.ts";
 import {
   renderEditorSettingsPreview,
   renderUserMessageSettingsPreview,
   SETTINGS_PREVIEW_MAX_WIDTH,
-} from "./settings-previews";
-import { EDITOR_BORDER_STYLE, renderChromeBorder, safeThemeFg } from "./style";
+} from "./settings-previews.ts";
+import { EDITOR_BORDER_STYLE, renderChromeBorder, safeThemeFg } from "./style.ts";
 import {
   buildWorkingLinePreviewFrames,
   normalizeWorkingLineMessages,
   remapWorkingLineTextTick,
   type WorkingLineFrames,
-} from "./working-line";
+} from "./working-line.ts";
 
 const colorSourceValues: ColorSource[] = ["theme", "terminal"];
 const extensionStatusPlacementValues: ExtensionStatusPlacement[] = [

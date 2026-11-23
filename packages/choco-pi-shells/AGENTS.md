@@ -1,6 +1,6 @@
 # choco-pi-shells — working rules
 
-First-party package. There is no upstream, so there is no `VENDORED.md`.
+First-party package. `VENDORED.md` records its package notes and divergences; update it with each such change.
 
 ## Process-singleton ownership
 

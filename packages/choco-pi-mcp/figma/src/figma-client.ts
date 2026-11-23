@@ -2,9 +2,9 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { readAuthToken } from "../common/auth.ts";
+import { createTtlCache } from "../common/cache.ts";
 import { createHttpClient, type HttpClient } from "../common/http-client.ts";
 import { createRateLimiter, type RateLimiter } from "../common/rate-limiter.ts";
-import { figmaCache } from "./figma-cache.ts";
 import {
   collectAssetCandidates,
   manifestEntryFromFile,
@@ -94,6 +94,10 @@ export interface ComponentHintsOptions extends FigmaImplementationContextOptions
 }
 
 const DEFAULT_ASSET_TYPES = ["svgIcons", "nodeRenders", "imageFills"] as const;
+const figmaCache = createTtlCache<unknown>({
+  defaultTtlMs: 5 * 60 * 1000,
+  maxEntries: 100,
+});
 
 export class FigmaClient {
   private readonly http: HttpClient;

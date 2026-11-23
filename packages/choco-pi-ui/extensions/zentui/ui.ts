@@ -16,22 +16,22 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import { padsBottom, padsTop, type EditorStyle, type ZentuiConfig } from "./config";
-import { renderEditorMetadataFormat } from "./editor-metadata-format";
+import { padsBottom, padsTop, type EditorStyle, type ZentuiConfig } from "./config.ts";
+import { renderEditorMetadataFormat } from "./editor-metadata-format.ts";
 import {
   EditorSelection,
   type SelectionClipboard,
   type TextOrigin,
   type TextPosition,
-} from "./editor-selection";
-import { readFocusedAgentRuntime, selectFocusScopedUsage } from "./focused-runtime";
-import { MouseReportTailFilter } from "./mouse-report-tail";
+} from "./editor-selection.ts";
+import { readFocusedAgentRuntime, selectFocusScopedUsage } from "./focused-runtime.ts";
+import { MouseReportTailFilter } from "./mouse-report-tail.ts";
 import {
   type MinimalistEditorMetadata,
   minimalistFrameGeometry,
   renderMinimalistFrame,
-} from "./minimalist-editor";
-import { formatProviderLabel } from "./model-display";
+} from "./minimalist-editor.ts";
+import { formatProviderLabel } from "./model-display.ts";
 import {
   type BoundaryValue,
   invokeWithReceiver,
@@ -39,13 +39,13 @@ import {
   isCallable,
   isNumber,
   isString,
-} from "./runtime-values";
+} from "./runtime-values.ts";
 import {
   EDITOR_ACCENT_FALLBACK,
   EDITOR_BORDER_FALLBACK,
   renderStyleForSourceOrFallback,
   safeThemeFg,
-} from "./style";
+} from "./style.ts";
 
 const LEGACY_SPLIT_POLISHED_FRAME = Symbol.for("pi-zentui.polished-frame");
 /** How long a failed copy stays on screen, as long as Pi keeps its own copy errors. */

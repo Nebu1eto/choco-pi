@@ -1,5 +1,7 @@
 import {
   buildFrameworkHints,
+  flatten,
+  toPascalCase,
   type FigmaFramework,
   type FigmaStyling,
 } from "./figma-implementation.ts";
@@ -102,25 +104,4 @@ function hasRole(summary: FigmaNodeSummary, role: string): boolean {
   return flatten(summary).some(
     (node) => node.roleGuess === role || String(node.name).toLowerCase().includes(role),
   );
-}
-
-function flatten(summary: FigmaNodeSummary): FigmaNodeSummary[] {
-  const out: FigmaNodeSummary[] = [];
-  function visit(node: FigmaNodeSummary): void {
-    out.push(node);
-    for (const child of node.children ?? []) visit(child);
-  }
-  visit(summary);
-  return out;
-}
-
-function toPascalCase(value: string): string {
-  const result = value
-    .replace(/[^a-z0-9]+/gi, " ")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((part) => part[0]?.toUpperCase() + part.slice(1))
-    .join("");
-  return /^[A-Z]/.test(result) ? result : `Figma${result || "Component"}`;
 }

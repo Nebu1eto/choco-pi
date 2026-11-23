@@ -1,4 +1,4 @@
-import { type BoundaryValue, isString } from "./runtime-values";
+import { type BoundaryValue, isString } from "./runtime-values.ts";
 /**
  * Icon mode defaults and resolvers.
  *

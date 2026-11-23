@@ -1,6 +1,6 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { CompactFooterMaxLines } from "./config";
-import type { CompactBoundaryKind } from "./footer-format";
+import type { CompactFooterMaxLines } from "./config.ts";
+import type { CompactBoundaryKind } from "./footer-format.ts";
 
 export type FooterZones = {
   left: string;

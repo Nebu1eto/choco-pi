@@ -1,18 +1,18 @@
 import { basename, isAbsolute, relative, sep } from "node:path";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { ZentuiConfig } from "./config";
-import { sanitizeEditorMetadataText } from "./editor-metadata-format";
-import { isString } from "./runtime-values";
+import type { ZentuiConfig } from "./config.ts";
+import { sanitizeEditorMetadataText } from "./editor-metadata-format.ts";
+import { isString } from "./runtime-values.ts";
 import {
   buildContextGauge,
   contextColorTier,
   formatCount,
   formatCwdLabel,
   formatElapsedDuration,
-} from "./format";
+} from "./format.ts";
 
-export { formatElapsedDuration } from "./format";
+export { formatElapsedDuration } from "./format.ts";
 
 import {
   EDITOR_ACCENT_FALLBACK,
@@ -20,7 +20,7 @@ import {
   renderStyleForSource,
   renderStyleForSourceOrFallback,
   safeThemeFg,
-} from "./style";
+} from "./style.ts";
 
 export type MinimalistEditorMetadata = {
   cwd: string;

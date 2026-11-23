@@ -1,6 +1,6 @@
 import type { ThemeColor } from "@earendil-works/pi-coding-agent";
-import type { ColorSource, ColorSpec } from "./config";
-import { type BoundaryValue, isString } from "./runtime-values";
+import type { ColorSource, ColorSpec } from "./config.ts";
+import { type BoundaryValue, isString } from "./runtime-values.ts";
 
 type ThemeLike = {
   fg(color: string, text: string): string;

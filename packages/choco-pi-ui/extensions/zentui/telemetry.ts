@@ -1,5 +1,5 @@
 import { type ExtensionContext, SettingsManager } from "@earendil-works/pi-coding-agent";
-import { type BoundaryValue, isBoolean, isCallable } from "./runtime-values";
+import { type BoundaryValue, isBoolean, isCallable } from "./runtime-values.ts";
 
 export type FooterTelemetry = {
   subscription?: boolean;

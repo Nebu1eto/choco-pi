@@ -1,7 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import type { ZentuiConfig } from "./config";
-import { type FormatToken, parseFooterFormat } from "./footer-format";
-import { EDITOR_ACCENT_FALLBACK, renderStyleForSourceOrFallback, safeThemeFg } from "./style";
+import type { ZentuiConfig } from "./config.ts";
+import { type FormatToken, parseFooterFormat } from "./footer-format.ts";
+import { EDITOR_ACCENT_FALLBACK, renderStyleForSourceOrFallback, safeThemeFg } from "./style.ts";
 
 export type EditorMetadataValues = {
   model: string;

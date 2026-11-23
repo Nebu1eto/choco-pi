@@ -43,50 +43,50 @@ import {
   type UserMessagesComponentConfig,
   type WorkingLineComponentPatch,
   type ZentuiConfig,
-} from "./config";
+} from "./config.ts";
 import {
   type EditorTransferFailureReason,
   replaceEditorComponentWithExpandedText,
-} from "./editor-transfer";
-import { installFooter, installHiddenFooter } from "./footer";
-import { collectFooterFormatReferences, parseFooterFormat } from "./footer-format";
+} from "./editor-transfer.ts";
+import { installFooter, installHiddenFooter } from "./footer.ts";
+import { collectFooterFormatReferences, parseFooterFormat } from "./footer-format.ts";
 import {
   buildSessionDurationLabel,
   formatTimeLabel,
   invalidateUsageTotalsCache,
 } from "./format.ts";
-import { emptyGitStatus, readGitStatus } from "./git";
+import { emptyGitStatus, readGitStatus } from "./git.ts";
 import {
   InteractionMetricsTracker,
   renderTurnSummaryEntry,
   TURN_SUMMARY_ENTRY_TYPE,
-} from "./interaction-summary";
+} from "./interaction-summary.ts";
 import { LiveContextController } from "./live-context.ts";
-import { readPackageVersionResult } from "./package-version";
+import { readPackageVersionResult } from "./package-version.ts";
 import {
   createProjectRefreshScheduler,
   type ProjectRefreshRun,
   type ScheduleProjectRefreshOptions,
   type StopProjectRefreshInterval,
   startProjectRefreshInterval,
-} from "./project-refresh";
-import { applyProjectRefreshToState } from "./project-state";
-import { readRuntimeInfo } from "./runtime";
-import { installSelectorBorderStyle, removeSelectorBorderStyle } from "./selector-border";
-import { SessionLifecycle } from "./session-lifecycle";
+} from "./project-refresh.ts";
+import { applyProjectRefreshToState } from "./project-state.ts";
+import { readRuntimeInfo } from "./runtime.ts";
+import { installSelectorBorderStyle, removeSelectorBorderStyle } from "./selector-border.ts";
+import { SessionLifecycle } from "./session-lifecycle.ts";
 import { createSessionTimerTick } from "./session-timer.ts";
-import { registerZentuiPreferencesProvider } from "./settings-command";
-import { createInitialState, type FooterState, modelLabelFor, syncState } from "./state";
-import { resolveFooterTelemetry } from "./telemetry";
-import { installToolRendering } from "./tool-rendering";
-import { PolishedEditor, selectionClipboard, WrappedPolishedEditor } from "./ui";
-import { installUserMessageStyle, removeUserMessageStyle } from "./user-message";
-import { type BoundaryValue, isBoundaryValue, isCallable, isSymbol } from "./runtime-values";
+import { registerZentuiPreferencesProvider } from "./settings-command.ts";
+import { createInitialState, type FooterState, modelLabelFor, syncState } from "./state.ts";
+import { resolveFooterTelemetry } from "./telemetry.ts";
+import { installToolRendering } from "./tool-rendering.ts";
+import { PolishedEditor, selectionClipboard, WrappedPolishedEditor } from "./ui.ts";
+import { installUserMessageStyle, removeUserMessageStyle } from "./user-message.ts";
+import { type BoundaryValue, isBoundaryValue, isCallable, isSymbol } from "./runtime-values.ts";
 import {
   AgentDurationClock,
   snapshotWorkingLineHighStyle,
   WorkingLineController,
-} from "./working-line";
+} from "./working-line.ts";
 
 const ZENTUI_EDITOR_FACTORY = Symbol.for("pi-zentui.editor-factory");
 const ZENTUI_EDITOR_BASE_FACTORY = Symbol.for("pi-zentui.editor-base-factory");

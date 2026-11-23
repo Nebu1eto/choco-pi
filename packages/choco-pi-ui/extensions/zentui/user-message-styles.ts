@@ -5,13 +5,13 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import { padsBottom, padsTop, type ZentuiConfig } from "./config";
+import { padsBottom, padsTop, type ZentuiConfig } from "./config.ts";
 import {
   EDITOR_ACCENT_FALLBACK,
   EDITOR_BORDER_FALLBACK,
   renderStyleForSourceOrFallbackStrict,
-} from "./style";
-import { sanitizeUserMessageSourceText } from "./user-message-osc";
+} from "./style.ts";
+import { sanitizeUserMessageSourceText } from "./user-message-osc.ts";
 
 export type UserMessageStyleRenderInput = {
   text: string;

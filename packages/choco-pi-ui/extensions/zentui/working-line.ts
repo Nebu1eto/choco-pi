@@ -6,20 +6,20 @@ import type {
   WorkingLineComponentConfig,
   WorkingLineTextAnimation,
   ZentuiConfig,
-} from "./config";
-import { formatCount } from "./format";
+} from "./config.ts";
+import { formatCount } from "./format.ts";
 import {
   isSafeSgrStylePrefix,
   isSupportedColorSpec,
   renderStyleForSourceOrFallback,
   type ThemeLike,
-} from "./style";
-import { PI_WORKING_LINE_MESSAGES } from "./working-line-messages";
-import { WORKING_LINE_SPINNERS } from "./working-line-spinners";
-import { resolveToolLabel } from "./tool-labels";
-import { type BoundaryValue, isBoolean, isCallable, isString } from "./runtime-values";
+} from "./style.ts";
+import { PI_WORKING_LINE_MESSAGES } from "./working-line-messages.ts";
+import { WORKING_LINE_SPINNERS } from "./working-line-spinners.ts";
+import { resolveToolLabel } from "./tool-labels.ts";
+import { type BoundaryValue, isBoolean, isCallable, isString } from "./runtime-values.ts";
 
-export { WORKING_LINE_SPINNERS } from "./working-line-spinners";
+export { WORKING_LINE_SPINNERS } from "./working-line-spinners.ts";
 
 export const BUILT_IN_WORKING_LINE_MESSAGES = PI_WORKING_LINE_MESSAGES;
 export const WORKING_LINE_FALLBACK_MESSAGE = "Working…";

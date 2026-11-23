@@ -1,17 +1,3 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createLazyExtension } from "../_shared/lazy-extension.ts";
 
-interface UsageStatusRuntime {
-  default(pi: ExtensionAPI): Promise<void>;
-}
-
-let runtimePromise: Promise<UsageStatusRuntime> | undefined;
-
-function loadRuntime(): Promise<UsageStatusRuntime> {
-  runtimePromise ??= import("./runtime.ts");
-  return runtimePromise;
-}
-
-export default async function (pi: ExtensionAPI): Promise<void> {
-  const runtime = await loadRuntime();
-  await runtime.default(pi);
-}
+export default createLazyExtension(() => import("./runtime.ts"));

@@ -32,7 +32,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type BoundaryValue, isBoundaryRecord, isString } from "./runtime-values";
+import { type BoundaryValue, isBoundaryRecord, isString } from "./runtime-values.ts";
 
 export type PackageVersionResult = {
   /** Starship ecosystem key — matches `runtimeMetadata[].name` where it exists. */

@@ -3,10 +3,10 @@ import {
   SettingsSelectorComponent,
   type Theme,
 } from "@earendil-works/pi-coding-agent";
-import type { ZentuiConfig } from "./config";
-import { installPrototypePatch, removePrototypePatch } from "./prototype-patch-registry";
-import { EDITOR_BORDER_STYLE, renderChromeBorder, renderEditorBorder } from "./style";
-import { type BoundaryValue, invokeWithReceiver, isNumber, isString } from "./runtime-values";
+import type { ZentuiConfig } from "./config.ts";
+import { installPrototypePatch, removePrototypePatch } from "./prototype-patch-registry.ts";
+import { EDITOR_BORDER_STYLE, renderChromeBorder, renderEditorBorder } from "./style.ts";
+import { type BoundaryValue, invokeWithReceiver, isNumber, isString } from "./runtime-values.ts";
 
 type PatchableSelectorPrototype = {
   render: (width: number) => readonly string[];

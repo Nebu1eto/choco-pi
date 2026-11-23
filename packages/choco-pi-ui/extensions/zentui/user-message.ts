@@ -1,13 +1,13 @@
 import { type Theme, UserMessageComponent } from "@earendil-works/pi-coding-agent";
 import { wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import type { ZentuiConfig } from "./config";
-import { installPrototypePatch, removePrototypePatch } from "./prototype-patch-registry";
+import type { ZentuiConfig } from "./config.ts";
+import { installPrototypePatch, removePrototypePatch } from "./prototype-patch-registry.ts";
 import {
   sanitizeRenderedUserMessageLines,
   sanitizeRenderedUserMessageText,
   sanitizeUserMessageSourceText,
-} from "./user-message-osc";
-import { renderUserMessageStyle, userMessageStyleCacheKey } from "./user-message-styles";
+} from "./user-message-osc.ts";
+import { renderUserMessageStyle, userMessageStyleCacheKey } from "./user-message-styles.ts";
 import {
   type BoundaryRecord,
   type BoundaryValue,
@@ -16,7 +16,7 @@ import {
   isNumber,
   isObjectValue,
   isString,
-} from "./runtime-values";
+} from "./runtime-values.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";

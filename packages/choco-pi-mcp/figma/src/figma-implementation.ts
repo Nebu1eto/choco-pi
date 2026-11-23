@@ -257,7 +257,7 @@ function snippetFor(
   return `export function ${componentName}() {\n  return <section className="${className}">${escapeSnippet(text)}</section>;\n}`;
 }
 
-function flatten(summary: FigmaNodeSummary): FigmaNodeSummary[] {
+export function flatten(summary: FigmaNodeSummary): FigmaNodeSummary[] {
   const out: FigmaNodeSummary[] = [];
   function visit(node: FigmaNodeSummary): void {
     out.push(node);
@@ -375,7 +375,7 @@ function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)];
 }
 
-function toPascalCase(value: string): string {
+export function toPascalCase(value: string): string {
   const result = value
     .replace(/[^a-z0-9]+/gi, " ")
     .trim()

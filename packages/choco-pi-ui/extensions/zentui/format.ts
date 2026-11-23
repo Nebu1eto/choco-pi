@@ -8,14 +8,14 @@ import type {
   ContextThresholds,
   GitBranchMaxLength,
   PathDisplayMode,
-} from "./config";
-import type { GitCommitInfo, GitMetricsInfo } from "./git";
-import type { IconMode } from "./icons";
-import { resolveOsIcon, resolvePackageIcon, resolveRuntimeSymbol } from "./icons";
-import type { PackageVersionResult } from "./package-version";
-import type { RuntimeInfo } from "./runtime";
-import { renderStyleForSource } from "./style";
-import { type BoundaryValue, isCallable, isNumber, isObjectValue } from "./runtime-values";
+} from "./config.ts";
+import type { GitCommitInfo, GitMetricsInfo } from "./git.ts";
+import type { IconMode } from "./icons.ts";
+import { resolveOsIcon, resolvePackageIcon, resolveRuntimeSymbol } from "./icons.ts";
+import type { PackageVersionResult } from "./package-version.ts";
+import type { RuntimeInfo } from "./runtime.ts";
+import { renderStyleForSource } from "./style.ts";
+import { type BoundaryValue, isCallable, isNumber, isObjectValue } from "./runtime-values.ts";
 
 /**
  * Starship `git_commit` style — render a short hash, optionally with an
@@ -135,7 +135,7 @@ export function formatElapsedDuration(durationMs: number): string {
   return `${seconds}s`;
 }
 
-export { formatProviderLabel } from "./model-display";
+export { formatProviderLabel } from "./model-display.ts";
 
 function calculateCacheHitRate(
   input: number,
