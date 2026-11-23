@@ -551,20 +551,28 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
 
   const lspRoot = path.join(checkoutRoot, "packages", "choco-pi-lsp");
   try {
+    const rootManifest: unknown = JSON.parse(
+      await readText(path.join(checkoutRoot, "package.json")),
+    );
+    const expectedVersion =
+      isRecord(rootManifest) && isString(rootManifest.version) ? rootManifest.version : undefined;
     const manifest: unknown = JSON.parse(await readText(path.join(lspRoot, "package.json")));
     const version = isRecord(manifest) && isString(manifest.version) ? manifest.version : undefined;
+    const versionMatches = expectedVersion !== undefined && version === expectedVersion;
     const grammarPresent = await exists(
       path.join(lspRoot, "grammars", "tree-sitter-typescript.wasm"),
     );
     const astGrepPresent = await exists(path.join(lspRoot, "node_modules", "@ast-grep", "napi"));
-    const valid = version === "0.1.0" && grammarPresent && astGrepPresent;
+    const valid = versionMatches && grammarPresent && astGrepPresent;
     add(
       "choco-pi-lsp",
       valid ? "pass" : "fail",
       valid
         ? `choco-pi-lsp ${version}; semantic tools available`
         : [
-            version === "0.1.0" ? null : `expected version 0.1.0, found ${version ?? "unknown"}`,
+            versionMatches
+              ? null
+              : `expected checkout version ${expectedVersion ?? "unknown"}, found ${version ?? "unknown"}`,
             grammarPresent ? null : "tree-sitter-typescript.wasm is missing",
             astGrepPresent ? null : "@ast-grep/napi is missing",
           ]

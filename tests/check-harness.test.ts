@@ -326,6 +326,32 @@ test("full check preserves every capability failure", async () => {
   }
 });
 
+test("choco-pi-lsp readiness requires the checkout's lockstep version", async () => {
+  for (const [lspVersion, expected] of [
+    ["1.0.0-alpha.1", "pass"],
+    ["0.1.0", "fail"],
+  ] as const) {
+    const manifests = new Map<string, string>([
+      [path.join("/fixture", "package.json"), JSON.stringify({ version: "1.0.0-alpha.1" })],
+      [
+        path.join("/fixture", "packages", "choco-pi-lsp", "package.json"),
+        JSON.stringify({ version: lspVersion }),
+      ],
+    ]);
+    const { options } = fixture({ mode: "full" });
+    const fallbackRead = options.readText;
+    const report = await checkHarness({
+      ...options,
+      readText: async (target: string) => manifests.get(target) ?? fallbackRead(target),
+    });
+    const check = report.checks.find((entry) => entry.id === "choco-pi-lsp");
+    assert.equal(check?.status, expected, lspVersion);
+    if (expected === "fail") {
+      assert.equal(check?.detail, "expected checkout version 1.0.0-alpha.1, found 0.1.0");
+    }
+  }
+});
+
 test("subagent readiness accepts only supported fallback roles", async () => {
   for (const [fallbackSubagent, expected] of [
     ["general", "pass"],
