@@ -536,6 +536,7 @@ test(
         [{ initialSection: "userMessages" }, "appearance"],
         [{ initialSection: "codex", initialFocusId: "editConfig" }, "tools"],
         [{ initialSection: "model", initialFocusId: "piModel" }, "model"],
+        [{ initialSection: "appearance", initialFocusId: "diffPaneDefault" }, "appearance"],
         [{ initialSection: "advanced" }, "advanced"],
       ] as const) {
         const panel = openPanel(module, config, sections, initial);
@@ -553,6 +554,15 @@ test(
         assert.match(cursorRow(focused), /^Edit config/);
       } finally {
         focused.dispose();
+      }
+      const diffFocused = openPanel(module, config, sections, {
+        initialSection: "appearance",
+        initialFocusId: "diffPaneDefault",
+      });
+      try {
+        assert.match(cursorRow(diffFocused), /^Diff panel/);
+      } finally {
+        diffFocused.dispose();
       }
     });
   },

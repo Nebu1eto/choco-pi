@@ -35,6 +35,12 @@ export const DAYBREAK_DEFAULT_KEY = "daybreakDefault";
 export type DaybreakPreference = boolean | "auto";
 export const DEFAULT_DAYBREAK = false;
 
+/** Default startup/auto-open status for the /diff panel. */
+export const DIFF_PANE_DEFAULT_KEY = "diffPaneDefault";
+export type DiffPaneDefault = "on" | "off" | "auto";
+export const DIFF_PANE_DEFAULT_VALUES: readonly DiffPaneDefault[] = ["on", "off", "auto"];
+export const DEFAULT_DIFF_PANE_DEFAULT: DiffPaneDefault = "auto";
+
 /** Soft context window applied to large-window models; see lib/context-policy.ts. */
 export const CONTEXT_SOFT_CAP_KEY = "contextSoftCap";
 /** Token count past which the context cap requests compaction. */
@@ -147,6 +153,8 @@ export interface AgentPreferences {
   /** Always set by the readers; optional so partial fallbacks stay valid. */
   daybreak?: DaybreakPreference;
   /** Always set by the readers; optional so partial fallbacks stay valid. */
+  diffPaneDefault?: DiffPaneDefault;
+  /** Always set by the readers; optional so partial fallbacks stay valid. */
   contextSoftCap?: ContextSoftCap;
   /** Always set by the readers; optional so partial fallbacks stay valid. */
   autoCompactionPoint?: AutoCompactionPoint;
@@ -161,6 +169,7 @@ export interface AgentPreferences {
 export interface ResolvedAgentPreferences extends AgentPreferences {
   onUsageLimit: OnUsageLimit;
   daybreak: DaybreakPreference;
+  diffPaneDefault: DiffPaneDefault;
   contextSoftCap: ContextSoftCap;
   autoCompactionPoint: AutoCompactionPoint;
 }
@@ -169,6 +178,7 @@ interface AgentPreferenceValues {
   agentPersona: string;
   agentOnUsageLimit: OnUsageLimit;
   daybreakDefault: DaybreakPreference;
+  diffPaneDefault: DiffPaneDefault;
   contextSoftCap: ContextSoftCap;
   autoCompactionPoint: AutoCompactionPoint;
   agentLanguage: string;
@@ -300,6 +310,8 @@ function preferencesFromSettings(settings: JsonRecord): ResolvedAgentPreferences
     persona: parsePersona(settings[AGENT_PERSONA_KEY]) ?? DEFAULT_PERSONA,
     onUsageLimit: parseOnUsageLimit(settings[AGENT_ON_USAGE_LIMIT_KEY]) ?? DEFAULT_ON_USAGE_LIMIT,
     daybreak: parseDaybreakPreference(settings[DAYBREAK_DEFAULT_KEY]) ?? DEFAULT_DAYBREAK,
+    diffPaneDefault:
+      parseDiffPaneDefault(settings[DIFF_PANE_DEFAULT_KEY]) ?? DEFAULT_DIFF_PANE_DEFAULT,
     contextSoftCap: parseContextSoftCap(settings[CONTEXT_SOFT_CAP_KEY]) ?? DEFAULT_CONTEXT_SOFT_CAP,
     autoCompactionPoint:
       parseAutoCompactionPoint(settings[AUTO_COMPACTION_POINT_KEY]) ??
@@ -330,6 +342,20 @@ function preferencesFromSettings(settings: JsonRecord): ResolvedAgentPreferences
 
 export function parseDaybreakPreference(value: RuntimeValue): DaybreakPreference | undefined {
   return isBoolean(value) || value === "auto" ? value : undefined;
+}
+
+export function parseDiffPaneDefault(value: RuntimeValue): DiffPaneDefault | undefined {
+  if (!isString(value)) return undefined;
+  switch (value.trim().toLowerCase()) {
+    case "on":
+      return "on";
+    case "off":
+      return "off";
+    case "auto":
+      return "auto";
+    default:
+      return undefined;
+  }
 }
 
 export function readAgentPreferences(agentDir: string = getAgentDir()): ResolvedAgentPreferences {

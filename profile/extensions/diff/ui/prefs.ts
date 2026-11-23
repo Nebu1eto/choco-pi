@@ -1,6 +1,7 @@
 /**
- * Pane preferences: whether the pane was open, its width, and whether it may
- * open by itself when the agent changes code (`autoOpen`, on by default).
+ * Pane UI state: its remembered width. Whether the pane opens on startup or
+ * automatically on session changes is governed by the `diffPaneDefault` user
+ * preference (`on` | `off` | `auto`) in `<agentDir>/settings.json`.
  *
  * Stored as `<agentDir>/choco-pi/diff-pane.json`. The file is user state in
  * the agent directory, not a tracked `profile/extensions/*.json` sidecar, so the
@@ -8,13 +9,12 @@
  * or validate is ignored and rewritten with the defaults. Writes are debounced
  * and atomic (temporary file, then rename).
  *
- * `autoOpen` is optional and written only when off, so a file from before it
- * existed still loads (as on), and an unknown key or a non-boolean `autoOpen`
- * falls back to the default instead of discarding the open state and width.
+ * Legacy keys (`open`, `autoOpen`) and unknown keys are accepted so files from
+ * earlier versions keep their saved width without being rewritten as corrupt.
  */
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { bool, compile, int, obj, type Static } from "@earendil-works/pi-schema";
+import { bool, compile, int, obj, opt, type Static } from "@earendil-works/pi-schema";
 import type { RuntimeValue } from "../../lib/runtime-values.ts";
 import type { DiffClock } from "../../lib/changes/git/clock.ts";
 import { DEFAULT_PANE_WIDTH } from "../host/geometry.ts";
@@ -22,20 +22,18 @@ import { DEFAULT_PANE_WIDTH } from "../host/geometry.ts";
 const PanePrefsSchema = obj(
   {
     version: int({ minimum: 1, maximum: 1 }),
-    open: bool(),
     width: int({ minimum: 1, maximum: 10_000 }),
+    open: opt(bool()),
   },
   { open: true },
 );
 const isPanePrefsFile = compile(PanePrefsSchema).check;
 
-export type PanePrefsFile = Static<typeof PanePrefsSchema> & { autoOpen?: boolean };
-export type PanePrefs = { open: boolean; width: number; autoOpen: boolean };
+export type PanePrefsFile = Static<typeof PanePrefsSchema>;
+export type PanePrefs = { width: number };
 
 export const DEFAULT_PANE_PREFS: PanePrefs = {
-  open: false,
   width: DEFAULT_PANE_WIDTH,
-  autoOpen: true,
 };
 export const PREFS_DEBOUNCE_MS = 200;
 
@@ -81,14 +79,11 @@ export function parsePrefs(text: string): PanePrefs | undefined {
     return undefined;
   }
   if (!isPanePrefsFile(value)) return undefined;
-  // Only an explicit false turns automatic opening off.
-  const autoOpen = !("autoOpen" in value && value.autoOpen === false);
-  return { open: value.open, width: value.width, autoOpen };
+  return { width: value.width };
 }
 
 export function serializePrefs(prefs: PanePrefs): string {
-  const file: PanePrefsFile = { version: 1, open: prefs.open, width: Math.floor(prefs.width) };
-  if (!prefs.autoOpen) file.autoOpen = false;
+  const file: PanePrefsFile = { version: 1, width: Math.floor(prefs.width) };
   return `${JSON.stringify(file)}\n`;
 }
 

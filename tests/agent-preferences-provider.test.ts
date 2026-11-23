@@ -102,6 +102,7 @@ test(
         "promptSuggestion",
         "contextSoftCap",
         "autoCompactionPoint",
+        "diffPaneDefault",
       ],
     );
     assert.equal(items[0].currentValue, "Match user");
@@ -145,6 +146,10 @@ test(
     for (const tokens of ["200,000", "300,000", "450,000", "600,000"]) {
       assert.ok(items[9].description?.includes(tokens), `point description states ${tokens}`);
     }
+    assert.equal(items[10].label, "Diff panel");
+    assert.equal(items[10].currentValue, "auto");
+    assert.deepEqual(items[10].values, ["on", "off", "auto"]);
+    assert.ok(items[10].description?.includes("/diff"));
 
     assert.deepEqual(section.handleChange("agentLanguage", "Korean"), { kind: "update" });
     assert.deepEqual(section.handleChange("agentStyle", "concise"), { kind: "update" });
@@ -153,6 +158,8 @@ test(
     assert.deepEqual(section.handleChange("daybreakDefault", "on"), { kind: "update" });
     assert.deepEqual(section.handleChange("contextSoftCap", "strict"), { kind: "update" });
     assert.deepEqual(section.handleChange("autoCompactionPoint", "unlimited"), { kind: "update" });
+    assert.deepEqual(section.handleChange("diffPaneDefault", "on"), { kind: "update" });
+    assert.deepEqual(section.handleChange("diffPaneDefault", "bogus"), { kind: "update" });
     assert.deepEqual(section.handleChange("contextSoftCap", "bogus"), { kind: "update" });
     assert.deepEqual(section.handleChange("sessionAutoNameModel", "openai/gpt-5.6-luna"), {
       kind: "update",
@@ -173,6 +180,7 @@ test(
     assert.equal(settings.daybreakDefault, true);
     assert.equal(settings.contextSoftCap, "strict", "an invalid value is not persisted");
     assert.equal(settings.autoCompactionPoint, "unlimited");
+    assert.equal(settings.diffPaneDefault, "on", "an invalid diff panel default is not persisted");
     assert.equal(settings.sessionAutoName, false);
     assert.equal(settings.sessionAutoNameModel, "openai/gpt-5.6-luna");
     assert.ok(
@@ -270,18 +278,37 @@ test(
       section: "agent",
       focusId: "agentOnUsageLimit",
     });
+    assert.deepEqual(resolveAgentPreferencesArgs("diff", ctx), {
+      open: true,
+      section: "appearance",
+      focusId: "diffPaneDefault",
+    });
 
     assert.deepEqual(resolveAgentPreferencesArgs("language Japanese", ctx), { open: false });
     assert.deepEqual(resolveAgentPreferencesArgs("style concise", ctx), { open: false });
     assert.deepEqual(resolveAgentPreferencesArgs("persona pessimistic", ctx), { open: false });
     assert.deepEqual(resolveAgentPreferencesArgs("usage-limit fallback", ctx), { open: false });
+    assert.deepEqual(resolveAgentPreferencesArgs("diff off", ctx), { open: false });
     await settleWrites();
     const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
     assert.equal(settings.agentLanguage, "Japanese");
     assert.equal(settings.agentStyle, "concise");
     assert.equal(settings.agentPersona, "pessimistic");
     assert.equal(settings.agentOnUsageLimit, "fallback");
-    assert.deepEqual(notices.at(-1), ["On usage limit: fallback", "info"]);
+    assert.equal(settings.diffPaneDefault, "off");
+    assert.deepEqual(notices.at(-1), [
+      "Diff panel default: off (manual only; /diff opens it)",
+      "info",
+    ]);
+
+    assert.deepEqual(resolveAgentPreferencesArgs("diff bogus", ctx), { open: false });
+    await settleWrites();
+    const diffUnchanged = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
+    assert.equal(diffUnchanged.diffPaneDefault, "off");
+    assert.deepEqual(notices.at(-1), [
+      'Diff panel default "bogus" is not one of on, off, auto.',
+      "warning",
+    ]);
 
     assert.deepEqual(resolveAgentPreferencesArgs("usage-limit bogus", ctx), { open: false });
     await settleWrites();
@@ -354,6 +381,19 @@ test("usage-limit completions offer the command and filter its values", () => {
   ]);
   assert.deepEqual(agentPreferencesCompletions("usage-limit f"), [
     { value: "usage-limit fallback", label: "usage-limit fallback" },
+  ]);
+});
+
+test("diff completions offer the command and filter its values", () => {
+  assert.deepEqual(agentPreferencesCompletions("di"), [{ value: "diff ", label: "diff" }]);
+  assert.deepEqual(agentPreferencesCompletions("diff "), [
+    { value: "diff on", label: "diff on" },
+    { value: "diff off", label: "diff off" },
+    { value: "diff auto", label: "diff auto" },
+  ]);
+  assert.deepEqual(agentPreferencesCompletions("diff o"), [
+    { value: "diff on", label: "diff on" },
+    { value: "diff off", label: "diff off" },
   ]);
 });
 

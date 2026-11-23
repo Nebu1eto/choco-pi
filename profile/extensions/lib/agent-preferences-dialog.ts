@@ -14,6 +14,8 @@ import {
   DAYBREAK_DEFAULT_KEY,
   DEFAULT_SESSION_AUTO_NAME_MODEL,
   DEFAULT_STYLE,
+  DIFF_PANE_DEFAULT_KEY,
+  DIFF_PANE_DEFAULT_VALUES,
   ON_USAGE_LIMIT_VALUES,
   PROMPT_SUGGESTION_KEY,
   SESSION_AUTO_NAME_KEY,
@@ -23,12 +25,14 @@ import {
   discoverAgentStyles,
   parseAutoCompactionPoint,
   parseContextSoftCap,
+  parseDiffPaneDefault,
   parseOnUsageLimit,
   parsePersona,
   readAgentPreferences,
   resolveAgentStyle,
   writeAgentPreference,
   writeAgentPreferenceIfChanged,
+  type DiffPaneDefault,
   type AutoCompactionPoint,
   type ContextSoftCap,
   type DaybreakPreference,
@@ -212,6 +216,32 @@ async function writeDaybreakDefault(
   );
 }
 
+function diffPaneDefaultMessage(value: DiffPaneDefault): string {
+  switch (value) {
+    case "on":
+      return "Diff panel default: on (opens on startup; /diff closes it)";
+    case "off":
+      return "Diff panel default: off (manual only; /diff opens it)";
+    case "auto":
+      return "Diff panel default: auto (opens only when the session has changes)";
+  }
+}
+
+async function writeDiffPaneDefault(
+  ctx: ExtensionCommandContext,
+  value: DiffPaneDefault,
+): Promise<void> {
+  await writeAndNotify(
+    ctx,
+    async () => {
+      await writeAgentPreferenceIfChanged(DIFF_PANE_DEFAULT_KEY, value);
+    },
+    diffPaneDefaultMessage(value),
+    (error) =>
+      `Could not update the diff panel default: ${error instanceof Error ? error.message : String(error)}`,
+  );
+}
+
 async function writeSessionAutoNameModel(
   ctx: ExtensionCommandContext,
   model: string,
@@ -294,6 +324,11 @@ function handleAgentPreferenceChange(
   if (id === DAYBREAK_DEFAULT_KEY) {
     const daybreak = parseDaybreakValue(newValue);
     if (daybreak !== undefined) void writeDaybreakDefault(ctx, daybreak);
+    return { kind: "update" };
+  }
+  if (id === DIFF_PANE_DEFAULT_KEY) {
+    const status = parseDiffPaneDefault(newValue);
+    if (status !== undefined) void writeDiffPaneDefault(ctx, status);
     return { kind: "update" };
   }
   if (id === CONTEXT_SOFT_CAP_KEY) {
@@ -442,6 +477,14 @@ export function buildAgentPreferencesSection(
           currentValue: preferences.autoCompactionPoint,
           values: [...CONTEXT_PRESET_VALUES],
         },
+        {
+          id: DIFF_PANE_DEFAULT_KEY,
+          label: "Diff panel",
+          description:
+            "Default status for the /diff panel: on opens it on startup (/diff closes it), off keeps it closed until opened manually with /diff, auto (default) opens it only when the session has changes.",
+          currentValue: preferences.diffPaneDefault,
+          values: [...DIFF_PANE_DEFAULT_VALUES],
+        },
       );
       return items;
     },
@@ -571,6 +614,22 @@ export function resolveAgentPreferencesArgs(
     void writeDaybreakDefault(ctx, daybreak);
     return { open: false };
   }
+  if (command === "diff") {
+    if (rest.length === 0) {
+      return { open: true, section: "appearance", focusId: DIFF_PANE_DEFAULT_KEY };
+    }
+    const value = rest.join(" ");
+    const status = parseDiffPaneDefault(value);
+    if (status === undefined) {
+      ctx.ui.notify(
+        `Diff panel default "${value}" is not one of ${DIFF_PANE_DEFAULT_VALUES.join(", ")}.`,
+        "warning",
+      );
+      return { open: false };
+    }
+    void writeDiffPaneDefault(ctx, status);
+    return { open: false };
+  }
   return undefined;
 }
 
@@ -603,7 +662,22 @@ export function agentPreferencesCompletions(prefix: string): { value: string; la
       label: `daybreak ${value}`,
     })).filter((item) => item.value.startsWith(`daybreak ${valuePrefix}`));
   }
-  const candidates = ["agent", "language ", "style ", "persona ", "usage-limit ", "daybreak "];
+  if (/^diff\s/i.test(normalized)) {
+    const valuePrefix = normalized.replace(/^diff\s+/i, "");
+    return DIFF_PANE_DEFAULT_VALUES.map((value) => ({
+      value: `diff ${value}`,
+      label: `diff ${value}`,
+    })).filter((item) => item.value.startsWith(`diff ${valuePrefix}`));
+  }
+  const candidates = [
+    "agent",
+    "language ",
+    "style ",
+    "persona ",
+    "usage-limit ",
+    "daybreak ",
+    "diff ",
+  ];
   return candidates.flatMap((candidate) =>
     candidate.startsWith(normalized.toLowerCase())
       ? [{ value: candidate, label: candidate.trimEnd() }]

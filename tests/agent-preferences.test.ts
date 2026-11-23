@@ -10,9 +10,12 @@ import {
   CONTEXT_SOFT_CAP_KEY,
   DEFAULT_AUTO_COMPACTION_POINT,
   DEFAULT_CONTEXT_SOFT_CAP,
+  DEFAULT_DIFF_PANE_DEFAULT,
   DEFAULT_ON_USAGE_LIMIT,
   DEFAULT_PERSONA,
   DEFAULT_STYLE,
+  DIFF_PANE_DEFAULT_KEY,
+  DIFF_PANE_DEFAULT_VALUES,
   AGENT_PREFERENCES_MARKER,
   AGENT_PREFERENCES_MARKER_END,
   ON_USAGE_LIMIT_VALUES,
@@ -26,6 +29,7 @@ import {
   parseAgentStyleDocument,
   parseAutoCompactionPoint,
   parseContextSoftCap,
+  parseDiffPaneDefault,
   parsePersona,
   personaDirectiveFromPrompt,
   readAgentPreferences,
@@ -137,6 +141,7 @@ test(
       persona: DEFAULT_PERSONA,
       onUsageLimit: DEFAULT_ON_USAGE_LIMIT,
       daybreak: false,
+      diffPaneDefault: DEFAULT_DIFF_PANE_DEFAULT,
       contextSoftCap: "permissive",
       autoCompactionPoint: "standard",
     };
@@ -190,6 +195,30 @@ test(
     const fallback = await readAgentPreferencesAsync(agent);
     assert.equal(fallback.contextSoftCap, "permissive");
     assert.equal(fallback.autoCompactionPoint, "standard");
+  }),
+);
+
+test(
+  "diffPaneDefault defaults to auto, round-trips every value, and rejects invalid values",
+  withTempDirs(async ({ agent }) => {
+    assert.equal(DEFAULT_DIFF_PANE_DEFAULT, "auto");
+    assert.deepEqual(DIFF_PANE_DEFAULT_VALUES, ["on", "off", "auto"]);
+    assert.equal((await readAgentPreferencesAsync(agent)).diffPaneDefault, "auto");
+
+    for (const value of DIFF_PANE_DEFAULT_VALUES) {
+      await writeAgentPreference(DIFF_PANE_DEFAULT_KEY, value, agent);
+      assert.equal(readAgentPreferences(agent).diffPaneDefault, value);
+      assert.equal((await readAgentPreferencesAsync(agent)).diffPaneDefault, value);
+    }
+
+    assert.equal(parseDiffPaneDefault(" On "), "on");
+    assert.equal(parseDiffPaneDefault("OFF"), "off");
+    assert.equal(parseDiffPaneDefault("Auto"), "auto");
+    for (const invalid of ["", "always", true, false, 1, null, undefined]) {
+      assert.equal(parseDiffPaneDefault(invalid), undefined);
+    }
+    writeFileSync(path.join(agent, "settings.json"), JSON.stringify({ diffPaneDefault: "always" }));
+    assert.equal((await readAgentPreferencesAsync(agent)).diffPaneDefault, "auto");
   }),
 );
 

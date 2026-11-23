@@ -151,6 +151,7 @@ test("the import allowlist covers every Pi 1.6.0 setting and adds only choco-pi 
     "compactionXai",
     "contextSoftCap",
     "daybreakDefault",
+    "diffPaneDefault",
     FUZZY_FILE_MENTIONS_SETTING,
     "promptSuggestion",
     "sessionAutoName",

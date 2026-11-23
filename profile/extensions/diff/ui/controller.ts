@@ -5,19 +5,22 @@
  * The pane shows the session source (changes since the session's first file
  * checkpoint) whenever it opens without an explicit source; `/diff source …`
  * applies until the pane closes. Nothing runs before the user first opens the
- * pane, a saved preference says it was open, or a possibly file-changing tool
- * call ends: no store, no git, no timers, no TUI probe. Sessions without the
- * interactive terminal UI get the command (as an inline list) but never a host
- * and never open anything by themselves.
+ * pane, the `diffPaneDefault` preference asks for startup opening (`on`) or
+ * auto-opening on a resumed checkpointed session (`auto`), or a possibly
+ * file-changing tool call ends under `auto`: no store, no git, no timers, no
+ * TUI probe. Sessions without the interactive terminal UI get the command (as
+ * an inline list) but never a host and never open anything by themselves.
  *
- * Automatic opening: after a tool call that is not known to be read-only, or a
- * subagent's completion, the session source is read; when it lists a change
- * and the pane is closed, the pane docks beside the transcript without taking
- * focus. It never falls back to an overlay or the inline list; when docking is
- * impossible it leaves one hint per session. Closing the pane (any way) stops
- * it for the rest of the session until the user opens the pane again; a new
- * session starts armed. `/diff auto off` (`autoOpen` in the preferences)
- * turns it off.
+ * Default status (`diffPaneDefault` in `/preferences`):
+ * - `on`: opens when a TUI session starts; closing with `/diff` closes it for
+ *   the current session without changing the preference.
+ * - `off`: never opens by itself; `/diff` still opens and closes it manually.
+ * - `auto` (default): opens only when the session has changes — after a tool
+ *   call that is not known to be read-only, a subagent completion, or resuming
+ *   a session with an existing checkpoint baseline. Never falls back to an
+ *   overlay or inline list; leaves one hint per session when docking fails.
+ *   Closing the pane stops automatic opening for the rest of the session until
+ *   the user opens it again.
  */
 import type {
   ExtensionAPI,
@@ -53,6 +56,7 @@ import {
   type FindingsSummary,
 } from "../../lib/changes/findings.ts";
 import { isStaleContextError } from "../../lib/lifecycle.ts";
+import { DEFAULT_DIFF_PANE_DEFAULT, type DiffPaneDefault } from "../../lib/agent-preferences.ts";
 import {
   editorRendersMarkdown,
   markdownFailure,
@@ -184,6 +188,12 @@ export type DiffPaneDependencies = {
   notesIo?: PrefsIo;
   /** Puts text on the system clipboard; omitted means the pane cannot copy. */
   copyText?(text: string): Promise<void>;
+  /** Default startup/auto-open status (`on` | `off` | `auto`); omitted defaults to `auto`. */
+  readDefaultStatus?(): Promise<DiffPaneDefault>;
+  /** Persists a default-status change made through `/diff auto on | off`. */
+  writeDefaultStatus?(status: DiffPaneDefault): Promise<void>;
+  /** Subscribes to live default-status changes (for example from `/preferences`). */
+  onDefaultStatusChange?(listener: (status: DiffPaneDefault) => void): () => void;
   /**
    * The environment Pi was started with; `process.env` when absent. Under the
    * choco-pi ACP adapter's marker the editor renders notifications as Markdown,
@@ -222,10 +232,14 @@ type Session = {
   turnOnly?: number;
   /** Bumped by every source change; a late default-base answer for an older request is dropped. */
   sourceGeneration: number;
-  /** The `autoOpen` preference, or the user's `/diff auto` choice in this session. */
-  autoOpen: boolean;
-  /** The user chose `/diff auto` in this session; a late preference load must not override it. */
-  autoChosen: boolean;
+  /** The `diffPaneDefault` preference (`on` | `off` | `auto`), updated live from `/preferences` or `/diff auto`. */
+  defaultStatus: DiffPaneDefault;
+  /** The user changed the default status in this session; a late startup load must not override it. */
+  defaultStatusChosen: boolean;
+  /** Pending startup preference load, awaited by automatic opening so a slow load cannot be raced. */
+  prefsPending?: Promise<void>;
+  /** Unsubscribes this session from live default-status changes. */
+  unsubscribeDefaultStatus?: () => void;
   /** False after the pane was closed in this session, until the user opens it again. */
   autoArmed: boolean;
   /** The one hint that the pane could not open by itself was shown. */
@@ -272,7 +286,7 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
 
   function sessionFor(ctx: ExtensionContext): Session {
     if (current?.alive) return current;
-    current = {
+    const session: Session = {
       ctx,
       alive: true,
       userActed: false,
@@ -281,22 +295,50 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
       commentsGeneration: 0,
       source: SESSION_SOURCE,
       sourceGeneration: 0,
-      autoOpen: DEFAULT_PANE_PREFS.autoOpen,
-      autoChosen: false,
+      defaultStatus: DEFAULT_DIFF_PANE_DEFAULT,
+      defaultStatusChosen: false,
       autoArmed: true,
       autoHinted: false,
       autoFailed: false,
       autoCheck: "idle",
     };
+    if (deps.onDefaultStatusChange) {
+      session.unsubscribeDefaultStatus = deps.onDefaultStatusChange((status) => {
+        if (!session.alive || current !== session) return;
+        session.defaultStatus = status;
+        session.defaultStatusChosen = true;
+        if (status === "auto") session.autoArmed = true;
+      });
+    }
+    current = session;
     return current;
   }
 
   function persist(session: Session): void {
     prefs().save({
-      open: session.host !== undefined,
       width: session.width,
-      autoOpen: session.autoOpen,
     });
+  }
+
+  async function readDefaultStatusSafe(): Promise<DiffPaneDefault> {
+    const read = deps.readDefaultStatus;
+    if (!read) return DEFAULT_DIFF_PANE_DEFAULT;
+    try {
+      return await read();
+    } catch {
+      return DEFAULT_DIFF_PANE_DEFAULT;
+    }
+  }
+
+  function sessionHasBaseline(session: Session): boolean {
+    try {
+      if (deps.sessionBaseline) {
+        return deps.sessionBaseline(session.ctx).kind === "checkpoint";
+      }
+      return (deps.listTurns?.(session.ctx).length ?? 0) > 0;
+    } catch {
+      return false;
+    }
   }
 
   function ensureStore(session: Session): DiffStore {
@@ -1191,7 +1233,6 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
     if (!options.keepSource && !session.host) resetToSessionSource(session);
     const result = openPane(session, { announce: true, overlay: true });
     if (result.opened) {
-      persist(session);
       return true;
     }
     await showInline(session, session.ctx.mode === "tui" ? result.reason : undefined);
@@ -1200,8 +1241,8 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
 
   function userClose(session: Session): void {
     session.userActed = true;
+    session.autoArmed = false;
     closePane(session);
-    persist(session);
   }
 
   async function toggle(session: Session): Promise<void> {
@@ -1235,7 +1276,7 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
       session.alive &&
       current === session &&
       session.ctx.mode === "tui" &&
-      session.autoOpen &&
+      session.defaultStatus === "auto" &&
       session.autoArmed &&
       !session.autoFailed &&
       session.host === undefined
@@ -1257,6 +1298,10 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
    * while a read runs into one more read.
    */
   async function maybeAutoOpen(session: Session): Promise<void> {
+    if (session.prefsPending) {
+      await session.prefsPending;
+      if (!session.alive || current !== session) return;
+    }
     if (!autoEligible(session)) return;
     if (session.autoCheck !== "idle") {
       session.autoCheck = "again";
@@ -1378,17 +1423,33 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
     if (previous?.alive) shutdown(previous);
     const session = sessionFor(ctx);
     if (ctx.mode !== "tui") return;
-    const saved = await prefs().load();
-    if (!session.alive) return;
-    if (!session.autoChosen) session.autoOpen = saved.autoOpen;
-    if (session.userActed) return;
-    session.width = saved.width;
-    if (saved.open) openPane(session, { announce: false, overlay: true });
+    const load = Promise.all([prefs().load(), readDefaultStatusSafe()]).then(
+      ([saved, defaultStatus]) => {
+        if (!session.alive || current !== session) return;
+        if (!session.defaultStatusChosen) session.defaultStatus = defaultStatus;
+        if (!session.userActed) session.width = saved.width;
+      },
+    );
+    session.prefsPending = load;
+    try {
+      await load;
+    } finally {
+      if (session.prefsPending === load) session.prefsPending = undefined;
+    }
+    if (!session.alive || current !== session) return;
+    if (session.userActed || session.host) return;
+    if (session.defaultStatus === "on") {
+      openPane(session, { announce: false, overlay: true });
+    } else if (session.defaultStatus === "auto" && sessionHasBaseline(session)) {
+      autoOpenInBackground();
+    }
   });
 
   function shutdown(session: Session): void {
     session.alive = false;
     if (current === session) current = undefined;
+    session.unsubscribeDefaultStatus?.();
+    session.unsubscribeDefaultStatus = undefined;
     session.escapeArmedUntil = undefined;
     session.removeInputListener?.();
     session.removeInputListener = undefined;
@@ -1506,15 +1567,31 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
           return;
         case "auto":
           if (command.enabled !== undefined) {
-            session.autoOpen = command.enabled;
-            session.autoChosen = true;
-            persist(session);
+            const next: DiffPaneDefault = command.enabled ? "auto" : "off";
+            session.defaultStatus = next;
+            session.defaultStatusChosen = true;
+            if (next === "auto") session.autoArmed = true;
+            if (deps.writeDefaultStatus) {
+              try {
+                await deps.writeDefaultStatus(next);
+              } catch (error) {
+                reportFailure(
+                  session,
+                  `Could not save the diff panel default: ${errorText(error)}`,
+                  error,
+                );
+                return;
+              }
+              if (!session.alive) return;
+            }
           }
           say(
             session,
-            session.autoOpen
-              ? "The diff pane opens by itself when the agent changes code (/diff auto off stops it)."
-              : "The diff pane does not open by itself (/diff auto on turns it back on).",
+            session.defaultStatus === "on"
+              ? "The diff pane opens on startup (/diff auto off stops it, or change it in /preferences)."
+              : session.defaultStatus === "auto"
+                ? "The diff pane opens by itself when the session has changes (/diff auto off stops it)."
+                : "The diff pane does not open by itself (/diff auto on turns it back on).",
           );
           return;
         case "notes":

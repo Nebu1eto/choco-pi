@@ -1,6 +1,7 @@
 import {
   AGENT_ON_USAGE_LIMIT_KEY,
   DAYBREAK_DEFAULT_KEY,
+  DIFF_PANE_DEFAULT_KEY,
   PROMPT_SUGGESTION_KEY,
   SESSION_AUTO_NAME_KEY,
   SESSION_AUTO_NAME_MODEL_KEY,
@@ -142,6 +143,7 @@ export const PREFERENCES_LAYOUT: readonly PreferencesLayoutTab[] = [
         label: "Codex display",
         rows: ["toolRenaming", "compactTools", "codeModeDetails", "steeringDeliveryStatus"],
       },
+      { label: "Panels", rows: [DIFF_PANE_DEFAULT_KEY] },
     ],
   },
   {

@@ -1,5 +1,8 @@
 // The /diff pane always opens on the session source, opens by itself when the agent changes code, and refreshes.
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 import type {
   ExtensionAPI,
@@ -25,7 +28,11 @@ import type {
 } from "../profile/extensions/lib/changes/git/model.ts";
 import type { TurnTreeProvider } from "../profile/extensions/lib/changes/types.ts";
 import { DIFF_SUBCOMMANDS, parseDiffCommand } from "../profile/extensions/diff/ui/command.ts";
-import { registerDiffPane, TOGGLE_SHORTCUT } from "../profile/extensions/diff/ui/controller.ts";
+import {
+  registerDiffPane,
+  TOGGLE_SHORTCUT,
+  type DiffPaneDependencies,
+} from "../profile/extensions/diff/ui/controller.ts";
 import { plainPaneStyler } from "../profile/extensions/diff/ui/format.ts";
 import {
   NATIVE_DIFF_ENV,
@@ -39,6 +46,15 @@ import {
   serializePrefs,
   type PrefsIo,
 } from "../profile/extensions/diff/ui/prefs.ts";
+import {
+  DIFF_PANE_DEFAULT_KEY,
+  onAgentPreferenceChange,
+  parseDiffPaneDefault,
+  readAgentPreferencesAsync,
+  writeAgentPreferenceIfChanged,
+  type DiffPaneDefault,
+} from "../profile/extensions/lib/agent-preferences.ts";
+import type { SessionBaselineChoice } from "../profile/extensions/lib/changes/types.ts";
 import { FakeClock, FakeTui } from "./diff-actions-fakes.ts";
 
 const PREFS = prefsPath("/agent");
@@ -173,6 +189,11 @@ function setup(
     files?: Map<string, string>;
     root?: RuntimeValue;
     world?: Map<string, string[]>;
+    defaultStatus?: DiffPaneDefault;
+    readDefaultStatus?: () => Promise<DiffPaneDefault>;
+    writeDefaultStatus?: (status: DiffPaneDefault) => Promise<void>;
+    onDefaultStatusChange?: (listener: (status: DiffPaneDefault) => void) => () => void;
+    sessionBaseline?: () => SessionBaselineChoice;
   } = {},
 ) {
   const handlers = new Map<string, Handler[]>();
@@ -223,7 +244,7 @@ function setup(
       files.set(path, contents);
     },
   };
-  const probe = registerDiffPane(reinterpretHostValue<ExtensionAPI>(fakePi), {
+  const deps: DiffPaneDependencies = {
     createStore: (_cwd, checkpoints, source) => {
       const store = new SourceStore(world, checkpoints, source);
       stores.push(store);
@@ -236,7 +257,16 @@ function setup(
     styler: () => plainPaneStyler,
     renderFileBody: () => [],
     listTurns: () => [],
-  });
+  };
+  if (options.readDefaultStatus) deps.readDefaultStatus = options.readDefaultStatus;
+  else if (options.defaultStatus !== undefined) {
+    const status = options.defaultStatus;
+    deps.readDefaultStatus = async () => status;
+  }
+  if (options.writeDefaultStatus) deps.writeDefaultStatus = options.writeDefaultStatus;
+  if (options.onDefaultStatusChange) deps.onDefaultStatusChange = options.onDefaultStatusChange;
+  if (options.sessionBaseline) deps.sessionBaseline = options.sessionBaseline;
+  const probe = registerDiffPane(reinterpretHostValue<ExtensionAPI>(fakePi), deps);
   const fire = async (event: string, payload: RuntimeValue = {}) => {
     for (const handler of handlers.get(event) ?? []) await handler(payload, ctx);
   };
@@ -379,52 +409,169 @@ test("completions offer and the parser accepts the session source and the auto s
 
 /* ------------------------------------------------------------ preferences */
 
-test("preferences: old files load with automatic opening on, odd values fall back, off is kept", () => {
-  assert.deepEqual(parsePrefs('{"version":1,"open":true,"width":70}'), {
-    open: true,
-    width: 70,
-    autoOpen: true,
-  });
+test("preferences: old files keep their saved width, odd values fall back, serialize writes width only", () => {
+  assert.deepEqual(parsePrefs('{"version":1,"open":true,"width":70}'), { width: 70 });
   assert.deepEqual(parsePrefs('{"version":1,"open":false,"width":60,"autoOpen":false}'), {
-    open: false,
     width: 60,
-    autoOpen: false,
   });
   assert.deepEqual(
     parsePrefs('{"version":1,"open":true,"width":60,"autoOpen":"no","later":1}'),
-    { open: true, width: 60, autoOpen: true },
-    "a non-boolean autoOpen or an unknown key keeps open and width",
+    { width: 60 },
+    "legacy or unknown keys keep the saved width",
   );
+  assert.deepEqual(parsePrefs('{"version":1,"width":52}'), { width: 52 });
   assert.equal(parsePrefs('{"version":2,"open":true,"width":60}'), undefined);
-  assert.equal(
-    serializePrefs({ open: true, width: 56, autoOpen: true }).includes("autoOpen"),
-    false,
-  );
-  assert.match(serializePrefs({ open: true, width: 56, autoOpen: false }), /"autoOpen":false/u);
+  assert.equal(serializePrefs({ width: 56 }), '{"version":1,"width":56}\n');
 });
 
-test("/diff auto off stops automatic opening and is saved; /diff auto on restores it", async () => {
+test("/diff auto off stops automatic opening and persists off; /diff auto on restores auto", async () => {
   const world = new Map([["session", ["b.txt"]]]);
-  const h = setup({ world });
+  let saved: DiffPaneDefault = "auto";
+  const readDefaultStatus = async () => saved;
+  const writeDefaultStatus = async (status: DiffPaneDefault) => {
+    saved = status;
+  };
+  const h = setup({ world, readDefaultStatus, writeDefaultStatus });
   await h.fire("session_start", { reason: "startup" });
   await h.run("auto off");
   await h.settle();
-  assert.match(h.files.get(PREFS) ?? "", /"autoOpen":false/u);
+  assert.equal(saved, "off");
   await h.fire("tool_execution_end", { toolName: "edit" });
   await h.settle();
   assert.equal(h.docked(), false, "off: nothing opens");
 
-  const again = setup({ world, files: h.files });
+  const again = setup({ world, files: h.files, readDefaultStatus, writeDefaultStatus });
   await again.fire("session_start", { reason: "startup" });
   await again.fire("tool_execution_end", { toolName: "edit" });
   await again.settle();
   assert.equal(again.docked(), false, "the saved preference applies to the next session");
   await again.run("auto on");
   await again.settle();
-  assert.equal(again.files.get(PREFS)?.includes("autoOpen") ?? false, false);
+  assert.equal(saved, "auto");
   await again.fire("tool_execution_end", { toolName: "edit" });
   await again.settle();
   assert.ok(again.docked());
+});
+
+test("defaultStatus on opens the diff panel on startup, can be closed by /diff, and opens again next session", async () => {
+  const world = new Map<string, string[]>();
+  const h = setup({ world, defaultStatus: "on" });
+  await h.fire("session_start", { reason: "startup" });
+  assert.ok(h.docked(), "opens at startup even before any changes exist");
+  assert.equal(h.tui.paneFocused(), false, "focus stays in the prompt editor");
+
+  await h.run("");
+  assert.equal(h.docked(), false, "/diff closes it");
+  world.set("session", ["b.txt"]);
+  await h.fire("tool_execution_end", { toolName: "edit" });
+  await h.settle();
+  assert.equal(h.docked(), false, "closing keeps it closed for the rest of the session");
+
+  await h.fire("session_shutdown", { reason: "new" });
+  await h.fire("session_start", { reason: "new" });
+  assert.ok(h.docked(), "next session opens again because defaultStatus is on");
+});
+
+test("defaultStatus off never opens automatically, allows manual /diff, and stays closed next session", async () => {
+  const world = new Map([["session", ["b.txt"]]]);
+  const h = setup({
+    world,
+    defaultStatus: "off",
+    sessionBaseline: () => ({ kind: "checkpoint", tree: "c0ffee", label: "turn 1" }),
+  });
+  await h.fire("session_start", { reason: "startup" });
+  await h.settle();
+  assert.equal(h.docked(), false, "does not open on startup even with existing session changes");
+  assert.equal(h.stores.length, 0, "does not read git on startup");
+
+  await h.fire("tool_execution_end", { toolName: "edit" });
+  h.fakePi.events.emit("subagents:completed", { id: "a" });
+  await h.settle();
+  assert.equal(h.docked(), false, "does not open automatically after edits");
+  assert.equal(h.stores.length, 0, "does not read git after edits");
+
+  await h.run("");
+  assert.ok(h.docked(), "can still be opened manually with /diff");
+  await h.fire("session_shutdown", { reason: "new" });
+  await h.fire("session_start", { reason: "new" });
+  await h.settle();
+  assert.equal(h.docked(), false, "manual open does not make the next session auto-open");
+});
+
+test("defaultStatus auto opens on resumed session only when it has changes", async () => {
+  const emptyResumed = setup({
+    world: new Map(),
+    defaultStatus: "auto",
+    sessionBaseline: () => ({ kind: "checkpoint", tree: "c0ffee", label: "turn 1" }),
+  });
+  await emptyResumed.fire("session_start", { reason: "resume" });
+  await emptyResumed.settle();
+  assert.equal(emptyResumed.docked(), false, "resumed session with no changes stays closed");
+
+  const changedResumed = setup({
+    world: new Map([["session", ["resumed.ts"]]]),
+    defaultStatus: "auto",
+    sessionBaseline: () => ({ kind: "checkpoint", tree: "c0ffee", label: "turn 1" }),
+  });
+  await changedResumed.fire("session_start", { reason: "resume" });
+  await changedResumed.settle();
+  assert.ok(changedResumed.docked(), "resumed session with changes opens automatically");
+  assert.equal(changedResumed.tui.paneFocused(), false);
+});
+
+test("a tool event racing a slow startup preference load obeys the loaded off preference", async () => {
+  let resolvePref: (value: DiffPaneDefault) => void = () => {};
+  const h = setup({
+    world: new Map([["session", ["race.ts"]]]),
+    readDefaultStatus: () =>
+      new Promise<DiffPaneDefault>((resolve) => {
+        resolvePref = resolve;
+      }),
+  });
+  const startPromise = h.fire("session_start", { reason: "startup" });
+  await h.fire("tool_execution_end", { toolName: "edit" });
+  resolvePref("off");
+  await startPromise;
+  await h.settle();
+  assert.equal(h.docked(), false, "must not auto-open before off preference finishes loading");
+});
+
+test("live preference updates via settings.json immediately update automatic opening and next startup", async () => {
+  const agentDir = await mkdtemp(path.join(tmpdir(), "diff-pane-pref-"));
+  try {
+    const world = new Map([["session", ["live.ts"]]]);
+    const h = setup({
+      world,
+      readDefaultStatus: async () => (await readAgentPreferencesAsync(agentDir)).diffPaneDefault,
+      writeDefaultStatus: async (status) => {
+        await writeAgentPreferenceIfChanged(DIFF_PANE_DEFAULT_KEY, status, agentDir);
+      },
+      onDefaultStatusChange: (listener) =>
+        onAgentPreferenceChange((change) => {
+          if (change.key !== DIFF_PANE_DEFAULT_KEY) return;
+          const parsed = parseDiffPaneDefault(change.value);
+          if (parsed !== undefined) listener(parsed);
+        }),
+    });
+    await h.fire("session_start", { reason: "startup" });
+    await writeAgentPreferenceIfChanged(DIFF_PANE_DEFAULT_KEY, "off", agentDir);
+    await h.fire("tool_execution_end", { toolName: "edit" });
+    await h.settle();
+    assert.equal(h.docked(), false, "live change to off disables auto-open immediately");
+
+    await writeAgentPreferenceIfChanged(DIFF_PANE_DEFAULT_KEY, "auto", agentDir);
+    await h.fire("tool_execution_end", { toolName: "edit" });
+    await h.settle();
+    assert.ok(h.docked(), "live change to auto re-enables auto-open");
+
+    await h.run("close");
+    await writeAgentPreferenceIfChanged(DIFF_PANE_DEFAULT_KEY, "on", agentDir);
+    await h.fire("session_shutdown", { reason: "new" });
+    await h.fire("session_start", { reason: "new" });
+    assert.ok(h.docked(), "persisted on preference opens on next session_start");
+  } finally {
+    await rm(agentDir, { recursive: true, force: true });
+  }
 });
 
 /* ------------------------------------------------------- automatic opening */

@@ -824,7 +824,7 @@ function closeOpenDialogs(): void {
 }
 
 const PREFERENCES_USAGE =
-  "Usage: /preferences [editor|messages|statusline|viewport-indicators] [enable|disable|toggle], /preferences [messages|user-messages|working-line|statusline|agent], /preferences [language <name>|style <name>|daybreak on|off], or /preferences format <template>";
+  "Usage: /preferences [editor|messages|statusline|viewport-indicators] [enable|disable|toggle], /preferences [messages|user-messages|working-line|statusline|agent], /preferences [language <name>|style <name>|daybreak on|off|auto|diff on|off|auto], or /preferences format <template>";
 
 /**
  * Every row source the Preferences tab hosts on top of the panel's own
@@ -852,6 +852,7 @@ function preferencesSummary(ctx: ExtensionCommandContext): void {
         `Agent style: ${preferences.style ?? `default (${DEFAULT_STYLE})`}`,
         `On usage limit: ${preferences.onUsageLimit}`,
         `Daybreak default: ${preferences.daybreak ? "on" : "off"}`,
+        `Diff panel default: ${preferences.diffPaneDefault}`,
         "Run /preferences in the interactive TUI to change preferences.",
       ].join("\n"),
       "info",

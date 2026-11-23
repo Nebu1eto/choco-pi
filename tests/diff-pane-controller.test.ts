@@ -33,10 +33,12 @@ import {
   FOCUS_SHORTCUT,
   registerDiffPane,
   TOGGLE_SHORTCUT,
+  type DiffPaneDependencies,
 } from "../profile/extensions/diff/ui/controller.ts";
 import { plainPaneStyler } from "../profile/extensions/diff/ui/format.ts";
 import { PaneView } from "../profile/extensions/diff/ui/pane-view.ts";
 import { prefsPath, type PrefsIo } from "../profile/extensions/diff/ui/prefs.ts";
+import type { DiffPaneDefault } from "../profile/extensions/lib/agent-preferences.ts";
 
 /* ------------------------------------------------------------------ fakes */
 
@@ -240,6 +242,10 @@ function harness(
     mode?: ExtensionContext["mode"];
     root?: RuntimeValue;
     files?: Map<string, string>;
+    defaultStatus?: DiffPaneDefault;
+    readDefaultStatus?: () => Promise<DiffPaneDefault>;
+    writeDefaultStatus?: (status: DiffPaneDefault) => Promise<void>;
+    onDefaultStatusChange?: (listener: (status: DiffPaneDefault) => void) => () => void;
   } = {},
 ) {
   const handlers = new Map<string, Handler[]>();
@@ -292,7 +298,7 @@ function harness(
       files.set(path, contents);
     },
   };
-  const probe = registerDiffPane(reinterpretHostValue<ExtensionAPI>(fakePi), {
+  const deps: DiffPaneDependencies = {
     createStore: (cwd) => {
       const store = new FakeStore(cwd);
       stores.push(store);
@@ -307,7 +313,15 @@ function harness(
     },
     styler: () => plainPaneStyler,
     renderFileBody: (diffFile) => diffFile.hunks.map((hunk) => hunk.header),
-  });
+  };
+  if (options.readDefaultStatus) deps.readDefaultStatus = options.readDefaultStatus;
+  else if (options.defaultStatus !== undefined) {
+    const status = options.defaultStatus;
+    deps.readDefaultStatus = async () => status;
+  }
+  if (options.writeDefaultStatus) deps.writeDefaultStatus = options.writeDefaultStatus;
+  if (options.onDefaultStatusChange) deps.onDefaultStatusChange = options.onDefaultStatusChange;
+  const probe = registerDiffPane(reinterpretHostValue<ExtensionAPI>(fakePi), deps);
 
   const fire = async (event: string, payload: RuntimeValue = {}) => {
     for (const handler of handlers.get(event) ?? []) await handler(payload, ctx);
@@ -354,7 +368,7 @@ test("nothing is created before the pane is first opened or a tool may have chan
   assert.equal(h.probe.session()?.host, undefined);
 });
 
-test("/diff opens a docked pane without taking focus and persists the choice", async () => {
+test("/diff opens a docked pane without taking focus and toggles closed without persisting open state", async () => {
   const h = harness();
   await h.fire("session_start", { reason: "startup" });
   await h.run("");
@@ -367,7 +381,7 @@ test("/diff opens a docked pane without taking focus and persists the choice", a
   h.clock.advance(200);
   await Promise.resolve();
   await Promise.resolve();
-  assert.deepEqual(JSON.parse(h.files.get(PREFS) ?? "null"), { version: 1, open: true, width: 56 });
+  assert.equal(h.files.get(PREFS), undefined, "manual open does not overwrite startup preference");
   await h.run("");
   assert.equal(h.viewport.root.children[0], h.viewport.transcript, "toggle closes and restores");
   assert.deepEqual(store.visible, [true, false]);
@@ -454,7 +468,7 @@ test("width is clamped on every change and on terminal resize, and persisted", a
   h.clock.advance(200);
   await Promise.resolve();
   await Promise.resolve();
-  assert.deepEqual(JSON.parse(h.files.get(PREFS) ?? "null"), { version: 1, open: true, width: 28 });
+  assert.deepEqual(JSON.parse(h.files.get(PREFS) ?? "null"), { version: 1, width: 28 });
   await h.run("width 70");
   h.tui.terminal.columns = 90;
   const row = h.viewport.root.children[0];
@@ -466,10 +480,11 @@ test("width is clamped on every change and on terminal resize, and persisted", a
   assert.equal(entriesOf(row)[2]?.basis, 49, "re-clamped after the terminal shrank");
 });
 
-test("session_shutdown disposes everything synchronously and keeps the open preference", async () => {
-  const h = harness();
+test("session_shutdown disposes everything synchronously, flushes width, and respects defaultStatus on restart", async () => {
+  const h = harness({ defaultStatus: "on" });
   await h.fire("session_start", { reason: "startup" });
-  await h.run("open");
+  assert.ok(h.viewport.root.children[0] instanceof HStack, "defaultStatus on opens at startup");
+  await h.run("width 44");
   const store = h.stores[0];
   assert.ok(store);
   const before = h.clock.timers.size;
@@ -484,28 +499,28 @@ test("session_shutdown disposes everything synchronously and keeps the open pref
   assert.equal(h.probe.session(), undefined);
   await Promise.resolve();
   await Promise.resolve();
-  assert.deepEqual(JSON.parse(h.files.get(PREFS) ?? "null"), { version: 1, open: true, width: 56 });
+  assert.deepEqual(JSON.parse(h.files.get(PREFS) ?? "null"), { version: 1, width: 44 });
 
-  const restarted = harness({ files: h.files });
+  const restarted = harness({ files: h.files, defaultStatus: "on" });
   await restarted.fire("session_start", { reason: "startup" });
-  assert.ok(restarted.viewport.root.children[0] instanceof HStack, "reopened from the preference");
+  assert.ok(
+    restarted.viewport.root.children[0] instanceof HStack,
+    "reopened because defaultStatus is on",
+  );
+  assert.equal(restarted.probe.session()?.width, 44, "remembered width restored");
   assert.equal(restarted.tui.focused, restarted.tui.editor);
 });
 
 test("/new and /reload start clean: the old session's host and store are gone", async () => {
-  const h = harness();
+  const h = harness({ defaultStatus: "on" });
   await h.fire("session_start", { reason: "startup" });
-  await h.run("open");
-  h.clock.advance(200);
-  await Promise.resolve();
-  await Promise.resolve();
   await h.fire("session_shutdown", { reason: "new" });
   await h.fire("session_start", { reason: "new" });
   assert.equal(h.stores.length, 2);
   assert.equal(h.stores[0]?.disposed, true);
   assert.equal(h.stores[1]?.disposed, false);
   const row = h.viewport.root.children[0];
-  assert.ok(row instanceof HStack, "reopened because the preference says open");
+  assert.ok(row instanceof HStack, "reopened because defaultStatus is on");
   assert.equal(h.viewport.root.children.length, 2);
   assert.equal(row.children[0], h.viewport.transcript);
   assert.equal(h.tui.listeners.length, 1);
@@ -560,7 +575,7 @@ test("a corrupt preference file is ignored and rewritten", async () => {
   h.clock.advance(200);
   await Promise.resolve();
   await Promise.resolve();
-  assert.deepEqual(JSON.parse(files.get(PREFS) ?? "null"), { version: 1, open: false, width: 56 });
+  assert.deepEqual(JSON.parse(files.get(PREFS) ?? "null"), { version: 1, width: 56 });
   files.set(PREFS, JSON.stringify({ version: 1, open: "yes", width: 40 }));
   const again = harness({ files });
   await again.fire("session_start", { reason: "startup" });

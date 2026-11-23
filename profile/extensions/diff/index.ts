@@ -25,6 +25,14 @@ import { probeTui } from "./host/probe.ts";
 import { registerDiffPane } from "./ui/controller.ts";
 import { notesFilePath } from "../lib/changes/notes.ts";
 import { fileSystemPrefsIo } from "./ui/prefs.ts";
+import {
+  DEFAULT_DIFF_PANE_DEFAULT,
+  DIFF_PANE_DEFAULT_KEY,
+  onAgentPreferenceChange,
+  parseDiffPaneDefault,
+  readAgentPreferencesAsync,
+  writeAgentPreferenceIfChanged,
+} from "../lib/agent-preferences.ts";
 
 function scratchDir(ctx: ExtensionContext): string | undefined {
   const inherited = process.env[SCRATCH_DIR_ENV];
@@ -40,6 +48,22 @@ export default function diffPaneExtension(pi: ExtensionAPI): void {
     clock,
     prefsIo: fileSystemPrefsIo,
     agentDir: getAgentDir,
+    readDefaultStatus: async () => {
+      try {
+        return (await readAgentPreferencesAsync(getAgentDir())).diffPaneDefault;
+      } catch {
+        return DEFAULT_DIFF_PANE_DEFAULT;
+      }
+    },
+    writeDefaultStatus: async (status) => {
+      await writeAgentPreferenceIfChanged(DIFF_PANE_DEFAULT_KEY, status, getAgentDir());
+    },
+    onDefaultStatusChange: (listener) =>
+      onAgentPreferenceChange((change) => {
+        if (change.key !== DIFF_PANE_DEFAULT_KEY) return;
+        const parsed = parseDiffPaneDefault(change.value);
+        if (parsed !== undefined) listener(parsed);
+      }),
     probe: probeTui,
     copyText: copyToClipboard,
     styler: (ctx) => ctx.ui.theme,
