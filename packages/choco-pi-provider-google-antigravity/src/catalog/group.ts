@@ -3,6 +3,7 @@ import { arr, bool, compile, num, obj, oneOf, opt, str } from "@earendil-works/p
 import type { Static } from "@earendil-works/pi-schema";
 import { AntigravityError } from "../errors.ts";
 import type { AntigravityModelDetails, FetchAvailableModelsResponse } from "./fetch.ts";
+import { costForAntigravityModel } from "./pricing.ts";
 
 export const CATALOG_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type CatalogLevel = (typeof CATALOG_LEVELS)[number];
@@ -271,7 +272,7 @@ export function catalogToProviderModels(catalog: AntigravityCatalog): ProviderMo
       api: "google-generative-ai",
       reasoning: model.reasoning,
       input: model.images ? ["text", "image"] : ["text"],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: costForAntigravityModel(model.id, model.family),
       contextWindow: model.contextWindow,
       maxTokens: model.maxTokens,
     };

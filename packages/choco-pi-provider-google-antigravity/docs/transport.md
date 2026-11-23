@@ -177,7 +177,10 @@ From the last `usageMetadata` seen:
 | `totalTokens` | `totalTokenCount`                            |
 
 Cost comes from Pi's `calculateCost` with the model's per-million prices, as pi-ai's Gemini
-adapter computes it. Subscription models are registered at zero cost, so cost is normally 0.
+adapter computes it. Catalog models resolve API-equivalent per-million rates from
+`src/catalog/pricing.ts` (matching pi-ai's Google and Anthropic model tables plus Vertex AI
+partner pricing for `gpt-oss-120b`),
+falling back to zero for unknown models.
 `responseModel` is `modelVersion` and `responseId` is `responseId`.
 
 ## Unproven assumptions

@@ -8,6 +8,9 @@ import type {
   RefreshModelsContext,
 } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { calculateCost } from "@earendil-works/pi-ai";
+import { ANTHROPIC_MODELS } from "@earendil-works/pi-ai/providers/anthropic.models";
+import { GOOGLE_MODELS } from "@earendil-works/pi-ai/providers/google.models";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import {
   fetchAvailableModelsValidator,
@@ -21,6 +24,7 @@ import {
   resolveRuntimeModel,
   setActiveCatalog,
 } from "../src/catalog/group.ts";
+import { costForAntigravityModel } from "../src/catalog/pricing.ts";
 import {
   CATALOG_TTL_MS,
   catalogCredentialKey,
@@ -688,4 +692,90 @@ test("legacy entry: offline and on failure it serves its catalog; online it refe
       catalog,
     }),
   );
+});
+
+test("every fallback and captured catalog model receives API token pricing", async () => {
+  const fallbackModels = catalogToProviderModels(FALLBACK_CATALOG);
+  for (const model of fallbackModels) {
+    assert.ok(model.cost.input > 0, `${model.id} fallback input cost should be > 0`);
+    assert.ok(model.cost.output > 0, `${model.id} fallback output cost should be > 0`);
+  }
+
+  const captured = catalogToProviderModels(buildAntigravityCatalog(await capturedModels()));
+  const byId = new Map(captured.map((model) => [model.id, model]));
+  assert.equal(byId.size, 8);
+  for (const model of captured) {
+    assert.ok(model.cost.input > 0, `${model.id} input cost should be > 0`);
+    assert.ok(model.cost.output > 0, `${model.id} output cost should be > 0`);
+  }
+  assert.deepEqual(byId.get("gemini-4-neon")?.cost, GOOGLE_MODELS["gemini-4-neon"].cost);
+  assert.deepEqual(byId.get("gemini-4-carbon")?.cost, GOOGLE_MODELS["gemini-4-carbon"].cost);
+  assert.deepEqual(byId.get("gemini-4-argon")?.cost, GOOGLE_MODELS["gemini-4-argon"].cost);
+  assert.deepEqual(byId.get("gemini-4-hydrogen")?.cost, GOOGLE_MODELS["gemini-4-hydrogen"].cost);
+  assert.deepEqual(byId.get("gemini-3.8-flash")?.cost, GOOGLE_MODELS["gemini-3.8-flash"].cost);
+  assert.deepEqual(byId.get("claude-opus-5-5")?.cost, ANTHROPIC_MODELS["claude-opus-5-5"].cost);
+  assert.deepEqual(byId.get("claude-sonnet-5-5")?.cost, ANTHROPIC_MODELS["claude-sonnet-5-5"].cost);
+  assert.deepEqual(byId.get("gpt-oss-120b")?.cost, {
+    input: 0.09,
+    output: 0.36,
+    cacheRead: 0,
+    cacheWrite: 0,
+  });
+});
+
+test("pricing resolves preview/thinking aliases, preserves tiers, clones defensively, and falls back to zero", () => {
+  assert.deepEqual(
+    costForAntigravityModel("gemini-3-flash", "gemini"),
+    GOOGLE_MODELS["gemini-3-flash-preview"].cost,
+  );
+  assert.deepEqual(
+    costForAntigravityModel("gemini-2.5-flash-thinking", "gemini"),
+    GOOGLE_MODELS["gemini-2.5-flash"].cost,
+  );
+  assert.deepEqual(
+    costForAntigravityModel("gemini-3.8-flash-tiered", "gemini"),
+    GOOGLE_MODELS["gemini-3.8-flash"].cost,
+  );
+  assert.deepEqual(
+    costForAntigravityModel("gemini-4-hydrogen-tiered", "gemini"),
+    GOOGLE_MODELS["gemini-4-hydrogen"].cost,
+  );
+  for (const model of Object.values(GOOGLE_MODELS)) {
+    if (!model.id.startsWith("gemini-")) continue;
+    assert.deepEqual(costForAntigravityModel(model.id, "gemini"), model.cost, model.id);
+  }
+  assert.deepEqual(
+    costForAntigravityModel("claude-sonnet-4-5-thinking", "claude"),
+    ANTHROPIC_MODELS["claude-sonnet-4-5"].cost,
+  );
+  assert.deepEqual(costForAntigravityModel("unknown-future-model", "gemini"), {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+  });
+
+  const proCost = costForAntigravityModel("gemini-2.5-pro", "gemini");
+  assert.deepEqual(proCost, GOOGLE_MODELS["gemini-2.5-pro"].cost);
+  assert.ok(proCost.tiers && proCost.tiers.length > 0, "gemini-2.5-pro keeps tiered pricing");
+  proCost.input = 999;
+  proCost.tiers[0].input = 999;
+  const freshProCost = costForAntigravityModel("gemini-2.5-pro", "gemini");
+  assert.deepEqual(freshProCost, GOOGLE_MODELS["gemini-2.5-pro"].cost);
+
+  const neon = catalogToProviderModels(FALLBACK_CATALOG).find((m) => m.id === "gemini-4-neon");
+  assert.ok(neon);
+  const usage = {
+    input: 1_000_000,
+    output: 500_000,
+    cacheRead: 2_000_000,
+    cacheWrite: 0,
+    totalTokens: 3_500_000,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+  const computed = calculateCost(asModel(neon), usage);
+  assert.equal(computed.input, neon.cost.input);
+  assert.equal(computed.output, neon.cost.output * 0.5);
+  assert.equal(computed.cacheRead, neon.cost.cacheRead * 2);
+  assert.equal(computed.total, computed.input + computed.output + computed.cacheRead);
 });
