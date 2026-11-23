@@ -732,17 +732,17 @@ test("CLI exit codes through a child process", async (t) => {
   assert.match(help.stdout, /TEXTUAL change only|textual change/iu);
 });
 
-test("AgentManager.transition extracts from its declaration to its closing brace", async () => {
+test("AgentManager.applyResumeModel extracts from its declaration to its closing brace", async () => {
   const source = await readFile(AGENT_MANAGER, "utf8");
-  const located = await extractSymbol(AGENT_MANAGER, source, "AgentManager.transition");
+  const located = await extractSymbol(AGENT_MANAGER, source, "AgentManager.applyResumeModel");
   assert.ok(located.ok, located.ok ? "" : located.reason);
-  const start = source.indexOf("  private transition(record: AgentRecord") + 2;
+  const start = source.indexOf("  private applyResumeModel(") + 2;
   assert.ok(start > 2);
   const end = source.indexOf("\n  }\n", start) + "\n  }".length;
   assert.equal(located.start, start);
   assert.equal(located.end, end);
   assert.equal(located.text, source.slice(start, end));
-  assert.ok(located.text.startsWith("private transition("));
+  assert.ok(located.text.startsWith("private applyResumeModel("));
   assert.ok(located.text.endsWith("}"));
 });
 
