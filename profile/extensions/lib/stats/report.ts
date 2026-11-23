@@ -1,6 +1,6 @@
 import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { promisify } from "node:util";
 import type { SessionInfoStyle } from "../session-usage.ts";
 import {

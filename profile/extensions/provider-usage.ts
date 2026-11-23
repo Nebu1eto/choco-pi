@@ -1,1164 +1,114 @@
-import { isNumber, isObject, isString, recordOf, type RuntimeValue } from "./lib/runtime-values.ts";
-import {
-  createFileUsageCacheStorage,
-  createUsageCache,
-  fetchUsageJson,
-  identityKey,
-  UsageHttpError,
-  UsageThrottledError,
-  type UsageCache,
-  type UsageRequestPolicy,
-  type UsageRequestResult,
-} from "./lib/usage-cache.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { readAntigravityApiKey } from "../../packages/choco-pi-provider-google-antigravity/src/auth/oauth.ts";
-import { SIGN_IN_HINT as GOOGLE_SIGN_IN_HINT } from "../../packages/choco-pi-provider-google-antigravity/src/config.ts";
+import { claudeUsageProviderAdapter } from "./lib/provider-usage/claude.ts";
+import { chatgptUsageProviderAdapter } from "./lib/provider-usage/codex.ts";
+import { formatUsageReport, usageFailureMessage } from "./lib/provider-usage/format.ts";
+import { googleAntigravityUsageProviderAdapter } from "./lib/provider-usage/google-antigravity.ts";
+import { usageCache } from "./lib/provider-usage/helpers.ts";
 import {
-  readQuotaSummary,
-  readTier,
-} from "../../packages/choco-pi-provider-google-antigravity/src/client/quota.ts";
-import { AntigravityError } from "../../packages/choco-pi-provider-google-antigravity/src/errors.ts";
-import { compile, obj, opt, str, type Static } from "@earendil-works/pi-schema";
-import { createCodexResetClient, runCodexResetFlow } from "./lib/codex-resets.ts";
+  findUsageProviderAdapter,
+  getUsageProviders,
+  registerUsageProvider,
+} from "./lib/provider-usage/registry.ts";
+import { syntheticUsageProviderAdapter } from "./lib/provider-usage/synthetic.ts";
+import type {
+  ProviderUsageReading,
+  ProviderUsageReport,
+  ProviderUsageSnapshot,
+  UsageStyle,
+  UsageWindow,
+} from "./lib/provider-usage/types.ts";
+import { xaiUsageProviderAdapter } from "./lib/provider-usage/xai.ts";
+import type { UsageCache } from "./lib/usage-cache.ts";
 
-const OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
-const USAGE_BAR_WIDTH = 50;
-const HOUR_SECONDS = 3_600;
-const DAY_SECONDS = 86_400;
-/**
- * Shortest gap between two Synthetic readings worth reading a pace from. Below
- * it a single request dominates the difference and the verdict would flicker.
- */
-const MIN_PACE_INTERVAL_MS = 30_000;
+export {
+  quotaHealth,
+  windowElapsedPercent,
+  type ProviderUsage,
+  type ProviderUsageReading,
+  type ProviderUsageReport,
+  type ProviderUsageSnapshot,
+  type QuotaHealth,
+  type UsageProviderAdapter,
+  type UsageStyle,
+  type UsageWindow,
+  type UsageWindowSummary,
+} from "./lib/provider-usage/types.ts";
+export { providerUsesOAuth } from "./lib/provider-usage/helpers.ts";
+export {
+  findUsageProviderAdapter,
+  getUsageProviders,
+  registerUsageProvider,
+  USAGE_PROVIDER_REGISTRY_SYMBOL,
+} from "./lib/provider-usage/registry.ts";
+export { claudePlanLabel, normalizeClaudeUsage } from "./lib/provider-usage/claude.ts";
+export {
+  CHATGPT_USAGE_NAME,
+  chatgptUsageProvider,
+  codexPlanLabel,
+  normalizeCodexUsage,
+  OPENAI_API_KEY_STATUS,
+  OPENAI_SIGNED_IN_STATUS,
+  openaiUsage,
+  resetCodexUsage,
+} from "./lib/provider-usage/codex.ts";
+export {
+  GOOGLE_ANTIGRAVITY_NO_QUOTA_STATUS,
+  GOOGLE_ANTIGRAVITY_USAGE_NAME,
+  googleAntigravityPlan,
+  googleAntigravityUsage,
+  normalizeGoogleAntigravityUsage,
+  type GoogleAntigravityPlan,
+} from "./lib/provider-usage/google-antigravity.ts";
+export {
+  GROK_API_KEY_STATUS,
+  GROK_USAGE_NAME,
+  grokPeriodLabel,
+  grokPlanLabel,
+  grokProductLabel,
+  grokSubscription,
+  grokUsage,
+  normalizeGrokUsage,
+  type GrokSubscription,
+} from "./lib/provider-usage/xai.ts";
+export {
+  normalizeSyntheticUsage,
+  refillPace,
+  syntheticReadings,
+} from "./lib/provider-usage/synthetic.ts";
+export {
+  cachedLabel,
+  describeUsageWindow,
+  formatProviderUsage,
+  formatUsageReport,
+  usageFailureMessage,
+} from "./lib/provider-usage/format.ts";
 
-/**
- * Quota windows move slowly, so one live read per minute per endpoint is enough
- * for an open Usage tab while leaving the provider's rate limit alone. A stored
- * snapshot stays on screen for an hour of failures before the tab admits it has
- * nothing current to show.
- */
-const USAGE_POLICY: UsageRequestPolicy = {
-  minIntervalMs: 60_000,
-  maxStaleMs: 60 * 60_000,
-};
+const BUILTIN_ADAPTERS = [
+  claudeUsageProviderAdapter,
+  chatgptUsageProviderAdapter,
+  googleAntigravityUsageProviderAdapter,
+  xaiUsageProviderAdapter,
+  syntheticUsageProviderAdapter,
+] as const;
 
-/** The plan only changes when the subscription does, so it is read far less often. */
-const PROFILE_POLICY: UsageRequestPolicy = {
-  minIntervalMs: 30 * 60_000,
-  maxStaleMs: 7 * 24 * 60 * 60_000,
-};
-
-const ANTHROPIC_HEADERS = { "anthropic-beta": "oauth-2025-04-20" };
-
-const usageCache = createUsageCache({ storage: createFileUsageCacheStorage() });
-
-export type UsageWindow = {
-  label: string;
-  percent: number;
-  qualifier: "used" | "remaining";
-  eventAt?: Date;
-  eventLabel?: string;
-  detail?: string;
-  /**
-   * Full length of the quota window. Set only where the provider states a
-   * fixed window, which is what makes `eventAt` measurable as a pace.
-   */
-  windowSeconds?: number;
-  /**
-   * Pace decided by the provider rather than by the clock. A refilling bucket
-   * has no window to run out of, so its verdict comes from comparing two
-   * snapshots against the refill rate.
-   */
-  pace?: { health: "over" | "under"; label: string };
-  /**
-   * Provider name of the model group a scoped window limits, such as
-   * `"Fable"`. Absent: the window limits every model on the account.
-   */
-  scope?: string;
-};
-
-export type ProviderUsage = {
-  name: string;
-  plan?: string;
-  status?: string;
-  /** Set when the report comes from the store instead of a live response. */
-  cached?: { at: Date; reason?: string };
-  windows: UsageWindow[];
-};
-
-type QuotaWindow = {
-  utilization?: number;
-  resets_at?: string;
-};
-
-/**
- * How a quota window is doing against its own clock: `over` means quota is
- * being spent faster than the window replaces it, `under` means slower, and
- * `unknown` means nothing measurable was reported.
- */
-export type QuotaHealth = "exhausted" | "over" | "under" | "unknown";
-
-/**
- * Share of a fixed window already elapsed, which is the pace a subscription
- * window can be judged against: spending exactly this much of the quota keeps
- * the allowance lasting until the window resets.
- */
-export function windowElapsedPercent(window: UsageWindow, now: number): number | undefined {
-  if (window.windowSeconds === undefined || window.windowSeconds <= 0) return undefined;
-  if (window.eventAt === undefined) return undefined;
-  const remainingSeconds = (window.eventAt.getTime() - now) / 1000;
-  if (!Number.isFinite(remainingSeconds)) return undefined;
-  return clampPercent(((window.windowSeconds - remainingSeconds) / window.windowSeconds) * 100);
+for (const adapter of BUILTIN_ADAPTERS) {
+  registerUsageProvider(adapter);
 }
 
 /**
- * A window's colour verdict. An exhausted quota outranks everything; a
- * provider-supplied pace is used where it exists; otherwise the used share is
- * compared against the share of the window that has already passed.
- */
-export function quotaHealth(window: UsageWindow, now: number): QuotaHealth {
-  if (window.percent >= 100) return "exhausted";
-  if (window.pace) return window.pace.health;
-  const elapsed = windowElapsedPercent(window, now);
-  if (elapsed === undefined) return "unknown";
-  return window.percent > elapsed ? "over" : "under";
-}
-
-function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
-  return isObject(value) && value !== null && !Array.isArray(value);
-}
-
-function numberValue(value: RuntimeValue): number | undefined {
-  return isNumber(value) && Number.isFinite(value) ? value : undefined;
-}
-
-function stringValue(value: RuntimeValue): string | undefined {
-  return isString(value) && value.length > 0 ? value : undefined;
-}
-
-function clampPercent(value: number): number {
-  return Math.max(0, Math.min(100, value));
-}
-
-function dateValue(value: RuntimeValue, unixSeconds = false): Date | undefined {
-  if (unixSeconds && isNumber(value)) {
-    const date = new Date(value * 1000);
-    return Number.isNaN(date.getTime()) ? undefined : date;
-  }
-  if (!isString(value)) return undefined;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? undefined : date;
-}
-
-function parseJwtPayload(token: string): Record<string, RuntimeValue> | undefined {
-  try {
-    const encoded = token.split(".")[1];
-    if (!encoded) return undefined;
-    const payload = Buffer.from(encoded, "base64url").toString("utf8");
-    const parsed = JSON.parse(payload);
-    return isRecord(parsed) ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function codexAccountId(token: string): string | undefined {
-  const payload = parseJwtPayload(token);
-  const auth = payload?.[OPENAI_AUTH_CLAIM];
-  return isRecord(auth) ? stringValue(auth.chatgpt_account_id) : undefined;
-}
-
-function quotaWindow(value: RuntimeValue): QuotaWindow | undefined {
-  if (!isRecord(value)) return undefined;
-  return {
-    utilization: numberValue(value.utilization),
-    resets_at: stringValue(value.resets_at),
-  };
-}
-
-function usageWindowPeriodLabel(raw: string): string {
-  const normalized = raw.trim().toLowerCase();
-  if (normalized === "5h") return "5-hours";
-  if (normalized === "7d" || normalized === "weekly") return "Weekly";
-  return raw;
-}
-
-function structuredClaudeWindow(value: RuntimeValue): UsageWindow | undefined {
-  if (!isRecord(value)) return undefined;
-  const percent = numberValue(value.percent);
-  const kind = stringValue(value.kind);
-  if (percent === undefined || !kind) return undefined;
-
-  let label: string;
-  let windowSeconds: number;
-  let scope: string | undefined;
-  if (kind === "session") {
-    label = "5-hours";
-    windowSeconds = 5 * HOUR_SECONDS;
-  } else if (kind === "weekly_all") {
-    label = "Weekly";
-    windowSeconds = 7 * DAY_SECONDS;
-  } else if (kind === "weekly_scoped") {
-    const scopeRecord = isRecord(value.scope) ? value.scope : undefined;
-    const model = scopeRecord && isRecord(scopeRecord.model) ? scopeRecord.model : undefined;
-    const name = stringValue(model?.display_name);
-    label = `${name ?? "Scoped"} Weekly`;
-    // An unnamed scope still limits only some models; keep it scoped.
-    scope = name ?? stringValue(model?.id) ?? "Scoped";
-    windowSeconds = 7 * DAY_SECONDS;
-  } else {
-    return undefined;
-  }
-
-  const window: UsageWindow = {
-    label,
-    percent: clampPercent(percent),
-    qualifier: "used",
-    eventAt: dateValue(value.resets_at),
-    eventLabel: "resets",
-    windowSeconds,
-  };
-  if (scope !== undefined) window.scope = scope;
-  return window;
-}
-
-const CLAUDE_RATE_LIMIT_TIERS = recordOf<string, string>()({
-  default_claude_pro: "Pro",
-  default_claude_max_5x: "Max (5x)",
-  default_claude_max_20x: "Ultra",
-});
-
-const CLAUDE_SUBSCRIPTION_LABELS = recordOf<string, string>()({
-  free: "Free",
-  pro: "Pro",
-  max: "Max",
-  team: "Team",
-  enterprise: "Enterprise",
-});
-
-/**
- * Derives the plan label from the `/api/oauth/profile` response. Team and
- * Enterprise organizations keep a Max rate-limit tier, so the organization
- * type decides those labels before the tier is consulted.
- */
-export function claudePlanLabel(
-  profile: RuntimeValue,
-  fallbackSubscription?: string,
-): string | undefined {
-  const record = isRecord(profile) ? profile : undefined;
-  const organization = record && isRecord(record.organization) ? record.organization : undefined;
-  const account = record && isRecord(record.account) ? record.account : undefined;
-  const organizationType = organization ? stringValue(organization.organization_type) : undefined;
-  if (organizationType === "claude_team") {
-    const seat = organization ? (stringValue(organization.seat_tier) ?? "") : "";
-    return seat.toLowerCase().includes("premium") ? "Team Premium" : "Team";
-  }
-  if (organizationType === "claude_enterprise") return "Enterprise";
-  const tier = organization ? stringValue(organization.rate_limit_tier) : undefined;
-  const tierLabel = tier ? CLAUDE_RATE_LIMIT_TIERS[tier] : undefined;
-  if (tierLabel) return tierLabel;
-  if (organizationType?.startsWith("claude_")) {
-    return CLAUDE_SUBSCRIPTION_LABELS[organizationType.slice("claude_".length)];
-  }
-  if (account?.has_claude_max === true) return "Max";
-  if (account?.has_claude_pro === true) return "Pro";
-  return fallbackSubscription
-    ? CLAUDE_SUBSCRIPTION_LABELS[fallbackSubscription.toLowerCase()]
-    : undefined;
-}
-
-export function normalizeClaudeUsage(payload: RuntimeValue, profile?: RuntimeValue): ProviderUsage {
-  if (!isRecord(payload)) throw new Error("Unexpected response");
-  const structuredWindows = Array.isArray(payload.limits)
-    ? payload.limits.flatMap((value) => {
-        const window = structuredClaudeWindow(value);
-        return window ? [window] : [];
-      })
-    : [];
-  const definitions: Array<[string, string, number, string | undefined]> = [
-    ["five_hour", "5-hours", 5 * HOUR_SECONDS, undefined],
-    ["seven_day", "Weekly", 7 * DAY_SECONDS, undefined],
-    ["seven_day_sonnet", "Sonnet Weekly", 7 * DAY_SECONDS, "Sonnet"],
-    ["seven_day_opus", "Opus Weekly", 7 * DAY_SECONDS, "Opus"],
-    ["seven_day_fable", "Fable Weekly", 7 * DAY_SECONDS, "Fable"],
-  ];
-  const legacyWindows = definitions.flatMap(([key, label, windowSeconds, scope]) => {
-    const value = quotaWindow(payload[key]);
-    if (value?.utilization === undefined) return [];
-    const window: UsageWindow = {
-      label,
-      percent: clampPercent(value.utilization),
-      qualifier: "used",
-      eventAt: dateValue(value.resets_at),
-      eventLabel: "resets",
-      windowSeconds,
-    };
-    if (scope !== undefined) window.scope = scope;
-    return [window];
-  });
-  const extraUsage = isRecord(payload.extra_usage) ? payload.extra_usage : undefined;
-  const extraPercent = extraUsage ? numberValue(extraUsage.utilization) : undefined;
-  const status =
-    extraUsage?.is_enabled === true
-      ? extraPercent === undefined
-        ? "extra usage enabled"
-        : `extra usage ${extraPercent.toFixed(0)}% used`
-      : undefined;
-  const plan = claudePlanLabel(profile, stringValue(payload.plan_type));
-  return {
-    name: "Claude",
-    plan,
-    status,
-    windows: structuredWindows.length > 0 ? structuredWindows : legacyWindows,
-  };
-}
-
-function codexWindow(value: RuntimeValue, label: string): UsageWindow | undefined {
-  if (!isRecord(value)) return undefined;
-  const percent = numberValue(value.used_percent);
-  if (percent === undefined) return undefined;
-  const seconds = numberValue(value.limit_window_seconds);
-  const rawLabel =
-    seconds === undefined
-      ? label
-      : seconds % DAY_SECONDS === 0
-        ? `${seconds / DAY_SECONDS}d`
-        : seconds % HOUR_SECONDS === 0
-          ? `${seconds / HOUR_SECONDS}h`
-          : label;
-  const resolvedLabel = usageWindowPeriodLabel(rawLabel);
-  const window: UsageWindow = {
-    label: resolvedLabel,
-    percent: clampPercent(percent),
-    qualifier: "used",
-    eventAt: dateValue(value.reset_at, true),
-    eventLabel: "resets",
-  };
-  if (seconds !== undefined && seconds > 0) window.windowSeconds = seconds;
-  return window;
-}
-
-const CODEX_PLAN_LABELS = recordOf<string, string>()({
-  guest: "Guest",
-  free: "Free",
-  free_workspace: "Free",
-  go: "Go",
-  plus: "Plus",
-  prolite: "Pro 100",
-  pro: "Pro 200",
-  promax: "Pro 500",
-  team: "Team",
-  self_serve_business_prolite: "Business",
-  self_serve_business_usage_based: "Business",
-  business: "Business",
-  ent26: "Enterprise",
-  enterprise: "Enterprise",
-  enterprise_cbp_automation: "Enterprise",
-  enterprise_cbp_usage_based: "Enterprise",
-  hc: "Enterprise",
-  edu: "Edu",
-  education: "Edu",
-  k12: "K12",
-  quorum: "Quorum",
-});
-
-function titleCase(value: string): string {
-  return value
-    .split(/[_\s-]+/)
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
-}
-
-/** Maps the ChatGPT `plan_type` wire value to the label ChatGPT bills under. */
-export function codexPlanLabel(planType: string | undefined): string | undefined {
-  if (!planType) return undefined;
-  const key = planType.toLowerCase();
-  return CODEX_PLAN_LABELS[key] ?? titleCase(planType);
-}
-
-export function normalizeCodexUsage(payload: RuntimeValue): ProviderUsage {
-  if (!isRecord(payload)) throw new Error("Unexpected response");
-  const rateLimit = isRecord(payload.rate_limit) ? payload.rate_limit : {};
-  const windows = [
-    codexWindow(rateLimit.primary_window, "5-hours"),
-    codexWindow(rateLimit.secondary_window, "Weekly"),
-  ].filter((window): window is UsageWindow => window !== undefined);
-  const plan = codexPlanLabel(stringValue(payload.plan_type));
-  const credits = isRecord(payload.credits) ? payload.credits : undefined;
-  const balance = credits ? formatCredits(credits.balance) : undefined;
-  const resetCredits = isRecord(payload.rate_limit_reset_credits)
-    ? payload.rate_limit_reset_credits
-    : undefined;
-  const resetCount = numberValue(resetCredits?.available_count);
-  const resets =
-    resetCount !== undefined && Number.isSafeInteger(resetCount) && resetCount >= 0
-      ? `${resetCount} saved reset${resetCount === 1 ? "" : "s"} available`
-      : undefined;
-  return {
-    name: CHATGPT_USAGE_NAME,
-    plan,
-    status:
-      [balance === undefined ? undefined : `${balance} credits`, resets]
-        .filter(Boolean)
-        .join(" · ") || undefined,
-    windows,
-  };
-}
-
-/** One reading of a bucket that refills instead of resetting. */
-type RefillReading = { capacity: number; remaining: number };
-
-type SyntheticReadings = { weekly?: RefillReading };
-
-/**
- * The refilling bucket a `/v2/quotas` response reports, when present.
- *
- * Synthetic now reports the weekly plan limit as `planWeeklyLimit`, in percent
- * only; the credit-denominated `weeklyTokenLimit` is read as a fallback for
- * snapshots stored before that change.
- *
- * Synthetic retired its five-hour request limit, so `rollingFiveHourLimit`
- * (and the legacy `subscription` request counter) is deliberately ignored.
- */
-export function syntheticReadings(payload: RuntimeValue): SyntheticReadings {
-  if (!isRecord(payload)) return {};
-  const readings: SyntheticReadings = {};
-  const plan = isRecord(payload.planWeeklyLimit) ? payload.planWeeklyLimit : undefined;
-  const planRemaining = plan ? numberValue(plan.percentRemaining) : undefined;
-  if (planRemaining !== undefined) {
-    readings.weekly = { capacity: 100, remaining: planRemaining };
-    return readings;
-  }
-  const weekly = isRecord(payload.weeklyTokenLimit) ? payload.weeklyTokenLimit : undefined;
-  const maxCredits = weekly ? stringValue(weekly.maxCredits) : undefined;
-  const remainingCredits = weekly ? stringValue(weekly.remainingCredits) : undefined;
-  if (maxCredits && remainingCredits) {
-    const weeklyCapacity = currencyValue(maxCredits);
-    if (weeklyCapacity > 0) {
-      readings.weekly = {
-        capacity: weeklyCapacity,
-        remaining: currencyValue(remainingCredits),
-      };
-    }
-  }
-  return readings;
-}
-
-/**
- * Pace of a refilling bucket, read from how its level moved between two
- * readings.
- *
- * A bucket that regenerates has no window to run out of, so the clock says
- * nothing about it and a single reading cannot be paced at all: the level alone
- * is both the quota spent and the time needed to earn it back. What can be read
- * is the net movement, which already nets consumption against regeneration — a
- * level that fell was drained faster than it refilled, and a level that held or
- * rose was not. Comparing observed levels also survives the regeneration being
- * granted in discrete ticks, which a continuous refill estimate would report as
- * overspending on every idle gap between ticks.
- *
- * A changed capacity means the subscription tier moved, which is not usage.
- */
-export function refillPace(
-  current: RefillReading | undefined,
-  previous: RefillReading | undefined,
-  elapsedMs: number,
-): UsageWindow["pace"] {
-  if (!current || !previous) return undefined;
-  if (previous.capacity !== current.capacity) return undefined;
-  if (!Number.isFinite(elapsedMs) || elapsedMs < MIN_PACE_INTERVAL_MS) return undefined;
-  return current.remaining < previous.remaining
-    ? { health: "over", label: "spending faster than it refills" }
-    : { health: "under", label: "refill keeping up" };
-}
-
-export function normalizeSyntheticUsage(
-  payload: RuntimeValue,
-  previous?: { payload: RuntimeValue; storedAt: number },
-  payloadAt = Date.now(),
-): ProviderUsage {
-  if (!isRecord(payload)) throw new Error("Unexpected response");
-  const windows: UsageWindow[] = [];
-  const readings = syntheticReadings(payload);
-  const priorReadings = previous ? syntheticReadings(previous.payload) : {};
-  const elapsedMs = previous ? payloadAt - previous.storedAt : Number.NaN;
-
-  const plan = isRecord(payload.planWeeklyLimit) ? payload.planWeeklyLimit : undefined;
-  const planRemaining = plan ? numberValue(plan.percentRemaining) : undefined;
-  if (planRemaining !== undefined) {
-    const regenPercent = numberValue(plan?.nextRegenPercent);
-    const window: UsageWindow = {
-      label: "Weekly",
-      percent: clampPercent(100 - planRemaining),
-      qualifier: "used",
-      eventAt: dateValue(plan?.nextRegenAt),
-      eventLabel:
-        regenPercent === undefined
-          ? "regenerates"
-          : `regenerates ${formatNumber(regenPercent, 0)}%`,
-    };
-    const pace = refillPace(readings.weekly, priorReadings.weekly, elapsedMs);
-    if (pace) window.pace = pace;
-    windows.push(window);
-    return { name: "Synthetic", windows };
-  }
-
-  const weekly = isRecord(payload.weeklyTokenLimit) ? payload.weeklyTokenLimit : undefined;
-  const remainingPercent = weekly ? numberValue(weekly.percentRemaining) : undefined;
-  if (remainingPercent !== undefined) {
-    const nextRegenCredits = stringValue(weekly?.nextRegenCredits);
-    const maxCredits = stringValue(weekly?.maxCredits);
-    const regenPercent =
-      nextRegenCredits && maxCredits
-        ? (currencyValue(nextRegenCredits) / currencyValue(maxCredits)) * 100
-        : undefined;
-    const regenDescription = nextRegenCredits
-      ? `regenerates${regenPercent !== undefined && Number.isFinite(regenPercent) ? ` ${formatNumber(regenPercent, 0)}%` : ""} (${nextRegenCredits})`
-      : "regenerates";
-    const window: UsageWindow = {
-      label: "Weekly credits",
-      percent: clampPercent(100 - remainingPercent),
-      qualifier: "used",
-      eventAt: dateValue(weekly?.nextRegenAt),
-      eventLabel: regenDescription,
-      detail: stringValue(weekly?.remainingCredits)
-        ? `${weekly?.remainingCredits} remaining`
-        : undefined,
-    };
-    const pace = refillPace(readings.weekly, priorReadings.weekly, elapsedMs);
-    if (pace) window.pace = pace;
-    windows.push(window);
-  }
-
-  return { name: "Synthetic", windows };
-}
-
-/** Display name of the xAI Grok subscription entry (provider `xai`). */
-export const GROK_USAGE_NAME = "Grok";
-
-const GROK_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
-const GROK_USER_URL = "https://cli-chat-proxy.grok.com/v1/user?include=subscription";
-const GROK_PERIOD_PREFIX = "USAGE_PERIOD_TYPE_";
-
-/**
- * The one field read from the Grok `/v1/user` response. The response also
- * carries personal data (email, names, ids), which is never read or kept.
- */
-const GrokUserSchema = obj({ subscriptionTier: opt(str()) }, { open: true });
-const isGrokUser = compile(GrokUserSchema).check;
-/** The subscription part of a Grok `/v1/user` response, the only part kept. */
-export type GrokSubscription = Static<typeof GrokUserSchema>;
-
-/** Display labels of the `/v1/user` subscription tiers Grok Build recognises. */
-const GROK_PLAN_LABELS = new Map([
-  ["GrokPro", "SuperGrok"],
-  ["SuperGrokLite", "SuperGrok Lite"],
-  ["SuperGrokPlus", "SuperGrok Plus"],
-  ["SuperGrokPro", "SuperGrok Pro"],
-  ["XBasic", "X Basic"],
-  ["XPremium", "X Premium"],
-  ["XPremiumPlus", "X Premium+"],
-]);
-
-/** Plan label of a `/v1/user` subscription tier; an unknown tier is shown verbatim. */
-export function grokPlanLabel(tier: string | undefined): string | undefined {
-  const trimmed = tier?.trim();
-  if (!trimmed) return undefined;
-  return GROK_PLAN_LABELS.get(trimmed) ?? trimmed;
-}
-
-/** Display labels of the billing `productUsage` keys Grok Build reports. */
-const GROK_PRODUCT_LABELS = new Map([
-  ["GrokBot", "Bot"],
-  ["Api", "API"],
-  ["GrokBuild", "Build"],
-]);
-
-/** Label of a billing `productUsage` key; an unknown key is shown verbatim. */
-export function grokProductLabel(product: string | undefined): string | undefined {
-  const trimmed = product?.trim();
-  if (!trimmed) return undefined;
-  return GROK_PRODUCT_LABELS.get(trimmed) ?? trimmed;
-}
-
-/**
- * Reduces a `/v1/user` response to its subscription tier, so only that field
- * reaches the shared cache file. A response of any other shape yields `{}`.
- */
-export function grokSubscription(payload: RuntimeValue): GrokSubscription {
-  const subscription: GrokSubscription = {};
-  if (isGrokUser(payload) && payload.subscriptionTier !== undefined) {
-    subscription.subscriptionTier = payload.subscriptionTier;
-  }
-  return subscription;
-}
-
-/**
- * Label of the Grok credit window, from the period type the billing endpoint
- * reports (`USAGE_PERIOD_TYPE_WEEKLY` -> "Weekly"). An unrecognised type keeps
- * its own name, and a missing or unspecified one falls back to "Credits".
- */
-export function grokPeriodLabel(type: string | undefined): string {
-  if (!type) return "Credits";
-  const name = type.startsWith(GROK_PERIOD_PREFIX) ? type.slice(GROK_PERIOD_PREFIX.length) : type;
-  const key = name.toLowerCase();
-  if (key.length === 0 || key === "unspecified") return "Credits";
-  return usageWindowPeriodLabel(titleCase(key));
-}
-
-/** Prepaid balance in cents; proto int64 values may arrive as numeric strings. */
-function grokCents(value: RuntimeValue): number | undefined {
-  if (!isRecord(value)) return undefined;
-  const raw = value.val;
-  const cents = isString(raw) && raw.trim().length > 0 ? Number(raw) : numberValue(raw);
-  return cents !== undefined && Number.isFinite(cents) ? cents : undefined;
-}
-
-/**
- * Normalizes the private Grok Build billing response
- * (`/v1/billing?format=credits`): one credit window for the current period,
- * with per-product usage as its detail and a positive prepaid balance as the
- * status. A valid period without `creditUsagePercent` reads as 0% used; without
- * a valid period that reading stays unknown and no window is drawn. Throws on a
- * response without a `config` object.
- */
-export function normalizeGrokUsage(payload: RuntimeValue): ProviderUsage {
-  if (!isRecord(payload) || !isRecord(payload.config)) throw new Error("Unexpected response");
-  const config = payload.config;
-  const period = isRecord(config.currentPeriod) ? config.currentPeriod : undefined;
-  const start = dateValue(period?.start);
-  const end = dateValue(period?.end);
-  // A period with no credit used yet arrives without `creditUsagePercent` or
-  // `productUsage`, so a valid period alone is a fresh, unused window.
-  const validPeriod = start !== undefined && end !== undefined && end.getTime() > start.getTime();
-  const percent = numberValue(config.creditUsagePercent) ?? (validPeriod ? 0 : undefined);
-  const products = Array.isArray(config.productUsage)
-    ? config.productUsage.flatMap((entry) => {
-        if (!isRecord(entry)) return [];
-        const product = grokProductLabel(stringValue(entry.product));
-        const used = numberValue(entry.usagePercent);
-        return product && used !== undefined ? [`${product} ${formatNumber(used, 1)}%`] : [];
-      })
-    : [];
-  const windows: UsageWindow[] = [];
-  if (percent !== undefined) {
-    const window: UsageWindow = {
-      label: grokPeriodLabel(stringValue(period?.type)),
-      percent: clampPercent(percent),
-      qualifier: "used",
-      eventAt: end,
-      eventLabel: "resets",
-    };
-    if (products.length > 0) window.detail = products.join(" · ");
-    const seconds = start && end ? (end.getTime() - start.getTime()) / 1000 : undefined;
-    if (seconds !== undefined && Number.isFinite(seconds) && seconds > 0) {
-      window.windowSeconds = seconds;
-    }
-    windows.push(window);
-  }
-  const cents = grokCents(config.prepaidBalance);
-  const usage: ProviderUsage = { name: GROK_USAGE_NAME, windows };
-  if (cents !== undefined && cents > 0)
-    usage.status = `$${(cents / 100).toFixed(2)} prepaid balance`;
-  return usage;
-}
-
-async function providerToken(ctx: ExtensionContext, provider: string): Promise<string | undefined> {
-  if (!ctx.modelRegistry.getProviderAuthStatus(provider).configured) return undefined;
-  return ctx.modelRegistry.getApiKeyForProvider(provider);
-}
-
-/**
- * Marks a report that was rebuilt from the store, so the tab never presents an
- * old snapshot as a live reading.
- */
-function withCacheNote(usage: ProviderUsage, result: UsageRequestResult): ProviderUsage {
-  if (result.cachedAt === undefined) return usage;
-  return {
-    ...usage,
-    cached: { at: new Date(result.cachedAt), reason: result.reason },
-  };
-}
-
-/**
- * Reads the live plan from Anthropic's profile endpoint. The value only changes
- * when the subscription changes, so it is read far less often than the usage
- * windows and never blocks the usage report when it fails.
- */
-async function claudeProfile(token: string, cache: UsageCache = usageCache): Promise<RuntimeValue> {
-  try {
-    const result = await cache.request(
-      "anthropic:profile",
-      () => fetchUsageJson("https://api.anthropic.com/api/oauth/profile", token, ANTHROPIC_HEADERS),
-      PROFILE_POLICY,
-    );
-    return result.payload;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Anthropic's OAuth token is opaque and rotates, and the account only appears in
- * the profile response this key already guards. The provider therefore owns one
- * cache slot: a snapshot from a previous account is replaced by the next live
- * read and is labelled with its age until then.
- */
-async function claudeUsage(
-  ctx: ExtensionContext,
-  cache: UsageCache,
-): Promise<ProviderUsage | undefined> {
-  const token = await providerToken(ctx, "anthropic");
-  if (!token) return undefined;
-  return readClaudeUsage(token, cache);
-}
-
-async function readClaudeUsage(
-  token: string,
-  cache: UsageCache = usageCache,
-): Promise<ProviderUsage> {
-  const [usage, profile] = await Promise.all([
-    cache.request(
-      "anthropic:usage",
-      () => fetchUsageJson("https://api.anthropic.com/api/oauth/usage", token, ANTHROPIC_HEADERS),
-      USAGE_POLICY,
-    ),
-    claudeProfile(token, cache),
-  ]);
-  return withCacheNote(normalizeClaudeUsage(usage.payload, profile), usage);
-}
-
-/**
- * Display name of the single ChatGPT entry. It reports whichever of the twin
- * providers `openai-codex` (Codex login, chatgpt.com) or `openai` (Sign in with
- * ChatGPT, api.openai.com) `chatgptUsageProvider` selects.
- */
-export const CHATGPT_USAGE_NAME = "ChatGPT";
-/** Status of a signed-in `openai` account: api.openai.com exposes no quota window. */
-export const OPENAI_SIGNED_IN_STATUS = "signed in; quota window not available on api.openai.com";
-/** Status of `openai` configured with an API key, which has no subscription window. */
-export const OPENAI_API_KEY_STATUS = "API key; no subscription quota window";
-const CODEX_RESET_SIGNED_OUT = "ChatGPT Codex login (openai-codex) is not signed in.";
-
-/**
- * Whether `provider` authenticates with a stored OAuth sign-in. The host reads
- * only the credential type from its auth snapshot, so no token is resolved,
- * refreshed, or exposed. Resolves `undefined` when the host cannot say.
- */
-export function providerUsesOAuth(ctx: ExtensionContext, provider: string): boolean | undefined {
-  try {
-    const registry = ctx.modelRegistry;
-    const model =
-      ctx.model?.provider === provider
-        ? ctx.model
-        : registry.getAll().find((candidate) => candidate.provider === provider);
-    return model ? registry.isUsingOAuth(model) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** Whether `provider` has a stored credential; reads auth status only, never a token. */
-function providerConfigured(ctx: ExtensionContext, provider: string): boolean {
-  try {
-    return ctx.modelRegistry.getProviderAuthStatus(provider).configured;
-  } catch {
-    return false;
-  }
-}
-
-type ChatGPTProvider = "openai" | "openai-codex";
-
-/**
- * Provider the ChatGPT entry reports: the active model's provider when it is
- * `openai` or `openai-codex` and configured, else `openai-codex` when
- * configured, else `openai` when configured. Reads auth status only.
- */
-export function chatgptUsageProvider(ctx: ExtensionContext): ChatGPTProvider | undefined {
-  const active = ctx.model?.provider;
-  if ((active === "openai" || active === "openai-codex") && providerConfigured(ctx, active)) {
-    return active;
-  }
-  if (providerConfigured(ctx, "openai-codex")) return "openai-codex";
-  if (providerConfigured(ctx, "openai")) return "openai";
-  return undefined;
-}
-
-/**
- * Provider `openai` (api.openai.com). Sign in with ChatGPT carries no account
- * id for chatgpt.com, and api.openai.com publishes no quota window, so this
- * never resolves a token or makes a request; it reports the sign-in state only.
- */
-export function openaiUsage(ctx: ExtensionContext): ProviderUsage {
-  const notConnected: ProviderUsage = {
-    name: CHATGPT_USAGE_NAME,
-    status: "not connected",
-    windows: [],
-  };
-  if (!providerConfigured(ctx, "openai")) return notConnected;
-  const oauth = providerUsesOAuth(ctx, "openai");
-  return {
-    name: CHATGPT_USAGE_NAME,
-    status: oauth === false ? OPENAI_API_KEY_STATUS : OPENAI_SIGNED_IN_STATUS,
-    windows: [],
-  };
-}
-
-/**
- * The single ChatGPT entry. Resolving the `openai-codex` token may refresh a
- * stale OAuth credential (network and credential-store lock), so it happens
- * only when the selection is `openai-codex`; an `openai` selection reads auth
- * status only. A Codex sign-in without a usable account id falls back to the
- * `openai` state. Resolves `undefined` when neither provider is signed in.
- */
-async function chatgptUsage(
-  ctx: ExtensionContext,
-  cache: UsageCache,
-): Promise<ProviderUsage | undefined> {
-  const selected = chatgptUsageProvider(ctx);
-  if (selected === undefined) return undefined;
-  if (selected !== "openai-codex") return openaiUsage(ctx);
-  const token = await providerToken(ctx, "openai-codex");
-  const accountId = token ? codexAccountId(token) : undefined;
-  if (!token || !accountId) {
-    return providerConfigured(ctx, "openai") ? openaiUsage(ctx) : undefined;
-  }
-  return readCodexUsage(token, accountId, false, cache);
-}
-
-async function readCodexUsage(
-  token: string,
-  accountId: string,
-  refresh = false,
-  cache: UsageCache = usageCache,
-): Promise<ProviderUsage> {
-  const usage = await cache.request(
-    `openai-codex:usage:${identityKey(accountId)}`,
-    () =>
-      fetchUsageJson("https://chatgpt.com/backend-api/wham/usage", token, {
-        "chatgpt-account-id": accountId,
-        originator: "pi",
-      }),
-    USAGE_POLICY,
-    refresh,
-  );
-  return withCacheNote(normalizeCodexUsage(usage.payload), usage);
-}
-
-export async function resetCodexUsage(
-  ctx: ExtensionContext,
-  isCurrent: () => boolean,
-): Promise<string | undefined> {
-  const registry = ctx.modelRegistry;
-  if (!registry.getProviderAuthStatus("openai-codex").configured) return CODEX_RESET_SIGNED_OUT;
-  const token = await registry.getApiKeyForProvider("openai-codex");
-  if (!isCurrent()) return;
-  if (!token) return CODEX_RESET_SIGNED_OUT;
-  const accountId = codexAccountId(token);
-  if (!accountId) return "OAuth account ID is unavailable.";
-  return runCodexResetFlow({
-    client: createCodexResetClient(token, accountId),
-    select: (title, choices) => ctx.ui.select(title, choices),
-    isCurrent,
-    refresh: async () => {
-      const usage = await readCodexUsage(token, accountId, true);
-      if (usage.cached) throw new Error("Usage refresh returned a cached snapshot.");
-    },
-  });
-}
-
-async function syntheticUsage(
-  ctx: ExtensionContext,
-  cache: UsageCache,
-): Promise<ProviderUsage | undefined> {
-  const token = await providerToken(ctx, "synthetic");
-  if (!token) return undefined;
-  return readSyntheticUsage(token, cache);
-}
-
-async function readSyntheticUsage(
-  token: string,
-  cache: UsageCache = usageCache,
-): Promise<ProviderUsage> {
-  const usage = await cache.request(
-    `synthetic:usage:${identityKey(token)}`,
-    () => fetchUsageJson("https://api.synthetic.new/v2/quotas", token, {}),
-    USAGE_POLICY,
-  );
-  return withCacheNote(
-    normalizeSyntheticUsage(usage.payload, usage.previous, usage.payloadAt),
-    usage,
-  );
-}
-
-/** Status of `xai` configured with an API key, which has no subscription window. */
-export const GROK_API_KEY_STATUS = OPENAI_API_KEY_STATUS;
-
-/**
- * The Grok entry (provider `xai`). Only a confirmed OAuth sign-in reaches the
- * private Grok Build billing endpoint; an API key, or a credential whose type
- * the host cannot report, gets a status-only row without resolving the
- * credential or making a request. Resolves `undefined` when `xai` is not signed
- * in. The OAuth token rotates, so the provider owns one cache slot, as Claude
- * does.
- */
-export async function grokUsage(
-  ctx: ExtensionContext,
-  cache: UsageCache = usageCache,
-): Promise<ProviderUsage | undefined> {
-  if (!providerConfigured(ctx, "xai")) return undefined;
-  // Fail closed: only a confirmed OAuth sign-in is sent to the private endpoint.
-  if (providerUsesOAuth(ctx, "xai") !== true) {
-    return { name: GROK_USAGE_NAME, status: GROK_API_KEY_STATUS, windows: [] };
-  }
-  const token = await providerToken(ctx, "xai");
-  if (!token) return undefined;
-  const [usage, user] = await Promise.allSettled([
-    cache.request("xai:usage", () => fetchUsageJson(GROK_BILLING_URL, token, {}), USAGE_POLICY),
-    // The plan only changes with the subscription, so it is cached like Claude's profile.
-    cache.request(
-      "xai:profile",
-      async () => grokSubscription(await fetchUsageJson(GROK_USER_URL, token, {})),
-      PROFILE_POLICY,
-    ),
-  ]);
-  if (usage.status === "rejected") throw usage.reason;
-  const reading = normalizeGrokUsage(usage.value.payload);
-  // Best effort: a failed or unrecognised `/v1/user` read only omits the plan.
-  const plan =
-    user.status === "fulfilled"
-      ? grokPlanLabel(grokSubscription(user.value.payload).subscriptionTier)
-      : undefined;
-  return withCacheNote(plan === undefined ? reading : { ...reading, plan }, usage.value);
-}
-
-export const GOOGLE_ANTIGRAVITY_USAGE_NAME = "Google";
-const GOOGLE_ANTIGRAVITY_PROVIDER = "google";
-/** Status of an account whose tier has no quota summary (403 SUBSCRIPTION_REQUIRED). */
-export const GOOGLE_ANTIGRAVITY_NO_QUOTA_STATUS = "no quota summary for this plan";
-
-/** Fixed lengths of the bucket windows the quota summary names. */
-const ANTIGRAVITY_WINDOW_SECONDS = recordOf<string, number>()({
-  weekly: 7 * DAY_SECONDS,
-  "5h": 5 * HOUR_SECONDS,
-});
-
-function antigravityGroupRank(groupName: string | undefined): number {
-  return groupName !== undefined && /gemini/i.test(groupName) ? 0 : 1;
-}
-
-function antigravityWindowRank(windowName: string): number {
-  const normalized = windowName.toLowerCase();
-  if (normalized === "5h") return 0;
-  if (normalized === "weekly") return 1;
-  return 2;
-}
-
-/**
- * Converts the `retrieveUserQuotaSummary` reading (or the stored copy of one)
- * into a Usage row: one window per enabled bucket of every model group,
- * labelled `<group> <window>`. Google reports the share remaining; the row
- * shows the share used, as every other provider does, so pace and exhaustion
- * read the same way. A bucket reporting only an absolute amount has no share
- * and is skipped. A tier without a quota summary yields a status-only row.
- */
-export function normalizeGoogleAntigravityUsage(payload: RuntimeValue): ProviderUsage {
-  if (isRecord(payload) && payload.kind === "no_quota_for_tier") {
-    return {
-      name: GOOGLE_ANTIGRAVITY_USAGE_NAME,
-      status: GOOGLE_ANTIGRAVITY_NO_QUOTA_STATUS,
-      windows: [],
-    };
-  }
-  const groups = isRecord(payload) && Array.isArray(payload.groups) ? payload.groups : [];
-  const normalizedGroups: Array<{
-    rank: number;
-    windows: Array<{ rank: number; window: UsageWindow }>;
-  }> = [];
-  for (const group of groups) {
-    if (!isRecord(group) || !Array.isArray(group.buckets)) continue;
-    const groupName = stringValue(group.displayName);
-    const groupWindows: Array<{ rank: number; window: UsageWindow }> = [];
-    for (const bucket of group.buckets) {
-      if (!isRecord(bucket) || bucket.disabled === true) continue;
-      const remaining = numberValue(bucket.remainingFraction);
-      const windowName = stringValue(bucket.window) ?? stringValue(bucket.displayName);
-      if (remaining === undefined || windowName === undefined) continue;
-      const windowLabel = usageWindowPeriodLabel(windowName);
-      const window: UsageWindow = {
-        label: groupName === undefined ? windowLabel : `${groupName} ${windowLabel}`,
-        percent: clampPercent((1 - remaining) * 100),
-        qualifier: "used",
-        eventAt: dateValue(bucket.resetTime),
-        eventLabel: "resets",
-      };
-      const windowSeconds = ANTIGRAVITY_WINDOW_SECONDS[windowName];
-      if (windowSeconds !== undefined) window.windowSeconds = windowSeconds;
-      // Each group's buckets limit only the models of that group.
-      if (groupName !== undefined) window.scope = groupName;
-      groupWindows.push({ rank: antigravityWindowRank(windowName), window });
-    }
-    if (groupWindows.length > 0) {
-      groupWindows.sort((a, b) => a.rank - b.rank);
-      normalizedGroups.push({
-        rank: antigravityGroupRank(groupName),
-        windows: groupWindows,
-      });
-    }
-  }
-  normalizedGroups.sort((a, b) => a.rank - b.rank);
-  const windows = normalizedGroups.flatMap((group) => group.windows.map((entry) => entry.window));
-  return { name: GOOGLE_ANTIGRAVITY_USAGE_NAME, windows };
-}
-
-/** Plan label and AI credit balance of a Google Antigravity account. */
-export type GoogleAntigravityPlan = { plan?: string; credits?: string };
-
-/** Reads {@link GoogleAntigravityPlan} from the stored `loadCodeAssist` summary. */
-export function googleAntigravityPlan(payload: RuntimeValue): GoogleAntigravityPlan {
-  if (!isRecord(payload)) return {};
-  const result: GoogleAntigravityPlan = {};
-  const plan = stringValue(payload.planLabel);
-  if (plan !== undefined) result.plan = plan;
-  const credits = Array.isArray(payload.credits) ? payload.credits : [];
-  const amounts = credits.flatMap((credit) => {
-    const amount = isRecord(credit) ? formatCredits(credit.creditAmount) : undefined;
-    return amount === undefined ? [] : [amount];
-  });
-  if (amounts.length > 0) result.credits = `${amounts.join(" + ")} AI credits`;
-  return result;
-}
-
-/**
- * The client's error carries Google's sanitized detail; the cache keeps only a
- * status (so a 401 is not retried with backoff) or the error kind.
- */
-async function antigravityRequest<T>(read: () => Promise<T>): Promise<T> {
-  try {
-    return await read();
-  } catch (error) {
-    if (error instanceof AntigravityError && error.status !== undefined) {
-      throw new UsageHttpError(error.status, error.retryAfterMs);
-    }
-    if (error instanceof AntigravityError) throw new Error(`Google Antigravity ${error.kind}`);
-    throw error;
-  }
-}
-
-/**
- * The Google entry (provider `google`, signed in with Google Antigravity OAuth).
- * The registry key packs the rotating OAuth access token, the Cloud Code Assist project and
- * a non-reversible account key derived from the refresh token. Consumer
- * accounts share one project, so both cache slots are keyed by the account key,
- * as Codex's are by its account id: switching accounts inside the cache gate
- * never shows the previous account's quota or plan. A key without an account
- * key (not packed by this provider) falls back to one shared slot. Neither the
- * token, the account key nor the project appears in a cache key or the report.
- * The plan is read far less often and only decorates the row. Resolves
- * `undefined` when the provider is not signed in with Google Antigravity OAuth:
- * Pi's inherited Gemini API-key auth (a stored API key or GEMINI_API_KEY) also
- * configures `google`, but such a key cannot read the quota, so the row is
- * listed as not signed in. A host that reports API-key auth never has the key
- * resolved; a key that resolves but is not this provider's packed format is
- * treated the same way. Only a confirmed OAuth sign-in whose key is unusable
- * is a failure reading.
- */
-export async function googleAntigravityUsage(
-  ctx: ExtensionContext,
-  cache: UsageCache = usageCache,
-): Promise<ProviderUsage | undefined> {
-  if (!providerConfigured(ctx, GOOGLE_ANTIGRAVITY_PROVIDER)) return undefined;
-  const oauth = providerUsesOAuth(ctx, GOOGLE_ANTIGRAVITY_PROVIDER);
-  if (oauth === false) return undefined;
-  const apiKey = await providerToken(ctx, GOOGLE_ANTIGRAVITY_PROVIDER);
-  if (!apiKey) return undefined;
-  const credential = readAntigravityApiKey(apiKey);
-  if (credential === undefined) {
-    if (oauth === true) {
-      throw new Error(`Google Antigravity credential is unusable; ${GOOGLE_SIGN_IN_HINT}`);
-    }
-    return undefined;
-  }
-  const { token, projectId, accountKey } = credential;
-  const slot = accountKey === undefined ? "" : `:${identityKey(accountKey)}`;
-  const [usage, tier] = await Promise.allSettled([
-    cache.request(
-      `google:quota${slot}`,
-      () =>
-        antigravityRequest(async () => {
-          const summary = await readQuotaSummary({ token, projectId });
-          // The no-quota detail is backend text; the store keeps only the verdict.
-          return summary.kind === "summary" ? summary : { kind: summary.kind };
-        }),
-      USAGE_POLICY,
-    ),
-    cache.request(
-      `google:profile${slot}`,
-      async () => {
-        const { planLabel, credits } = await antigravityRequest(() => readTier({ token }));
-        return {
-          planLabel,
-          credits: (credits ?? []).map((credit) => ({
-            creditType: credit.creditType,
-            creditAmount: credit.creditAmount,
-          })),
-        };
-      },
-      PROFILE_POLICY,
-    ),
-  ]);
-  if (usage.status === "rejected") throw usage.reason;
-  const reading = normalizeGoogleAntigravityUsage(usage.value.payload);
-  // Best effort: a failed `loadCodeAssist` read only omits the plan and credits.
-  const { plan, credits } =
-    tier.status === "fulfilled" ? googleAntigravityPlan(tier.value.payload) : {};
-  const status = [reading.status, credits].filter(Boolean).join(" · ");
-  const row: ProviderUsage = { ...reading };
-  if (plan !== undefined) row.plan = plan;
-  if (status) row.status = status;
-  else delete row.status;
-  return withCacheNote(row, usage.value);
-}
-
-/**
- * Quota windows of one provider together with the epoch ms they were read. A
- * reading served from the store carries the time it was originally fetched, so
- * a caller can tell a live reading from one that predates an event.
- */
-export type ProviderUsageSnapshot = {
-  windows: UsageWindow[];
-  observedAt: number;
-};
-
-/**
- * Reads the quota windows of `provider` (`anthropic`, `openai-codex` or
- * `synthetic`). Resolves `undefined` when the provider is unknown or not
- * connected, or when no reading can be obtained; it never rejects.
+ * Reads the quota windows of `provider` via its registered adapter. Resolves
+ * `undefined` when the provider is unknown or not connected, or when no
+ * reading can be obtained; it never rejects.
  */
 export async function providerUsageSnapshot(
   ctx: ExtensionContext,
   provider: string,
 ): Promise<ProviderUsageSnapshot | undefined> {
   try {
-    let usage: ProviderUsage;
-    if (provider === "anthropic") {
-      const token = await providerToken(ctx, provider);
-      if (!token) return undefined;
-      usage = await readClaudeUsage(token);
-    } else if (provider === "openai-codex") {
-      const token = await providerToken(ctx, provider);
-      if (!token) return undefined;
-      const accountId = codexAccountId(token);
-      if (!accountId) return undefined;
-      usage = await readCodexUsage(token, accountId);
-    } else if (provider === "synthetic") {
-      const token = await providerToken(ctx, provider);
-      if (!token) return undefined;
-      usage = await readSyntheticUsage(token);
-    } else {
-      return undefined;
-    }
+    const adapter = findUsageProviderAdapter(provider);
+    if (!adapter?.readSnapshot) return undefined;
+    const usage = await adapter.readSnapshot(ctx, provider, usageCache);
+    if (!usage) return undefined;
     return {
       windows: usage.windows,
       observedAt: usage.cached?.at.getTime() ?? Date.now(),
@@ -1177,259 +127,42 @@ export async function providerUsageWindows(
 }
 
 /**
- * Stable account identity for closing a provider per account: the ChatGPT
- * account ID for Codex, the OAuth profile's account UUID for Anthropic, and a
- * non-reversible key of the API key for Synthetic, so no credential leaves this
- * module. Resolves `undefined` when it cannot be derived; never rejects.
+ * Stable account identity for closing a provider per account via its
+ * registered adapter. Resolves `undefined` when it cannot be derived; never
+ * rejects.
  */
 export async function providerAccountId(
   ctx: ExtensionContext,
   provider: string,
 ): Promise<string | undefined> {
   try {
-    if (provider !== "anthropic" && provider !== "openai-codex" && provider !== "synthetic") {
-      return undefined;
-    }
-    const token = await providerToken(ctx, provider);
-    if (!token) return undefined;
-    if (provider === "openai-codex") return codexAccountId(token);
-    if (provider === "synthetic") return identityKey(token);
-    const profile = await claudeProfile(token);
-    const account = isRecord(profile) && isRecord(profile.account) ? profile.account : undefined;
-    return account ? stringValue(account.uuid) : undefined;
+    const adapter = findUsageProviderAdapter(provider);
+    if (!adapter?.resolveAccountId) return undefined;
+    return await adapter.resolveAccountId(ctx, provider, usageCache);
   } catch {
     return undefined;
   }
 }
 
-function currencyValue(value: string): number {
-  const parsed = Number(value.replace(/[^0-9.-]/g, ""));
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatNumber(value: number, precision: number): string {
-  const fixed = value.toFixed(precision);
-  return fixed.includes(".") ? fixed.replace(/0+$/, "").replace(/\.$/, "") : fixed;
-}
-
-/** Credit balances arrive as decimal strings or floats; show them rounded to an integer. */
-function formatCredits(value: RuntimeValue): string | undefined {
-  const text = stringValue(value);
-  const parsed = text !== undefined ? Number(text) : numberValue(value);
-  // String(-0) is "0", so small negative balances never render as "-0".
-  if (parsed !== undefined && Number.isFinite(parsed)) return String(Math.round(parsed));
-  return text;
-}
-
-function relativeTime(date: Date | undefined, at = Date.now()): string | undefined {
-  if (!date) return undefined;
-  const milliseconds = date.getTime() - at;
-  if (milliseconds <= 0) return "soon";
-  const totalMinutes = Math.ceil(milliseconds / 60_000);
-  const days = Math.floor(totalMinutes / 1440);
-  const hours = Math.floor((totalMinutes % 1440) / 60);
-  const minutes = totalMinutes % 60;
-  const value = [
-    days ? `${days}d` : "",
-    hours ? `${hours}h` : "",
-    !days && minutes ? `${minutes}m` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-  return `in ${value || "<1m"}`;
-}
-
-/** Age of a stored snapshot, rounded down so it never overstates freshness. */
-function elapsedTime(date: Date, at = Date.now()): string {
-  const totalMinutes = Math.floor(Math.max(0, at - date.getTime()) / 60_000);
-  if (totalMinutes < 1) return "just now";
-  const days = Math.floor(totalMinutes / 1440);
-  const hours = Math.floor((totalMinutes % 1440) / 60);
-  const minutes = totalMinutes % 60;
-  const value = [
-    days ? `${days}d` : "",
-    hours ? `${hours}h` : "",
-    !days && minutes ? `${minutes}m` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-  return `${value} ago`;
-}
-
 /**
- * The usage bar. The filled part carries the window's verdict colour and the
- * empty part stays dim, so a glance at the bar answers the pace question the
- * percentage below it states in words.
- */
-function progressBar(
-  percent: number,
-  paint: UsagePainter,
-  health: QuotaHealth,
-  width = USAGE_BAR_WIDTH,
-): string {
-  const filled = Math.round((clampPercent(percent) / 100) * width);
-  return `${paint.health(health, "█".repeat(filled))}${paint.dim("░".repeat(width - filled))}`;
-}
-
-/** Theme hooks used by a coloured report; omitted when the surface is plain text. */
-export type UsageStyle = { fg(color: string, text: string): string };
-
-type UsagePainter = {
-  value: (text: string) => string;
-  dim: (text: string) => string;
-  label: (text: string) => string;
-  head: (text: string) => string;
-  health: (health: QuotaHealth, text: string) => string;
-};
-
-function usagePainter(style: UsageStyle | undefined): UsagePainter {
-  const plain = (text: string): string => text;
-  if (!style) {
-    return {
-      value: plain,
-      dim: plain,
-      label: plain,
-      head: plain,
-      health: (_health, t) => t,
-    };
-  }
-  const color = (name: string, text: string): string => {
-    try {
-      return style.fg(name, text);
-    } catch {
-      return text;
-    }
-  };
-  const HEALTH_COLORS = recordOf<QuotaHealth, string>()({
-    exhausted: "error",
-    over: "warning",
-    under: "success",
-    unknown: "text",
-  });
-  return {
-    value: (text) => color("text", text),
-    dim: (text) => color("dim", text),
-    label: (text) => color("muted", text),
-    head: (text) => color("accent", text),
-    health: (health, text) => color(HEALTH_COLORS[health], text),
-  };
-}
-
-export function cachedLabel(cached: { at: Date; reason?: string } | undefined): string | undefined {
-  if (!cached) return undefined;
-  const age = elapsedTime(cached.at);
-  return cached.reason ? `cached ${age} · ${cached.reason}` : `cached ${age}`;
-}
-
-/** A window's printed percentage and its secondary line. */
-export type UsageWindowSummary = { percent: string; detail: string };
-
-/**
- * One window in words: the percentage as the report prints it, and the
- * secondary line (next reset or regeneration, pace, provider detail), which is
- * empty when the provider reported none of them.
- */
-export function describeUsageWindow(window: UsageWindow, now = Date.now()): UsageWindowSummary {
-  const percent = formatNumber(window.percent, 0);
-  const eventTime = relativeTime(window.eventAt, now);
-  const event = window.eventLabel && eventTime ? `${window.eventLabel} ${eventTime}` : undefined;
-  const elapsed = windowElapsedPercent(window, now);
-  const pace =
-    window.pace?.label ??
-    (elapsed === undefined ? undefined : `${formatNumber(elapsed, 0)}% of window elapsed`);
-  return {
-    percent,
-    detail: [event, pace, window.detail].filter(Boolean).join(" · "),
-  };
-}
-
-export function formatProviderUsage(
-  result: ProviderUsage,
-  style?: UsageStyle,
-  now = Date.now(),
-): string {
-  const paint = usagePainter(style);
-  const summary = [result.plan, result.status, cachedLabel(result.cached)]
-    .filter(Boolean)
-    .join(" · ");
-  const heading = summary
-    ? `${paint.head(result.name)}${paint.dim(" — ")}${paint.value(summary)}`
-    : paint.head(result.name);
-  if (result.windows.length === 0) {
-    return summary ? heading : `${heading}${paint.dim(" — no quota windows")}`;
-  }
-  const windows = result.windows.flatMap((window) => {
-    const health = quotaHealth(window, now);
-    const { percent, detail } = describeUsageWindow(window, now);
-    return [
-      `  ${paint.label(window.label)}`,
-      `  ${progressBar(window.percent, paint, health)} ${paint.health(health, `${percent}% ${window.qualifier}`)}`,
-      ...(detail ? [`  ${paint.dim(detail)}`] : []),
-    ];
-  });
-  return [heading, ...windows].join("\n");
-}
-
-const PROVIDER_NAMES = [
-  "Claude",
-  CHATGPT_USAGE_NAME,
-  GOOGLE_ANTIGRAVITY_USAGE_NAME,
-  GROK_USAGE_NAME,
-  "Synthetic",
-] as const;
-
-/**
- * Describes why a provider produced nothing: a throttled request also reports
- * when the next live request is allowed, so the tab does not look stuck.
- */
-export function usageFailureMessage(reason: RuntimeValue): string {
-  if (reason instanceof UsageThrottledError) {
-    const retry = relativeTime(new Date(reason.retryAt));
-    return retry ? `${reason.message} · retrying ${retry}` : reason.message;
-  }
-  return reason instanceof Error ? reason.message : "unknown error";
-}
-
-/** One provider's outcome: its report, or why none could be read. */
-export type ProviderUsageReading =
-  | { ok: true; usage: ProviderUsage }
-  | { ok: false; name: string; error: string };
-
-/**
- * Every signed-in provider's outcome from one round of requests, when the
- * round finished, and the names of providers skipped because they have no
- * credential (absent means none were skipped).
- */
-export type ProviderUsageReport = {
-  observedAt: Date;
-  providers: ProviderUsageReading[];
-  absent?: string[];
-};
-
-/**
- * Queries Claude, ChatGPT (`openai-codex` or `openai`), Google (`google` with
- * Google Antigravity OAuth), Grok (`xai`), and Synthetic once; the list and
- * `PROVIDER_NAMES` are index-coupled. A provider without a credential is listed in `absent`
- * instead of producing a reading; a signed-in provider that fails becomes a
- * reading with its failure message, so this never rejects. The Usage tab and
- * the structured host report both render from one result.
+ * Queries every registered usage provider adapter in display order once.
+ * A provider without a credential is listed in `absent` instead of producing
+ * a reading; a signed-in provider that fails becomes a reading with its
+ * failure message, so this never rejects.
  */
 export async function readProviderUsages(
   ctx: ExtensionContext,
   options: { cache?: UsageCache } = {},
 ): Promise<ProviderUsageReport> {
   const cache = options.cache ?? usageCache;
-  const settled = await Promise.allSettled([
-    claudeUsage(ctx, cache),
-    chatgptUsage(ctx, cache),
-    googleAntigravityUsage(ctx, cache),
-    grokUsage(ctx, cache),
-    syntheticUsage(ctx, cache),
-  ]);
+  const adapters = getUsageProviders();
+  const settled = await Promise.allSettled(
+    adapters.map((adapter) => adapter.readUsage(ctx, cache)),
+  );
   const providers: ProviderUsageReading[] = [];
   const absent: string[] = [];
   settled.forEach((result, index) => {
-    const name = PROVIDER_NAMES[index];
+    const name = adapters[index].displayName;
     if (result.status === "rejected") {
       providers.push({
         ok: false,
@@ -1443,19 +176,6 @@ export async function readProviderUsages(
     }
   });
   return { observedAt: new Date(), providers, absent };
-}
-
-export function formatUsageReport(report: ProviderUsageReport, style?: UsageStyle): string {
-  const paint = usagePainter(style);
-  const blocks = report.providers.map((reading) =>
-    reading.ok
-      ? formatProviderUsage(reading.usage, style)
-      : `${paint.head(reading.name)}${paint.dim(" — ")}${paint.health(
-          "exhausted",
-          `unavailable (${reading.error})`,
-        )}`,
-  );
-  return blocks.join("\n\n");
 }
 
 export async function usageReport(ctx: ExtensionContext, style?: UsageStyle): Promise<string> {
