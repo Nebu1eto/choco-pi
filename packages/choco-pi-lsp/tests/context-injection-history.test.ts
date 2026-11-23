@@ -25,7 +25,7 @@ const user = (content: string, timestamp = 1): UserMessage => ({
 
 test("the actual context handler retains delivered guidance when a findings collector fails", async () => {
   // Execute the production callback with controlled collectors, without booting LSP services.
-  const source = readFileSync(new URL("../runtime-extension.ts", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../extension/context-hook.ts", import.meta.url), "utf8");
   const start = source.indexOf("    async (\n      event: { messages?");
   assert.ok(start >= 0);
   const end = source.indexOf("\n  );", start);
@@ -37,8 +37,7 @@ test("the actual context handler retains delivered guidance when a findings coll
   const history = new ContextInjectionHistory<ContextInjectionMessage>();
   const handler = runInNewContext(stripTypeScriptTypes(`(${callback})`), {
     contextInjectionHistory: history,
-    lensEnabled: true,
-    contextInjectionEnabled: true,
+    activationState: { lensEnabled: true, contextInjectionEnabled: true },
     getStableSessionId: () => "owner",
     classifyCurrentSessionEmission: () => "primary",
     observeCachePrefix: () => "unchanged",

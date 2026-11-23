@@ -404,3 +404,20 @@ Internal-only cleanup; tool names, schemas, and runtime behavior are unchanged.
 ## 2026-11-23: adopt @choco-pi/shared
 
 - Imports of the former profile/extensions/lib helpers (pi-paths, node-runtime, and where used lifecycle, value-guards) now resolve through the workspace package `@choco-pi/shared` instead of relative paths.
+
+## 2026-11-23 choco-pi patch: structural decomposition of the two monoliths
+
+Internal-only restructuring (decision D5: vendored monoliths may be decomposed; there is no upstream tracking). Tool names, parameter schemas, commands, flags, event registrations and their order, exported symbols, and runtime behavior are unchanged.
+
+- `runtime-extension.ts` (2,984 lines, one 2,421-line `activateExtension`) is now a 108-line orchestrator. It keeps the load-time telemetry, the `RuntimeCoordinator` construction in its original position, the default export, the `createHostPorts`/`CreateHostPortsOptions` exports (re-exported from `extension/host-ports.ts`), and the final `closeModuleLoadConsoleWindow()`. `activateExtension` calls these modules in the original registration order:
+  - `extension/activation.ts`: `createActivation` builds the capture-window-wrapped API, host ports, plumbing, flags, read bridge, and the per-activation state. The closure's former `let` bindings are now `ExtensionActivation.activationState` fields.
+  - `extension/process-state.ts`: the former module-level `let` bindings (`processState`), dispatch warmup, latest-ctx tracking, and LSP config initialization.
+  - `extension/shared.ts`, `extension/host-ports.ts`, `extension/widget-status.ts` (footer status, widget mount).
+  - `extension/commands.ts`, `extension/report-commands.ts`, `extension/tool-registrations.ts`.
+  - `extension/session-lifecycle.ts`, `extension/tool-hooks.ts`, `extension/turn-hooks.ts`, `extension/quiet-window-hooks.ts`, `extension/context-hook.ts`.
+- `clients/lsp/index.ts` (7,113 lines, one 6,051-line `LSPService`) is now 736 lines. Every former private field of `LSPService` lives in one `LSPServiceInternals` record (`clients/lsp/service-internals.ts`). Each method body moved verbatim into a module function that takes that record first. `this.<field>` became `core.<field>`, private-method calls became direct calls, and public-method calls dispatch through `core.service`. The class keeps every public method as a one-line delegator with its original signature and documentation. Modules:
+  - `service-clients`, `service-spawn`, `service-documents`, `service-notify-pacing`, `service-touch`, `service-diagnostics`, `service-navigation`, `service-rename`, `service-warmup`, `service-workspace`, `service-lifecycle`.
+  - Shared leaves: `service-types`, `service-tunables`, `service-workspace-files`, `initialization-options`.
+- `index.ts` re-exports all 27 previously exported names. The method bodies were moved by a TypeScript-AST rewrite, not retyped. Checks: an export and public-signature comparison against the previous file (27/27 exports, 45/45 public method signatures), and a fake-host activation whose recorded registration sequence and command/context-hook behavior are byte-identical before and after.
+- `tests/context-injection-history.test.ts` now reads the context callback from `extension/context-hook.ts` and supplies `activationState` instead of the two former closure variables.
+- Known remaining size: `touchFile` is still one 1,890-line function (`service-touch.ts`) and `runWorkspaceDiagnosticsSwept` one 640-line function. They moved intact because splitting their shared local state without direct tests is a separate behavior risk.
