@@ -1,7 +1,9 @@
 import path from "node:path";
 
+/** Environment map subset inspected when resolving the Node.js executable under Bun or Node. */
 export type NodeRuntimeEnv = Readonly<Record<string, string | undefined>>;
 
+/** Injectable runtime facts for resolving the Node.js executable path without reading global process state. */
 export type NodeRuntimeFacts = {
   env?: NodeRuntimeEnv;
   execPath?: string;

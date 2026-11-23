@@ -3,6 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const COMPACTION_TOKEN_COUNTERS_SYMBOL = Symbol.for("choco-pi:compaction-token-counters/v1");
 
+/** Provider-neutral request payload passed to a registered compaction token counter. */
 export interface CompactionTokenCountRequest {
   readonly model: Model<Api>;
   readonly system: string;
@@ -15,6 +16,7 @@ export interface CompactionTokenCountRequest {
   readonly timeoutMs: number;
 }
 
+/** Discriminated result of a compaction token-count call: token total, structured failure, or opt-in skip. */
 export type CompactionTokenCountOutcome =
   | { readonly ok: true; readonly inputTokens: number }
   | {
@@ -25,7 +27,9 @@ export type CompactionTokenCountOutcome =
     }
   | { readonly skipped: true };
 
+/** Cross-extension provider contract for counting compaction input tokens via `globalThis[Symbol.for(...)]`. */
 export interface CompactionTokenCounter {
+  /** Optional environment variable that must be set to enable this counter. */
   readonly optInEnv?: string;
   countTokens(request: CompactionTokenCountRequest): Promise<CompactionTokenCountOutcome>;
 }
@@ -59,6 +63,7 @@ export function registerCompactionTokenCounter(
   };
 }
 
+/** Ties a compaction token counter registration to `session_start` and `session_shutdown` lifecycle events. */
 export function bindCompactionTokenCounter(pi: ExtensionAPI, register: () => () => void): void {
   let unregister: (() => void) | undefined = register();
   pi.on("session_start", () => {

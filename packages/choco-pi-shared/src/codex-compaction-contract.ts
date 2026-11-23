@@ -2,21 +2,25 @@ import { arr, bool, compile, obj, str } from "@earendil-works/pi-schema";
 import { isObject, type RuntimeValue } from "./runtime-values.ts";
 import { deleteGlobalSlot, readGlobalSlot, writeGlobalSlot } from "./symbols.ts";
 
+/** Cross-extension `globalThis` slot protocol for reading Codex compaction settings across jiti `moduleCache: false` boundaries. */
 export const CODEX_COMPACTION_CONFIG_READER_PROTOCOL = "choco-pi:codex-compaction-config-reader/v1";
 export const CODEX_COMPACTION_CONFIG_READER_KEY = Symbol.for(
   CODEX_COMPACTION_CONFIG_READER_PROTOCOL,
 );
 
+/** Normalized Codex compaction configuration snapshot shared between provider and compaction extensions. */
 export interface CodexCompactionSnapshotContract {
   readonly responsesCompaction: boolean;
   readonly additionalProviders: readonly string[];
 }
 
+/** Workspace trust and directory inputs passed to the registered Codex compaction config reader. */
 export interface CodexCompactionConfigReadOptions {
   readonly cwd: string;
   readonly projectTrusted: boolean;
 }
 
+/** Callback registered in the global slot to supply Codex compaction settings on demand. */
 export type CodexCompactionConfigReader = (
   options: CodexCompactionConfigReadOptions,
 ) => CodexCompactionSnapshotContract;

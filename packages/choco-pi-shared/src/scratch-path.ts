@@ -12,6 +12,7 @@ export const SCRATCH_GRANTS_KEY = "scratchGrants";
 const ROOTS_KEY = Symbol.for("choco-pi:scratch-roots");
 const PREVIOUS_KEY = Symbol.for("choco-pi:scratch-previous");
 
+/** Resolved root session scratch directory and optional prior directory after fork or resume. */
 export interface ScratchResolution {
   rootSessionId: string;
   currentSessionId: string;
@@ -19,6 +20,7 @@ export interface ScratchResolution {
   previousScratchDir?: string;
 }
 
+/** Session identifiers needed to derive the shared root scratch directory. */
 export interface ResolveScratchInput {
   rootSessionId?: string | undefined;
   currentSessionId: string;
@@ -79,6 +81,7 @@ export function setPreviousScratchDir(sessionId: string, previousScratchDir: str
   sharedMap(PREVIOUS_KEY).set(sessionId, previousScratchDir);
 }
 
+/** Environment variables propagated to child processes so subagents share the root session scratch directory. */
 export type ScratchEnv = {
   PI_ROOT_SESSION_ID?: string;
   PI_SCRATCH_DIR?: string;
@@ -123,6 +126,7 @@ export function sessionIdFromFile(sessionFile: string): string | undefined {
   return id || undefined;
 }
 
+/** Scratch directory transition metadata emitted when a session forks or resumes from another session file. */
 export interface ScratchChange {
   previousScratchDir: string;
   scratchDir: string;
@@ -178,6 +182,7 @@ export function isUnderDirectory(candidate: string, directory: string): boolean 
   return candidate === base || candidate.startsWith(`${base}/`);
 }
 
+/** Normalized write target extracted from a tool call for scratch-path policy checks. */
 export interface ScratchDestination {
   path: string;
   directory: boolean;
@@ -239,6 +244,7 @@ export async function loadScratchGrants(
   return grants;
 }
 
+/** Inputs for evaluating whether a tool call writes under `/tmp` outside the session scratch directory. */
 export interface ScratchCheck {
   sessionId: string;
   toolName: string;
@@ -246,11 +252,13 @@ export interface ScratchCheck {
   destinations: readonly ScratchDestination[];
 }
 
+/** Stateful per-session evaluator that warns once per directory when writes escape the scratch path. */
 export interface ScratchWarner {
   check(call: ScratchCheck): Promise<string[]>;
   reset(): void;
 }
 
+/** Configuration hooks for injecting user scratch grants and inherited environment variables. */
 export interface ScratchWarnerOptions {
   grants?: () => readonly string[] | Promise<readonly string[]>;
   inherited?: Readonly<Record<string, string | undefined>>;

@@ -2,10 +2,13 @@ import { compile, str } from "@earendil-works/pi-schema";
 
 const stringCheck = compile(str()).check;
 
+/** Top-level runtime value type replacing `unknown` for explicit boundary narrowing without `any`. */
 export type RuntimeValue = {} | null | undefined;
 
+/** JSON-compatible runtime value union for parsed payloads and tool-boundary data. */
 export type JsonValue = boolean | number | string | null | undefined | JsonValue[] | JsonRecord;
 
+/** Plain JSON object map with string keys and `JsonValue` entries. */
 export type JsonRecord = { [key: string]: JsonValue };
 
 export function recordOf<Key extends PropertyKey, Value>() {
@@ -25,6 +28,7 @@ export function propertiesWhen<Properties extends {}>(
   return (include ? createProperties() : {}) as Properties;
 }
 
+/** Exhaustive `typeof` tag union returned by `runtimeTypeOf`. */
 export type RuntimeTypeName =
   | "bigint"
   | "boolean"

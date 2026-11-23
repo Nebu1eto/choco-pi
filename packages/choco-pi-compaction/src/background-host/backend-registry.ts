@@ -13,6 +13,7 @@ import {
 } from "../background/settings.ts";
 import { isFunction, isNonEmptyString, isOptional, isRecord, readProperty } from "../guards.ts";
 
+/** Global symbol key for external compaction backend registrations across jiti `moduleCache: false` boundaries. */
 export const COMPACTION_BACKENDS_SYMBOL = Symbol.for("choco-pi:compaction-backends/v1");
 
 const BUILT_IN_BACKEND_IDS: ReadonlySet<string> = new Set([
@@ -22,11 +23,13 @@ const BUILT_IN_BACKEND_IDS: ReadonlySet<string> = new Set([
   "xai-native",
 ]);
 
+/** Handler signature for intercepting foreground `session_before_compact` events. */
 export type ForegroundCompactHandler = (
   event: SessionBeforeCompactEvent,
   ctx: ExtensionContext,
 ) => Promise<SessionBeforeCompactResult | undefined>;
 
+/** External compaction backend contract supplying a background factory, enablement predicate, or foreground hook. */
 export interface CompactionBackendProvider {
   readonly id: string;
   readonly backendFactory?: BackendFactory;
@@ -68,6 +71,7 @@ function providerTable(): ProviderTable {
   return table;
 }
 
+/** Registers a non-built-in compaction backend provider in the `globalThis` table and returns a disposer. */
 export function registerCompactionBackendProvider(provider: CompactionBackendProvider): () => void {
   if (provider.id.length === 0) throw new Error("Compaction backend id must not be empty");
   if (BUILT_IN_BACKEND_IDS.has(provider.id)) {
@@ -84,6 +88,7 @@ export function registerCompactionBackendProvider(provider: CompactionBackendPro
   };
 }
 
+/** Returns the newest registered provider per non-built-in backend id. */
 export function compactionBackendProviders(): readonly CompactionBackendProvider[] {
   const providers: CompactionBackendProvider[] = [];
   for (const [id, registrations] of providerTable()) {
@@ -93,6 +98,7 @@ export function compactionBackendProviders(): readonly CompactionBackendProvider
   return providers;
 }
 
+/** Finds the active external backend provider with a `backendFactory` for `id`. */
 export function registeredBackendProvider(id: string): CompactionBackendProvider | undefined {
   return compactionBackendProviders().find(
     (provider) => provider.id === id && provider.backendFactory !== undefined,

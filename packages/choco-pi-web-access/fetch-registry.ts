@@ -1,11 +1,14 @@
 import type { DeclaredWebLink } from "./declared-web-links.ts";
 import type { ExtractedContent, ExtractOptions } from "./extract.ts";
 
+/** Global symbol key for the shared `WebAccessScope` registry across jiti `moduleCache: false` extensions. */
 export const WEB_ACCESS_SCOPE_SYMBOL = Symbol.for("choco-pi:web-access/v1");
 export const WEB_ACCESS_SCOPE_VERSION = 1;
 
+/** Pipeline stage at which a `ContentExtractor` runs: before fetching or on the HTTP response. */
 export type ContentExtractorStage = "pre-fetch" | "response";
 
+/** Stage-dependent request and response metadata passed to `ContentExtractor.match` and `extract`. */
 export interface ContentExtractorContext {
   url: string;
   parsedUrl?: URL;
@@ -22,6 +25,7 @@ export interface ContentExtractorContext {
   activityId?: string;
 }
 
+/** Pluggable URL/response extractor contract ordered by ascending `priority` within a stage. */
 export interface ContentExtractor {
   id: string;
   priority: number;
@@ -30,6 +34,7 @@ export interface ContentExtractor {
   extract(ctx: ContentExtractorContext): Promise<ExtractedContent | null>;
 }
 
+/** Request context and active `WebAccessScope` passed to a registered `FetchTransport`. */
 export interface FetchTransportContext {
   url: string;
   remoteUrl: URL | null;
@@ -39,12 +44,15 @@ export interface FetchTransportContext {
   scope: WebAccessScope;
 }
 
+/** Extracted page payload returned by a `FetchTransport`, with optional discovered links and retry hint. */
 export interface FetchTransportResult {
   content: ExtractedContent;
   declaredLinks?: DeclaredWebLink[];
+  /** When true, stops fallback to subsequent transports after this result. */
   nonRecoverable?: boolean;
 }
 
+/** Pluggable web fetch backend contract distinguishing hosted vs. local transports. */
 export interface FetchTransport {
   id: string;
   hosted: boolean;
@@ -52,6 +60,7 @@ export interface FetchTransport {
   fetch(ctx: FetchTransportContext): Promise<FetchTransportResult | null>;
 }
 
+/** Process-local registry holding content extractors and fetch transports for `choco-pi-web-access`. */
 export class WebAccessScope {
   readonly scopeVersion: typeof WEB_ACCESS_SCOPE_VERSION = WEB_ACCESS_SCOPE_VERSION;
   readonly extractors = new Map<string, ContentExtractor>();
@@ -102,6 +111,7 @@ export class WebAccessScope {
   }
 }
 
+/** Structural duck-type shape used to validate an existing `WebAccessScope` across module reloads. */
 export interface WebAccessScopeCandidate {
   readonly scopeVersion?: number;
   readonly extractors?: object;
@@ -137,6 +147,7 @@ export function createWebAccessScope(): WebAccessScope {
   return new WebAccessScope();
 }
 
+/** Returns the singleton `WebAccessScope` from `globalThis`, creating it on first access. */
 export function getWebAccessScope(): WebAccessScope {
   // SAFETY: Process-local typed slot keyed by WEB_ACCESS_SCOPE_SYMBOL on globalThis.
   const host = globalThis as WebAccessGlobalHost;
@@ -147,6 +158,7 @@ export function getWebAccessScope(): WebAccessScope {
   return scope;
 }
 
+/** Registers a `ContentExtractor` in the active `WebAccessScope` and returns its disposer. */
 export function registerContentExtractor(
   extractor: ContentExtractor,
   scope: WebAccessScope = getWebAccessScope(),
@@ -154,6 +166,7 @@ export function registerContentExtractor(
   return scope.registerContentExtractor(extractor);
 }
 
+/** Registers a `FetchTransport` in the active `WebAccessScope` and returns its disposer. */
 export function registerFetchTransport(
   transport: FetchTransport,
   scope: WebAccessScope = getWebAccessScope(),

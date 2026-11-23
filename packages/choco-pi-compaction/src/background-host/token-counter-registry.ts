@@ -13,8 +13,10 @@ import {
 } from "../guards.ts";
 import { compile } from "@earendil-works/pi-schema";
 
+/** Global symbol key for the shared compaction token-counter table across jiti `moduleCache: false` modules. */
 export const COMPACTION_TOKEN_COUNTERS_SYMBOL = Symbol.for("choco-pi:compaction-token-counters/v1");
 
+/** Provider-neutral request payload passed to a registered compaction token counter. */
 export interface CompactionTokenCountRequest {
   readonly model: Model<Api>;
   readonly system: string;
@@ -27,6 +29,7 @@ export interface CompactionTokenCountRequest {
   readonly timeoutMs: number;
 }
 
+/** Discriminated result of a compaction token-count call: token total, structured failure, or opt-in skip. */
 export type CompactionTokenCountOutcome =
   | { readonly ok: true; readonly inputTokens: number }
   | {
@@ -37,7 +40,9 @@ export type CompactionTokenCountOutcome =
     }
   | { readonly skipped: true };
 
+/** Provider-supplied token counter registered in the compaction host's `globalThis` table. */
 export interface CompactionTokenCounter {
+  /** Optional environment variable that must be set to enable this counter. */
   readonly optInEnv?: string;
   countTokens(request: CompactionTokenCountRequest): Promise<CompactionTokenCountOutcome>;
 }
@@ -74,6 +79,7 @@ function counterTable(): CounterTable {
   return table;
 }
 
+/** Appends a provider token counter to the shared `globalThis` table and returns a disposer. */
 export function registerCompactionTokenCounter(
   providerId: string,
   counter: CompactionTokenCounter,
@@ -90,10 +96,12 @@ export function registerCompactionTokenCounter(
   };
 }
 
+/** Returns the most recently registered token counter for `providerId`, if any. */
 export function registeredTokenCounter(providerId: string): CompactionTokenCounter | undefined {
   return counterTable().get(providerId)?.at(-1);
 }
 
+/** Lists all distinct `optInEnv` variable names declared by currently registered token counters. */
 export function registeredOptInEnvs(): readonly string[] {
   const names = new Set<string>();
   for (const counters of counterTable().values()) {

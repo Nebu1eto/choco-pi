@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import path from "node:path";
 
+/** Environment map subset used to resolve standalone vs. legacy Pi state and agent directories. */
 export type PiPathEnv = Readonly<Record<string, string | undefined>>;
 
 export function standaloneHome(env: PiPathEnv = process.env): string | undefined {

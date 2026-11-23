@@ -3,11 +3,13 @@ import type { RuntimeValue } from "./runtime-values.ts";
 export const STALE_CONTEXT_ERROR_PREFIX =
   "This extension ctx is stale after session replacement or reload.";
 
+/** Generation-pinned handle for detecting stale extension contexts across async boundaries. */
 export interface OwnerLease<Owner> {
   readonly generation: number;
   readonly owner: Owner;
 }
 
+/** Tracks the active extension owner and generation so async continuations can abort after reload or replacement. */
 export interface LifecycleOwner<Owner> {
   replace(owner: Owner): OwnerLease<Owner>;
   invalidate(): void;

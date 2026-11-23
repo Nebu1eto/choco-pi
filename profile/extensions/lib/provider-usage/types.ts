@@ -14,6 +14,7 @@ export const PROFILE_POLICY: UsageRequestPolicy = {
   maxStaleMs: 7 * 24 * 60 * 60_000,
 };
 
+/** Normalized quota or rate-limit window reported by a provider usage adapter. */
 export type UsageWindow = {
   label: string;
   percent: number;
@@ -26,6 +27,7 @@ export type UsageWindow = {
   scope?: string;
 };
 
+/** Aggregated usage windows, plan metadata, and optional cache provenance for one provider. */
 export type ProviderUsage = {
   name: string;
   plan?: string;
@@ -34,27 +36,34 @@ export type ProviderUsage = {
   windows: UsageWindow[];
 };
 
+/** Pace-adjusted quota status derived from elapsed window time or explicit adapter pace. */
 export type QuotaHealth = "exhausted" | "over" | "under" | "unknown";
 
+/** Point-in-time usage windows paired with the Unix epoch millisecond timestamp of observation. */
 export type ProviderUsageSnapshot = {
   windows: UsageWindow[];
   observedAt: number;
 };
 
+/** Minimal foreground-coloring port for rendering usage summaries without coupling to a specific TUI theme. */
 export type UsageStyle = { fg(color: string, text: string): string };
 
+/** Pre-formatted percentage and detail strings for compact status-line or report rendering. */
 export type UsageWindowSummary = { percent: string; detail: string };
 
+/** Per-provider fetch outcome: either normalized usage data or a structured error entry. */
 export type ProviderUsageReading =
   | { ok: true; usage: ProviderUsage }
   | { ok: false; name: string; error: string };
 
+/** Combined multi-provider usage report with observation timestamp and unconfigured provider names. */
 export type ProviderUsageReport = {
   observedAt: Date;
   providers: ProviderUsageReading[];
   absent?: string[];
 };
 
+/** Provider-to-feature adapter contract decoupling provider quota fetching from usage reporting UI. */
 export type UsageProviderAdapter = {
   id: string;
   displayName: string;

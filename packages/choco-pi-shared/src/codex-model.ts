@@ -3,6 +3,7 @@ import { isJsonRecord, isString, type RuntimeValue } from "./runtime-values.ts";
 
 export const CODEX_JWT_CLAIM_PATH = "https://api.openai.com/auth";
 
+/** Minimal model metadata shape for identifying Codex, OpenAI Responses, and Copilot GPT transports. */
 export interface CodexLikeModelDescriptor {
   provider: string;
   api: string;
@@ -10,6 +11,7 @@ export interface CodexLikeModelDescriptor {
   baseUrl: string;
 }
 
+/** Extension context projection exposing the active model descriptor for transport predicate checks. */
 export interface ModelContextLike {
   readonly model?: Partial<CodexLikeModelDescriptor> | null | undefined;
 }
