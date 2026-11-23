@@ -71,18 +71,8 @@ export function incompatibility(
   return undefined;
 }
 
-export function normalizeSearchRequest(
-  request: SearchRequest,
-  adapterFamily?: SearchProviderFamily,
-): SearchRequest {
+export function normalizeSearchRequest(request: SearchRequest): SearchRequest {
   if (request.exaSearchType === undefined) return request;
-  if (
-    adapterFamily !== undefined &&
-    adapterFamily !== "exa" &&
-    request.providerOptions === undefined
-  ) {
-    return request;
-  }
   const existingExa = request.providerOptions?.exa;
   if (existingExa && existingExa.searchType !== undefined) return request;
   const mergedExa: JsonRecord = {

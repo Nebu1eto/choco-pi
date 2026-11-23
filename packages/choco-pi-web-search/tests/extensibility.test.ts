@@ -132,3 +132,24 @@ test("providerOptions passes through to adapters and normalizes legacy exaSearch
     (err) => isSearchError(err) && err.kind === "invalid-request",
   );
 });
+
+test("legacy exaSearchType normalizes into providerOptions for custom families without providerOptions", async () => {
+  const scope = createBoundScope();
+  const seen: SearchRequest[] = [];
+  registerSearchAdapter(scope, {
+    id: "custom.deep",
+    family: "custom-deep",
+    transport: "api",
+    capabilities: { actions: ["search"], constraints: { exaSearchType: true } },
+    availability: () => ({ status: "available" }),
+    execute: async (request) => {
+      seen.push(request);
+      return { answer: "ok", results: [] };
+    },
+  });
+
+  await search({ query: "q", provider: "custom-deep", exaSearchType: "deep" }, { scope });
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0]?.exaSearchType, "deep");
+  assert.equal(seen[0]?.providerOptions?.exa?.searchType, "deep");
+});

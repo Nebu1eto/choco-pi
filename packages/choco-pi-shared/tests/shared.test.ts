@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { compile } from "@earendil-works/pi-schema";
 import {
+  type CompactionTokenCounter,
+  registerCompactionTokenCounter,
+} from "../src/compaction-token-counter-slot.ts";
+import {
   createLifecycleOwner,
   isStaleContextError,
   rethrowUnlessStaleContext,
@@ -131,4 +135,52 @@ test("pi-paths, node-runtime, and print-settle-wait behave purely", async () => 
     maxWaitMs: 100,
   });
   assert.equal(outcome, "idle");
+});
+
+function sharedCounterTableKeys(): string[] {
+  const table: unknown = Object.getOwnPropertyDescriptor(
+    globalThis,
+    Symbol.for("choco-pi:compaction-token-counters/v1"),
+  )?.value;
+  return table instanceof Map ? [...table.keys()].map(String) : [];
+}
+
+function sharedCounterTableEntries(providerId: string): unknown[] {
+  const table: unknown = Object.getOwnPropertyDescriptor(
+    globalThis,
+    Symbol.for("choco-pi:compaction-token-counters/v1"),
+  )?.value;
+  if (!(table instanceof Map)) return [];
+  const entries: unknown = table.get(providerId);
+  return Array.isArray(entries) ? entries : [];
+}
+
+test("compaction token counter slot removes one lease per idempotent disposer", () => {
+  const counter: CompactionTokenCounter = { countTokens: async () => ({ skipped: true }) };
+  const first = registerCompactionTokenCounter("test-provider", counter);
+  const second = registerCompactionTokenCounter("test-provider", counter);
+  try {
+    first();
+    first();
+    assert.deepEqual(sharedCounterTableEntries("test-provider"), [counter]);
+    second();
+    assert.equal(sharedCounterTableKeys().includes("test-provider"), false);
+  } finally {
+    first();
+    second();
+  }
+});
+
+test("compaction token counter slot rejects blank provider ids without touching the table", () => {
+  const counter: CompactionTokenCounter = { countTokens: async () => ({ skipped: true }) };
+  const unregister = registerCompactionTokenCounter("test-intact", counter);
+  try {
+    for (const providerId of ["", "   "]) {
+      assert.throws(() => registerCompactionTokenCounter(providerId, counter), /must not be empty/);
+    }
+    assert.deepEqual(sharedCounterTableKeys(), ["test-intact"]);
+    assert.deepEqual(sharedCounterTableEntries("test-intact"), [counter]);
+  } finally {
+    unregister();
+  }
 });

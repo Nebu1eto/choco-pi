@@ -448,19 +448,42 @@ function createBuiltinTransports(): FetchTransport[] {
   ];
 }
 
-export function ensureBuiltinFetchRegistry(
-  scope: WebAccessScope = getWebAccessScope(),
-): WebAccessScope {
+const BUILTIN_FETCH_ENTRY = Symbol.for("choco-pi:web-access/builtin-fetch-entry/v1");
+
+function brandBuiltin<Entry extends object>(entry: Entry): Entry {
+  Object.defineProperty(entry, BUILTIN_FETCH_ENTRY, { value: true });
+  return entry;
+}
+
+function isReplaceableBuiltin(existing: ContentExtractor | FetchTransport | undefined): boolean {
+  return existing === undefined || Object.hasOwn(existing, BUILTIN_FETCH_ENTRY);
+}
+
+function installBuiltinFetchRegistry(scope: WebAccessScope, replace: boolean): WebAccessScope {
   for (const extractor of createBuiltinExtractors()) {
-    if (!scope.extractors.has(extractor.id)) scope.registerContentExtractor(extractor);
+    const existing = scope.extractors.get(extractor.id);
+    if (existing === undefined) scope.registerContentExtractor(brandBuiltin(extractor));
+    else if (replace && isReplaceableBuiltin(existing)) {
+      scope.extractors.set(extractor.id, brandBuiltin(extractor));
+    }
   }
   for (const transport of createBuiltinTransports()) {
-    if (!scope.transports.has(transport.id)) scope.registerFetchTransport(transport);
+    const existing = scope.transports.get(transport.id);
+    if (existing === undefined) scope.registerFetchTransport(brandBuiltin(transport));
+    else if (replace && isReplaceableBuiltin(existing)) {
+      scope.transports.set(transport.id, brandBuiltin(transport));
+    }
   }
   return scope;
 }
 
-ensureBuiltinFetchRegistry(getWebAccessScope());
+export function ensureBuiltinFetchRegistry(
+  scope: WebAccessScope = getWebAccessScope(),
+): WebAccessScope {
+  return installBuiltinFetchRegistry(scope, false);
+}
+
+installBuiltinFetchRegistry(getWebAccessScope(), true);
 
 export async function extractContent(
   url: string,

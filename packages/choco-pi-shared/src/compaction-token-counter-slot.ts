@@ -51,13 +51,21 @@ export function registerCompactionTokenCounter(
   providerId: string,
   counter: CompactionTokenCounter,
 ): () => void {
+  if (providerId.trim().length === 0) {
+    throw new Error("Token counter provider id must not be empty");
+  }
   const table = counterTable();
   const existing = table.get(providerId);
   table.set(providerId, [...(Array.isArray(existing) ? existing : []), counter]);
+  let disposed = false;
   return () => {
+    if (disposed) return;
+    disposed = true;
     const current = table.get(providerId);
-    if (!Array.isArray(current) || !current.includes(counter)) return;
-    const remaining = current.filter((entry) => entry !== counter);
+    if (!Array.isArray(current)) return;
+    const index = current.lastIndexOf(counter);
+    if (index === -1) return;
+    const remaining = current.toSpliced(index, 1);
     if (remaining.length === 0) table.delete(providerId);
     else table.set(providerId, remaining);
   };

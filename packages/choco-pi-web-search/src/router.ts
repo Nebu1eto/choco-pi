@@ -601,7 +601,7 @@ async function attemptAdapter(
     ensureNotInterrupted(attemptSignal, adapter);
     if (resolvedBilling === "subscription") billingState.attemptedSubscription = true;
     const raw = await awaitWithAbort(
-      adapter.execute(normalizeSearchRequest(request, adapter.family), adapterContext),
+      adapter.execute(normalizeSearchRequest(request), adapterContext),
       attemptSignal,
       adapter,
     );

@@ -165,3 +165,34 @@ test("registered foreground handlers: newest per id, and a stale unregister keep
   }
   assert.deepEqual(compactionBackendProviders(), []);
 });
+
+test("the same provider registered twice keeps one lease after an idempotent first unregister", () => {
+  const provider = { id: "acme-twice" };
+  const first = registerCompactionBackendProvider(provider);
+  const second = registerCompactionBackendProvider(provider);
+  try {
+    first();
+    first();
+    assert.deepEqual(compactionBackendProviders(), [provider]);
+    second();
+    assert.deepEqual(compactionBackendProviders(), []);
+  } finally {
+    first();
+    second();
+  }
+});
+
+test("a blank backend id is rejected before the shared table changes", () => {
+  const unregister = registerCompactionBackendProvider({ id: "acme-intact" });
+  try {
+    for (const id of ["", "   "]) {
+      assert.throws(() => registerCompactionBackendProvider({ id }), /must not be empty/);
+    }
+    assert.deepEqual(
+      compactionBackendProviders().map((provider) => provider.id),
+      ["acme-intact"],
+    );
+  } finally {
+    unregister();
+  }
+});

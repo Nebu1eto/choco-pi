@@ -73,16 +73,23 @@ function providerTable(): ProviderTable {
 
 /** Registers a non-built-in compaction backend provider in the `globalThis` table and returns a disposer. */
 export function registerCompactionBackendProvider(provider: CompactionBackendProvider): () => void {
-  if (provider.id.length === 0) throw new Error("Compaction backend id must not be empty");
+  if (provider.id.trim().length === 0) {
+    throw new Error("Compaction backend id must not be empty");
+  }
   if (BUILT_IN_BACKEND_IDS.has(provider.id)) {
     throw new Error(`Compaction backend id ${provider.id} is built in`);
   }
   const table = providerTable();
   table.set(provider.id, [...(table.get(provider.id) ?? []), provider]);
+  let disposed = false;
   return () => {
+    if (disposed) return;
+    disposed = true;
     const current = table.get(provider.id);
-    if (current === undefined || !current.includes(provider)) return;
-    const remaining = current.filter((entry) => entry !== provider);
+    if (current === undefined) return;
+    const index = current.lastIndexOf(provider);
+    if (index === -1) return;
+    const remaining = current.toSpliced(index, 1);
     if (remaining.length === 0) table.delete(provider.id);
     else table.set(provider.id, remaining);
   };

@@ -64,6 +64,31 @@ export function standaloneCodeModeActiveTools(activeTools: readonly string[]): s
   return [...STANDALONE_CODE_MODE_TOOL_NAMES, ...preserved];
 }
 
+function withoutCodeModeTools(names: readonly string[]): string[] {
+  return names.filter((name) => !CODE_MODE_OWNED_TOOL_NAMES.includes(name));
+}
+
+function addedSince(observed: readonly string[], current: readonly string[]): string[] | undefined {
+  const observedNames = new Set(observed);
+  const currentNames = new Set(current);
+  if ([...observedNames].some((name) => !currentNames.has(name))) return undefined;
+  if (current.some((name) => REPLACED_DIRECT_TOOL_NAMES.includes(name))) return undefined;
+  return [...currentNames].filter((name) => !observedNames.has(name));
+}
+
+function refreshStandalonePermissionSnapshot(
+  previous: readonly string[] | undefined,
+  lastObserved: readonly string[] | undefined,
+  active: readonly string[],
+): string[] {
+  if (previous === undefined || lastObserved === undefined) return withoutCodeModeTools(active);
+  const added = addedSince(lastObserved, active);
+  if (added === undefined) return withoutCodeModeTools(active);
+  const extended = [...previous];
+  for (const name of withoutCodeModeTools(added)) if (!extended.includes(name)) extended.push(name);
+  return extended;
+}
+
 export async function registerStandaloneCodeMode(
   pi: ExtensionAPI,
   config: CodeModeToolConfig = DEFAULT_STANDALONE_CODE_MODE_CONFIG,
@@ -86,20 +111,29 @@ export async function registerStandaloneCodeMode(
   const registration = await registerCodeMode(pi, host);
   sessions.onSessionExit((sessionId) => tracker.recordSessionFinished(sessionId));
   let generation = 0;
+  let lastObserved: string[] | undefined;
 
   const activate = (): void => {
     const active = pi.getActiveTools();
-    host.state.previousToolNames ??= active.filter(
-      (name) => !CODE_MODE_OWNED_TOOL_NAMES.includes(name),
+    host.state.previousToolNames = refreshStandalonePermissionSnapshot(
+      host.state.previousToolNames,
+      lastObserved,
+      active,
     );
     const next = standaloneCodeModeActiveTools(active);
-    if (next.length !== active.length || next.some((name, index) => name !== active[index]))
+    if (next.length !== active.length || next.some((name, index) => name !== active[index])) {
       pi.setActiveTools(next);
+      lastObserved = pi.getActiveTools();
+    } else {
+      lastObserved = [...active];
+    }
   };
   const prepare = (ctx: ExtensionContext): void => {
+    const prepGeneration = generation;
     const preparation = withLiveCtx(() => registration.prepare(ctx));
     if (!preparation) return;
     void preparation.catch((error: BoundaryValue) => {
+      if (generation !== prepGeneration) return;
       if (isAbortError(error) || isStaleContextError(error)) return;
       withLiveCtx(() =>
         ctx.ui.notify(`Code Mode host setup failed: ${errorMessage(error)}`, "error"),

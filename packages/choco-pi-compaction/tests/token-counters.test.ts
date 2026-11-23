@@ -15,6 +15,7 @@ import {
   registerCompactionTokenCounter,
   registeredTokenCounter,
 } from "../src/background-host/token-counter-registry.ts";
+import { registerCompactionTokenCounter as registerSharedCompactionTokenCounter } from "../../choco-pi-shared/src/compaction-token-counter-slot.ts";
 import {
   ANTIGRAVITY_COUNT_TOKENS_ENV,
   registerAntigravityCompactionTokenCounter,
@@ -549,5 +550,54 @@ test("registry: a counter failure code, cache override, and an unreadable answer
     assert.deepEqual(notes, ["count-tokens: error"]);
   } finally {
     dropMalformed();
+  }
+});
+
+test("the same counter registered twice keeps one lease after an idempotent first unregister", () => {
+  const counter: CompactionTokenCounter = { countTokens: async () => ({ skipped: true }) };
+  const first = registerCompactionTokenCounter("test-provider", counter);
+  const second = registerCompactionTokenCounter("test-provider", counter);
+  try {
+    first();
+    first();
+    assert.equal(registeredTokenCounter("test-provider"), counter);
+    second();
+    assert.equal(registeredTokenCounter("test-provider"), undefined);
+  } finally {
+    first();
+    second();
+  }
+});
+
+test("shared slot: the same counter registered twice keeps one lease after an idempotent first unregister", () => {
+  const counter: CompactionTokenCounter = { countTokens: async () => ({ skipped: true }) };
+  const first = registerSharedCompactionTokenCounter("test-provider", counter);
+  const second = registerSharedCompactionTokenCounter("test-provider", counter);
+  try {
+    first();
+    first();
+    assert.equal(registeredTokenCounter("test-provider"), counter);
+    second();
+    assert.equal(registeredTokenCounter("test-provider"), undefined);
+  } finally {
+    first();
+    second();
+  }
+});
+
+test("a blank provider id is rejected by both registries and valid lookups stay intact", () => {
+  const counter: CompactionTokenCounter = { countTokens: async () => ({ skipped: true }) };
+  const unregister = registerCompactionTokenCounter("test-intact", counter);
+  try {
+    for (const providerId of ["", "   "]) {
+      assert.throws(
+        () => registerSharedCompactionTokenCounter(providerId, counter),
+        /must not be empty/,
+      );
+      assert.throws(() => registerCompactionTokenCounter(providerId, counter), /must not be empty/);
+    }
+    assert.equal(registeredTokenCounter("test-intact"), counter);
+  } finally {
+    unregister();
   }
 });

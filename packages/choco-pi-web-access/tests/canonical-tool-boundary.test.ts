@@ -506,6 +506,7 @@ test("canonical constraints reach the selected Brave adapter exactly", async () 
       responseLength: "long",
       searchContextSize: "high",
       requiredCapabilities: ["country", "safesearch", "offset"],
+      providerOptions: { exa: { searchType: "deep" } },
     },
   ]);
 });

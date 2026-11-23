@@ -32,7 +32,7 @@ import {
 
 export const CODEX_PACKAGE_NAME = "choco-pi-codex";
 
-function standaloneOwnedCodeMode(): CodeModeRegistration {
+function externallyOwnedCodeMode(): CodeModeRegistration {
   return {
     prepare: () => undefined,
     refreshPromptTools: (systemPrompt) => systemPrompt,
@@ -58,6 +58,7 @@ function warnStandaloneCodeModeOwner(pi: ExtensionAPI): void {
 
 export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
   const codeModeOwner = probeCodeModeHostOwner(pi);
+  const codeModeOwnedElsewhere = codeModeOwner !== undefined;
   const standaloneCodeMode = codeModeOwner?.kind === "standalone";
   const releaseCodeModeClaim = codeModeOwner
     ? () => {}
@@ -65,7 +66,7 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
   if (standaloneCodeMode) warnStandaloneCodeModeOwner(pi);
   registerCodexTransportCleanup();
   registerNativeSteeringBridge();
-  if (!standaloneCodeMode) registerApplyPatchDisplayBroker(pi);
+  if (!codeModeOwnedElsewhere) registerApplyPatchDisplayBroker(pi);
   const runtime = createCodexExtensionRuntime(pi);
   let findModel: NativeCompactionModelLookup | undefined;
   const budgetHook = createNativeCompactionBudgetHook({
@@ -101,8 +102,8 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
   pi.on("session_shutdown", () => searchAdapter.unregister());
   let codeMode: CodeModeRegistration;
   try {
-    codeMode = standaloneCodeMode
-      ? standaloneOwnedCodeMode()
+    codeMode = codeModeOwnedElsewhere
+      ? externallyOwnedCodeMode()
       : await registerCodexCodeMode(pi, runtime);
   } catch (error) {
     releaseCodeModeClaim();
@@ -138,7 +139,7 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
       () => runtime.state.executionMode,
     );
     cleanupProxyProvider = proxyProvider;
-    const tools = registerCodexTools(pi, runtime, { coreTools: !standaloneCodeMode });
+    const tools = registerCodexTools(pi, runtime, { coreTools: !codeModeOwnedElsewhere });
     const ui = registerCodexUi(pi, runtime);
     registerCodexCommand(pi, runtime.state, (config, ctx, previousConfig) => {
       eligibility.refresh();
