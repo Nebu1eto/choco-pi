@@ -11,7 +11,7 @@ import { type ChildProcessByStdio, spawn } from "node:child_process";
 import type { Readable } from "node:stream";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { nodeExecutable } from "../../../../profile/extensions/lib/node-runtime.ts";
+import { nodeExecutable } from "@choco-pi/shared/node-runtime";
 import {
   type NodePackageManager,
   pmBinary,

@@ -1,3 +1,4 @@
+import { memoizedImport } from "../../memoized-import.ts";
 import type { BoundaryRecord, BoundaryValue } from "../boundary.ts";
 import { isObjectValue, isStringValue } from "../boundary.ts";
 import {
@@ -18,11 +19,6 @@ import { renderTextWithImages } from "../../ui/tool-rendering/media.ts";
 import { renderCodexToolCell } from "../../ui/tool-rendering/codex-tool-cell.ts";
 import { supportsViewImageInputs } from "../../adapter/tool-support.ts";
 import { OPENAI_PLATFORM_BASE_URL } from "../../adapter/openai-sign-in.ts";
-
-function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
-  let promise: Promise<Module> | undefined;
-  return () => (promise ??= loader());
-}
 
 const loadNativeBinary = memoizedImport(() => import("../native/binary.ts"));
 const loadNativeRunner = memoizedImport(() => import("../native/runner.ts"));

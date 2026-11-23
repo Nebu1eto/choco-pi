@@ -1,3 +1,4 @@
+import { memoizedImport } from "../../memoized-import.ts";
 import { isStringValue } from "../boundary.ts";
 import type {
   ExtensionAPI,
@@ -19,11 +20,6 @@ import {
 } from "./output.ts";
 import { renderTextWithImages } from "../../ui/tool-rendering/media.ts";
 import { renderCodexToolCell } from "../../ui/tool-rendering/codex-tool-cell.ts";
-
-function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
-  let promise: Promise<Module> | undefined;
-  return () => (promise ??= loader());
-}
 
 const loadNativeBinary = memoizedImport(() => import("../native/binary.ts"));
 const loadNativeRunner = memoizedImport(() => import("../native/runner.ts"));

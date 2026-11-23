@@ -1,4 +1,4 @@
-import { isString, isNumber } from "../providers/value-guards.ts";
+import { isString, isNumber } from "../value-guards.ts";
 import { conditionalProperties } from "../adapter/runtime-values.ts";
 import { isJsonObject } from "../adapter/runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "../adapter/runtime-values.ts";

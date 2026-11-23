@@ -17,7 +17,7 @@ import {
   STOP_CONTROL_REGISTRY_KEY,
   STOP_CONTROL_REPORT_CHANNEL,
   STOP_CONTROL_REVOKE_CHANNEL,
-} from "../src/stop-control.ts";
+} from "@choco-pi/shared/stop-control";
 
 const ROOT = "root-session";
 

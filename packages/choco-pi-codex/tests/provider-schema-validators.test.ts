@@ -18,7 +18,7 @@ import {
   publishTransportProbe,
   type TransportProbeRecord,
 } from "../src/diagnostics/transport-probe-registry.ts";
-import { isString, isNumber, isRevision } from "../src/providers/value-guards.ts";
+import { isString, isNumber, isRevision } from "../src/value-guards.ts";
 
 const validBody: ResponsesBody = {
   model: "gpt-5.6-sol",

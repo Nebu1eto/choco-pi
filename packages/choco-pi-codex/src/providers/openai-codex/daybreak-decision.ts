@@ -1,5 +1,5 @@
 import { isJsonObject } from "../../adapter/runtime-values.ts";
-import { isBoolean, isFunction, isRevision, isString } from "../value-guards.ts";
+import { isBoolean, isFunction, isRevision, isString } from "../../value-guards.ts";
 import {
   type CodexLikeModelDescriptor,
   isCanonicalCodexSubscriptionModel,

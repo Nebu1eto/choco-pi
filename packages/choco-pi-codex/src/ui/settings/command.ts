@@ -1,3 +1,4 @@
+import { memoizedImport } from "../../memoized-import.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { CodexConversionConfig } from "../../adapter/activation/config.ts";
 import {
@@ -18,11 +19,6 @@ import type { AdapterState } from "../../adapter/activation/state.ts";
 import { ROUTABLE_SETTINGS_TABS, parseSettingsTab, type SettingsTab } from "./tabs.ts";
 import { registerCodexPreferencesProvider } from "./preferences-sections.ts";
 import { inSubagentChildLoad } from "../../extension/child-load.ts";
-
-function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
-  let promise: Promise<Module> | undefined;
-  return () => (promise ??= loader());
-}
 
 const loadSettingsScreen = memoizedImport(() => import("./screen.ts"));
 

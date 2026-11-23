@@ -1,6 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { isJsonObject } from "../../adapter/runtime-values.ts";
-import { isBoolean, isFunction, isRevision, isString } from "../value-guards.ts";
+import { isBoolean, isFunction, isRevision, isString } from "../../value-guards.ts";
 import {
   isOpenAIPlatformModel,
   isOpenAISubscriptionSignInModel,

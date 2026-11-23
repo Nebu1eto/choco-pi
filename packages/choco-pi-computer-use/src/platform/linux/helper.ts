@@ -5,7 +5,7 @@ import { access } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { piAgentDir } from "../../../../../profile/extensions/lib/pi-paths.ts";
+import { piAgentDir } from "@choco-pi/shared/pi-paths";
 import type { JsonValue } from "../../json.ts";
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");

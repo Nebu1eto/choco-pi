@@ -1,3 +1,4 @@
+import { memoizedImport } from "../memoized-import.ts";
 import {
   createAssistantMessageEventStream,
   type Api,
@@ -15,11 +16,6 @@ import type { ExecutionMode } from "../adapter/activation/execution-mode.ts";
 import { isCodeModeRuntime, resolveCodexRuntimePlan } from "../adapter/activation/runtime-plan.ts";
 import type { CodexStreamEvent, ResponsesBody } from "./openai-codex/types.ts";
 import { supportsResponsesLiteModel } from "./openai-codex/responses-lite.ts";
-
-function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
-  let promise: Promise<Module> | undefined;
-  return () => (promise ??= loader());
-}
 
 const loadOpenAI = memoizedImport(() => import("openai"));
 const loadConstrainedSampling = memoizedImport(() => import("./constrained-sampling.ts"));

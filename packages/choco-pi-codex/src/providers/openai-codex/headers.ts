@@ -11,8 +11,11 @@ import {
   type CodexTurnMetadata,
 } from "./client-identity.ts";
 import { RESPONSES_LITE_HEADER } from "./responses-lite.ts";
-export { headersToRecord } from "./header-record.ts";
 export type { CodexTurnMetadata } from "./client-identity.ts";
+
+export function headersToRecord(headers: Headers): Record<string, string> {
+  return Object.fromEntries(headers.entries());
+}
 
 type ProviderHeaders = Record<string, string | null>;
 

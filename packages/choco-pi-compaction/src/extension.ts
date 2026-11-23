@@ -15,7 +15,7 @@ import {
 import type { LocalCompactionDetails } from "./details.ts";
 import { formatFileLists, resolveFileLists } from "./file-ops.ts";
 import { buildCompactionInput, type CompactionInput } from "./input.ts";
-import { isStaleContextError } from "./lifecycle.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 import { normalizeSummary } from "./normalize.ts";
 import {
   lossAuthorizedFor,

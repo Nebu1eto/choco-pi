@@ -49,7 +49,7 @@ import {
   SidecarRefusedError,
   writeGlobalBackgroundSettings,
 } from "../background/settings.ts";
-import { isStaleContextError } from "../lifecycle.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 import {
   lossAuthorized,
   opaqueCheckpointOf,

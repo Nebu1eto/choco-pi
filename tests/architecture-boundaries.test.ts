@@ -50,16 +50,11 @@ const KNOWN_LEGACY_CYCLES: readonly (readonly string[])[] = [
  * Packages are meant to load without the profile tree; this list only shrinks.
  */
 const KNOWN_PACKAGE_TO_PROFILE_EDGES: readonly string[] = [
-  "packages/choco-pi-acp -> profile",
   "packages/choco-pi-agent-browser -> profile",
   "packages/choco-pi-codex -> profile",
-  "packages/choco-pi-computer-use -> profile",
   "packages/choco-pi-hooks -> profile",
-  "packages/choco-pi-lsp -> profile",
-  "packages/choco-pi-mcp -> profile",
   "packages/choco-pi-shells -> profile",
   "packages/choco-pi-subagents -> profile",
-  "packages/choco-pi-web-access -> profile",
 ];
 
 /**

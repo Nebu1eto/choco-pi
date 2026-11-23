@@ -1,6 +1,6 @@
 import { compile, bool, num, obj, opt, str, type Static } from "@earendil-works/pi-schema";
 import { isJsonObject } from "../adapter/runtime-values.ts";
-import { isFunction } from "../providers/value-guards.ts";
+import { isFunction } from "../value-guards.ts";
 
 export const TRANSPORT_PROBE_SYMBOL: unique symbol = Symbol.for("choco-pi.transport-probe");
 

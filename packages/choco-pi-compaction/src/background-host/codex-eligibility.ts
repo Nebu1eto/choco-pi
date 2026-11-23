@@ -6,7 +6,7 @@
  * changes, journals the owner transition and replaces the main owner so its
  * backend selection follows the new eligibility.
  */
-import { isStaleContextError } from "../lifecycle.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 import { CODEX_BACKEND_SETTING_ID } from "../background/settings.ts";
 import {
   CODEX_ELIGIBILITY_SLOT,

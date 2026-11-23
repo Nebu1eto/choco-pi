@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { arr, compile, obj, opt, str, type Static } from "@earendil-works/pi-schema";
-import { isString } from "../src/providers/value-guards.ts";
+import { isString } from "../src/value-guards.ts";
 import {
   createAgentSession,
   DefaultResourceLoader,

@@ -1,5 +1,6 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { SettingItem } from "@earendil-works/pi-tui";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 import { modelPickerSubmenu } from "./model-picker.ts";
 import type { RuntimeValue } from "./runtime-values.ts";
 import {
@@ -58,12 +59,6 @@ const DAYBREAK_VALUES = [DAYBREAK_OFF, DAYBREAK_ON, "auto"];
 function formatDaybreakPreference(value: DaybreakPreference | undefined): string {
   if (value === "auto") return "auto";
   return value ? DAYBREAK_ON : DAYBREAK_OFF;
-}
-const STALE_CONTEXT_ERROR =
-  "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().";
-
-function isStaleContextError(error: RuntimeValue): boolean {
-  return error instanceof Error && error.message === STALE_CONTEXT_ERROR;
 }
 
 function notifyIfContextActive(

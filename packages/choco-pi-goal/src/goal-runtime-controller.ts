@@ -24,7 +24,7 @@ import {
   setRecoveryPausedAttention,
   type GoalStartTurnStrategy,
 } from "./recovery-machine.ts";
-import { isStaleContextError } from "./goal-runtime-access.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 import { goalWithLiveUsage, updateGoalStatus } from "./state.ts";
 import {
   isRevokeRequest,
@@ -32,7 +32,7 @@ import {
   STOP_CONTROL_REVOKE_CHANNEL,
   type RevokeRequest,
   type StopReport,
-} from "./stop-control.ts";
+} from "@choco-pi/shared/stop-control";
 import { registerGoalTools } from "./tools.ts";
 import type { GoalEntrySource, GoalResult, ThreadGoal } from "./types.ts";
 

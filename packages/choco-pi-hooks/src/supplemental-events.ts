@@ -3,7 +3,7 @@ import path from "node:path";
 import type { ExtensionAPI, ExtensionContext, TurnEndEvent } from "@earendil-works/pi-coding-agent";
 import type { HookEventName, JsonObject, MergedHookResult } from "./types.ts";
 import { isStringValue, parseRuntimeRecord } from "./validation.ts";
-import { rethrowUnlessStaleContext } from "./lifecycle.ts";
+import { rethrowUnlessStaleContext } from "@choco-pi/shared/lifecycle";
 
 export type HookDispatch = (
   event: HookEventName,

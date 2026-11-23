@@ -4,7 +4,7 @@ import { hasRuntimeType } from "./parsing.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { piStateRoot } from "../../../../../profile/extensions/lib/pi-paths.ts";
+import { piStateRoot } from "@choco-pi/shared/pi-paths";
 
 export type BrowserDefaultProfilePolicy = "explicit-only" | "authenticated-only" | "always";
 export type AgentBrowserConfigScope = "global" | "project" | "override" | "env-fallback";

@@ -1,13 +1,9 @@
+import { memoizedImport } from "../../memoized-import.ts";
 import { createHash } from "node:crypto";
 import type { AcquiredWebSocket, ProviderEnv, SessionWebSocketCacheEntry } from "./types.ts";
 import { clearCanonicalSessions } from "./session-continuity.ts";
 import { clearAsyncCodeModeCalls } from "./native-features.ts";
 import { closeNativeSteering } from "./native-steering.ts";
-
-function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
-  let promise: Promise<Module> | undefined;
-  return () => (promise ??= loader());
-}
 
 const loadWebSocketConnection = memoizedImport(() => import("./websocket-connection.ts"));
 

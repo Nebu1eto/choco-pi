@@ -12,7 +12,7 @@ import {
   isString,
   readProperty,
 } from "../guards.ts";
-import { isStaleContextError } from "../lifecycle.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 
 // ---------------------------------------------------------------------------
 // Programmatic compact bridge (RPC `compact`, SDK, extension `ctx.compact()`)

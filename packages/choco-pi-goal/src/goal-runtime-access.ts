@@ -1,4 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
+import type { RuntimeValue } from "@choco-pi/shared/runtime-values";
 
 import { cloneGoal } from "./state.ts";
 import type { GoalEntrySource, GoalResult, ThreadGoal } from "./types.ts";
@@ -44,20 +46,7 @@ export interface GoalRuntimeAccessPublisher<Ctx extends SessionOwnedContext = Ex
   dispose(): void;
 }
 
-/** Host-owned value read before validation; mirrors the repository `RuntimeValue` alias. */
-type RuntimeValue = {} | null | undefined;
-
-const STALE_CONTEXT_ERROR_PREFIX =
-  "This extension ctx is stale after session replacement or reload.";
-
-/** Matches only the host's canonical stale-context failure. */
-export function isStaleContextError(error: RuntimeValue): boolean {
-  return (
-    error instanceof Error &&
-    (error.message === STALE_CONTEXT_ERROR_PREFIX ||
-      error.message.startsWith(`${STALE_CONTEXT_ERROR_PREFIX} `))
-  );
-}
+export { isStaleContextError };
 
 function currentSlot(): RuntimeValue {
   return Object.getOwnPropertyDescriptor(globalThis, GOAL_RUNTIME_SYMBOL)?.value;

@@ -27,7 +27,7 @@ import type { AnthropicServerSideSession } from "../anthropic/mode.ts";
 import type { FailureReason, PreparationBudget, ProviderScope } from "../background/contract.ts";
 import { type LaneRoute, ownedReasonOf, REASONS } from "../background/lane-journal.ts";
 import type { AnnouncedRecord, NoticeLevel, NoticePolicy } from "../background-host/notices.ts";
-import { isStaleContextError } from "../lifecycle.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 import {
   SURFACED_FAILURE_RESULT,
   surfacedFailureMessage,

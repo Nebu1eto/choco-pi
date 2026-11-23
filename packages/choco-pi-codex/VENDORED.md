@@ -1386,3 +1386,11 @@ Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`),
 
 - `src/tools/exec/command-tool.ts` (`EXEC_COMMAND_PARAMETERS`): removed `maxLength: 60` on `description` (keeping `minLength: 1` and the 3-7 word guidance). Collapsed display already truncates longer labels cleanly to terminal width via `fitDisplayDescription` (`src/tools/code-mode/display-description.ts`), so rejecting the entire `exec_command` call at 61+ characters caused avoidable tool failures.
 - Tests: `tests/exec-command-session-env.test.ts`.
+
+## 2026-11-23 choco-pi patch: adopt `@choco-pi/shared/*` and intra-package deduplication
+
+- Adopted `@choco-pi/shared/*` for shared runtime utilities: `src/tools/code-mode/custom-tools.ts` now imports `nodeExecutable` from `@choco-pi/shared/node-runtime`, `tests/steering-status.test.ts` imports `reinterpretHostValue` from `@choco-pi/shared/runtime-values`, and `src/extension/live-context.ts` delegates `isStaleExtensionContextError` to `isStaleContextError` from `@choco-pi/shared/lifecycle`.
+- Consolidated duplicate `value-guards.ts`: `src/value-guards.ts` now re-exports `finiteNum`, `isBoolean`, `isFiniteNumber`, and `isString` from `@choco-pi/shared/value-guards`, implements `isNumber` via `isFiniteNumber`, and hosts `isRevision` and `isFunction`. Deleted `src/providers/value-guards.ts` and updated all 27 callers in `src/` and `tests/`.
+- Deduplicated `memoizedImport`: extracted `src/memoized-import.ts` and replaced all 12 local copies across `src/extension/`, `src/providers/`, `src/tools/`, and `src/ui/`.
+- Deduplicated `summarizePatchCounts`: moved into `src/tools/apply-patch/render-state.ts` and imported by both `src/tools/apply-patch/execute.ts` and `src/tools/apply-patch/tool.ts` (preserving the lazy import of `execute.ts`).
+- Removed unused tiny pass-through files: inlined `headersToRecord` into `src/providers/openai-codex/headers.ts` (updating `websocket-connection.ts` and deleting `src/providers/openai-codex/header-record.ts`), and pointed `src/adapter/compaction/compaction.ts` directly at `../replay/native-replay-segments.ts` (deleting `src/adapter/replay/payload-rewrite.ts`). Kept `src/tools/apply-patch/binary.ts` because root `tests/prop-patch-paths.test.ts` imports it directly.

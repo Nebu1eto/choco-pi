@@ -1,4 +1,4 @@
-import { isFunction, isString } from "../value-guards.ts";
+import { isFunction, isString } from "../../value-guards.ts";
 import { isJsonObject } from "../../adapter/runtime-values.ts";
 import {
   isCodexStreamEvent,

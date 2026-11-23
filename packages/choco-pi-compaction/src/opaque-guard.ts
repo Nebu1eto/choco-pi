@@ -34,7 +34,7 @@ import type {
 import type { LaneId, LaneRecordInput, LaneRoute } from "./background/lane-journal.ts";
 import type { CompactionModes } from "./background-host/runtime.ts";
 import { isNonNegativeInteger, isRecord, readProperty } from "./guards.ts";
-import { isStaleContextError } from "./lifecycle.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 import { type OpaqueBlock, pendingOpaqueBlock, pendingOpaqueBlocks } from "./opaque-block.ts";
 import {
   laneMayAnswerOverOpaque,

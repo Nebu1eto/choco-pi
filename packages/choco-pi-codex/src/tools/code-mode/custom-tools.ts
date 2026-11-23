@@ -4,7 +4,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { parse } from "smol-toml";
-import { nodeExecutable } from "../../../../../profile/extensions/lib/node-runtime.ts";
+import { nodeExecutable } from "@choco-pi/shared/node-runtime";
 import type { CustomToolDefinition, CustomToolInputMode } from "./types.ts";
 
 export interface CustomToolDiscoveryError {

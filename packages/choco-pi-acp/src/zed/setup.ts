@@ -2,7 +2,7 @@ import { lstatSync, realpathSync } from "node:fs";
 import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { standaloneHome } from "../../../../profile/extensions/lib/pi-paths.ts";
+import { standaloneHome } from "@choco-pi/shared/pi-paths";
 import {
   type BoundaryRecord,
   type BoundaryValue,

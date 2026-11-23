@@ -1,4 +1,4 @@
-import { isString } from "./value-guards.ts";
+import { isString } from "../value-guards.ts";
 import { isJsonObject, type BoundaryValue, type JsonObject } from "../adapter/runtime-values.ts";
 import type { Tool } from "@earendil-works/pi-ai";
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isStaleContextError, rethrowUnlessStaleContext } from "../src/lifecycle.ts";
+import { isStaleContextError, rethrowUnlessStaleContext } from "@choco-pi/shared/lifecycle";
 
 test("only the canonical stale-context error is contained", () => {
   const stale = new Error(

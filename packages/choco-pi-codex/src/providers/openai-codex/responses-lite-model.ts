@@ -1,4 +1,4 @@
-import { isString } from "../value-guards.ts";
+import { isString } from "../../value-guards.ts";
 
 type ResponsesLiteModel = string | { id: string } | undefined;
 

@@ -20,7 +20,7 @@ import {
   type ReviewBlock,
   type VerdictBlock,
 } from "../../../profile/extensions/lib/verdict-blocks.ts";
-import { isString, type RuntimeValue } from "../../../profile/extensions/lib/runtime-values.ts";
+import { isString, type RuntimeValue } from "@choco-pi/shared/runtime-values";
 import { isValidWorkTask, roundClassOf, type RoundClass } from "./review-rounds.ts";
 import type { AgentRecord } from "./types.ts";
 

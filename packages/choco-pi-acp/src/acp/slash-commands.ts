@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { AvailableCommand } from "@agentclientprotocol/sdk";
-import { piAgentDir } from "../../../../profile/extensions/lib/pi-paths.ts";
+import { piAgentDir } from "@choco-pi/shared/pi-paths";
 
 /**
  * File-based slash command (mirrors pi-coding-agent semantics).

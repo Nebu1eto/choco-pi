@@ -1,4 +1,4 @@
-import { isString } from "../value-guards.ts";
+import { isString } from "../../value-guards.ts";
 import { calculateCost, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
 import { compile } from "@earendil-works/pi-schema";
 import { isJsonObject } from "../../adapter/runtime-values.ts";

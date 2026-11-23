@@ -18,7 +18,7 @@ import {
   STOP_CONTROL_REGISTRY_KEY,
   STOP_CONTROL_REPORT_CHANNEL,
   STOP_CONTROL_STOP_SHELLS_CHANNEL,
-} from "../src/stop-control.ts";
+} from "@choco-pi/shared/stop-control";
 
 const managerKey = Symbol.for("choco-pi-shells:manager");
 const ROOT = "root-session";

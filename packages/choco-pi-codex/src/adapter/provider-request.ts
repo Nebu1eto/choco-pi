@@ -1,5 +1,5 @@
 import { arr, compile, obj, str, unknown } from "@earendil-works/pi-schema";
-import { isString } from "../providers/value-guards.ts";
+import { isString } from "../value-guards.ts";
 import { isJsonObject } from "./runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "./runtime-values.ts";
 

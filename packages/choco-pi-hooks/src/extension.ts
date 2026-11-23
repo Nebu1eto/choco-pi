@@ -41,8 +41,8 @@ import { createHookWatchers, type HookWatchers } from "./watchers.ts";
 import { applyHookEnvironment, hookEnvironmentFile, removeHookEnvironment } from "./environment.ts";
 import { registerClaudeTaskTools } from "./tasks.ts";
 import { isStringValue, type RuntimeValue } from "./validation.ts";
-import { isStaleContextError, rethrowUnlessStaleContext } from "./lifecycle.ts";
-import { readStopState } from "./stop-control.ts";
+import { isStaleContextError, rethrowUnlessStaleContext } from "@choco-pi/shared/lifecycle";
+import { readStopState } from "@choco-pi/shared/stop-control";
 
 const TOOL_NAMES = new Map([
   ["bash", "Bash"],

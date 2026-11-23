@@ -1,3 +1,4 @@
+import { memoizedImport } from "../../memoized-import.ts";
 import type { BoundaryValue } from "../boundary.ts";
 import type { CodeModeHostClient } from "./host-client.ts";
 import type {
@@ -7,11 +8,6 @@ import type {
   RuntimeResponse,
   ToolExecutionContext,
 } from "./types.ts";
-
-function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
-  let promise: Promise<Module> | undefined;
-  return () => (promise ??= loader());
-}
 
 const loadHostBinary = memoizedImport(() => import("./binary.ts"));
 const loadHostClient = memoizedImport(() => import("./host-client.ts"));

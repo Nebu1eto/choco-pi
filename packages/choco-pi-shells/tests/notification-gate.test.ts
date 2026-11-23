@@ -7,7 +7,7 @@ import {
   type ShellNotificationGateOptions,
 } from "../src/notification-gate.ts";
 import type { ShellResult } from "../src/shell-manager.ts";
-import type { RuntimeValue } from "../src/validation.ts";
+import type { RuntimeValue } from "@choco-pi/shared/runtime-values";
 
 const nativeSteeringSymbol = Symbol.for("choco-pi-codex:native-steering");
 

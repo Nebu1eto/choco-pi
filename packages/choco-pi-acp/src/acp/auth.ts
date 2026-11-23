@@ -1,6 +1,6 @@
 import type { AuthMethod } from "@agentclientprotocol/sdk";
 import { isAbsolute } from "node:path";
-import { standaloneHome } from "../../../../profile/extensions/lib/pi-paths.ts";
+import { standaloneHome } from "@choco-pi/shared/pi-paths";
 
 export const PI_SETUP_METHOD_ID = "pi_terminal_login";
 

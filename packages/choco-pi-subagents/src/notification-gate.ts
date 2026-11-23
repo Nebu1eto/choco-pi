@@ -1,3 +1,5 @@
+import { STALE_CONTEXT_ERROR_PREFIX } from "@choco-pi/shared/lifecycle";
+
 export const NUDGE_HOLD_MS = 200;
 const STREAMING_HOLD_MS = 5_000;
 const STEER_HOLD_MS = 30_000;
@@ -152,8 +154,8 @@ export class NotificationGate<Record extends NotificationRecord> {
     } catch (error) {
       // Never throw into a timer. A stale host stops scheduling; other failures
       // remain visible to the caller's error reporter instead of disappearing.
-      const prefix = "This extension ctx is stale after session replacement or reload.";
-      if (error instanceof Error && error.message.startsWith(prefix)) {
+      // Any message starting with the prefix (newline or space suffix) is stale here.
+      if (error instanceof Error && error.message.startsWith(STALE_CONTEXT_ERROR_PREFIX)) {
         this.sessionId = undefined;
         return;
       }

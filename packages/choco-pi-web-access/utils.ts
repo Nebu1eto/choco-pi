@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
-import { legacyPiFallbacks, piAgentDir } from "../../profile/extensions/lib/pi-paths.ts";
+import { legacyPiFallbacks, piAgentDir } from "@choco-pi/shared/pi-paths";
 
 /**
  * Directory holding web-search.json: PI_CODING_AGENT_DIR, else (legacy mode

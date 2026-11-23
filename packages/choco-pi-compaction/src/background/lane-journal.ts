@@ -11,7 +11,7 @@ import { bool, compile, lit, obj, oneOf, opt, str } from "@earendil-works/pi-sch
 import type { Static } from "@earendil-works/pi-schema";
 
 import { finiteInt, nonEmptyStr, nonNegative } from "../guards.ts";
-import { isStaleContextError } from "../lifecycle.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 import { LANE_RECORD_TYPE as LANE_ENTRY_TYPE } from "./entry-types.ts";
 import { CompactionTriggerSchema } from "../trigger.ts";
 

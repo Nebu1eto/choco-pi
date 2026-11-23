@@ -82,7 +82,11 @@ import {
   setFallbackSubagent,
 } from "./agent-types.ts";
 import { inChildSessionContext, isChildSessionId } from "./child-context.ts";
-import { printWaitLimitMs, PRINT_WAIT_ENV, waitForBackgroundSettle } from "./print-settle-wait.ts";
+import {
+  printWaitLimitMs,
+  PRINT_WAIT_ENV,
+  waitForBackgroundSettle,
+} from "@choco-pi/shared/print-settle-wait";
 import {
   describeScratchChange,
   setPreviousScratchDir,
@@ -203,7 +207,7 @@ import {
   STOP_CONTROL_REPORT_CHANNEL,
   STOP_CONTROL_REVOKE_CHANNEL,
   type StopReport,
-} from "./stop-control-contract.ts";
+} from "@choco-pi/shared/stop-control";
 import type {
   AgentConfig,
   AgentInvocation,

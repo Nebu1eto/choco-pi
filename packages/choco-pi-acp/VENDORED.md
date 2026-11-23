@@ -469,3 +469,7 @@ Standalone mode is the `choco-pi` launcher's env contract (`CHOCO_PI_STANDALONE=
 ## 2026-11-15 choco-pi patch: `@choco-pi` package name
 
 - `package.json` `name`: `choco-pi-acp` → `@choco-pi/acp`; `version`: `0.0.33` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-acp`, so path-based settings entries, imports, and the path-derived extension name are unchanged.
+
+## 2026-11-23: adopt @choco-pi/shared
+
+- Imports of the former profile/extensions/lib helpers (pi-paths, node-runtime, and where used lifecycle, value-guards) now resolve through the workspace package `@choco-pi/shared` instead of relative paths.

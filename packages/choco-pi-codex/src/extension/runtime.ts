@@ -1,3 +1,4 @@
+import { memoizedImport } from "../memoized-import.ts";
 import {
   conditionalProperties,
   isBoundaryValue,
@@ -89,11 +90,6 @@ export interface CodexExtensionRuntime {
 
 export interface CodexExtensionRuntimeOptions {
   cacheKeepaliveIntervalMs?: number | undefined;
-}
-
-function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
-  let promise: Promise<Module> | undefined;
-  return () => (promise ??= loader());
 }
 
 const loadOpenAICodexProvider = memoizedImport(

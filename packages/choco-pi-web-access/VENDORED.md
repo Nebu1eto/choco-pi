@@ -320,3 +320,7 @@ shared router. Display-only edits so the new family type-checks and renders:
 - `curator-page.ts` / `curator-server.ts`: Google provider button, client provider list and
   label, and server-side availability check.
 - `tests/search-routing.test.ts`: provider-list and schema expectations include `google`.
+
+## 2026-11-23: adopt @choco-pi/shared
+
+- Imports of the former profile/extensions/lib helpers (pi-paths, node-runtime, and where used lifecycle, value-guards) now resolve through the workspace package `@choco-pi/shared` instead of relative paths.

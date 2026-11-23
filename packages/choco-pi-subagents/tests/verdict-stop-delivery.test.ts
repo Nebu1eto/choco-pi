@@ -19,10 +19,7 @@ import test, { type TestContext } from "node:test";
 
 import { ReviewRoundStore, type ReviewTicket } from "../src/review-rounds.ts";
 import { resolveStopOutcome } from "../src/stop-subagent.ts";
-import {
-  ADMISSION_CLOSED_MESSAGE,
-  STOP_CONTROL_REGISTRY_KEY,
-} from "../src/stop-control-contract.ts";
+import { ADMISSION_CLOSED_MESSAGE, STOP_CONTROL_REGISTRY_KEY } from "@choco-pi/shared/stop-control";
 import type { AgentRecord } from "../src/types.ts";
 import { fence, WORK_TASK } from "./fixtures/verdict-blocks.ts";
 import {

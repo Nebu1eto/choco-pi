@@ -48,3 +48,8 @@ Tool outputs are model-visible, so they now use snake_case. `shell_start`/`shell
 ## 2026-11-20 choco-pi patch: Pi SDK range ~1.6.0
 
 Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`), so later 1.6 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
+
+## choco-pi patch: migrate shared contracts and helpers to `@choco-pi/shared`
+
+- Replaced package-local `src/stop-control.ts`, `src/lifecycle.ts`, `src/print-settle-wait.ts`, and `src/validation.ts` with `@choco-pi/shared/stop-control`, `@choco-pi/shared/lifecycle`, `@choco-pi/shared/print-settle-wait`, and `@choco-pi/shared/runtime-values`, and removed the duplicate files.
+- Replaced the hardcoded stale-context error string in `src/index.ts` with `STALE_CONTEXT_ERROR_PREFIX` from `@choco-pi/shared/lifecycle`.

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { rethrowUnlessStaleContext } from "./lifecycle.ts";
+import { rethrowUnlessStaleContext } from "@choco-pi/shared/lifecycle";
 import type { HookSource } from "./types.ts";
 import type { HookDispatch } from "./supplemental-events.ts";
 

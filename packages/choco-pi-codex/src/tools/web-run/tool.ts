@@ -1,3 +1,4 @@
+import { memoizedImport } from "../../memoized-import.ts";
 import type { BoundaryRecord, BoundaryValue } from "../boundary.ts";
 import { isFunctionValue, isObjectValue, isStringValue } from "../boundary.ts";
 import { randomUUID } from "node:crypto";
@@ -14,11 +15,6 @@ import { supportsNativeWebSearch } from "../../adapter/tool-support.ts";
 import { isOpenAIPlatformModel } from "../../adapter/openai-sign-in.ts";
 import { renderCodexToolCell } from "../../ui/tool-rendering/codex-tool-cell.ts";
 import { buildWebSearchInput } from "./history.ts";
-
-function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
-  let promise: Promise<Module> | undefined;
-  return () => (promise ??= loader());
-}
 
 const loadNativeBinary = memoizedImport(() => import("../native/binary.ts"));
 const loadToolProvider = memoizedImport(() => import("../../adapter/codex-tool-provider.ts"));

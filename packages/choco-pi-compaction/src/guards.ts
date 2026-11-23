@@ -1,18 +1,14 @@
-// oxlint anti-slop/no-runtime-typeof forbids typeof here, so these guards use instanceof, identity and pi-schema checks.
-import { bool, compile, int, num, str } from "@earendil-works/pi-schema";
-import type { NumberBounds, Schema } from "@earendil-works/pi-schema";
+import {
+  isBoolean,
+  isFunction,
+  isString,
+  type RuntimeValue,
+} from "@choco-pi/shared/runtime-values";
+import { finiteNum, isRecord } from "@choco-pi/shared/value-guards";
+import { compile, int, str } from "@earendil-works/pi-schema";
+import type { Schema } from "@earendil-works/pi-schema";
 
-/** Any value a host event, slot or decoded payload may hand to a guard. */
-export type RuntimeValue = {} | null | undefined;
-
-/**
- * A finite number. pi-schema `num()` accepts NaN and +/-Infinity, which the
- * previous TypeBox `Number` rejected; the bounds keep that rejection for
- * in-process values (JSON.parse output can never contain them anyway).
- */
-export function finiteNum(bounds: NumberBounds = {}): Schema<number> {
-  return num({ minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE, ...bounds });
-}
+export { finiteNum, isBoolean, isFunction, isRecord, isString, type RuntimeValue };
 
 /** A finite number of at least zero. */
 export function nonNegative(): Schema<number> {
@@ -29,20 +25,10 @@ export function nonEmptyStr(): Schema<string> {
   return str({ minLength: 1 });
 }
 
-const stringCheck = compile(str()).check;
-const booleanCheck = compile(bool()).check;
 const nonNegativeIntegerCheck = compile(finiteInt(0)).check;
 
-export function isString<Value>(value: Value): value is Value & string {
-  return stringCheck(value);
-}
-
 export function isNonEmptyString<Value>(value: Value): value is Value & string {
-  return stringCheck(value) && value.length > 0;
-}
-
-export function isBoolean<Value>(value: Value): value is Value & boolean {
-  return booleanCheck(value);
+  return isString(value) && value.length > 0;
 }
 
 /** An integer of at least zero. */
@@ -56,15 +42,6 @@ export function isOptional<Value, Narrowed extends Value>(
   check: (candidate: Value) => candidate is Narrowed,
 ): value is Narrowed | undefined {
   return value === undefined || check(value);
-}
-
-export function isFunction<Value>(value: Value): value is Value & Function {
-  return value instanceof Function;
-}
-
-/** A non-null, non-function, non-array object (TypeBox `Object` semantics, accessors included). */
-export function isRecord<Value>(value: Value): value is Value & object {
-  return Object(value) === value && !(value instanceof Function) && !Array.isArray(value);
 }
 
 /**

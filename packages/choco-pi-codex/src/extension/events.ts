@@ -1,3 +1,4 @@
+import { memoizedImport } from "../memoized-import.ts";
 import { isBoundaryValue, isJsonObject, type BoundaryValue } from "../adapter/runtime-values.ts";
 import { isNonNegativeInteger, isString } from "../value-guards.ts";
 
@@ -61,11 +62,6 @@ import {
 } from "./context-elision.ts";
 
 const CONTEXT_ELISION_ENTRY = "codex-context-elision";
-
-function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
-  let promise: Promise<Module> | undefined;
-  return () => (promise ??= loader());
-}
 
 const loadBash = memoizedImport(() => import("../shell/bash.ts"));
 const loadCompaction = memoizedImport(() => import("../adapter/compaction/compaction.ts"));

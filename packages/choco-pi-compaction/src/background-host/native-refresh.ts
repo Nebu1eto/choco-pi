@@ -15,7 +15,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isFunction, isNonEmptyString } from "../guards.ts";
 
-import { isStaleContextError } from "../lifecycle.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 
 /** The context a refresher reads; a live `ExtensionContext` satisfies it. */
 export type NativeRefreshContext = Pick<

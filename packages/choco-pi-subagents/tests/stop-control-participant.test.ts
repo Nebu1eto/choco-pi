@@ -23,7 +23,7 @@ import {
   STOP_CONTROL_REPORT_CHANNEL,
   STOP_CONTROL_REVOKE_CHANNEL,
   type StopReport,
-} from "../src/stop-control-contract.ts";
+} from "@choco-pi/shared/stop-control";
 import type { StopWorkflowPort } from "../src/types.ts";
 import { toolContext } from "./fixtures/tool-context.ts";
 import {

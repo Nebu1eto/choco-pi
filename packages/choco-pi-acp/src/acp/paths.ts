@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { piStateRoot } from "../../../../profile/extensions/lib/pi-paths.ts";
+import { piStateRoot } from "@choco-pi/shared/pi-paths";
 
 /**
  * Storage owned by the ACP adapter.

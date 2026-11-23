@@ -13,7 +13,7 @@ import {
 import { hasAgentBadge } from "../agent-color.ts";
 import type { AgentManager } from "../agent-manager.ts";
 import { isSessionCompacting } from "../compaction-activity.ts";
-import { isStaleContextError } from "../../../choco-pi-compaction/src/lifecycle.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 import { countFailedDescendants } from "../subagent-tree.ts";
 import type { AgentRecord, WidgetMode } from "../types.ts";
 import { formatResetAt } from "../usage-limit-seam.ts";

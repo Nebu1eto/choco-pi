@@ -1,4 +1,4 @@
-import { isString, isNumber, isBoolean } from "../value-guards.ts";
+import { isString, isNumber, isBoolean } from "../../value-guards.ts";
 import { isJsonObject, type JsonObject } from "../../adapter/runtime-values.ts";
 import { processResponsesStream } from "../openai-responses/shared.ts";
 import type {

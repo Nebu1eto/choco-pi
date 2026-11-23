@@ -42,7 +42,7 @@ import { codexBackgroundAccountScope } from "./background-v2.ts";
 import {
   rewriteResponsesPayloadWithNativeReplay,
   serializeLiveTailToResponsesInput,
-} from "../replay/payload-rewrite.ts";
+} from "../replay/native-replay-segments.ts";
 import {
   DEFAULT_SUPPORTED_PROVIDERS,
   isResponsesCompatiblePayload,

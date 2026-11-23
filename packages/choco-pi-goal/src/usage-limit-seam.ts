@@ -1,6 +1,6 @@
 import { compile, obj, oneOf, opt, str, unknown, type Static } from "@earendil-works/pi-schema";
 
-import { finiteNumber } from "./guards.ts";
+import { finiteNum } from "@choco-pi/shared/value-guards";
 
 /**
  * Structural reader for the root usage-limit policy seam. The root harness registers owner-indexed
@@ -27,7 +27,7 @@ const UsageLimitClassificationSchema = obj(
     provider: str(),
     modelId: str(),
     accountId: opt(str()),
-    resetAt: opt(finiteNumber),
+    resetAt: opt(finiteNum()),
     confidence: oneOf(["structured", "parsed", "inferred"]),
   },
   { open: true },

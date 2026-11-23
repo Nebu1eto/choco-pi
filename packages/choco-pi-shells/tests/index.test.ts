@@ -14,7 +14,7 @@ import shellsExtension, {
 } from "../src/index.ts";
 import type { ShellLifecyclePayload } from "../src/lifecycle-events.ts";
 import { ShellManager, type ShellResult } from "../src/shell-manager.ts";
-import type { RuntimeValue } from "../src/validation.ts";
+import type { RuntimeValue } from "@choco-pi/shared/runtime-values";
 import type { ShellCustomOptions, ShellViewerKeybindings } from "../src/ui/shells-overlay.ts";
 import type {
   ShellSectionProvider,

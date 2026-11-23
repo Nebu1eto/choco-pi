@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { piAgentDir } from "../../../../profile/extensions/lib/pi-paths.ts";
+import { piAgentDir } from "@choco-pi/shared/pi-paths";
 import { type BoundaryRecord, isBoolean, isBoundaryRecord, parseJsonLine } from "../boundary.ts";
 
 function deepMerge(a: BoundaryRecord, b: BoundaryRecord): BoundaryRecord {

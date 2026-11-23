@@ -211,3 +211,12 @@ export function renderApplyPatchCallFromState(
       ? renderFailedCall(baseText, theme, cached.failedTargets)
       : baseText;
 }
+
+export function summarizePatchCounts(result: ExecutePatchResult): string {
+  return [
+    `changed ${result.changedFiles.length} file${result.changedFiles.length === 1 ? "" : "s"}`,
+    `created ${result.createdFiles.length}`,
+    `deleted ${result.deletedFiles.length}`,
+    `moved ${result.movedFiles.length}`,
+  ].join(", ");
+}

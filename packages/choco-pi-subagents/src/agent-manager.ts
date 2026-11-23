@@ -100,7 +100,7 @@ import {
   isAdmissionOpen,
   readStopState,
   requireAdmissionOpen,
-} from "./stop-control-contract.ts";
+} from "@choco-pi/shared/stop-control";
 import type {
   AgentInvocation,
   AgentRecord,

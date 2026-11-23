@@ -13,7 +13,7 @@ import {
   createBeforeCompactHandler,
   registerBackgroundCompaction,
 } from "./extension.ts";
-import { isStaleContextError } from "./lifecycle.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 import {
   guardBeforeLocalSummary,
   installOpaqueBlockProvider,

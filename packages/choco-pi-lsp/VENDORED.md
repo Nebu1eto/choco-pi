@@ -400,3 +400,7 @@ Internal-only cleanup; tool names, schemas, and runtime behavior are unchanged.
 - `clients/dispatch/runners/utils/helm-shared.ts` holds `isWithin` and `failedResult`, which had been identical in `helm-lint.ts` and `helm-render.ts`.
 - Removed `clients/lsp/path-utils.ts`, a re-export of `clients/path-utils.ts`; `clients/lsp/client.ts`, `edits.ts`, and `server.ts` import `../path-utils.ts`.
 - Removed two files that nothing imported: `clients/finding-delivery-gate.ts` (the #1634 delivery-surface documentation and registry; the `// @delivery-surface:` tags in `tools/diagnostics-report.ts` and `clients/runtime-turn.ts` remain as plain labels) and `clients/module-report-lsp.ts` (live-LSP enrichment for `module_report`, parked for #236 since #1090; it is in git history). `withinRemaining` in `clients/deadline-utils.ts` was used only by `module-report-lsp.ts` and is removed with it. Comments that pointed at the removed files are updated.
+
+## 2026-11-23: adopt @choco-pi/shared
+
+- Imports of the former profile/extensions/lib helpers (pi-paths, node-runtime, and where used lifecycle, value-guards) now resolve through the workspace package `@choco-pi/shared` instead of relative paths.

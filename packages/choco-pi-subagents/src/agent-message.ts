@@ -6,7 +6,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import { hostParams } from "./schema-bridge.ts";
-import { mayTriggerTurn } from "./stop-control-contract.ts";
+import { mayTriggerTurn } from "@choco-pi/shared/stop-control";
 import {
   type AgentMessageType,
   classifyMessageDelivery,

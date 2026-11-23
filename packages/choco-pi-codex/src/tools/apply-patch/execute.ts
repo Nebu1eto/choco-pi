@@ -10,18 +10,10 @@ import { formatPatchTarget } from "./rendering.ts";
 import {
   markApplyPatchFailure,
   markApplyPatchPartialFailure,
+  summarizePatchCounts,
   type ApplyPatchPartialFailureDetails,
   type ApplyPatchSuccessDetails,
 } from "./render-state.ts";
-
-function summarizePatchCounts(result: ExecutePatchResult): string {
-  return [
-    `changed ${result.changedFiles.length} file${result.changedFiles.length === 1 ? "" : "s"}`,
-    `created ${result.createdFiles.length}`,
-    `deleted ${result.deletedFiles.length}`,
-    `moved ${result.movedFiles.length}`,
-  ].join(", ");
-}
 
 function uniqueStrings(values: Array<string | undefined>): string[] {
   return Array.from(

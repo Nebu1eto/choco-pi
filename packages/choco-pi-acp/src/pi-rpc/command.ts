@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import { delimiter, dirname, extname, isAbsolute, join, resolve, win32 } from "node:path";
-import { standaloneHome } from "../../../../profile/extensions/lib/pi-paths.ts";
+import { standaloneHome } from "@choco-pi/shared/pi-paths";
 import { type BoundaryValue, isBoundaryRecord, isString, parseJsonLine } from "../boundary.ts";
 
 export type PiLaunchSpec = {

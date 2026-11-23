@@ -1,4 +1,4 @@
-import { isString } from "../providers/value-guards.ts";
+import { isString } from "../value-guards.ts";
 import type { BoundaryValue } from "../adapter/runtime-values.ts";
 import { mkdir, open } from "node:fs/promises";
 import { basename, join } from "node:path";

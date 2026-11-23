@@ -6,7 +6,7 @@ import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { piAgentDir } from "../../../profile/extensions/lib/pi-paths.ts";
+import { piAgentDir } from "@choco-pi/shared/pi-paths";
 import {
   AGENT_BROWSER_LATEST_TESTED_VERSION,
   AGENT_BROWSER_TESTED_VERSIONS,

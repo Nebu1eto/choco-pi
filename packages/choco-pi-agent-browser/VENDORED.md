@@ -250,3 +250,7 @@ The package now contains no first-party JavaScript. Earlier entries that name `.
 - `tsconfig.json` includes `scripts/**/*.ts`, so `config.ts`, `doctor.ts`, and the capability baseline are typechecked directly.
 - `lib/input-modes/schema-constants.ts` and `lib/electron/discovery-constants.ts` merged into the import-free `lib/input-modes/types.ts`, which `params.ts` already loads at registration. `AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES`, `ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS`, and `ELECTRON_DISCOVERY_MAX_RESULTS` keep their values and their re-exports from `script.ts` and `electron/discovery.ts`; registration still imports neither the script runner nor Electron discovery.
 - Tests: `tests/agent-browser.config-cli.test.ts` runs the CLI against a temporary project for help, usage errors, set/clear/prefer mutations, unknown-key preservation, the 0600 file mode, and secret redaction.
+
+## 2026-11-23: adopt @choco-pi/shared
+
+- Imports of the former profile/extensions/lib helpers (pi-paths, node-runtime, and where used lifecycle, value-guards) now resolve through the workspace package `@choco-pi/shared` instead of relative paths.

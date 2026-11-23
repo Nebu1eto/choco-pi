@@ -48,7 +48,7 @@ import {
   type PrefixSnapshot,
   type SnapshotRefusal,
 } from "../background/snapshot.ts";
-import { isStaleContextError } from "../lifecycle.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 import {
   laneMayAnswerOverOpaque,
   lossAuthorizedFor,

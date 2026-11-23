@@ -12,7 +12,11 @@ import { inChildSessionContext } from "../../choco-pi-subagents/src/child-contex
 import { isRegisteredChildSession } from "./child-session.ts";
 import { hostParams } from "./schema-bridge.ts";
 import { ShellNotificationGate } from "./notification-gate.ts";
-import { printWaitLimitMs, PRINT_WAIT_ENV, waitForBackgroundSettle } from "./print-settle-wait.ts";
+import {
+  printWaitLimitMs,
+  PRINT_WAIT_ENV,
+  waitForBackgroundSettle,
+} from "@choco-pi/shared/print-settle-wait";
 import { ShellManager } from "./shell-manager.ts";
 import {
   isStopShellsRequest,
@@ -22,9 +26,10 @@ import {
   STOP_CONTROL_STOP_SHELLS_CHANNEL,
   type StopReport,
   type StopShellsRequest,
-} from "./stop-control.ts";
+} from "@choco-pi/shared/stop-control";
 import type { ReadShellResult, ShellChangeEvent, ShellResult } from "./shell-manager.ts";
-import { isStaleContextError, type RuntimeValue } from "./lifecycle.ts";
+import { isStaleContextError, STALE_CONTEXT_ERROR_PREFIX } from "@choco-pi/shared/lifecycle";
+import type { RuntimeValue } from "@choco-pi/shared/runtime-values";
 import {
   lifecycleKindForChange,
   SHELL_LIFECYCLE_CHANNELS,
@@ -290,7 +295,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
 
   const flushCompletions = (completed: ShellResult[]): void => {
     if (shuttingDown) {
-      throw new Error("This extension ctx is stale after session replacement or reload.");
+      throw new Error(STALE_CONTEXT_ERROR_PREFIX);
     }
     if (completed.length === 0) return;
     const shells = completed.map((shell) => buildCompletionDetails(manager, shell));

@@ -5,20 +5,15 @@
  * primitive checks go through compiled pi-schema validators.
  */
 
-import { bool, compile, num, str } from "@earendil-works/pi-schema";
-import type { Schema } from "@earendil-works/pi-schema";
+import { bool, compile, str } from "@earendil-works/pi-schema";
+import { finiteNum } from "@choco-pi/shared/value-guards";
 
 /**
- * A finite number. pi-schema `num()` accepts NaN and +/-Infinity, which the
- * previous TypeBox `Number` rejected; the bounds keep that rejection for
- * in-process values (JSON.parse output can never contain them anyway).
+ * A finite number schema; pi-schema `num()` accepts NaN and +/-Infinity, which
+ * the previous TypeBox `Number` rejected. The canonical bounded copy lives in
+ * `@choco-pi/shared/value-guards`.
  */
-export function finiteNum(options?: { minimum?: number }): Schema<number> {
-  return num({
-    minimum: Math.max(options?.minimum ?? -Number.MAX_VALUE, -Number.MAX_VALUE),
-    maximum: Number.MAX_VALUE,
-  });
-}
+export { finiteNum };
 
 export const isString = compile(str()).check;
 export const isNonEmptyString = compile(str({ minLength: 1 })).check;

@@ -269,3 +269,9 @@ Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1
 ## 2026-11-20 choco-pi patch: Pi SDK range ~1.6.0
 
 Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`), so later 1.6 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
+
+## choco-pi patch: migrate shared contracts and guards to `@choco-pi/shared`
+
+- Replaced package-local `src/stop-control.ts` with `@choco-pi/shared/stop-control` and removed the duplicate file.
+- Replaced package-local `src/guards.ts` with `@choco-pi/shared/value-guards` (`finiteNum`, `isFiniteNumber`, `isString`) and removed the duplicate file.
+- Replaced the local `STALE_CONTEXT_ERROR_PREFIX` / `isStaleContextError` implementation in `src/goal-runtime-access.ts` with `@choco-pi/shared/lifecycle` (and `RuntimeValue` from `@choco-pi/shared/runtime-values`).

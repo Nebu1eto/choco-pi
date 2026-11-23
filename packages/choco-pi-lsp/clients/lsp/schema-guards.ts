@@ -1,14 +1,7 @@
-import { bool, compile, num } from "@earendil-works/pi-schema";
-import type { Schema } from "@earendil-works/pi-schema";
+import { bool, compile } from "@earendil-works/pi-schema";
+import { finiteNum } from "@choco-pi/shared/value-guards";
 
-/**
- * A JSON number that is finite. pi-schema `num()` accepts NaN and the infinities (TypeBox rejected them), and
- * `JSON.parse` yields `Infinity` for overflowing literals such as `1e999`, so parsed external output is bounded the
- * same way the previous validators behaved.
- */
-export function finiteNum(): Schema<number> {
-  return num({ minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE });
-}
+export { finiteNum };
 
 /** Type guard for a finite JSON number (rejects NaN and the infinities, like TypeBox `Type.Number()`). */
 export const isFiniteNumber = compile(finiteNum()).check;

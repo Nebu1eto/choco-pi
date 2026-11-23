@@ -1,10 +1,8 @@
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 import { isBoundaryValue, type BoundaryValue } from "../adapter/runtime-values.ts";
 
-const STALE_CONTEXT_ERROR_PREFIX =
-  "This extension ctx is stale after session replacement or reload.";
-
 export function isStaleExtensionContextError(error: BoundaryValue): boolean {
-  return error instanceof Error && error.message.startsWith(STALE_CONTEXT_ERROR_PREFIX);
+  return isStaleContextError(error);
 }
 
 export function withLiveCtx<Result>(action: () => Promise<Result>): Promise<Result | undefined>;

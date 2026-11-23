@@ -5,28 +5,34 @@
  * through compiled pi-schema validators.
  */
 
-import { bool, compile, int, num, str } from "@earendil-works/pi-schema";
-import type { Schema } from "@earendil-works/pi-schema";
+import { finiteNum, isBoolean, isFiniteNumber, isString } from "@choco-pi/shared/value-guards";
+import { compile, int, str } from "@earendil-works/pi-schema";
+import type { BoundaryValue } from "./adapter/runtime-values.ts";
 
-/**
- * A finite number. pi-schema `num()` accepts NaN and +/-Infinity, which the previous TypeBox
- * `Number` rejected; the bounds keep that rejection for in-process values.
- */
-export function finiteNum(options?: { minimum?: number }): Schema<number> {
-  return num({
-    minimum: Math.max(options?.minimum ?? -Number.MAX_VALUE, -Number.MAX_VALUE),
-    maximum: Number.MAX_VALUE,
-  });
-}
+export { finiteNum, isBoolean, isFiniteNumber, isString };
 
-export const isString = compile(str()).check;
 export const isNonEmptyString = compile(str({ minLength: 1 })).check;
-export const isBoolean = compile(bool()).check;
-export const isNumber = compile(finiteNum()).check;
 export const isNonNegativeInteger = compile(int({ minimum: 0, maximum: Number.MAX_VALUE })).check;
 
 /** Any value read from a process-global slot or host boundary before validation. */
 export type HostValue = {} | null | undefined;
+
+/** Finite number only: rejects NaN and +/-Infinity. */
+export function isNumber<Value extends HostValue>(value: Value): value is Value & number {
+  return isFiniteNumber(value);
+}
+
+/** Integer >= 0; rejects NaN and +/-Infinity. */
+export function isRevision<Value extends HostValue>(value: Value): value is Value & number {
+  return isNumber(value) && Number.isInteger(value) && value >= 0;
+}
+
+type Callable = (...args: never[]) => BoundaryValue;
+
+/** Callable check; the TypeBox function schema ignored parameter and return types the same way. */
+export function isFunction<Value>(value: Value): value is Value & Callable {
+  return value instanceof Function;
+}
 
 /** A non-null, non-array, non-callable object (the shape TypeBox `Object` accepted). */
 export function isHostObject<Value extends HostValue>(value: Value): value is Value & {} {

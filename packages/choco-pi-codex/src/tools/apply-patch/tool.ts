@@ -1,23 +1,19 @@
 import type { BoundaryValue } from "../boundary.ts";
+import { memoizedImport } from "../../memoized-import.ts";
 import { isObjectValue, isStringValue } from "../boundary.ts";
 import { obj, str } from "@earendil-works/pi-schema";
 import { hostParams } from "../../schema-bridge.ts";
 import { type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Container, Text } from "@earendil-works/pi-tui";
-import type { ExecutePatchResult } from "../../patch/types.ts";
 import { getExperimentalToolSampling } from "../tool-sampling.ts";
 import { recordApplyPatchDisplayInput, shouldCompactApplyPatchDisplay } from "./display-broker.ts";
 import {
   isApplyPatchToolDetails,
   renderApplyPatchCallFromState,
   setApplyPatchRenderState,
+  summarizePatchCounts,
   type ApplyPatchToolDetails,
 } from "./render-state.ts";
-
-function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
-  let promise: Promise<Module> | undefined;
-  return () => (promise ??= loader());
-}
 
 const loadExecution = memoizedImport(() => import("./execute.ts"));
 
@@ -80,15 +76,6 @@ function prepareApplyPatchArguments(args: BoundaryValue): PreparedApplyPatchInpu
   }
   // SAFETY: prepareArguments runs before schema validation; parseApplyPatchParams verifies input before execution or binary I/O.
   return args as PreparedApplyPatchInput;
-}
-
-function summarizePatchCounts(result: ExecutePatchResult): string {
-  return [
-    `changed ${result.changedFiles.length} file${result.changedFiles.length === 1 ? "" : "s"}`,
-    `created ${result.createdFiles.length}`,
-    `deleted ${result.deletedFiles.length}`,
-    `moved ${result.movedFiles.length}`,
-  ].join(", ");
 }
 
 export type { ExecutePatchResult } from "../../patch/types.ts";

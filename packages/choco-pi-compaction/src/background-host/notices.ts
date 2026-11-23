@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import type { LaneRecordInput } from "../background/lane-journal.ts";
-import { isStaleContextError } from "../lifecycle.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 import type { HostRuntime } from "./runtime.ts";
 
 const NOTICE_PREFIX = "Background compaction";

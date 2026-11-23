@@ -11,6 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
+import { rethrowUnlessStaleContext } from "@choco-pi/shared/lifecycle";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   denyForSession,
@@ -44,8 +45,6 @@ export interface GrantPromptRefusal {
   pidPointerAttempted?: boolean;
 }
 
-const STALE_CONTEXT_PREFIX = "This extension ctx is stale after session replacement or reload.";
-
 /** Shows a notice unless the host reports a stale context; any other failure propagates. */
 export function notifyUnlessStale(
   ui: ExtensionContext["ui"],
@@ -55,8 +54,7 @@ export function notifyUnlessStale(
   try {
     ui.notify(message, level);
   } catch (error) {
-    const stale = error instanceof Error && error.message.startsWith(STALE_CONTEXT_PREFIX);
-    if (!stale) throw error;
+    rethrowUnlessStaleContext(error);
   }
 }
 

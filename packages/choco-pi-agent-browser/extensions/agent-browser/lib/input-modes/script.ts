@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { nodeExecutable } from "../../../../../../profile/extensions/lib/node-runtime.ts";
+import { nodeExecutable } from "@choco-pi/shared/node-runtime";
 
 import { parseArgvDescriptor } from "../argv-descriptor.ts";
 import { getFlagName } from "../argv-grammar.ts";

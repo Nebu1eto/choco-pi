@@ -2552,3 +2552,15 @@ Anthropic's Fable weekly limit covers only the Claude Fable and Claude Mythos se
 Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`), so later 1.6 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow. The opt-in e2e-revival runner accepts any launcher in that range and requires an explicit launcher via --pi.
 
 - 2026-11-20: Delegation render caches, focus-mode render targets, and verdict assertions accept readonly Pi render rows.
+
+## 2026-11-23 choco-pi patch: shared contracts from `@choco-pi/shared` (Wave 1B / D2)
+
+Duplicated contracts and root-profile utility imports now come from the `@choco-pi/shared` workspace package (`workspace:*` dependency). Literal protocol strings, `Symbol.for("pi-subagents:manager")` and every `subagents:*` event name are unchanged.
+
+- Removed `src/stop-control-contract.ts`; `src/agent-manager.ts`, `src/agent-message.ts`, `src/index.ts` and `tests/stop-control-participant.test.ts`, `tests/verdict-stop-delivery.test.ts` import `@choco-pi/shared/stop-control` (same strings, validators, `readStopState`, `mayTriggerTurn`, `ADMISSION_CLOSED_MESSAGE`; the shared module also exports the stop-shells channel, unused here). This supersedes the package-local copy described under "/stop participant (P4b-2)".
+- Removed `src/print-settle-wait.ts`; `src/index.ts` and `tests/print-settle-wait.test.ts` import `@choco-pi/shared/print-settle-wait` (byte-identical logic).
+- `src/value-guards.ts`: `finiteNum` is re-exported from `@choco-pi/shared/value-guards` instead of defined locally; the remaining guards, `isHostObject` and `HostValue` stay local. For every in-package call (no options, or `{ minimum: 0 }`) the schema is identical.
+- `src/notification-gate.ts`: the hard-coded stale-context prefix string is replaced by `STALE_CONTEXT_ERROR_PREFIX` from `@choco-pi/shared/lifecycle`. The check stays `startsWith` rather than `isStaleContextError`, which accepts only the exact message or the prefix plus a space; `tests/notification-gate.test.ts` requires a newline-suffixed message to count as stale.
+- `src/child-compaction-bridge.ts`, `src/ui/fleet-panel.ts`: `isStaleContextError` comes from `@choco-pi/shared/lifecycle` instead of `choco-pi-compaction/src/lifecycle.ts`.
+- `src/agent-runner.ts`, `src/verdict-record.ts`: `@choco-pi/shared/runtime-values` replaces `profile/extensions/lib/runtime-values.ts`. `src/memory.ts`, `src/skill-loader.ts`: `@choco-pi/shared/pi-paths` replaces `profile/extensions/lib/pi-paths.ts` (see "standalone state paths").
+- Other `profile/extensions/lib/*` imports (scratch-path, tool-search-tool, verdict-blocks, verdict-summary, changes/terminal-text, and test-only fast-mode-state, daybreak-state, tool-surface, usage-limit) are not shared contracts and are unchanged.

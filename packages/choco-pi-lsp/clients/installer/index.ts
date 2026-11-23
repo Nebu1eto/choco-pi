@@ -1,5 +1,5 @@
 import { isRuntimeFunction, isRuntimeObject, isRuntimeString } from "../../tools/runtime-values.ts";
-import { nodeBinDirectory } from "../../../../profile/extensions/lib/node-runtime.ts";
+import { nodeBinDirectory } from "@choco-pi/shared/node-runtime";
 /**
  * Auto-Installation System for choco-pi-lsp
  *

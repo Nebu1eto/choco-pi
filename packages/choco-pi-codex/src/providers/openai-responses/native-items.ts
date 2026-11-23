@@ -1,6 +1,6 @@
 import { compile, lit, nullable, obj, opt, str, unknown } from "@earendil-works/pi-schema";
 import { isJsonObject } from "../../adapter/runtime-values.ts";
-import { isBoolean, isFunction, isNumber, isString } from "../value-guards.ts";
+import { isBoolean, isFunction, isNumber, isString } from "../../value-guards.ts";
 
 type NativeItemValue =
   | object

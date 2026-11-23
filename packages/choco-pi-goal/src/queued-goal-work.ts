@@ -1,6 +1,6 @@
 import { compile, lit, obj } from "@earendil-works/pi-schema";
 
-import { isString } from "./guards.ts";
+import { isString } from "@choco-pi/shared/value-guards";
 import { continuationGoalIdFromPrompt, supersededContinuationMessage } from "./prompts.ts";
 import {
   isActiveGoalQueuedDetails,

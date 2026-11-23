@@ -9,7 +9,7 @@ import {
   realpathSync,
 } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { piAgentDir } from "../../../../profile/extensions/lib/pi-paths.ts";
+import { piAgentDir } from "@choco-pi/shared/pi-paths";
 import { isBoundaryArray, isBoundaryRecord, isString, parseJsonLine } from "../boundary.ts";
 
 export type PiSessionListItem = {

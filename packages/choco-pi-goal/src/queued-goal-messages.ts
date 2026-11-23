@@ -1,6 +1,6 @@
 import { compile, lit, obj, oneOf, str } from "@earendil-works/pi-schema";
 
-import { isFiniteNumber, isString } from "./guards.ts";
+import { isFiniteNumber, isString } from "@choco-pi/shared/value-guards";
 import { CUSTOM_ENTRY_TYPE } from "./types.ts";
 
 // Both objects are open, as the previous TypeBox objects were: extra keys are accepted.

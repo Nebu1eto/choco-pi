@@ -45,7 +45,7 @@ import {
   setCoordinator,
 } from "../../choco-pi-compaction/src/background/registry.ts";
 import { refreshSessionNativeState } from "../../choco-pi-compaction/src/background-host/native-refresh.ts";
-import { isStaleContextError } from "../../choco-pi-compaction/src/lifecycle.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 
 /** Global slot the compaction extension publishes its child provider on. */
 const CHILD_COMPACTION_PROVIDER_SYMBOL: unique symbol = Symbol.for(

@@ -326,3 +326,7 @@ Pi 1.6.0 types `Component.render()` as `readonly string[]`. The runtime deps `@a
 ## 2026-11-21 choco-pi patch: shared lazy extension entry
 
 The `command-quotas`, `quota-warnings` and `usage-status` extension entries each repeated the same lazy `import("./runtime.ts")` proxy. They now call `createLazyExtension` from `extensions/_shared/lazy-extension.ts`, which loads the runtime once on first activation and forwards `pi` to its default export. Behavior is unchanged.
+
+## 2026-11-23: adopt @choco-pi/shared
+
+- Imports of the former profile/extensions/lib helpers (pi-paths, node-runtime, and where used lifecycle, value-guards) now resolve through the workspace package `@choco-pi/shared` instead of relative paths.

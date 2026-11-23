@@ -72,7 +72,7 @@ import type { AvailableCommand } from "@agentclientprotocol/sdk";
 import { join, dirname, basename } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { piAgentDir, standaloneHome } from "../../../../profile/extensions/lib/pi-paths.ts";
+import { piAgentDir, standaloneHome } from "@choco-pi/shared/pi-paths";
 import { resolvePiLaunch } from "../pi-rpc/command.ts";
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";

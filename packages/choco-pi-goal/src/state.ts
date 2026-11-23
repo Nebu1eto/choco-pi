@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { bool, compile, lit, nullable, obj, oneOf, str, union } from "@earendil-works/pi-schema";
 
-import { finiteNumber } from "./guards.ts";
+import { finiteNum } from "@choco-pi/shared/value-guards";
 
 import {
   CUSTOM_ENTRY_TYPE,
@@ -21,6 +21,7 @@ import {
 // Persisted journal entries are decoded JSON. The previous TypeBox objects were open (unknown keys
 // accepted) and numbers rejected NaN/Infinity, so every object here is { open: true } and every
 // number is the bounded finiteNumber.
+const finiteNumber = finiteNum();
 const GoalStatusSchema = oneOf(["active", "paused", "budgetLimited", "complete"]);
 const RuntimeUsageGoalStatusSchema = oneOf(["active", "budgetLimited"]);
 const GoalUsageSchema = obj(

@@ -4,7 +4,7 @@ import {
   DEFAULT_PRINT_WAIT_MS,
   printWaitLimitMs,
   waitForBackgroundSettle,
-} from "../src/print-settle-wait.ts";
+} from "@choco-pi/shared/print-settle-wait";
 
 function clock() {
   let time = 0;

@@ -375,3 +375,7 @@ The package no longer ships JavaScript. Decision D6 (TypeScript only, no excepti
 - **Behavior preserved.** CLI flags (`--runtime`, `--allow-adhoc-update`, `--arch`, `--build-only`, `--out`, strict parsing), signing, registration, and the source-hash scheme are unchanged; `helperSourceHash` returns the same digests as the `.mjs` module for arm64 and x64 on the same tree. The package version is read through `src/json.ts` (`isJsonObject`/`isString`) instead of a local string check. The entry-point check uses `fs.promises.realpath` instead of `realpathSync`, and the script awaits `main()` at top level; a `realpath` failure now prints its message and exits 1 instead of throwing.
 - **Still synchronous.** `resolveMacosHelperAppPath` keeps its `existsSync`/`accessSync` default probes, because `helper.ts` resolves `HELPER_APP_PATH` at module load and the extension module graph cannot use top-level await.
 - **Runtime assumption.** `MacosHelperClient.ensureInstalled` still runs `process.execPath scripts/setup-helper.ts --runtime` with `ELECTRON_RUN_AS_NODE=1` and `BUN_BE_BUN=1`. That works on Node.js 24+ and Bun. An Electron host whose embedded Node.js does not strip types, or a package copy under a `node_modules` path (Node.js refuses to strip types there), cannot run the installer.
+
+## 2026-11-23: adopt @choco-pi/shared
+
+- Imports of the former profile/extensions/lib helpers (pi-paths, node-runtime, and where used lifecycle, value-guards) now resolve through the workspace package `@choco-pi/shared` instead of relative paths.

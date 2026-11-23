@@ -13,7 +13,7 @@ import {
   readStopState,
   STOP_CONTROL_PROTOCOL,
   STOP_CONTROL_REGISTRY_KEY,
-} from "../src/stop-control.ts";
+} from "@choco-pi/shared/stop-control";
 
 interface StopStateFixture {
   epoch: number;

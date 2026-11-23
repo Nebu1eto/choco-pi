@@ -1,10 +1,10 @@
-import { isFunction, isNumber, isString } from "../value-guards.ts";
+import { isFunction, isNumber, isString } from "../../value-guards.ts";
 import { isJsonObject, type JsonObject } from "../../adapter/runtime-values.ts";
 import {
   DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS,
   WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE,
 } from "./constants.ts";
-import { headersToRecord } from "./header-record.ts";
+import { headersToRecord } from "./headers.ts";
 import type {
   ProviderEnv,
   WebSocketConstructorLike,

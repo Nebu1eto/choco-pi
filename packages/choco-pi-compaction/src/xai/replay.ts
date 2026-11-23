@@ -45,7 +45,7 @@ import { REASONS, ownedReasonOf } from "../background/lane-journal.ts";
 import type { AnnouncedRecord } from "../background-host/notices.ts";
 import { lossAuthorizedFor, OPAQUE_GUARD_NOTICE } from "../opaque-checkpoint.ts";
 import { clearOpaqueBlockOf, setOpaqueBlock } from "../opaque-guard.ts";
-import { isStaleContextError } from "../lifecycle.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 import {
   bindXaiSessionProjection,
   countCompactionItems,

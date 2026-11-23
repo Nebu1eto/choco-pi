@@ -16,7 +16,7 @@ import { lstat, mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { legacyPiFallbacks } from "../../../profile/extensions/lib/pi-paths.ts";
+import { legacyPiFallbacks } from "@choco-pi/shared/pi-paths";
 import { pathExists } from "./fs-async.ts";
 import type { MemoryScope } from "./types.ts";
 

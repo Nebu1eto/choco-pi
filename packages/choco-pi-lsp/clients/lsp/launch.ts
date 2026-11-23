@@ -23,10 +23,7 @@ import { findGlobalBinary } from "../package-manager.ts";
 import { redactSecrets } from "../redact/secrets.ts";
 import { classifySpawnFailure, SpawnFailureError } from "../safe-spawn.ts";
 import { getRubyVersionDirNamesAsync } from "./ruby-drive-dirs.ts";
-import {
-  nodeBinDirectory,
-  nodeExecutable,
-} from "../../../../profile/extensions/lib/node-runtime.ts";
+import { nodeBinDirectory, nodeExecutable } from "@choco-pi/shared/node-runtime";
 
 export interface LSPProcess {
   process: ChildProcess;

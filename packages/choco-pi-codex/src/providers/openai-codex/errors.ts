@@ -1,4 +1,4 @@
-import { isString, isNumber } from "../value-guards.ts";
+import { isString, isNumber } from "../../value-guards.ts";
 import { isJsonObject, type JsonObject } from "../../adapter/runtime-values.ts";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 

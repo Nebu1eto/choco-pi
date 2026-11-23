@@ -16,11 +16,7 @@ import {
 } from "../../../profile/extensions/lib/scratch-path.ts";
 import chocoPiHooks from "../src/extension.ts";
 import { HookEngine, mergeResults } from "../src/engine.ts";
-import {
-  isJsonRecord,
-  isString,
-  type JsonRecord,
-} from "../../../profile/extensions/lib/runtime-values.ts";
+import { isJsonRecord, isString, type JsonRecord } from "@choco-pi/shared/runtime-values";
 import type { HookInput } from "../src/types.ts";
 
 async function activate() {

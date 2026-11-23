@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { isJsonObject } from "./adapter/runtime-values.ts";
-import { isString } from "./providers/value-guards.ts";
+import { isString } from "./value-guards.ts";
 
 const RECOVERY =
   "Build the native helpers locally, set `tools.customRustBinariesDir` in `choco-pi-codex.json`, then run `/reload`";

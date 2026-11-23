@@ -11,7 +11,7 @@ import {
   type Static,
 } from "@earendil-works/pi-schema";
 import { isJsonObject } from "../../adapter/runtime-values.ts";
-import { isBoolean, isNumber, isString } from "../value-guards.ts";
+import { isBoolean, isNumber, isString } from "../../value-guards.ts";
 import type {
   ResponseCreateParamsStreaming,
   ResponseOutputItem,

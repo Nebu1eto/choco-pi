@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, InputEvent } from "@earendil-works/pi-coding-agent";
-import { reinterpretHostValue } from "../../../profile/extensions/lib/runtime-values.ts";
+import { reinterpretHostValue } from "@choco-pi/shared/runtime-values";
 import { SteeringStatusWidget } from "../src/ui/steering-status.ts";
 import { registerNativeFeatures } from "../src/extension/native-features.ts";
 import { normalizeCodexConversionConfig } from "../src/adapter/activation/config.ts";

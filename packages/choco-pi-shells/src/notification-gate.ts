@@ -1,8 +1,8 @@
 import type { ShellManager, ShellResult } from "./shell-manager.ts";
 import { arr, compile, lit, num, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 
-import { isStaleContextError } from "./lifecycle.ts";
-import type { RuntimeValue } from "./validation.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
+import type { RuntimeValue } from "@choco-pi/shared/runtime-values";
 
 const NATIVE_STEERING_SYMBOL: unique symbol = Symbol.for("choco-pi-codex:native-steering");
 

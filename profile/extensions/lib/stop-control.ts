@@ -14,14 +14,21 @@ import {
   str,
   type Static,
 } from "@earendil-works/pi-schema";
-import { isStaleContextError } from "./lifecycle.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
+import {
+  STOP_CONTROL_PROTOCOL,
+  STOP_CONTROL_REGISTRY_KEY,
+  STOP_CONTROL_REPORT_CHANNEL,
+  STOP_CONTROL_REVOKE_CHANNEL,
+  STOP_CONTROL_STOP_SHELLS_CHANNEL,
+} from "@choco-pi/shared/stop-control";
 import type { RuntimeValue } from "./runtime-values.ts";
 
-export const STOP_PROTOCOL = "choco-pi:stop-control/v1";
-export const STOP_REGISTRY_KEY = Symbol.for(STOP_PROTOCOL);
-export const STOP_REVOKE_CHANNEL = `${STOP_PROTOCOL}/revoke`;
-export const STOP_SHELLS_CHANNEL = `${STOP_PROTOCOL}/stop-shells`;
-export const STOP_REPORT_CHANNEL = `${STOP_PROTOCOL}/report`;
+export const STOP_PROTOCOL = STOP_CONTROL_PROTOCOL;
+export const STOP_REGISTRY_KEY = STOP_CONTROL_REGISTRY_KEY;
+export const STOP_REVOKE_CHANNEL = STOP_CONTROL_REVOKE_CHANNEL;
+export const STOP_SHELLS_CHANNEL = STOP_CONTROL_STOP_SHELLS_CHANNEL;
+export const STOP_REPORT_CHANNEL = STOP_CONTROL_REPORT_CHANNEL;
 export const STOP_ENTRY_TYPE = "choco-pi:stop-control";
 
 /** The codex broker protocol (literal on purpose: no import from the codex package). */

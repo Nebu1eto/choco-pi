@@ -1,3 +1,4 @@
+import { memoizedImport } from "../memoized-import.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   getSearchScope,
@@ -25,11 +26,6 @@ import { conditionalProperties } from "../adapter/runtime-values.ts";
 
 export const CODEX_WEB_RUN_SEARCH_ADAPTER_ID = "codex.web_run";
 export const CODEX_WEB_RUN_SEARCH_TRANSPORT = "codex-native";
-
-function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
-  let promise: Promise<Module> | undefined;
-  return () => (promise ??= loader());
-}
 
 const loadNativeBinary = memoizedImport(() => import("../tools/native/binary.ts"));
 const loadToolProvider = memoizedImport(() => import("../adapter/codex-tool-provider.ts"));
