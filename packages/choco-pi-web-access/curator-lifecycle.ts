@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { execFileSync, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { execFile, spawn } from "node:child_process";
+import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { platform } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import type {
   AgentToolResult,
   ExtensionAPI,
@@ -216,7 +217,9 @@ interface GlimpseOptions extends DetailObject {
 
 let glimpseOpen: ((html: string, opts: GlimpseOptions) => GlimpseWindow) | null | undefined;
 
-function findGlimpseMjs(): string | null {
+const execFileAsync = promisify(execFile);
+
+async function findGlimpseMjs(): Promise<string | null> {
   try {
     const req = createRequire(import.meta.url);
     return req.resolve("glimpseui");
@@ -224,18 +227,20 @@ function findGlimpseMjs(): string | null {
     // Optional dependency.
   }
   try {
-    const globalRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf-8" }).trim();
+    const { stdout } = await execFileAsync("npm", ["root", "-g"], { encoding: "utf-8" });
+    const globalRoot = stdout.trim();
     const entry = join(globalRoot, "glimpseui", "src", "glimpse.mjs");
-    if (existsSync(entry)) return entry;
+    await access(entry);
+    return entry;
   } catch {
-    // npm may be unavailable.
+    // npm may be unavailable, or the global glimpseui entry may be absent.
   }
   return null;
 }
 
 export async function getGlimpseOpen() {
   if (glimpseOpen !== undefined) return glimpseOpen;
-  const resolved = findGlimpseMjs();
+  const resolved = await findGlimpseMjs();
   if (resolved) {
     try {
       glimpseOpen = (await import(resolved)).open;
@@ -959,14 +964,14 @@ export function createSearchRuntime(pi: ExtensionAPI, _toolNames: ToolNames, cur
             }
             closeCurator(callId);
           },
-          onProviderChange(provider) {
+          async onProviderChange(provider) {
             if (pendingCurates.get(callId) !== pc) return;
             const normalized = normalizeProviderInput(provider);
             if (!normalized || normalized === "auto" || Array.isArray(normalized)) return;
             pc.defaultProvider = normalized;
             pc.searchProvider = normalized;
             try {
-              saveConfig({ provider: normalized });
+              await saveConfig({ provider: normalized });
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err);
               console.error(`Failed to persist default provider: ${message}`);

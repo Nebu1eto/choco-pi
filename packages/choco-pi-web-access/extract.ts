@@ -906,6 +906,31 @@ async function extractViaHttp(
       }
     }
 
+    const isHTML =
+      contentType.includes("text/html") || contentType.includes("application/xhtml+xml");
+
+    // Registered response-stage extractors get the first claim on non-HTML, non-PDF responses
+    // (for example application/json) before the generic unsupported-type and plain-text paths.
+    // Built-in response extractors match only PDFs or parsed HTML, so they never claim here.
+    if (!isPDFContent && !isHTML) {
+      const responseCtx: ContentExtractorContext = {
+        url,
+        stage: "response",
+        response,
+        contentType,
+        mimeType,
+        maxResponseSize,
+        activityId,
+      };
+      if (signal) responseCtx.signal = signal;
+      if (options) responseCtx.options = options;
+      for (const extractor of scope.listContentExtractors("response")) {
+        if (!extractor.match(responseCtx)) continue;
+        const extracted = await extractor.extract(responseCtx);
+        if (extracted) return extracted;
+      }
+    }
+
     if (
       contentType.includes("application/octet-stream") ||
       contentType.includes("image/") ||
@@ -923,8 +948,6 @@ async function extractViaHttp(
     }
 
     const text = await readTextResponseWithLimit(response, maxResponseSize);
-    const isHTML =
-      contentType.includes("text/html") || contentType.includes("application/xhtml+xml");
 
     if (!isHTML) {
       activityMonitor.logComplete(activityId, response.status);

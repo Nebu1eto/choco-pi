@@ -1,8 +1,7 @@
 // @ts-nocheck
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -15,14 +14,16 @@ import {
 import { generateSummaryDraft, SUMMARY_GENERATION_DEADLINE_MS } from "../summary-review.ts";
 
 const indexUrl = new URL("../index.ts", import.meta.url).href;
-const indexSrc =
-  readFileSync(new URL("../extension-config.ts", import.meta.url), "utf8") +
-  "\n" +
-  readFileSync(new URL("../curator-lifecycle.ts", import.meta.url), "utf8") +
-  "\n" +
-  readFileSync(new URL("../tools/web-search-tool.ts", import.meta.url), "utf8");
-const summarySrc = readFileSync(new URL("../summary-review.ts", import.meta.url), "utf8");
-const queryRewriteSrc = readFileSync(new URL("../query-rewrite.ts", import.meta.url), "utf8");
+const sourceText = (path) => readFile(new URL(path, import.meta.url), "utf8");
+const [extensionConfigSrc, curatorLifecycleSrc, webSearchToolSrc, summarySrc, queryRewriteSrc] =
+  await Promise.all([
+    sourceText("../extension-config.ts"),
+    sourceText("../curator-lifecycle.ts"),
+    sourceText("../tools/web-search-tool.ts"),
+    sourceText("../summary-review.ts"),
+    sourceText("../query-rewrite.ts"),
+  ]);
+const indexSrc = [extensionConfigSrc, curatorLifecycleSrc, webSearchToolSrc].join("\n");
 
 function summaryContext() {
   const model = { provider: "anthropic", id: "claude-haiku-4-5" };

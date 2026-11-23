@@ -1,15 +1,19 @@
 // @ts-nocheck
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
-const indexSrc = [
-  readFileSync(new URL("../index.ts", import.meta.url), "utf8"),
-  readFileSync(new URL("../extension-config.ts", import.meta.url), "utf8"),
-  readFileSync(new URL("../curator-lifecycle.ts", import.meta.url), "utf8"),
-  readFileSync(new URL("../commands.ts", import.meta.url), "utf8"),
-  readFileSync(new URL("../tools/web-search-tool.ts", import.meta.url), "utf8"),
-].join("\n");
+const indexSrc = (
+  await Promise.all(
+    [
+      "../index.ts",
+      "../extension-config.ts",
+      "../curator-lifecycle.ts",
+      "../commands.ts",
+      "../tools/web-search-tool.ts",
+    ].map((path) => readFile(new URL(path, import.meta.url), "utf8")),
+  )
+).join("\n");
 
 test("web_search curator auto-open failures keep the curator alive with a manual URL", () => {
   assert.match(indexSrc, /browserOpenError\?: string;/);

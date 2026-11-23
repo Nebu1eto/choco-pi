@@ -236,7 +236,7 @@ test("configured routing falls back from Kagi network failure to Exa", async () 
 
 test("invalid routing provider fails loudly", async () => {
   const child = await run(
-    { searchRouting: { providers: ["removed-provider"], fallbackOn: ["network"] } },
+    { searchRouting: { providers: ["removed provider!"], fallbackOn: ["network"] } },
     `
       const { search } = await import(${JSON.stringify(moduleUrl)});
       try { await search("route"); } catch (error) { console.log(String(error)); }
@@ -244,6 +244,53 @@ test("invalid routing provider fails loudly", async () => {
   );
   assert.equal(child.status, 0, child.stderr);
   assert.match(child.stdout, /invalid provider/);
+});
+
+test("configured routing accepts and routes to a registered custom family", async () => {
+  const coreUrl = new URL("../../choco-pi-web-search/index.ts", import.meta.url).href;
+  const child = await run(
+    { searchRouting: { providers: ["searxng"], fallbackOn: ["transient"] } },
+    `
+      const listeners = new Map();
+      const events = {
+        on(name, listener) { const entries = listeners.get(name) ?? []; entries.push(listener); listeners.set(name, entries); },
+        emit(name, value) { for (const listener of listeners.get(name) ?? []) listener(value); },
+      };
+      const manager = { getSessionId: () => "custom-family-session" };
+      const { getSearchScope, bindSearchSession, registerSearchAdapter } = await import(${JSON.stringify(coreUrl)});
+      const { search, getConfiguredSearchRouting } = await import(${JSON.stringify(moduleUrl)});
+      const scope = getSearchScope(events);
+      const queries: string[] = [];
+      registerSearchAdapter(scope, {
+        id: "fixture.searxng",
+        family: "searxng",
+        transport: "fixture-searxng",
+        capabilities: { actions: ["search"], constraints: {} },
+        availability: () => ({ status: "available", billing: "free" }),
+        async execute(request) {
+          queries.push(request.query ?? "");
+          return { answer: "SearXNG answer", results: [{ title: "S", url: "https://example.test/s", snippet: "s" }] };
+        },
+      });
+      bindSearchSession(scope, manager);
+      const routing = getConfiguredSearchRouting();
+      const response = await search("custom route", { provider: "auto", extensionContext: { sessionManager: manager } });
+      console.log(JSON.stringify({ routing, queries, provider: response.provider, adapterId: response.adapterId, answer: response.answer }));
+    `,
+  );
+  assert.equal(child.status, 0, child.stderr);
+  const output: {
+    routing: { providers: string[]; fallbackOn: string[] };
+    queries: string[];
+    provider: string;
+    adapterId: string;
+    answer: string;
+  } = JSON.parse(child.stdout.trim());
+  assert.deepEqual(output.routing, { providers: ["searxng"], fallbackOn: ["transient"] });
+  assert.deepEqual(output.queries, ["custom route"]);
+  assert.equal(output.provider, "searxng");
+  assert.equal(output.adapterId, "fixture.searxng");
+  assert.equal(output.answer, "SearXNG answer");
 });
 
 test("conflicting configuration is never published to the process cache", async () => {

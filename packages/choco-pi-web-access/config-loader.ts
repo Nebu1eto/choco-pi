@@ -83,22 +83,42 @@ export async function loadWebSearchConfig(options?: {
   return result.config;
 }
 
-/** Reads `web-search.json` asynchronously, returning `{}` if unreadable/unparseable when `lenient` is set. */
-export async function loadWebSearchConfigLenient(configPath?: string): Promise<ConfigObject> {
-  const targetPath = configPath ?? getWebSearchConfigPath();
-  const result = await readConfigFile(targetPath);
-  if (result.error) return {};
+/**
+ * Reads `web-search.json` from disk without consulting or updating the process cache.
+ * A missing file is an empty config; any other read or parse failure rejects.
+ */
+export async function readWebSearchConfigStrict(configPath?: string): Promise<ConfigObject> {
+  const result = await readConfigFile(configPath ?? getWebSearchConfigPath());
+  if (result.error) throw result.error;
   return result.config;
 }
 
-/** Persists a partial update to `web-search.json` asynchronously and refreshes the in-memory cache. */
-export async function saveWebSearchConfig(patch: ConfigObject): Promise<ConfigObject> {
+let saveQueue: Promise<void> = Promise.resolve();
+
+async function persistConfigPatch(patch: ConfigObject): Promise<ConfigObject> {
   const targetPath = getWebSearchConfigPath();
-  const current = await loadWebSearchConfigLenient(targetPath);
+  // Strict read: an unreadable or malformed file must never be replaced by the patch alone.
+  const current = await readWebSearchConfigStrict(targetPath);
   const next: ConfigObject = { ...current, ...patch };
   await mkdir(dirname(targetPath), { recursive: true });
   await writeFile(targetPath, JSON.stringify(next, null, 2) + "\n", "utf-8");
-  cachedPath = targetPath;
-  cachedResult = { config: next };
+  if (targetPath === getWebSearchConfigPath()) {
+    cachedPath = targetPath;
+    cachedResult = { config: next };
+  }
   return next;
+}
+
+/**
+ * Persists a partial update to `web-search.json` asynchronously and refreshes the in-memory cache.
+ * Saves are serialized so concurrent read-modify-write cycles cannot drop each other's keys.
+ * Rejects without touching the file when the existing config cannot be read or parsed.
+ */
+export function saveWebSearchConfig(patch: ConfigObject): Promise<ConfigObject> {
+  const run = saveQueue.then(() => persistConfigPatch(patch));
+  saveQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 }

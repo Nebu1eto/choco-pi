@@ -74,9 +74,9 @@ test("authFetch profiles resolve named, single true, and host policy", () => {
       root,
       `
 			const { resolveAuthFetchProfile, assertAuthFetchUrl } = await import(${JSON.stringify(authFetchUrl)});
-			const work = resolveAuthFetchProfile("work");
+			const work = await resolveAuthFetchProfile("work");
 			let trueError = "";
-			try { resolveAuthFetchProfile(true); } catch (err) { trueError = err instanceof Error ? err.message : String(err); }
+			try { await resolveAuthFetchProfile(true); } catch (err) { trueError = err instanceof Error ? err.message : String(err); }
 			let insecureError = "";
 			try { assertAuthFetchUrl(work, "http://docs.company.com/private"); } catch (err) { insecureError = err instanceof Error ? err.message : String(err); }
 			let disallowedError = "";
@@ -106,7 +106,7 @@ test("authFetch true selects the only profile", () => {
       root,
       `
 			const { resolveAuthFetchProfile } = await import(${JSON.stringify(authFetchUrl)});
-			console.log(JSON.stringify(resolveAuthFetchProfile(true)));
+			console.log(JSON.stringify(await resolveAuthFetchProfile(true)));
 		`,
     );
     assert.equal(output.name, "work");
@@ -166,7 +166,7 @@ test("authenticated fetch sends only browser-scoped cookies with raw values", (t
 			};
 			const { resolveAuthFetchProfile } = await import(${JSON.stringify(authFetchUrl)});
 			const { extractContent } = await import(${JSON.stringify(extractUrl)});
-			const result = await extractContent("https://app.example.com/private/page", undefined, { mode: "raw", authFetchProfile: resolveAuthFetchProfile("work"), fetch: globalThis.fetch, lookup: async () => [{ address: "93.184.216.34", family: 4 }] });
+			const result = await extractContent("https://app.example.com/private/page", undefined, { mode: "raw", authFetchProfile: await resolveAuthFetchProfile("work"), fetch: globalThis.fetch, lookup: async () => [{ address: "93.184.216.34", family: 4 }] });
 			console.log(JSON.stringify({ calls, result }));
 		`,
       { PATH: `${bin}:${process.env.PATH ?? ""}` },
@@ -223,7 +223,7 @@ test("authenticated same-origin redirects recompute path-scoped cookies", (t) =>
 			};
 			const { resolveAuthFetchProfile } = await import(${JSON.stringify(authFetchUrl)});
 			const { extractContent } = await import(${JSON.stringify(extractUrl)});
-			const result = await extractContent("https://app.example.com/start/page", undefined, { mode: "raw", authFetchProfile: resolveAuthFetchProfile("work"), fetch: globalThis.fetch, lookup: async () => [{ address: "93.184.216.34", family: 4 }] });
+			const result = await extractContent("https://app.example.com/start/page", undefined, { mode: "raw", authFetchProfile: await resolveAuthFetchProfile("work"), fetch: globalThis.fetch, lookup: async () => [{ address: "93.184.216.34", family: 4 }] });
 			console.log(JSON.stringify({ calls, result }));
 		`,
       { PATH: `${bin}:${process.env.PATH ?? ""}` },
@@ -259,7 +259,7 @@ test("authenticated fetch failure does not fall through to hosted providers", ()
 			globalThis.fetch = async (url) => { calls.push(String(url)); return new Response("hosted", { status: 200 }); };
 			const { resolveAuthFetchProfile } = await import(${JSON.stringify(authFetchUrl)});
 			const { extractContent } = await import(${JSON.stringify(extractUrl)});
-			const result = await extractContent("https://example.com/private", undefined, { authFetchProfile: resolveAuthFetchProfile("work"), fetch: globalThis.fetch, lookup: async () => [{ address: "93.184.216.34", family: 4 }] });
+			const result = await extractContent("https://example.com/private", undefined, { authFetchProfile: await resolveAuthFetchProfile("work"), fetch: globalThis.fetch, lookup: async () => [{ address: "93.184.216.34", family: 4 }] });
 			console.log(JSON.stringify({ calls, result }));
 		`,
     );

@@ -109,15 +109,13 @@ export function loadConfig(): WebSearchConfig {
   return getCachedWebSearchConfig();
 }
 
-export function saveConfig(updates: Partial<WebSearchConfig>): void {
+/** Persists config updates; rejects with the persistence error so callers can report it. */
+export async function saveConfig(updates: Partial<WebSearchConfig>): Promise<void> {
   const patch: ConfigObject = {};
   for (const [key, value] of Object.entries(updates)) {
     if (value !== undefined) patch[key] = value;
   }
-  void saveWebSearchConfig(patch).catch((err) => {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`Failed to persist web search config: ${message}`);
-  });
+  await saveWebSearchConfig(patch);
 }
 
 export type ToolNames = {

@@ -211,6 +211,7 @@ interface BoundaryToolParameters {
   numResults?: number; // pre-snake_case spelling, sent only to prove rejection
   offset?: number;
   provider?: string | string[];
+  provider_options?: Record<string, Record<string, string>>;
   queries?: string[];
   query?: string;
   recency_days?: number;
@@ -509,6 +510,18 @@ test("canonical constraints reach the selected Brave adapter exactly", async () 
       requiredCapabilities: ["country", "safesearch", "offset"],
     },
   ]);
+});
+
+test("ordinary web_search forwards provider_options to the selected adapter", async () => {
+  braveRequests.length = 0;
+  await execute({
+    query: "provider options",
+    provider: "brave",
+    workflow: "none",
+    provider_options: { exa: { searchType: "deep" } },
+  });
+  assert.equal(braveRequests.length, 1);
+  assert.equal(braveRequests[0]?.providerOptions?.exa?.searchType, "deep");
 });
 
 test("unsupported hard constraints fail before the backend", async () => {

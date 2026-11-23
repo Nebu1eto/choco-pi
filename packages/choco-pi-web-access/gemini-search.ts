@@ -2,6 +2,7 @@ import { getCachedWebSearchConfig, isConfigObject } from "./config-loader.ts";
 import { isAbortError, isBooleanValue, isStringValue } from "./value-guards.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
+  isValidSearchProviderFamily,
   resolveSearchScope,
   search as searchCore,
   searchProviderFamilies,
@@ -13,6 +14,7 @@ import {
   type SearchProviderSelection,
   type SearchCapability,
   type SearchErrorKind,
+  type JsonRecord,
   type SearchRequest,
   type SearchResponse as CoreSearchResponse,
 } from "../choco-pi-web-search/index.ts";
@@ -173,9 +175,13 @@ function normalizeSearchRouting<Value>(value: Value): SearchRoutingConfig {
     throw new Error(`searchRouting in ${CONFIG_PATH} must be an object`);
   }
   const raw = value;
-  const providers = normalizeResolvedProviderList(
+  // Configured routing may target any well-formed family, including custom families that
+  // extensions register with the shared SearchRouter (for example `searxng`). The closed
+  // built-in list still governs the UI picker and tool-schema provider values.
+  const providers = normalizeProviderFamilyList(
     raw.providers,
     `searchRouting.providers in ${CONFIG_PATH}`,
+    isValidSearchProviderFamily,
   );
   if (!Array.isArray(raw.fallbackOn) || raw.fallbackOn.length === 0) {
     throw new Error(`searchRouting.fallbackOn in ${CONFIG_PATH} must be a non-empty array`);
@@ -201,12 +207,20 @@ function normalizeResolvedProviderList<Value>(
   value: Value,
   label: string,
 ): ResolvedSearchProvider[] {
+  return normalizeProviderFamilyList(value, label, isResolvedSearchProvider);
+}
+
+function normalizeProviderFamilyList<Value>(
+  value: Value,
+  label: string,
+  isAccepted: (candidate: string) => boolean,
+): ResolvedSearchProvider[] {
   if (!Array.isArray(value) || value.length === 0)
     throw new Error(`${label} must be a non-empty array`);
   const providers: ResolvedSearchProvider[] = [];
   for (const provider of value) {
     const normalized = isStringValue(provider) ? provider.trim().toLowerCase() : "";
-    if (!isResolvedSearchProvider(normalized)) {
+    if (!isAccepted(normalized)) {
       throw new Error(`${label} contains an invalid provider: ${String(provider)}`);
     }
     if (providers.includes(normalized)) {
@@ -241,6 +255,8 @@ export interface FullSearchOptions extends SearchOptions {
   responseLength?: "short" | "medium" | "long";
   searchContextSize?: "low" | "medium" | "high";
   requiredCapabilities?: SearchCapability[];
+  /** Backend-specific options forwarded verbatim to the canonical search request. */
+  providerOptions?: Readonly<Record<string, JsonRecord>>;
 }
 
 function fromCoreResponse(response: CoreSearchResponse): AttributedSearchResponse {
@@ -315,6 +331,7 @@ async function searchWithCore(
   if (options.responseLength) request.responseLength = options.responseLength;
   if (options.searchContextSize) request.searchContextSize = options.searchContextSize;
   if (options.requiredCapabilities) request.requiredCapabilities = options.requiredCapabilities;
+  if (options.providerOptions) request.providerOptions = options.providerOptions;
   const response = await searchCore(request, {
     context,
     signal: options.signal,

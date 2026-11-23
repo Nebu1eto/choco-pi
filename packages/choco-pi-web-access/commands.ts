@@ -194,13 +194,13 @@ export function registerWebAccessCommands(
               }
               closeCurator(commandCallId);
             },
-            onProviderChange(provider) {
+            async onProviderChange(provider) {
               if (commandHandle && !isCommandActive()) return;
               const normalized = normalizeProviderInput(provider);
               if (!normalized || normalized === "auto" || Array.isArray(normalized)) return;
               currentSearchProvider = normalized;
               try {
-                saveConfig({ provider: normalized });
+                await saveConfig({ provider: normalized });
               } catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
                 console.error(`Failed to persist default provider: ${message}`);
@@ -383,7 +383,7 @@ export function registerWebAccessCommands(
         }
 
         try {
-          saveConfig({ workflow: newWorkflow });
+          await saveConfig({ workflow: newWorkflow });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           ctx.ui.notify(`Failed to save config: ${message}`, "error");

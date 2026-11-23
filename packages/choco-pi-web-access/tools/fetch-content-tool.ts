@@ -117,7 +117,7 @@ export function registerFetchContentTool(
       let authFetchProfile: AuthFetchProfile | undefined;
       if (options.auth !== undefined) {
         try {
-          authFetchProfile = resolveAuthFetchProfile(options.auth);
+          authFetchProfile = await resolveAuthFetchProfile(options.auth);
         } catch (err) {
           const error = err instanceof Error ? err.message : String(err);
           return { content: [{ type: "text", text: `Error: ${error}` }], details: { error } };

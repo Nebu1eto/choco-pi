@@ -172,6 +172,7 @@ export function searchOptionsForCanonicalRequest(
     responseLength: request.responseLength,
     searchContextSize: request.searchContextSize,
     requiredCapabilities: request.requiredCapabilities,
+    providerOptions: request.providerOptions,
     signal,
     extensionContext,
   };

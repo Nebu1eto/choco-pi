@@ -66,7 +66,7 @@ export interface CuratorServerCallbacks {
     rawResults?: boolean;
   }) => void;
   onCancel: (reason: "user" | "timeout" | "stale") => void;
-  onProviderChange: (provider: string) => void;
+  onProviderChange: (provider: string) => void | Promise<void>;
   onAddSearch: (query: string, provider?: string) => Promise<CuratorSearchEntry[]>;
   onAddSearchResults: (entries: IndexedCuratorSearchEntry[]) => void;
   onSummarize: (
@@ -491,7 +491,12 @@ export function startCuratorServer(
           sendJson(res, 400, { ok: false, error: `Provider unavailable: ${provider}` });
           return;
         }
-        setImmediate(() => callbacks.onProviderChange(provider));
+        setImmediate(() => {
+          Promise.resolve(callbacks.onProviderChange(provider)).catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(`Failed to apply curator provider change: ${message}`);
+          });
+        });
         sendJson(res, 200, { ok: true });
         return;
       }

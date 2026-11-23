@@ -1,4 +1,4 @@
-import { getCachedWebSearchConfig, isConfigObject } from "./config-loader.ts";
+import { isConfigObject, readWebSearchConfigStrict } from "./config-loader.ts";
 import { normalizeHostname } from "./ssrf-protection.ts";
 import { getWebSearchConfigPath } from "./utils.ts";
 
@@ -29,8 +29,15 @@ function isString(value: JsonValue): value is string {
   return Object.prototype.toString.call(value) === "[object String]";
 }
 
-export function resolveAuthFetchProfile(request: AuthFetchRequest): AuthFetchProfile {
-  const profiles = loadAuthFetchProfiles();
+/**
+ * Resolves an authFetch profile from the current on-disk `web-search.json`, never from the
+ * process cache, so a profile removed on disk is revoked immediately. Read or parse failures
+ * fail closed; a missing file means no profiles are configured.
+ */
+export async function resolveAuthFetchProfile(
+  request: AuthFetchRequest,
+): Promise<AuthFetchProfile> {
+  const profiles = await loadAuthFetchProfiles();
   if (profiles.length === 0) {
     throw new Error(`auth requires at least one authFetch profile in ${WEB_SEARCH_CONFIG_PATH}`);
   }
@@ -72,8 +79,8 @@ export function authFetchRedirectGuard(profile: AuthFetchProfile, from: URL, to:
   }
 }
 
-function loadAuthFetchProfiles(): AuthFetchProfile[] {
-  const parsed = getCachedWebSearchConfig();
+async function loadAuthFetchProfiles(): Promise<AuthFetchProfile[]> {
+  const parsed = await readWebSearchConfigStrict(getWebSearchConfigPath());
   if (parsed.authFetch === undefined || parsed.authFetch === null) return [];
   if (!isConfigObject(parsed.authFetch)) {
     throw new Error(`authFetch in ${WEB_SEARCH_CONFIG_PATH} must be an object`);
