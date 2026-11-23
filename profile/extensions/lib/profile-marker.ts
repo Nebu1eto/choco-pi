@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { compile, lit, nullable, obj, opt, str, type Static } from "@earendil-works/pi-schema";
+import { arr, compile, lit, nullable, obj, opt, str, type Static } from "@earendil-works/pi-schema";
 import { piAgentDir } from "./pi-paths.ts";
 import { PI_SDK_REQUIREMENT, isSupportedPiVersion } from "./pi-target.ts";
 
@@ -25,6 +25,9 @@ export const ProfileMarkerSchema = obj({
     // Optional so markers written before structured reports stay valid.
     reportStatusKey: opt(lit("choco-pi.report")),
   }),
+  // Names of the bundled packages this install offered; a reinstall adds only
+  // bundled packages missing here. Optional so earlier markers stay valid.
+  bundledPackages: opt(arr(str())),
 });
 export type ProfileMarker = Static<typeof ProfileMarkerSchema>;
 const isProfileMarker = compile(ProfileMarkerSchema).check;
@@ -95,6 +98,7 @@ export async function writeProfileMarker(
   agentDir: string,
   checkout: string,
   pi: ProfileMarker["pi"],
+  bundledPackages: readonly string[],
 ): Promise<string> {
   const target = profileMarkerPath(agentDir);
   const root = path.resolve(checkout);
@@ -111,6 +115,7 @@ export async function writeProfileMarker(
       statusKey: "choco-pi.host-bridge",
       reportStatusKey: "choco-pi.report",
     },
+    bundledPackages: [...bundledPackages],
   };
   await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
   await chmod(path.dirname(target), 0o700);

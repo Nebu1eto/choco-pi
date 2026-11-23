@@ -129,8 +129,10 @@ test("installer records an explicitly selected launcher and harness rechecks it 
 });
 
 function writeProfileMarker(agentDir: string, checkout: string, version: string) {
-  return publishProfileMarker(agentDir, checkout, { version, launcher: null });
+  return publishProfileMarker(agentDir, checkout, { version, launcher: null }, BUNDLED_NAMES);
 }
+
+const BUNDLED_NAMES = ["choco-pi-ui", "choco-pi-shells"];
 
 async function fixture(run: (directory: string) => Promise<void>) {
   const directory = await mkdtemp(path.join(process.cwd(), ".profile-marker-test-"));
@@ -162,6 +164,7 @@ test("marker uses schema 1, private modes and atomic replacement without changin
         statusKey: "choco-pi.host-bridge",
         reportStatusKey: "choco-pi.report",
       },
+      bundledPackages: BUNDLED_NAMES,
     });
     assert.ok(Number.isFinite(Date.parse(parsed.installedAt)));
     assert.equal((await stat(target)).mode & 0o777, 0o600);

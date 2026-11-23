@@ -812,7 +812,7 @@ async function fixtureSource(directory: string): Promise<string> {
       '  const markerPath = path.join(options.agentDir, "choco-pi", "profile.json");',
       "  await mkdir(path.dirname(markerPath), { recursive: true });",
       "  await writeFile(markerPath, JSON.stringify({ checkout: options.root, launcher: options.piLauncher }));",
-      '  return { links: [], settingsPath: path.join(options.agentDir, "settings.json"), markerPath, removed: [], warnings: [] };',
+      '  return { links: [], settingsPath: path.join(options.agentDir, "settings.json"), markerPath, addedPackages: [], removed: [], warnings: [] };',
       "}",
       "",
     ].join("\n"),

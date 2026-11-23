@@ -497,6 +497,7 @@ export async function setupCommand(options: SetupArguments): Promise<void> {
   });
   for (const link of result.links) log.info("{action}: {target}", link);
   log.info("updated: {path}", { path: result.settingsPath });
+  for (const spec of result.addedPackages) log.info("added package: {path}", { path: spec });
   log.info("updated: {path}", { path: result.markerPath });
   for (const target of result.removed) log.info("removed: {target}", { target });
   for (const warning of result.warnings) log.warn("{warning}", { warning });

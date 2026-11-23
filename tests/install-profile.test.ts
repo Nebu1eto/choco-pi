@@ -36,6 +36,7 @@ import {
   PROFILE_LINKS,
   RETIRED_PROFILE_FILES,
 } from "../scripts/install-profile.ts";
+import { profileMarkerPath, readProfileMarker } from "../profile/extensions/lib/profile-marker.ts";
 
 const CodexConfigSchema = obj({ openai: obj({ fast: bool() }, { open: true }) }, { open: true });
 
@@ -265,6 +266,98 @@ test("without project settings, global settings supply the profile and lose supe
 
   const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
   assert.deepEqual(settings.packages, [...BUNDLED_PACKAGES, "npm:user-package@2.0.0"]);
+});
+
+const GOOGLE_PACKAGE = path.resolve("packages", "choco-pi-provider-google-antigravity");
+
+/** Writes the profile marker an earlier install left, optionally with its offer record. */
+async function seedProfileMarker(agentDir: string, bundledPackages?: string[]) {
+  const target = profileMarkerPath(agentDir);
+  await mkdir(path.dirname(target), { recursive: true });
+  const marker = {
+    schema: 1,
+    name: "choco-pi",
+    checkout: process.cwd(),
+    revision: null,
+    installedAt: new Date(0).toISOString(),
+    pi: { version: null, launcher: null },
+    hostBridge: {
+      schema: 1,
+      entryPrefix: "choco-pi:host-bridge",
+      statusKey: "choco-pi.host-bridge",
+      reportStatusKey: "choco-pi.report",
+    },
+    ...(bundledPackages !== undefined && { bundledPackages }),
+  };
+  await writeFile(target, `${JSON.stringify(marker)}\n`, "utf8");
+}
+
+test("a reinstall from before the offer record adds packages bundled since, in default order", async (context) => {
+  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-new-bundled-"));
+  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  // An install from before the Google provider was bundled; its marker predates the record.
+  await seedProfileSettings(agentDir, {
+    packages: [
+      ...BUNDLED_PACKAGES.filter((spec) => spec !== GOOGLE_PACKAGE),
+      "npm:user-package@2.0.0",
+    ],
+  });
+  await seedProfileMarker(agentDir);
+
+  const result = await installProfile({ root: process.cwd(), agentDir });
+
+  const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
+  assert.deepEqual(settings.packages, [...BUNDLED_PACKAGES, "npm:user-package@2.0.0"]);
+  assert.deepEqual(result.addedPackages, [GOOGLE_PACKAGE]);
+});
+
+test("a reinstall keeps out a bundled package the user removed before the offer record", async (context) => {
+  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-removed-old-"));
+  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  const mcp = path.resolve("packages", "choco-pi-mcp");
+  await seedProfileSettings(agentDir, {
+    packages: BUNDLED_PACKAGES.filter((spec) => spec !== GOOGLE_PACKAGE && spec !== mcp),
+  });
+
+  await installProfile({ root: process.cwd(), agentDir });
+
+  const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
+  assert.deepEqual(
+    settings.packages,
+    BUNDLED_PACKAGES.filter((spec) => spec !== mcp),
+  );
+});
+
+test("a reinstall keeps out a recorded bundled package the user removed", async (context) => {
+  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-removed-recorded-"));
+  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  const remaining = BUNDLED_PACKAGES.filter((spec) => spec !== GOOGLE_PACKAGE);
+  await seedProfileSettings(agentDir, { packages: remaining });
+  await seedProfileMarker(
+    agentDir,
+    BUNDLED_PACKAGES.map((spec) => path.basename(spec)),
+  );
+
+  await installProfile({ root: process.cwd(), agentDir });
+
+  const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
+  assert.deepEqual(settings.packages, remaining);
+});
+
+test("an install records the bundled packages it offered in the profile marker", async (context) => {
+  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-offer-record-"));
+  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  await seedProfileSettings(agentDir);
+
+  await installProfile({ root: process.cwd(), agentDir });
+
+  const observation = await readProfileMarker(agentDir);
+  assert.equal(observation.status, "valid");
+  assert.ok(observation.status === "valid");
+  assert.deepEqual(
+    observation.marker.bundledPackages,
+    DEFAULT_PROFILE_PACKAGES.map((spec) => path.basename(spec)),
+  );
 });
 
 test("a clean machine with no settings at all bootstraps the bundled profile", async (context) => {

@@ -36,7 +36,7 @@ Pi에 내장된 `xai` 공급자(Grok)는 `/login xai`로 SuperGrok 또는 X Prem
 
 **Pi에 내장된 `google` 공급자를 대체합니다.** 이 패키지가 로드되어 있으면 `google/<모델>`은 Google Antigravity 모델을 가리키고, Pi에 내장된 Gemini API 키용 `google` 공급자와 그 모델은 사라집니다. `GEMINI_API_KEY`는 쓰지 않습니다. `/login google`에 Google Antigravity와 함께 Pi의 API 키 방식이 보일 수 있지만, 이 공급자는 Google Antigravity OAuth 로그인만 받습니다. 저장된 API 키나, 저장된 인증 정보가 없을 때의 `GEMINI_API_KEY`로는 요청이 네트워크 요청 없이 곧바로 인증 오류로 실패하며, 오류는 키를 보여 주지 않고 `/login google`을 안내합니다. `/usage`, Google 검색, 백그라운드 토큰 계산도 이런 키를 로그인하지 않은 상태로 봅니다. 저장된 Google Antigravity 로그인은 항상 `GEMINI_API_KEY`보다 우선합니다. Gemini API 키를 쓰려면 `packages`에서 이 패키지를 빼고 다시 시작하세요.
 
-새로 설치하면 이 패키지가 기본으로 로드됩니다. 다시 설치하는 명령(`pnpm install:profile`, `choco-pi self setup`, `choco-pi self update`)은 기존 패키지 목록을 그대로 유지하므로, 이미 설치한 환경에서는 한 번 직접 추가해야 합니다. `settings.json`(독립 실행형 명령은 `~/.choco-pi/agent/settings.json`)의 `packages`에 절대 경로 `<checkout>/packages/choco-pi-provider-google-antigravity`를 넣은 뒤 choco-pi를 다시 시작하세요.
+새로 설치하면 이 패키지가 기본으로 로드됩니다. 다시 설치하는 명령(`pnpm install:profile`, `choco-pi self setup`, `choco-pi self update`)은 기존 설치에도 이 패키지를 추가하고 그 경로를 `added package:`로 출력합니다. 이후 choco-pi를 다시 시작하세요. 이전 설치에서 이미 제공된 번들 패키지를 `settings.json`의 `packages`에서 지웠다면 그 패키지는 계속 빠진 상태로 유지되므로, Pi 기본 공급자를 계속 쓰려면 이 패키지도 같은 방법으로 지우세요.
 
 **약관과 계정 위험.** Google의 Antigravity 약관은 소비자 OAuth 접근으로 서드파티 클라이언트를 쓰는 것을 제한하며, 실제로 이런 방식으로 쓰인 계정이 정지된 사례가 있습니다. choco-pi는 서드파티 클라이언트이고, 요청은 공식 agy CLI로 식별됩니다. Google Antigravity 로그인은 이 경고를 보여 주고 사용자가 수락해야만 진행합니다. 거절하면 네트워크 요청 없이 로그인이 끝납니다. 계정에 대한 이 위험을 받아들일 때만 이 공급자를 쓰세요.
 

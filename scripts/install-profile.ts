@@ -37,7 +37,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { isJsonRecord, type JsonRecord } from "../profile/extensions/lib/runtime-values.ts";
-import { resolvePiLauncher, writeProfileMarker } from "../profile/extensions/lib/profile-marker.ts";
+import {
+  profileMarkerPath,
+  resolvePiLauncher,
+  writeProfileMarker,
+} from "../profile/extensions/lib/profile-marker.ts";
 import { PI_SDK_REQUIREMENT, isSupportedPiVersion } from "../profile/extensions/lib/pi-target.ts";
 import { readAnthropicCompactionMode } from "../packages/choco-pi-compaction/src/anthropic/mode.ts";
 import {
@@ -148,6 +152,38 @@ export const DEFAULT_PROFILE_PACKAGES: readonly string[] = [
   "./packages/choco-pi-agent-browser",
   "./packages/choco-pi-computer-use",
   "./packages/choco-pi-editor-context",
+];
+
+/** Package directory names of DEFAULT_PROFILE_PACKAGES, the offer an install records. */
+export const DEFAULT_PROFILE_PACKAGE_NAMES: readonly string[] = DEFAULT_PROFILE_PACKAGES.map(
+  (spec) => path.basename(spec),
+);
+
+/**
+ * Bundled packages every install offered before installs recorded their offer
+ * in the profile marker's `bundledPackages`. A reinstall over an install
+ * without that record treats these as offered, so it adds only packages
+ * bundled since and leaves out any of these the user removed. Frozen: a package
+ * bundled later belongs only in DEFAULT_PROFILE_PACKAGES.
+ */
+export const PRE_RECORD_BUNDLED_PACKAGE_NAMES: readonly string[] = [
+  "choco-pi-web-search",
+  "choco-pi-web-access",
+  "choco-pi-provider-synthetic",
+  "choco-pi-ui",
+  "choco-pi-shells",
+  "choco-pi-hooks",
+  "choco-pi-subagents",
+  "choco-pi-advisor",
+  "choco-pi-goal",
+  "choco-pi-mcp",
+  "choco-pi-lsp",
+  "choco-pi-compaction",
+  "choco-pi-codex",
+  "choco-pi-agents-md",
+  "choco-pi-agent-browser",
+  "choco-pi-computer-use",
+  "choco-pi-editor-context",
 ];
 
 /**
@@ -394,6 +430,51 @@ async function readJson(target: string, fallback?: Settings): Promise<Settings> 
 
 function unique(values: string[]) {
   return [...new Set(values)];
+}
+
+const OfferRecordSchema = obj({ bundledPackages: opt(arr(str())) }, { open: true });
+const isOfferRecord = compile(OfferRecordSchema).check;
+
+/**
+ * Bundled package names the previous install offered: the profile marker's
+ * record, or PRE_RECORD_BUNDLED_PACKAGE_NAMES when the marker is absent,
+ * unreadable or predates the record.
+ */
+async function previouslyOfferedPackageNames(agentDir: string): Promise<ReadonlySet<string>> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(profileMarkerPath(agentDir), "utf8"));
+  } catch {
+    return new Set(PRE_RECORD_BUNDLED_PACKAGE_NAMES);
+  }
+  const recorded = isOfferRecord(parsed) ? parsed.bundledPackages : undefined;
+  return new Set(recorded ?? PRE_RECORD_BUNDLED_PACKAGE_NAMES);
+}
+
+/**
+ * Adds each default bundled package the previous install did not offer and
+ * `packages` lacks, right after the nearest default package before it that
+ * `packages` holds, so load order follows DEFAULT_PROFILE_PACKAGES.
+ */
+function withNewlyBundledPackages(
+  packages: string[],
+  root: string,
+  offered: ReadonlySet<string>,
+): string[] {
+  const bundled = path.join(root, "packages");
+  const result = [...packages];
+  let anchor = -1;
+  for (const name of DEFAULT_PROFILE_PACKAGE_NAMES) {
+    const spec = path.join(bundled, name);
+    const index = result.indexOf(spec);
+    if (index !== -1) {
+      anchor = index;
+    } else if (!offered.has(name)) {
+      result.splice(anchor + 1, 0, spec);
+      anchor += 1;
+    }
+  }
+  return result;
 }
 
 /**
@@ -789,6 +870,7 @@ async function readProfileSettings(
   root: string,
   existingSettings: Settings,
   defaultEnabledModels: readonly string[],
+  offeredPackageNames: ReadonlySet<string>,
 ): Promise<ProjectSettings> {
   const projectPath = path.join(root, ".pi", "settings.json");
   if (await exists(projectPath)) {
@@ -842,7 +924,9 @@ async function readProfileSettings(
   // levels the profile added since; buildGlobalSettings lets the user's win.
   return {
     ...existingSettings,
-    packages: unique(packages),
+    // Bundled packages added since the previous install join here; ones it
+    // offered and the user removed stay out.
+    packages: withNewlyBundledPackages(unique(packages), root, offeredPackageNames),
     // A reinstall picks up built-in policy the profile added since.
     extensions: withProfileExtensionPolicy(existingSettings.extensions),
     modelThinkingLevels: { ...DEFAULT_PROFILE_MODEL_THINKING_LEVELS },
@@ -858,7 +942,22 @@ export async function installProfile({
 }: InstallProfileOptions = {}) {
   const settingsPath = path.join(agentDir, "settings.json");
   const existingSettings = await readJson(settingsPath, {});
-  const project = await readProfileSettings(root, existingSettings, defaultEnabledModels);
+  const offeredPackageNames = await previouslyOfferedPackageNames(agentDir);
+  const project = await readProfileSettings(
+    root,
+    existingSettings,
+    defaultEnabledModels,
+    offeredPackageNames,
+  );
+  // Reported because a newly bundled package can change behavior on update:
+  // the Google provider, for one, replaces Pi's built-in `google` provider.
+  const bundledDir = path.join(root, "packages");
+  const addedPackages = project.packages.filter(
+    (spec) =>
+      path.dirname(spec) === bundledDir &&
+      !offeredPackageNames.has(path.basename(spec)) &&
+      !(existingSettings.packages ?? []).includes(spec),
+  );
   // MCP configuration is deliberately not linked. Pi reads ~/.pi/agent/mcp.json and a
   // project .pi/mcp.json as separate sources, so linking a repo-local copy registers every
   // server twice when Pi runs from this checkout, and the ignored file disappearing leaves
@@ -886,7 +985,7 @@ export async function installProfile({
     buildGlobalSettings(project, existingSettings, root, superseded, foreignCheckouts),
   );
   const pi = await resolvePiLauncher(piLauncher);
-  const markerPath = await writeProfileMarker(agentDir, root, pi);
+  const markerPath = await writeProfileMarker(agentDir, root, pi, DEFAULT_PROFILE_PACKAGE_NAMES);
   const warnings: string[] = [];
   const migrations = [await migrateBackgroundCompactionSidecar(agentDir, warnings)];
   const removed = await removeRetiredProfileFiles(agentDir, warnings);
@@ -902,6 +1001,7 @@ export async function installProfile({
     warnings,
     links: results,
     migrations,
+    addedPackages,
     removed,
   };
 }
@@ -944,6 +1044,7 @@ if (await isMainModule(process.argv[1])) {
       console.log(`${link.action}: ${link.target}${suffix}`);
     }
     console.log(`updated: ${result.settingsPath}`);
+    for (const spec of result.addedPackages) console.log(`added package: ${spec}`);
     console.log(`updated: ${result.markerPath}`);
     for (const migration of result.migrations) {
       console.log(`${migration.action}: ${migration.target}`);
