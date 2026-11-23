@@ -23,7 +23,6 @@ const EXEC_COMMAND_PARAMETERS = hostParams(
     {
       description: str({
         minLength: 1,
-        maxLength: 60,
         description: "Required 3-7 word imperative phrase describing intent for collapsed display",
       }),
       cmd: str({

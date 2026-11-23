@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { validateToolArguments } from "@earendil-works/pi-ai";
 
 import { createExecCommandTracker } from "../src/tools/exec/command-state.ts";
 import { createExecCommandTool } from "../src/tools/exec/command-tool.ts";
@@ -45,4 +46,34 @@ test("exec_command exports the executing session's PI_SESSION_ID per call", asyn
   } finally {
     await sessions.shutdown();
   }
+});
+
+test("exec_command accepts descriptions over 60 characters and still rejects empty descriptions", () => {
+  const tool = createExecCommandTool(createExecCommandTracker(), createLazyExecSessionManager());
+  const longDescription =
+    "Inspect workspace policy checks and verify every changed package compiles cleanly";
+  assert.ok(longDescription.length > 60);
+  const validated = validateToolArguments(
+    { name: tool.name, description: tool.description, parameters: tool.parameters },
+    {
+      type: "toolCall",
+      id: "call-long-desc",
+      name: tool.name,
+      arguments: { description: longDescription, cmd: "true" },
+    },
+  );
+  assert.deepEqual(validated, { description: longDescription, cmd: "true" });
+  assert.throws(
+    () =>
+      validateToolArguments(
+        { name: tool.name, description: tool.description, parameters: tool.parameters },
+        {
+          type: "toolCall",
+          id: "call-empty-desc",
+          name: tool.name,
+          arguments: { description: "", cmd: "true" },
+        },
+      ),
+    /minLength|at least 1|Validation failed/i,
+  );
 });
