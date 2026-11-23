@@ -1,3 +1,5 @@
+import os from "node:os";
+import path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isJsonObject, isNumber, type JsonField, type JsonValue } from "../../json.ts";
 import { parseLookResponse, type LookResponse } from "../../outline.ts";
@@ -7,6 +9,7 @@ import type {
   ComputerUsePlatformBackend,
   FramePoints,
   HelperActResult,
+  ManagedBrowserKind,
   PlatformActRequest,
   PlatformApp,
   PlatformDiagnostics,
@@ -265,5 +268,31 @@ export const linuxBackend: ComputerUsePlatformBackend = {
       { signal, timeoutMs: 10_000 },
     );
     return true;
+  },
+  managedBrowserExecutableCandidates(browser: ManagedBrowserKind): string[] {
+    const installCandidates =
+      browser === "helium"
+        ? [
+            "/usr/bin/helium",
+            "/usr/bin/helium-browser",
+            "/opt/helium/chrome",
+            path.join(os.homedir(), ".local", "helium", "chrome"),
+          ]
+        : [
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/snap/bin/chromium",
+          ];
+    const pathNames =
+      browser === "helium"
+        ? ["helium", "helium-browser"]
+        : ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"];
+    const pathCandidates = (process.env.PATH ?? "")
+      .split(path.delimiter)
+      .filter(Boolean)
+      .flatMap((directory) => pathNames.map((name) => path.join(directory, name)));
+    return [...new Set([...installCandidates, ...pathCandidates])];
   },
 };

@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import computerUseExtension from "../extensions/computer-use.ts";
 import * as bridge from "../src/bridge.ts";
 import { isJsonObject, type JsonObject, type JsonValue } from "../src/json.ts";
+import {
+  managedBrowserExecutableCandidates,
+  platformBackendForRuntime,
+} from "../src/platform/index.ts";
 
 interface ToolDefinition {
   name: string;
@@ -97,4 +102,27 @@ test("extension and bridge load under Node strip-types with intact tool schemas"
     8,
     "act_ui must retain all eight action variants with one merged click branch",
   );
+});
+
+test("platform backends supply managed browser executable candidates and honor env overrides", () => {
+  const darwinChrome =
+    platformBackendForRuntime("darwin").managedBrowserExecutableCandidates?.("chrome");
+  const winHelium =
+    platformBackendForRuntime("win32").managedBrowserExecutableCandidates?.("helium");
+  const linuxChrome =
+    platformBackendForRuntime("linux").managedBrowserExecutableCandidates?.("chrome");
+  assert.ok(darwinChrome?.includes("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"));
+  assert.ok(winHelium?.some((candidate) => candidate.endsWith("helium.exe")));
+  assert.ok(linuxChrome?.includes("/usr/bin/google-chrome"));
+
+  const prev = process.env.PI_COMPUTER_USE_CHROME_EXECUTABLE;
+  process.env.PI_COMPUTER_USE_CHROME_EXECUTABLE = "./custom-chrome";
+  try {
+    assert.deepEqual(managedBrowserExecutableCandidates("chrome"), [
+      path.resolve("./custom-chrome"),
+    ]);
+  } finally {
+    if (prev === undefined) delete process.env.PI_COMPUTER_USE_CHROME_EXECUTABLE;
+    else process.env.PI_COMPUTER_USE_CHROME_EXECUTABLE = prev;
+  }
 });

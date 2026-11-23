@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isJsonObject, isNumber, type JsonField, type JsonValue } from "../../json.ts";
 import { parseLookResponse, type LookResponse } from "../../outline.ts";
@@ -6,6 +7,7 @@ import type {
   ComputerUsePlatformBackend,
   FramePoints,
   HelperActResult,
+  ManagedBrowserKind,
   PlatformActRequest,
   PlatformApp,
   PlatformDiagnostics,
@@ -266,5 +268,40 @@ export const windowsBackend: ComputerUsePlatformBackend = {
       { signal, timeoutMs: 10_000 },
     );
     return true;
+  },
+  managedBrowserExecutableCandidates(browser: ManagedBrowserKind): string[] {
+    const installCandidates =
+      browser === "helium"
+        ? [
+            process.env.LOCALAPPDATA &&
+              path.join(process.env.LOCALAPPDATA, "Helium", "Application", "helium.exe"),
+            process.env.PROGRAMFILES &&
+              path.join(process.env.PROGRAMFILES, "Helium", "Application", "helium.exe"),
+          ]
+        : [
+            process.env.LOCALAPPDATA &&
+              path.join(process.env.LOCALAPPDATA, "Google", "Chrome", "Application", "chrome.exe"),
+            process.env.PROGRAMFILES &&
+              path.join(process.env.PROGRAMFILES, "Google", "Chrome", "Application", "chrome.exe"),
+            process.env["PROGRAMFILES(X86)"] &&
+              path.join(
+                process.env["PROGRAMFILES(X86)"],
+                "Google",
+                "Chrome",
+                "Application",
+                "chrome.exe",
+              ),
+          ];
+    const pathNames = browser === "helium" ? ["helium.exe"] : ["chrome.exe"];
+    const pathCandidates = (process.env.PATH ?? "")
+      .split(path.delimiter)
+      .filter(Boolean)
+      .flatMap((directory) => pathNames.map((name) => path.join(directory, name)));
+    return [
+      ...new Set([
+        ...installCandidates.filter((candidate): candidate is string => Boolean(candidate)),
+        ...pathCandidates,
+      ]),
+    ];
   },
 };

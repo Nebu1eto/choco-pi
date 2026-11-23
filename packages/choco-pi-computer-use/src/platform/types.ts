@@ -4,6 +4,7 @@ import type { LookResponse } from "../outline.ts";
 import type { PermissionStatus } from "../permissions.ts";
 
 export type PlatformName = "macos" | "windows" | "linux";
+export type ManagedBrowserKind = "helium" | "chrome";
 export type NativeInputDelivery = "hid" | "pid";
 export type ActOutcome = "worked" | "didnt" | "unknown";
 /**
@@ -432,4 +433,5 @@ export interface ComputerUsePlatformBackend {
     url: string,
     signal?: AbortSignal,
   ): Promise<boolean>;
+  managedBrowserExecutableCandidates?(browser: ManagedBrowserKind): string[];
 }

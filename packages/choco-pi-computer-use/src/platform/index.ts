@@ -1,13 +1,16 @@
+import path from "node:path";
 import { macosBackend } from "./macos/backend.ts";
 import {
   isBrowserApp,
   isChromeFamilyApp,
+  macosManagedBrowserExecutableCandidates,
   openBrowserLocationWithAppleScript,
 } from "./macos/browser.ts";
 import { ensureMacosReady, releaseMacosOwnership } from "./macos/permissions.ts";
 import type {
   ComputerUsePlatformBackend,
   HelperActResult,
+  ManagedBrowserKind,
   PlatformActRequest,
   PlatformName,
 } from "./types.ts";
@@ -46,6 +49,7 @@ const macosPlatformBackend: ComputerUsePlatformBackend = {
   isBrowserApp,
   isChromeFamilyApp,
   openBrowserLocation: openBrowserLocationWithAppleScript,
+  managedBrowserExecutableCandidates: macosManagedBrowserExecutableCandidates,
 };
 
 class UnsupportedPlatformBackend implements ComputerUsePlatformBackend {
@@ -168,7 +172,24 @@ export const currentPlatformBackend: ComputerUsePlatformBackend = {
   openBrowserLocation(target, url, signal) {
     return activePlatformBackend.openBrowserLocation(target, url, signal);
   },
+  managedBrowserExecutableCandidates(browser) {
+    return managedBrowserExecutableCandidates(browser);
+  },
 };
+
+export function managedBrowserExecutableCandidates(browser: ManagedBrowserKind): string[] {
+  const overrideName =
+    browser === "helium"
+      ? "PI_COMPUTER_USE_HELIUM_EXECUTABLE"
+      : "PI_COMPUTER_USE_CHROME_EXECUTABLE";
+  const override = process.env[overrideName]?.trim();
+  if (override) return [path.resolve(override)];
+  return (
+    activePlatformBackend.managedBrowserExecutableCandidates?.(browser) ??
+    platformBackendForRuntime().managedBrowserExecutableCandidates?.(browser) ??
+    []
+  );
+}
 
 /** Test-only backend substitution for exercising bridge state transitions without native UI access. */
 export function replacePlatformBackendForTest(backend: ComputerUsePlatformBackend): () => void {

@@ -1,3 +1,6 @@
+import os from "node:os";
+import path from "node:path";
+import type { ManagedBrowserKind } from "../types.ts";
 import { runProcess } from "./helper.ts";
 
 const BROWSER_WINDOW_OPEN_TIMEOUT_MS = 10_000;
@@ -120,4 +123,33 @@ export async function openBrowserLocationWithAppleScript(
       error instanceof Error ? error : new Error(String(error)),
     );
   }
+}
+
+export function macosManagedBrowserExecutableCandidates(browser: ManagedBrowserKind): string[] {
+  const installCandidates =
+    browser === "helium"
+      ? [
+          "/Applications/Helium.app/Contents/MacOS/Helium",
+          path.join(os.homedir(), "Applications", "Helium.app", "Contents", "MacOS", "Helium"),
+        ]
+      : [
+          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          path.join(
+            os.homedir(),
+            "Applications",
+            "Google Chrome.app",
+            "Contents",
+            "MacOS",
+            "Google Chrome",
+          ),
+        ];
+  const pathNames =
+    browser === "helium"
+      ? ["helium", "helium-browser"]
+      : ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"];
+  const pathCandidates = (process.env.PATH ?? "")
+    .split(path.delimiter)
+    .filter(Boolean)
+    .flatMap((directory) => pathNames.map((name) => path.join(directory, name)));
+  return [...new Set([...installCandidates, ...pathCandidates])];
 }

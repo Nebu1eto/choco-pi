@@ -379,3 +379,9 @@ The package no longer ships JavaScript. Decision D6 (TypeScript only, no excepti
 ## 2026-11-23: adopt @choco-pi/shared
 
 - Imports of the former profile/extensions/lib helpers (pi-paths, node-runtime, and where used lifecycle, value-guards) now resolve through the workspace package `@choco-pi/shared` instead of relative paths.
+
+## 2026-11-24 choco-pi patch: decompose `src/bridge.ts` monolith and move browser candidate lookup into `src/platform/` (D5)
+
+- **Decomposition.** Split the 5,020-line `src/bridge.ts` into ten acyclic submodules under `src/bridge/`: `types.ts`, `state-store.ts`, `targets.ts`, `browser-session.ts`, `helper-act.ts`, `observation.ts`, `read-wait.ts`, `desktop-actions.ts`, `browser-actions.ts`, and `session-lifecycle.ts`. `src/bridge.ts` is now a 74-line facade preserving every existing public runtime and type export.
+- **Platform abstraction.** Moved the `process.platform` branches for managed browser executable candidates out of the bridge into `src/platform/` (`managedBrowserExecutableCandidates` on `ComputerUsePlatformBackend`, implemented in `src/platform/macos/browser.ts`, `src/platform/windows/backend.ts`, and `src/platform/linux/backend.ts`, and wired through `src/platform/index.ts`). No `process.platform` checks remain in `src/bridge.ts` or `src/bridge/`.
+- **Tests.** Added a unit test in `tests/load.test.ts` covering per-platform `managedBrowserExecutableCandidates` dispatch and the `PI_COMPUTER_USE_CHROME_EXECUTABLE` override. All 164 package tests, `tsc --noEmit`, `oxlint`, and `oxfmt --check` pass.
