@@ -18,26 +18,33 @@ import {
 import { renderTextWithImages } from "../../ui/tool-rendering/media.ts";
 import { renderCodexToolCell } from "../../ui/tool-rendering/codex-tool-cell.ts";
 import { supportsViewImageInputs } from "../../adapter/tool-support.ts";
-import { OPENAI_PLATFORM_BASE_URL } from "../../adapter/openai-sign-in.ts";
 
 const loadNativeBinary = memoizedImport(() => import("../native/binary.ts"));
 const loadNativeRunner = memoizedImport(() => import("../native/runner.ts"));
-const loadSse = memoizedImport(() => import("../../providers/openai-codex/sse.ts"));
-const loadToolProvider = memoizedImport(() => import("../../adapter/codex-tool-provider.ts"));
 
 const VIEW_IMAGE_UNSUPPORTED_MESSAGE =
   "view_image is not allowed because you do not support image inputs";
-const IMAGE_DESCRIPTION_MODEL = "gpt-5.6-luna";
-const OPENAI_PLATFORM_RESPONSES_URL = `${OPENAI_PLATFORM_BASE_URL}/responses`;
-const IMAGE_DESCRIPTION_PROMPT =
-  "Describe this image in detail. Output only the image description, no other commentary";
 interface ViewImageParams {
   path: string;
 }
 
+/**
+ * Port: describes an image for a model without image inputs. The tool stays
+ * provider-neutral; a provider (the OpenAI fallback in
+ * `src/providers/openai-codex/view-image-fallback.ts`) supplies the
+ * implementation through the extension composition root.
+ */
+export type ImageDescribeFallbackPort = (
+  image: ViewImageContent,
+  ctx: ExtensionContext,
+  signal: AbortSignal | undefined,
+) => Promise<string>;
+
 interface CreateViewImageToolOptions {
   customRustBinariesDir?: string | undefined;
+  /** Enables the text-model fallback; takes effect only with `describeImage`. */
   describeForTextModels?: boolean | undefined;
+  describeImage?: ImageDescribeFallbackPort | undefined;
   customRendering?: boolean | undefined;
   promptSnippet?: boolean | undefined;
 }
@@ -129,151 +136,11 @@ async function executeRustViewImage(
   return { content: [imageContent], details: { viewImage: true } };
 }
 
-function extractOutputText(value: BoundaryValue): string | undefined {
-  if (!value || !isObjectValue(value)) return undefined;
-  const record = value;
-  const outputText = record["output_text"];
-  if (isStringValue(outputText) && outputText.trim()) return outputText;
-  const output = record["output"];
-  if (!Array.isArray(output)) return undefined;
-  const parts: string[] = [];
-  for (const item of output) {
-    if (!item || !isObjectValue(item)) continue;
-    const content = item.content;
-    if (!Array.isArray(content)) continue;
-    for (const block of content) {
-      if (!block || !isObjectValue(block)) continue;
-      const text = block.text;
-      if (isStringValue(text)) parts.push(text);
-    }
-  }
-  const text = parts.join("").trim();
-  return text || undefined;
-}
-
-function isUsableDescriptionModel(
-  model: ExtensionContext["model"],
-  providerName: string = "openai-codex",
-): boolean {
-  return (
-    (model?.provider ?? "").toLowerCase() === providerName &&
-    Boolean(model?.api?.includes("responses")) &&
-    (!Array.isArray(model?.input) || model.input.includes("image"))
-  );
-}
-
-function modelVersionScore(id: string): number[] {
-  return [...id.matchAll(/\d+/g)].map((match) => Number.parseInt(match[0]!, 10));
-}
-
-function compareModelIdsDescending(left: string, right: string): number {
-  const a = modelVersionScore(left);
-  const b = modelVersionScore(right);
-  const length = Math.max(a.length, b.length);
-  for (let index = 0; index < length; index += 1) {
-    const diff = (b[index] ?? 0) - (a[index] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return right.localeCompare(left);
-}
-
-/** Pick the description model from the provider whose credential will be used. */
-export function resolveImageDescriptionModel(
-  ctx: ExtensionContext,
-  providerName: "openai-codex" | "openai" = "openai-codex",
-): string {
-  // SAFETY: ExtensionContext supplies Pi's model registry; this narrows only the documented optional lookup methods used below.
-  const registry = ctx.modelRegistry as {
-    getAvailable?: () => ExtensionContext["model"][];
-    getAll?: () => ExtensionContext["model"][];
-    find?: (provider: string, modelId: string) => ExtensionContext["model"] | undefined;
-  };
-  const models = [...(registry.getAvailable?.() ?? []), ...(registry.getAll?.() ?? [])].filter(
-    (model) => isUsableDescriptionModel(model, providerName),
-  );
-  const mini = models
-    .filter((model) => model?.id?.toLowerCase().includes("mini"))
-    .sort((left, right) => compareModelIdsDescending(left!.id, right!.id))[0];
-  if (mini?.id) return mini.id;
-  const direct = registry.find?.(providerName, IMAGE_DESCRIPTION_MODEL);
-  return isUsableDescriptionModel(direct, providerName) && direct?.id
-    ? direct.id
-    : IMAGE_DESCRIPTION_MODEL;
-}
-
-export async function describeImageContentForTextModel(
-  image: ViewImageContent,
-  ctx: ExtensionContext,
-  signal: AbortSignal | undefined,
-): Promise<string> {
-  const [
-    { parseSSE },
-    { codexToolProviderHeaders, resolveCodexResponsesUrl, resolveCodexToolProvider },
-  ] = await Promise.all([loadSse(), loadToolProvider()]);
-  const provider = await resolveCodexToolProvider(ctx);
-  const openAIPlatform = Boolean(provider.openAIPlatform);
-  const model = resolveImageDescriptionModel(ctx, openAIPlatform ? "openai" : "openai-codex");
-  const headers = codexToolProviderHeaders(provider);
-  headers.set("accept", "text/event-stream");
-  headers.set("OpenAI-Beta", "responses=experimental");
-  const responsesUrl = openAIPlatform
-    ? OPENAI_PLATFORM_RESPONSES_URL
-    : resolveCodexResponsesUrl(provider.baseUrl);
-  const response = await fetch(responsesUrl, {
-    method: "POST",
-    headers,
-    signal: signal ?? null,
-    body: JSON.stringify({
-      model,
-      store: false,
-      stream: true,
-      instructions: IMAGE_DESCRIPTION_PROMPT,
-      text: { verbosity: "low" },
-      // api.openai.com may gate reasoning summaries behind org verification; the description needs none.
-      reasoning: openAIPlatform ? { effort: "low" } : { effort: "low", summary: "auto" },
-      input: [
-        {
-          role: "user",
-          content: [
-            { type: "input_text", text: "Describe the image" },
-            {
-              type: "input_image",
-              image_url: `data:${image.mimeType};base64,${image.data}`,
-              detail: image.detail,
-            },
-          ],
-        },
-      ],
-    }),
-  });
-  if (!response.ok)
-    throw new Error(
-      `view_image description failed: HTTP ${response.status} ${await response.text()}`,
-    );
-  let text = "";
-  for await (const event of parseSSE(response, signal)) {
-    if (!isObjectValue(event)) continue;
-    const record = event;
-    if (record["type"] === "response.output_text.delta" && isStringValue(record["delta"]))
-      text += record["delta"];
-    if (
-      record["type"] === "response.output_text.done" &&
-      !text.trim() &&
-      isStringValue(record["text"])
-    )
-      text = record["text"];
-    if (record["type"] === "response.completed" && !text.trim())
-      text = extractOutputText(record["response"]) ?? "";
-  }
-  const trimmed = text.trim();
-  if (!trimmed) throw new Error("view_image description returned no text");
-  return trimmed;
-}
-
 export function createViewImageTool(
   options: CreateViewImageToolOptions = {},
 ): ToolDefinition<ViewImageParameters> {
   const parameters = createViewImageParameters();
+  const describeImage = options.describeForTextModels ? options.describeImage : undefined;
 
   const tool: ToolDefinition<ViewImageParameters> = {
     name: "view_image",
@@ -282,18 +149,18 @@ export function createViewImageTool(
     parameters,
     prepareArguments: prepareViewImageArguments,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      if (!supportsViewImageInputs(ctx.model) && !options.describeForTextModels) {
+      if (!supportsViewImageInputs(ctx.model) && !describeImage) {
         throw new Error(VIEW_IMAGE_UNSUPPORTED_MESSAGE);
       }
       const typedParams = parseViewImageParams(params);
-      if (!supportsViewImageInputs(ctx.model)) {
+      if (describeImage && !supportsViewImageInputs(ctx.model)) {
         const image = await executeRustViewImageContent(
           typedParams,
           ctx.cwd,
           signal,
           options.customRustBinariesDir,
         );
-        const description = await describeImageContentForTextModel(image, ctx, signal);
+        const description = await describeImage(image, ctx, signal);
         return {
           content: [{ type: "text", text: description }],
           details: { viewImageDescription: { image, path: typedParams.path, description } },

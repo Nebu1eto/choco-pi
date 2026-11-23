@@ -26,11 +26,26 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { arr, compile, map, obj, opt, str, unknown } from "@earendil-works/pi-schema";
 import type { Static } from "@earendil-works/pi-schema";
-import type { BoundaryValue } from "../../adapter/runtime-values.ts";
+import { isStaleContextError } from "@choco-pi/shared/lifecycle";
+import { isBoundaryValue, type BoundaryValue } from "../../adapter/runtime-values.ts";
 import { toNestedTool } from "../../adapter/code-mode/nested-tool-adapter.ts";
-import { withLiveCtx } from "../../extension/live-context.ts";
 import { enhanceCodeModeNestedToolError } from "./nested-tool-errors.ts";
 import type { ProgrammaticCodeModeToolDefinition } from "./types.ts";
+
+/**
+ * Port (LiveContextPort): run a synchronous host-context read and map the
+ * canonical stale-context error from `@choco-pi/shared/lifecycle` to
+ * `undefined`; every other failure propagates. Same contract as the
+ * extension's `withLiveCtx` without depending on `src/extension/`.
+ */
+function withLiveCtx<Result>(action: () => Result): Result | undefined {
+  try {
+    return action();
+  } catch (error) {
+    if (isBoundaryValue(error) && isStaleContextError(error)) return undefined;
+    throw error;
+  }
+}
 
 type BridgedRunnerPrototype = typeof ExtensionRunner.prototype & {
   __chocoPiCodeModeToolBridgeVersion?: number;

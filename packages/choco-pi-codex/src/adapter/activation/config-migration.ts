@@ -1,4 +1,4 @@
-import { isBoolean, isString } from "../../value-guards.ts";
+import { isBoolean } from "../../value-guards.ts";
 import type { BoundaryValue } from "../runtime-values.ts";
 import {
   DEFAULT_CODEX_CONVERSION_CONFIG,
@@ -100,25 +100,6 @@ export function migrateCodexConversionConfigIfNeeded(value: BoundaryValue): Conf
       compactTools: DEFAULT_CODEX_CONVERSION_CONFIG.ui["compactTools"],
       codeModeDetails: DEFAULT_CODEX_CONVERSION_CONFIG.ui["codeModeDetails"],
       steeringDeliveryStatus: DEFAULT_CODEX_CONVERSION_CONFIG.ui.steeringDeliveryStatus,
-      backgroundShellWidget: isBoolean(value["backgroundShellWidget"])
-        ? value["backgroundShellWidget"]
-        : DEFAULT_CODEX_CONVERSION_CONFIG.ui["backgroundShellWidget"],
-      backgroundShellToggleShortcut: stringValue(
-        value["backgroundShellToggleShortcut"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.ui["backgroundShellToggleShortcut"],
-      ),
-      backgroundShellPrevShortcut: stringValue(
-        value["backgroundShellPrevShortcut"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.ui["backgroundShellPrevShortcut"],
-      ),
-      backgroundShellNextShortcut: stringValue(
-        value["backgroundShellNextShortcut"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.ui["backgroundShellNextShortcut"],
-      ),
-      backgroundShellCloseShortcut: stringValue(
-        value["backgroundShellCloseShortcut"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.ui["backgroundShellCloseShortcut"],
-      ),
     },
     compaction: {
       responsesCompaction: isBoolean(value["responsesCompaction"])
@@ -145,8 +126,4 @@ export function migrateCodexConversionConfigIfNeeded(value: BoundaryValue): Conf
     },
   };
   return { migrated: true, config };
-}
-
-function stringValue(value: BoundaryValue, fallback: string): string {
-  return isString(value) && value.trim() ? value.trim() : fallback;
 }

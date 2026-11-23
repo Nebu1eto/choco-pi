@@ -5,6 +5,7 @@ import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../src/adapter/activation/confi
 import { createNestedTools } from "../src/adapter/code-mode.ts";
 import { toNestedTool } from "../src/adapter/code-mode/nested-tool-adapter.ts";
 import type { CodexExtensionRuntime } from "../src/extension/runtime.ts";
+import { createCodexCodeModePorts } from "../src/extension/code-mode-ports.ts";
 import { createCodexTurnState } from "../src/providers/openai-codex/turn-state.ts";
 import { renderTraceAndOutput } from "../src/tools/code-mode/trace-rendering.ts";
 import { createExecCommandTracker } from "../src/tools/exec/command-state.ts";
@@ -31,7 +32,7 @@ function unexpectedRuntimeAccess(): never {
 }
 
 function createRenderingRuntime(): CodexExtensionRuntime {
-  return {
+  const runtime: CodexExtensionRuntime = {
     state: {
       enabled: true,
       cwd: "/workspace",
@@ -42,6 +43,7 @@ function createRenderingRuntime(): CodexExtensionRuntime {
     },
     tracker: createExecCommandTracker(),
     sessions: createLazyExecSessionManager({ env: {} }),
+    codeMode: createCodexCodeModePorts(() => runtime.state),
     execEnv: unexpectedRuntimeAccess,
     codexSystemPrompt: unexpectedRuntimeAccess,
     startPrewarm: unexpectedRuntimeAccess,
@@ -59,6 +61,7 @@ function createRenderingRuntime(): CodexExtensionRuntime {
     diagnosticsSink: unexpectedRuntimeAccess,
     shutdownDiagnostics: unexpectedRuntimeAccess,
   };
+  return runtime;
 }
 
 function assertCompleteSource(rendered: string): void {

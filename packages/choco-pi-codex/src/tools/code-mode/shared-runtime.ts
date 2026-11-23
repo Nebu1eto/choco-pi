@@ -55,6 +55,11 @@ export interface CodeModeToolProvider {
   richRendering?(): boolean;
   executionKind?(ctx: BoundaryValue): CodeModeExecutionKind;
   notebookOptions?(ctx: BoundaryValue): NotebookRuntimeOptions;
+  /**
+   * Port (AsyncCodeModeCallHook): consumes a provider's record that this exec
+   * call was issued as a native async Code Mode call, so exec yields early.
+   */
+  consumeAsyncCall?(owner: string, toolCallId: string): boolean;
 }
 
 export class CodeModeProviderId {}
@@ -127,6 +132,14 @@ export class SharedCodeModeRuntime {
       [...this.providers.values()].find((provider) => provider.richRendering)?.richRendering?.() ??
       true
     );
+  }
+
+  /** Every provider consumes its own record; any match marks the call async. */
+  consumeAsyncCall(owner: string, toolCallId: string): boolean {
+    let found = false;
+    for (const provider of this.providers.values())
+      if (provider.consumeAsyncCall?.(owner, toolCallId) === true) found = true;
+    return found;
   }
 
   executionKind(ctx?: BoundaryValue): CodeModeExecutionKind {

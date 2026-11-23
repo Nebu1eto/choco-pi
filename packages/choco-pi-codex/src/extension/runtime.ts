@@ -48,6 +48,8 @@ import { createLazyCodexDiagnostics } from "../diagnostics/lazy.ts";
 import type { CodexDiagnosticsSink } from "../providers/openai-codex/types.ts";
 import { withLiveCtx } from "./live-context.ts";
 import { projectForcedPromptContext } from "../adapter/forced-prompt-projection.ts";
+import type { CodeModePorts } from "../adapter/code-mode/ports.ts";
+import { createCodexCodeModePorts } from "./code-mode-ports.ts";
 
 export type CodexContext = ExtensionContext;
 
@@ -61,6 +63,8 @@ export interface CodexExtensionRuntime {
   state: AdapterState;
   tracker: ReturnType<typeof createExecCommandTracker>;
   sessions: ExecSessionManager;
+  /** Codex implementations of the provider-neutral Code Mode ports. */
+  codeMode: CodeModePorts;
   execEnv(config?: CodexConversionConfig): NodeJS.ProcessEnv;
   codexSystemPrompt(
     basePrompt: string,
@@ -427,6 +431,7 @@ export function createCodexExtensionRuntime(
     state,
     tracker,
     sessions,
+    codeMode: createCodexCodeModePorts(() => runtime.state),
     execEnv(config = state.config) {
       return { ...process.env, PI_CODEX_MODEL: config.openai.webSearchModel };
     },

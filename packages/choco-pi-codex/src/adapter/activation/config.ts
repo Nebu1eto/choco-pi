@@ -19,32 +19,6 @@ export type WebSearchModel = HelperModel;
 export type V2UserMessageRetention = 16 | 32 | 64;
 export const MIN_NOTEBOOK_HEAP_MIB = 256;
 export const MAX_NOTEBOOK_HEAP_MIB = 65_536;
-export type DictationShortcutMode = "push" | "toggle";
-export const VOICE_CONTEXT_REASONING_LEVELS = [
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-] as const;
-export type VoiceContextReasoning = (typeof VOICE_CONTEXT_REASONING_LEVELS)[number];
-export const DEFAULT_VOICE_CONTEXT_REASONING: VoiceContextReasoning = "high";
-export type VoiceContextModel = { provider: string; modelId: string };
-
-export const REALTIME_V3_VOICES = [
-  "juniper",
-  "maple",
-  "spruce",
-  "ember",
-  "vale",
-  "breeze",
-  "arbor",
-  "sol",
-  "cove",
-] as const;
-export type RealtimeV3Voice = (typeof REALTIME_V3_VOICES)[number];
 
 // Pi 1.4.0 removed gpt-5.5 and gpt-5.3-codex-spark from openai-codex: they always fail for
 // ChatGPT accounts. gpt-5.4-mini is retired from this list. A saved value naming any of
@@ -81,33 +55,12 @@ export interface CodexConversionConfig {
     compactTools: boolean;
     codeModeDetails: boolean;
     steeringDeliveryStatus: boolean;
-    backgroundShellWidget: boolean;
-    backgroundShellToggleShortcut: string;
-    backgroundShellPrevShortcut: string;
-    backgroundShellNextShortcut: string;
-    backgroundShellCloseShortcut: string;
   };
   compaction: {
     responsesCompaction: boolean;
     v2UserMessageRetention: V2UserMessageRetention;
   };
   notebook: { maxHeapMiB: number; profile?: string | undefined };
-  voice: {
-    v3Voice: RealtimeV3Voice;
-    autoResumeRealtime: boolean;
-    audioSetupCompleted: boolean;
-    delegationAcknowledgements: boolean;
-    forwardReasoningSummaries: boolean;
-    dictationShortcut: string;
-    realtimeShortcut: string;
-    muteShortcut: string;
-    serverShortcut: string;
-    dictationShortcutMode: DictationShortcutMode;
-    contextModel?: VoiceContextModel | undefined;
-    contextReasoning: VoiceContextReasoning;
-    inputDevice?: string | undefined;
-    outputDevice?: string | undefined;
-  };
   openai: {
     fast: boolean;
     verbosity: CodexVerbosity;
@@ -142,27 +95,9 @@ export const DEFAULT_CODEX_CONVERSION_CONFIG: CodexConversionConfig = {
     compactTools: false,
     codeModeDetails: false,
     steeringDeliveryStatus: false,
-    backgroundShellWidget: true,
-    backgroundShellToggleShortcut: "alt+w",
-    backgroundShellPrevShortcut: "alt+q",
-    backgroundShellNextShortcut: "alt+e",
-    backgroundShellCloseShortcut: "alt+r",
   },
   compaction: { responsesCompaction: false, v2UserMessageRetention: 64 },
   notebook: { maxHeapMiB: 4_096 },
-  voice: {
-    v3Voice: "cove",
-    autoResumeRealtime: false,
-    audioSetupCompleted: false,
-    delegationAcknowledgements: true,
-    forwardReasoningSummaries: true,
-    dictationShortcut: "ctrl+alt+d",
-    realtimeShortcut: "ctrl+alt+space",
-    muteShortcut: "ctrl+alt+m",
-    serverShortcut: "ctrl+alt+g",
-    dictationShortcutMode: "push",
-    contextReasoning: DEFAULT_VOICE_CONTEXT_REASONING,
-  },
   openai: {
     fast: false,
     verbosity: "low",
@@ -210,16 +145,6 @@ export function normalizeV2UserMessageRetention(
   return value === 16 || value === 32 || value === 64 ? value : undefined;
 }
 
-export function normalizeDictationShortcutMode(
-  value: BoundaryValue,
-): DictationShortcutMode | undefined {
-  return value === "push" || value === "toggle" ? value : undefined;
-}
-
-export function normalizeRealtimeV3Voice(value: BoundaryValue): RealtimeV3Voice | undefined {
-  return isString(value) ? REALTIME_V3_VOICES.find((voice) => voice === value) : undefined;
-}
-
 export function normalizeProviderList(value: BoundaryValue): string[] {
   if (!Array.isArray(value)) return [];
   return [
@@ -234,10 +159,6 @@ export function normalizeProviderList(value: BoundaryValue): string[] {
 
 function bool(value: BoundaryValue, fallback: boolean): boolean {
   return isBoolean(value) ? value : fallback;
-}
-
-function stringValue(value: BoundaryValue, fallback: string): string {
-  return isString(value) && value.trim() ? value.trim() : fallback;
 }
 
 function optionalString(value: BoundaryValue): string | undefined {
@@ -257,24 +178,13 @@ function integerInRange(
     : fallback;
 }
 
-function normalizeVoiceContextModel(value: BoundaryValue): VoiceContextModel | undefined {
-  if (!isObject(value)) return undefined;
-  const provider = optionalString(value["provider"]);
-  const modelId = optionalString(value["modelId"]);
-  return provider && modelId ? { provider, modelId } : undefined;
-}
-
-export function normalizeVoiceContextReasoning(value: BoundaryValue): VoiceContextReasoning {
-  return (
-    VOICE_CONTEXT_REASONING_LEVELS.find((reasoning) => reasoning === value) ??
-    DEFAULT_VOICE_CONTEXT_REASONING
-  );
-}
-
 export function normalizeCustomRustBinariesDir(value: BoundaryValue): string {
   return optionalString(value) ?? "";
 }
 
+// Retired upstream keys (`voice.*`, `ui.backgroundShell*`) are not read: the
+// normalizer drops them, and writes merge into the existing document, so a
+// legacy file keeps them untouched.
 export function normalizeCodexConversionConfig(value: BoundaryValue): CodexConversionConfig {
   if (!isObject(value)) return structuredClone(DEFAULT_CODEX_CONVERSION_CONFIG);
   const prompt = isObject(value["prompt"]) ? value["prompt"] : {};
@@ -283,11 +193,7 @@ export function normalizeCodexConversionConfig(value: BoundaryValue): CodexConve
   const ui = isObject(value["ui"]) ? value["ui"] : {};
   const compaction = isObject(value["compaction"]) ? value["compaction"] : {};
   const notebook = isObject(value["notebook"]) ? value["notebook"] : {};
-  const voice = isObject(value["voice"]) ? value["voice"] : {};
   const openai = isObject(value["openai"]) ? value["openai"] : {};
-  const inputDevice = optionalString(voice["inputDevice"]);
-  const outputDevice = optionalString(voice["outputDevice"]);
-  const contextModel = normalizeVoiceContextModel(voice["contextModel"]);
   const notebookProfile = normalizeNotebookProfile(notebook["profile"]);
   const executionMode =
     normalizeExecutionMode(value["executionMode"]) ?? DEFAULT_CODEX_CONVERSION_CONFIG.executionMode;
@@ -345,29 +251,9 @@ export function normalizeCodexConversionConfig(value: BoundaryValue): CodexConve
         ui["codeModeDetails"],
         DEFAULT_CODEX_CONVERSION_CONFIG.ui["codeModeDetails"],
       ),
-      backgroundShellWidget: bool(
-        ui["backgroundShellWidget"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.ui["backgroundShellWidget"],
-      ),
       steeringDeliveryStatus: bool(
         ui["steeringDeliveryStatus"],
         DEFAULT_CODEX_CONVERSION_CONFIG.ui.steeringDeliveryStatus,
-      ),
-      backgroundShellToggleShortcut: stringValue(
-        ui["backgroundShellToggleShortcut"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.ui["backgroundShellToggleShortcut"],
-      ),
-      backgroundShellPrevShortcut: stringValue(
-        ui["backgroundShellPrevShortcut"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.ui["backgroundShellPrevShortcut"],
-      ),
-      backgroundShellNextShortcut: stringValue(
-        ui["backgroundShellNextShortcut"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.ui["backgroundShellNextShortcut"],
-      ),
-      backgroundShellCloseShortcut: stringValue(
-        ui["backgroundShellCloseShortcut"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.ui["backgroundShellCloseShortcut"],
       ),
     },
     compaction: {
@@ -387,49 +273,6 @@ export function normalizeCodexConversionConfig(value: BoundaryValue): CodexConve
         MAX_NOTEBOOK_HEAP_MIB,
       ),
       ...conditionalProperties(Boolean(notebookProfile), { profile: notebookProfile }),
-    },
-    voice: {
-      v3Voice:
-        normalizeRealtimeV3Voice(voice["v3Voice"]) ?? DEFAULT_CODEX_CONVERSION_CONFIG.voice.v3Voice,
-      autoResumeRealtime: bool(
-        voice["autoResumeRealtime"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.voice.autoResumeRealtime,
-      ),
-      audioSetupCompleted: bool(
-        voice["audioSetupCompleted"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.voice.audioSetupCompleted,
-      ),
-      delegationAcknowledgements: bool(
-        voice["delegationAcknowledgements"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.voice.delegationAcknowledgements,
-      ),
-      forwardReasoningSummaries: bool(
-        voice["forwardReasoningSummaries"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.voice.forwardReasoningSummaries,
-      ),
-      dictationShortcut: stringValue(
-        voice["dictationShortcut"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.voice.dictationShortcut,
-      ),
-      realtimeShortcut: stringValue(
-        voice["realtimeShortcut"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.voice.realtimeShortcut,
-      ),
-      muteShortcut: stringValue(
-        voice["muteShortcut"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.voice.muteShortcut,
-      ),
-      serverShortcut: stringValue(
-        voice["serverShortcut"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.voice.serverShortcut,
-      ),
-      dictationShortcutMode:
-        normalizeDictationShortcutMode(voice["dictationShortcutMode"]) ??
-        DEFAULT_CODEX_CONVERSION_CONFIG.voice.dictationShortcutMode,
-      ...conditionalProperties(Boolean(contextModel), { contextModel }),
-      contextReasoning: normalizeVoiceContextReasoning(voice["contextReasoning"]),
-      ...conditionalProperties(Boolean(inputDevice), { inputDevice }),
-      ...conditionalProperties(Boolean(outputDevice), { outputDevice }),
     },
     openai: {
       fast: bool(openai["fast"], DEFAULT_CODEX_CONVERSION_CONFIG.openai["fast"]),

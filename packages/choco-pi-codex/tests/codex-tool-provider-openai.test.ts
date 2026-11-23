@@ -38,7 +38,7 @@ import {
   createImageGenerationTool,
   OPENAI_SIGN_IN_IMAGEGEN_UNVERIFIED_NOTE,
 } from "../src/tools/imagegen/tool.ts";
-import { describeImageContentForTextModel } from "../src/tools/view-image/tool.ts";
+import { describeImageContentForTextModel } from "../src/providers/openai-codex/view-image-fallback.ts";
 import {
   CodexWebRunTransportError,
   executeConfiguredCodexWebRun,

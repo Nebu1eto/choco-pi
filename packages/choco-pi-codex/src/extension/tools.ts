@@ -13,6 +13,7 @@ import { registerWriteStdinTool } from "../tools/exec/write-stdin-tool.ts";
 import { registerImageGenerationTool } from "../tools/imagegen/tool.ts";
 import { registerViewImageTool } from "../tools/view-image/tool.ts";
 import { registerWebSearchTool } from "../tools/web-run/tool.ts";
+import { openAIImageDescribeFallback } from "../providers/openai-codex/view-image-fallback.ts";
 import type { CodexExtensionRuntime } from "./runtime.ts";
 
 export interface CodexToolRegistration {
@@ -49,6 +50,7 @@ export function registerCodexTools(
     registerViewImageTool(pi, {
       customRustBinariesDir: config.tools.customRustBinariesDir,
       describeForTextModels: config.tools.viewImageFallback,
+      describeImage: openAIImageDescribeFallback,
       ...renderOptions(config),
     });
   const registerCore = (config: CodexConversionConfig) => {

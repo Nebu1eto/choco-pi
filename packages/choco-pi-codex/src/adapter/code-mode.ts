@@ -6,10 +6,9 @@ import {
   getAgentDir,
   type ExtensionAPI,
   type ExtensionContext,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { CodexExtensionRuntime } from "../extension/runtime.ts";
 import type { CodexConversionConfig } from "./activation/config.ts";
-import type { WebSearchToolOptions } from "../tools/web-run/tool.ts";
 import { formatRunningExecSessionGuidance } from "../tools/code-mode/tool-result.ts";
 import {
   type CodeModeRegistration,
@@ -27,49 +26,66 @@ import { createApplyPatchTool } from "../tools/apply-patch/tool.ts";
 import { createExecCommandTool } from "../tools/exec/command-tool.ts";
 import { MAX_CODE_MODE_WAIT_MS } from "../tools/exec/shell.ts";
 import { createWriteStdinTool } from "../tools/exec/write-stdin-tool.ts";
-import { createImageGenerationTool } from "../tools/imagegen/tool.ts";
 import { createViewImageTool } from "../tools/view-image/tool.ts";
-import { createWebSearchTool } from "../tools/web-run/tool.ts";
-import { supportsNativeImageGeneration, supportsViewImageInputs } from "./tool-support.ts";
-import {
-  isCodeModeRuntime,
-  resolveCodexRuntimePlanForState,
-  usesCodexProviderFallback,
-} from "./activation/runtime-plan.ts";
-import {
-  codeModeImageResult,
-  codeModeWebResult,
-  toNestedTool,
-} from "./code-mode/nested-tool-adapter.ts";
+import { supportsViewImageInputs } from "./tool-support.ts";
+import { codeModeImageResult, toNestedTool } from "./code-mode/nested-tool-adapter.ts";
 import {
   activeRegisteredSessionToolNames,
   codeModeExecutionKindForPermissions,
   scopeCodeModeToolsToSessionPermissions,
 } from "./code-mode/session-tool-permissions.ts";
+import type { CodeModeHost } from "./code-mode/ports.ts";
+
+export type {
+  AsyncCodeModeCallHook,
+  CodeModeHost,
+  CodeModePorts,
+  CodeModeRuntimePolicy,
+  CodeModeToolConfig,
+  ImageDescribeFallbackPort,
+  OptionalNestedToolsPort,
+} from "./code-mode/ports.ts";
 
 const LONG_RUNNING_TOOL_OUTER_YIELD_MS = MAX_CODE_MODE_WAIT_MS;
 
+/** The provider-owned standalone `web__run` factory behind the transitional shim below. */
+export type CodeModeWebSearchToolFactory = (
+  config: CodexConversionConfig,
+  allowConfiguredProvider: (model: ExtensionContext["model"]) => boolean,
+) => ToolDefinition;
+
+let codeModeWebSearchToolFactory: CodeModeWebSearchToolFactory | undefined;
+
+/**
+ * Transitional seam: the web__run factory is OpenAI Codex code
+ * (`src/extension/code-mode-ports.ts` provides it at module load). Remove with
+ * `createCodeModeWebSearchTool` once callers import the provider module.
+ */
+export function provideCodeModeWebSearchToolFactory(factory: CodeModeWebSearchToolFactory): void {
+  codeModeWebSearchToolFactory = factory;
+}
+
+/**
+ * Transitional compatibility shim; delegates to the provider-registered
+ * factory and throws when no provider composed one.
+ */
 export function createCodeModeWebSearchTool(
   config: CodexConversionConfig,
-  allowConfiguredProvider: NonNullable<WebSearchToolOptions["allowConfiguredProvider"]>,
-) {
-  return createWebSearchTool("web__run", {
-    customRustBinariesDir: config.tools.customRustBinariesDir,
-    model: () => config.openai.webSearchModel,
-    allowConfiguredProvider,
-    allowCodexProviderFallback: usesCodexProviderFallback(config),
-    promptSnippet: false,
-    customRendering: config.ui.toolRenaming,
-  });
+  allowConfiguredProvider: (model: ExtensionContext["model"]) => boolean,
+): ToolDefinition {
+  if (!codeModeWebSearchToolFactory)
+    throw new Error("No provider registered the Code Mode web__run tool factory");
+  return codeModeWebSearchToolFactory(config, allowConfiguredProvider);
 }
 
 export async function registerCodexCodeMode(
   pi: ExtensionAPI,
-  runtime: CodexExtensionRuntime,
+  runtime: CodeModeHost,
 ): Promise<CodeModeRegistration> {
+  const { policy, consumeAsyncCall } = runtime.codeMode;
   const isActive = (ctx: BoundaryValue) =>
     // SAFETY: registerCodeModeTools invokes isActive with Pi's current ExtensionContext.
-    isCodeModeRuntime(resolveCodexRuntimePlanForState(ctx as ExtensionContext, runtime.state));
+    policy.isActive(ctx as ExtensionContext);
   // Capture Pi's runner so every registered tool can be bridged into the
   // tools namespace; harmless when the bridge is never used.
   installRegisteredToolCapture();
@@ -88,9 +104,7 @@ export async function registerCodexCodeMode(
     executionKind: (ctx) =>
       // SAFETY: registerCodeModeTools invokes executionKind with Pi's current ExtensionContext.
       codeModeExecutionKindForPermissions(
-        resolveCodexRuntimePlanForState(ctx as ExtensionContext, runtime.state).kind === "notebook"
-          ? "notebook"
-          : "code",
+        policy.executionKind(ctx as ExtensionContext),
         activeRegisteredSessionToolNames(pi, runtime.state.previousToolNames),
       ),
     notebookOptions: () => ({
@@ -103,6 +117,10 @@ export async function registerCodexCodeMode(
     providesRenderers: true,
     richRendering: () =>
       runtime.state.executionMode === "notebook" || runtime.state.config.ui.codeModeDetails,
+    ...conditionalProperties(consumeAsyncCall !== undefined, {
+      consumeAsyncCall: (owner: string, toolCallId: string) =>
+        consumeAsyncCall?.(owner, toolCallId) === true,
+    }),
   });
   return {
     prepare: (ctx) => programmaticRuntime.prepare(ctx),
@@ -118,7 +136,7 @@ export async function registerCodexCodeMode(
 }
 
 export function createNestedTools(
-  runtime: CodexExtensionRuntime,
+  runtime: CodeModeHost,
   activeToolNames: ReadonlySet<string>,
   ctx?: ExtensionContext,
 ): ProgrammaticCodeModeToolDefinition[] {
@@ -128,10 +146,6 @@ export function createNestedTools(
     customRendering: runtime.state.config.ui.toolRenaming,
     showOutputWhenCollapsed: true,
     compactTools: runtime.state.config.ui.compactTools,
-  };
-  const allowConfiguredProvider = (model: ExtensionContext["model"]) => {
-    const plan = resolveCodexRuntimePlanForState({ model }, runtime.state);
-    return isCodeModeRuntime(plan) && plan.configuredProvider && !plan.codexTransport;
   };
   const tools: ProgrammaticCodeModeToolDefinition[] = [
     toNestedTool(
@@ -203,13 +217,17 @@ export function createNestedTools(
       { yieldTimeMs: LONG_RUNNING_TOOL_OUTER_YIELD_MS },
     ),
   ];
-  if (!ctx || supportsViewImageInputs(ctx.model) || runtime.state.config.tools.viewImageFallback) {
+  const describeImage = runtime.state.config.tools.viewImageFallback
+    ? runtime.codeMode.describeImage
+    : undefined;
+  if (!ctx || supportsViewImageInputs(ctx.model) || describeImage) {
     const imageCapable = !ctx || supportsViewImageInputs(ctx.model);
     tools.push(
       toNestedTool(
         createViewImageTool({
           customRustBinariesDir: runtime.state.config.tools.customRustBinariesDir,
           describeForTextModels: runtime.state.config.tools.viewImageFallback,
+          describeImage,
           promptSnippet: false,
           customRendering: runtime.state.config.ui.toolRenaming,
         }),
@@ -221,45 +239,10 @@ export function createNestedTools(
       ),
     );
   }
-  if (runtime.state.config.tools.webRun && !runtime.state.canonicalSearch) {
-    tools.push(
-      toNestedTool(
-        createCodeModeWebSearchTool(runtime.state.config, allowConfiguredProvider),
-        'await tools.web__run({ search_query?: [{ q: string, recency?: number, domains?: string[] }], image_query?: [{ q: string }], open?: [{ ref_id: string, lineno?: number }], click?: [{ ref_id: string, id: number }], find?: [{ ref_id: string, pattern: string }], response_length?: "short" | "medium" | "long" }) // turn… ref_ids only for web__run; final answers cite result URLs with Markdown links, never turn… or cite…',
-        {},
-        { toolName: { namespace: "web", name: "run" }, resultValue: codeModeWebResult },
-      ),
-    );
-  }
-  if (
-    runtime.state.config.tools.imageGeneration &&
-    (!ctx || supportsNativeImageGeneration(ctx.model) || allowConfiguredProvider(ctx.model))
-  ) {
-    const imagegen = createImageGenerationTool({
-      customRustBinariesDir: runtime.state.config.tools.customRustBinariesDir,
-      allowConfiguredProvider,
-      promptSnippet: false,
-      customRendering: runtime.state.config.ui.toolRenaming,
-    });
-    tools.push(
-      toNestedTool(
-        { ...imagegen, name: "image_gen__imagegen", label: "image_gen__imagegen" },
-        'await tools.image_gen__imagegen({ prompt: string, action?: "generate" | "edit", images?: string[] })',
-        {},
-        {
-          toolName: { namespace: "image_gen", name: "imagegen" },
-          resultValue(result) {
-            const outputHint =
-              result.content
-                .filter((item) => item.type === "text")
-                .map((item) => item.text)
-                .join("\n") || undefined;
-            return codeModeImageResult(result, outputHint);
-          },
-        },
-      ),
-    );
-  }
+  // Provider-contributed tools (Codex: web__run, image_gen__imagegen) keep
+  // their slot between the core tools and the bridged session tools.
+  if (runtime.codeMode.optionalNestedTools)
+    tools.push(...runtime.codeMode.optionalNestedTools(ctx));
   // Everything else Pi has registered (LSP, MCP, sub-agents, sessions, goals,
   // web access) rides along as deferred tools: no prompt cost, callable as
   // tools.<name>(...) inside a block, discoverable through ALL_TOOLS.

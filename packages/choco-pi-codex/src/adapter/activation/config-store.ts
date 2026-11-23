@@ -12,8 +12,9 @@ import {
   type CodexConversionConfig,
 } from "./config.ts";
 
-// This fork owns its own config file. Obsolete upstream keys (voice.*,
-// ui.backgroundShell*) are still parsed and silently ignored.
+// This fork owns its own config file. Retired upstream keys (voice.*,
+// ui.backgroundShell*) are no longer part of the config: reads ignore them and
+// writes leave them in place in an existing document.
 export const CODEX_CONVERSION_CONFIG_BASENAME = "choco-pi-codex.json";
 
 export interface EffectiveCodexConversionConfigOptions {
@@ -27,6 +28,9 @@ export type CodexConversionConfigScope = "global" | "folder";
 
 const OWNED_CONFIG_KEYS = Object.keys(DEFAULT_CODEX_CONVERSION_CONFIG);
 const LEGACY_OWNED_CONFIG_KEYS = ["beta"];
+// Retired top-level sections the fork still owns: they mark a folder config and
+// a folder clear removes them, but a settings write preserves them.
+const RETIRED_OWNED_CONFIG_KEYS = ["voice"];
 
 function isRecord(value: BoundaryValue): value is JsonObject {
   return isJsonObject(value);
@@ -40,14 +44,6 @@ function mergeConfigDocument(existing: JsonObject, owned: JsonObject): JsonObjec
       isRecord(previous) && isRecord(value) ? mergeConfigDocument(previous, value) : value;
   }
   return merged;
-}
-
-function clearAbsentOwnedOptionals(document: JsonObject, owned: JsonObject): void {
-  const voice = isRecord(document["voice"]) ? document["voice"] : undefined;
-  const ownedVoice = isRecord(owned["voice"]) ? owned["voice"] : undefined;
-  if (!voice || !ownedVoice) return;
-  for (const key of ["contextModel", "inputDevice", "outputDevice"])
-    if (!(key in ownedVoice)) delete voice[key];
 }
 
 function writeConfigDocumentAtomic(configPath: string, document: JsonObject): void {
@@ -121,10 +117,7 @@ export function readCodexConversionConfig(
   const parsed = readConfigDocument(configPath, "global");
   if (parsed === undefined) return structuredClone(DEFAULT_CODEX_CONVERSION_CONFIG);
   const migration = migrateCodexConversionConfigIfNeeded(parsed);
-  const config = withoutProjectOnlyConfig(normalizeCodexConversionConfig(migration.config));
-  const voice = isRecord(parsed) && isRecord(parsed["voice"]) ? parsed["voice"] : undefined;
-  if (!isBoolean(voice?.["audioSetupCompleted"])) config.voice.audioSetupCompleted = true;
-  return config;
+  return withoutProjectOnlyConfig(normalizeCodexConversionConfig(migration.config));
 }
 
 export function readProjectCodexConversionDocument(
@@ -143,11 +136,13 @@ export function hasFolderCodexConversionConfig(cwd: string, projectTrusted: bool
   if (projectConfigAliasesGlobal(cwd)) return false;
   const project = readProjectCodexConversionDocument(cwd, projectTrusted);
   if (!project) return false;
-  return [...OWNED_CONFIG_KEYS, ...LEGACY_OWNED_CONFIG_KEYS].some((key) => {
-    if (key !== "openai") return key in project;
-    const openai = isRecord(project["openai"]) ? project["openai"] : undefined;
-    return !!openai && Object.keys(openai).some((option) => option !== "cacheKeepalive");
-  });
+  return [...OWNED_CONFIG_KEYS, ...LEGACY_OWNED_CONFIG_KEYS, ...RETIRED_OWNED_CONFIG_KEYS].some(
+    (key) => {
+      if (key !== "openai") return key in project;
+      const openai = isRecord(project["openai"]) ? project["openai"] : undefined;
+      return !!openai && Object.keys(openai).some((option) => option !== "cacheKeepalive");
+    },
+  );
 }
 
 function applyProcessOverrides(
@@ -239,7 +234,11 @@ export function clearFolderCodexConversionConfig(
   const path = getProjectCodexConversionConfigPath(cwd);
   const project = readProjectCodexConversionDocument(cwd, true);
   if (!project) return { ok: true };
-  for (const key of [...OWNED_CONFIG_KEYS, ...LEGACY_OWNED_CONFIG_KEYS]) {
+  for (const key of [
+    ...OWNED_CONFIG_KEYS,
+    ...LEGACY_OWNED_CONFIG_KEYS,
+    ...RETIRED_OWNED_CONFIG_KEYS,
+  ]) {
     if (key === "openai" && isRecord(project[key])) {
       const keepalive = project[key]["cacheKeepalive"];
       const nextOpenAI = isBoolean(keepalive) ? { cacheKeepalive: keepalive } : {};
@@ -281,7 +280,6 @@ export function writeCodexConversionConfig(
       }
     }
     if (!preserveProjectCacheKeepalive) document = withoutProjectOnlyDocument(document);
-    clearAbsentOwnedOptionals(document, normalized);
     for (const key of LEGACY_OWNED_CONFIG_KEYS) delete document[key];
     writeConfigDocumentAtomic(configPath, document);
     return { ok: true };

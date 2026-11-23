@@ -14,7 +14,6 @@ import { formatRunningExecSessionGuidance, toCodeModeToolResult } from "./tool-r
 import type { CodeModeRenderContext, CodeModeRenderTheme, ToolExecutionContext } from "./types.ts";
 import { CODE_MODE_EXEC_CONSTRAINED_SAMPLING } from "./exec-contract.ts";
 import { registeredToolNames, registeredToolRunner } from "./registered-tool-bridge.ts";
-import { consumeAsyncCodeModeCall } from "../../providers/openai-codex/native-features.ts";
 import { preflightCodeModeSource } from "./source-preflight.ts";
 import {
   registerCodeModePreflightBroker,
@@ -87,7 +86,7 @@ function createExecTool(
     async execute(id, params, signal, onUpdate, ctx) {
       const owner = ctx.sessionManager.getSessionId();
       const cwd = ctx.cwd;
-      const nativeAsync = consumeAsyncCodeModeCall(owner, id);
+      const nativeAsync = runtime.consumeAsyncCall(owner, id);
       const executionKind = runtime.executionKind(ctx);
       const tools = runtime.collectTools(ctx);
       preflightCodeModeSource(params.code, {
