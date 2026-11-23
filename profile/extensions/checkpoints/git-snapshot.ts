@@ -1,10 +1,14 @@
-import { execFile, spawn } from "node:child_process";
+import type { ExecFileException } from "node:child_process";
 import { copyFile, mkdtemp, readdir, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
-import { isString, propertiesWhen, type RuntimeValue } from "../lib/runtime-values.ts";
+import {
+  execFileCapture,
+  execFileCaptureBuffer,
+  isSpawnFailure,
+  type CapturedExec,
+} from "../lib/changes/git/exec.ts";
+import { isNumber, isString, propertiesWhen, type RuntimeValue } from "../lib/runtime-values.ts";
 
-const execFileAsync = promisify(execFile);
 const MAX_BUFFER = 128 * 1024 * 1024;
 
 /** Why a checkpoint could not be captured, which decides whether retrying helps. */
@@ -85,22 +89,39 @@ function describeGitFailure(error: RuntimeValue): string {
   );
 }
 
+/**
+ * The error a promisified `execFile` rejects with: the raw failure carrying the
+ * captured output, which {@link describeGitFailure} reads its detail from.
+ */
+function failureWithOutput<Output>(result: CapturedExec<Output>): ExecFileException | undefined {
+  const { error, stdout, stderr } = result;
+  if (!error) return undefined;
+  return Object.assign(error, { stdout, stderr });
+}
+
 async function git(cwd: string, args: readonly string[], environment?: GitEnvironment) {
-  try {
-    const result = await execFileAsync("git", [...args], {
-      cwd,
-      encoding: "utf8",
-      env: environment ?? identityEnvironment(),
-      maxBuffer: MAX_BUFFER,
-    });
-    return result.stdout.trim();
-  } catch (error) {
+  const result = await execFileCapture("git", args, {
+    cwd,
+    env: environment ?? identityEnvironment(),
+    maxBuffer: MAX_BUFFER,
+  });
+  const failure = failureWithOutput(result);
+  if (failure) {
     throw new CheckpointError(
       "transient",
-      `git ${args[0] ?? ""} failed: ${describeGitFailure(error)}`,
-      error,
+      `git ${args[0] ?? ""} failed: ${describeGitFailure(failure)}`,
+      failure,
     );
   }
+  return result.stdout.trim();
+}
+
+/** Binary git output with the inherited environment; failures reject with the raw error. */
+async function gitBuffer(cwd: string, args: readonly string[]): Promise<Buffer> {
+  const result = await execFileCaptureBuffer("git", args, { cwd, maxBuffer: MAX_BUFFER });
+  const failure = failureWithOutput(result);
+  if (failure) throw failure;
+  return result.stdout;
 }
 
 /** Runs a Git command whose failure is an expected outcome rather than an error. */
@@ -117,25 +138,18 @@ async function optionalGit(
 }
 
 async function gitWithInput(cwd: string, args: readonly string[], input: string): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const child = spawn("git", [...args], { cwd, env: identityEnvironment() });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
-    child.on("error", (error) => reject(error));
-    child.on("close", (code) => {
-      if (code === 0) resolve(stdout);
-      else reject(new Error(stderr.trim() || `git ${args[0] ?? ""} exited with code ${code}`));
-    });
-    child.stdin.end(input);
+  // No output cap: batch input can name every checkpoint ref at once.
+  const { stdout, stderr, error } = await execFileCapture("git", args, {
+    cwd,
+    env: identityEnvironment(),
+    input,
+    maxBuffer: Number.POSITIVE_INFINITY,
   });
+  if (!error) return stdout;
+  if (isSpawnFailure(error)) throw error;
+  // A signal-terminated child has no exit code, which reads as `null` like a spawn close event.
+  const code = isNumber(error.code) ? error.code : null;
+  throw new Error(stderr.trim() || `git ${args[0] ?? ""} exited with code ${code}`);
 }
 
 export async function openRepository(cwd: string): Promise<GitRepository> {
@@ -341,12 +355,8 @@ async function writeMetadataTree(
 }
 
 async function treePaths(root: string, tree: string): Promise<Set<string>> {
-  const result = await execFileAsync("git", ["ls-tree", "-r", "--name-only", "-z", tree], {
-    cwd: root,
-    encoding: "buffer",
-    maxBuffer: MAX_BUFFER,
-  });
-  return new Set(result.stdout.toString("utf8").split("\0").filter(Boolean));
+  const stdout = await gitBuffer(root, ["ls-tree", "-r", "--name-only", "-z", tree]);
+  return new Set(stdout.toString("utf8").split("\0").filter(Boolean));
 }
 
 /** Removes directories left empty after a file deletion, stopping at the root. */
@@ -369,15 +379,11 @@ async function pruneEmptyDirectories(root: string, relativePath: string): Promis
  * a concurrent reader never observes a partial index.
  */
 async function restoreIndexFile(repository: GitRepository, indexBlob: string): Promise<void> {
-  const content = await execFileAsync("git", ["cat-file", "blob", indexBlob], {
-    cwd: repository.root,
-    encoding: "buffer",
-    maxBuffer: MAX_BUFFER,
-  });
+  const content = await gitBuffer(repository.root, ["cat-file", "blob", indexBlob]);
   const lockFile = `${repository.indexFile}.lock`;
   for (let attempt = 0; ; attempt += 1) {
     try {
-      await writeFile(lockFile, content.stdout, { flag: "wx" });
+      await writeFile(lockFile, content, { flag: "wx" });
       break;
     } catch (error) {
       if (attempt >= 20) {

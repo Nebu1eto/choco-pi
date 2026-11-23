@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn, type ExecFileException } from "node:child_process";
+import { isString } from "../../runtime-values.ts";
 import type { ExecRunner } from "../types.ts";
 import type { DiffClock } from "./clock.ts";
 import type { DiffLimits } from "./limits.ts";
@@ -44,6 +45,84 @@ export class DiffGitError extends Error {
     super(message);
     this.name = "DiffGitError";
   }
+}
+
+/** Options for {@link execFileCapture}; every field maps onto `execFile` unchanged. */
+export type CapturedExecOptions = {
+  cwd?: string;
+  /** Child environment; `undefined` inherits `process.env`. */
+  env?: NodeJS.ProcessEnv;
+  /** Written to stdin, which is closed either way so no reader waits for end-of-file. */
+  input?: string;
+  /** Deadline after which `killSignal` is sent; omitted means no deadline. */
+  timeoutMs?: number;
+  killSignal?: NodeJS.Signals;
+  /** Per-stream byte cap; exceeding it kills the child and reports an error. */
+  maxBuffer: number;
+};
+
+/** Raw `execFile` outcome; `error` is set for spawn failures, non-zero exits, signals, and overflow. */
+export type CapturedExec<Output> = {
+  stdout: Output;
+  stderr: Output;
+  error: ExecFileException | null;
+};
+
+function captureOptions(options: CapturedExecOptions) {
+  return {
+    cwd: options.cwd,
+    env: options.env,
+    timeout: options.timeoutMs ?? 0,
+    killSignal: options.killSignal ?? "SIGTERM",
+    maxBuffer: options.maxBuffer,
+  };
+}
+
+/**
+ * Shared async `execFile` core for the review and checkpoint git helpers.
+ *
+ * It always settles (never rejects) so each caller keeps its own error policy,
+ * and it always ends stdin: a child that exits before reading turns the write
+ * into EPIPE, which is not a command failure.
+ */
+export function execFileCapture(
+  cmd: string,
+  args: readonly string[],
+  options: CapturedExecOptions,
+): Promise<CapturedExec<string>> {
+  return new Promise((resolve) => {
+    const child = execFile(
+      cmd,
+      [...args],
+      { ...captureOptions(options), encoding: "utf8" },
+      (error, stdout, stderr) => resolve({ stdout, stderr, error }),
+    );
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(options.input ?? "");
+  });
+}
+
+/** {@link execFileCapture} for binary output such as NUL-separated listings or blobs. */
+export function execFileCaptureBuffer(
+  cmd: string,
+  args: readonly string[],
+  options: CapturedExecOptions,
+): Promise<CapturedExec<Buffer>> {
+  return new Promise((resolve) => {
+    const child = execFile(
+      cmd,
+      [...args],
+      { ...captureOptions(options), encoding: "buffer" },
+      (error, stdout, stderr) => resolve({ stdout, stderr, error }),
+    );
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(options.input ?? "");
+  });
+}
+
+/** True when `execFile` failed before the child started, such as ENOENT or EACCES. */
+export function isSpawnFailure(error: ExecFileException): boolean {
+  return isString(error.code) && error.syscall?.startsWith("spawn") === true;
 }
 
 export class DiffDisposedError extends Error {

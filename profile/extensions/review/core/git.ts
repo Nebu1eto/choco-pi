@@ -1,5 +1,5 @@
-import { isNumber, isString } from "../../lib/runtime-values.ts";
-import { execFile } from "node:child_process";
+import { isNumber } from "../../lib/runtime-values.ts";
+import { execFileCapture, isSpawnFailure } from "../../lib/changes/git/exec.ts";
 import type { ExecRunner, ReviewTarget } from "./types.ts";
 
 const MAX_BUFFER = 256 * 1024 * 1024;
@@ -14,50 +14,23 @@ const DIFF_ARGS = ["--patch", "-M", "-C", "--no-color"];
  * unconditionally is what keeps a reader such as `gh api --input -` from
  * waiting on end-of-file that never arrives.
  */
-export const defaultExecRunner: ExecRunner = (cmd, args, opts) =>
-  new Promise((resolve, reject) => {
-    const child = execFile(
-      cmd,
-      args,
-      {
-        cwd: opts?.cwd,
-        encoding: "utf8",
-        timeout: EXEC_TIMEOUT_MS,
-        killSignal: "SIGTERM",
-        maxBuffer: MAX_BUFFER,
-      },
-      (error, stdout, stderr) => {
-        if (!error) {
-          resolve({ stdout, stderr, code: 0 });
-          return;
-        }
-        // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
-        const systemError = error as NodeJS.ErrnoException & {
-          killed?: boolean;
-          signal?: NodeJS.Signals;
-        };
-        if (systemError.killed && systemError.signal === "SIGTERM") {
-          reject(new Error(`${cmd} timed out after ${EXEC_TIMEOUT_MS} ms.`));
-          return;
-        }
-        if (isString(systemError.code) && systemError.syscall?.startsWith("spawn")) {
-          // execFile reports failures such as ENOENT and EACCES before the child starts.
-          reject(error);
-          return;
-        }
-        // Signals and post-spawn execution errors still resolve as non-zero exits.
-        resolve({
-          stdout,
-          stderr,
-          code: isNumber(error.code) ? error.code : 1,
-        });
-      },
-    );
-    // A child that exits before reading stdin turns this write into EPIPE,
-    // which is not a command failure.
-    child.stdin?.on("error", () => {});
-    child.stdin?.end(opts?.input ?? "");
+export const defaultExecRunner: ExecRunner = async (cmd, args, opts) => {
+  const { stdout, stderr, error } = await execFileCapture(cmd, args, {
+    cwd: opts?.cwd,
+    input: opts?.input,
+    timeoutMs: EXEC_TIMEOUT_MS,
+    killSignal: "SIGTERM",
+    maxBuffer: MAX_BUFFER,
   });
+  if (!error) return { stdout, stderr, code: 0 };
+  if (error.killed && error.signal === "SIGTERM") {
+    throw new Error(`${cmd} timed out after ${EXEC_TIMEOUT_MS} ms.`);
+  }
+  // execFile reports failures such as ENOENT and EACCES before the child starts.
+  if (isSpawnFailure(error)) throw error;
+  // Signals and post-spawn execution errors still resolve as non-zero exits.
+  return { stdout, stderr, code: isNumber(error.code) ? error.code : 1 };
+};
 
 export class GitCommandError extends Error {
   readonly code: number;
