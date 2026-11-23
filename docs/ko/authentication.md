@@ -50,7 +50,7 @@ Pi에 내장된 `xai` 공급자(Grok)는 `/login xai`로 SuperGrok 또는 X Prem
 
 `google`에 Google Antigravity로 로그인하면 다음과 같이 동작합니다.
 
-- `/usage`에 Google 행이 나타납니다. 요금제 이름, Google이 알려 줄 때는 AI 크레딧 잔액, 그리고 모델 그룹마다 주간 창과 5시간 창(예: "Gemini Models weekly", "Claude and GPT models 5h")이 사용 비율, 초기화 시각과 함께 표시됩니다. 할당량 요약이 없는 요금제는 상태 한 줄만 보여 줍니다. 이 로그인이 없으면, Gemini API 키만 설정된 경우를 포함해, Google은 "Not signed in"에 나열됩니다.
+- `/usage`에 Google 행이 나타납니다. 요금제 이름, Google이 알려 줄 때는 AI 크레딧 잔액, 그리고 모델 그룹마다 주간 창과 5시간 창(예: "Gemini Models weekly", "Claude and GPT models 5h")이 사용 비율, 초기화 시각과 함께 표시됩니다. Google은 두 소비자용 Ultra 요금제를 모두 "Google AI Ultra"라고 부르므로, 행에는 tier ID로 구분한 크기가 붙습니다: "Google AI Ultra (5x)" 또는 "Google AI Ultra (20x)". 할당량 요약이 없는 요금제는 상태 한 줄만 보여 줍니다. 이 로그인이 없으면, Gemini API 키만 설정된 경우를 포함해, Google은 "Not signed in"에 나열됩니다.
 - 할당량을 다 쓰면 턴이 사용량 한도로 멈춥니다. 이 공급자의 사용량 데이터를 다시 읽어 확인하지 않으므로, 한도는 실패한 모델에만 적용되고 Google이 알려 준 초기화 시각까지(알려 주지 않았다면 30분) 유지되며, 자동 재개는 꺼집니다. `/model`로 전환하세요.
 - 웹 검색에서 `google` 계열을 쓸 수 있습니다. 검색할 때마다 구독 할당량을 쓰므로 자동 라우팅은 이 계열을 고르지 않으며, 명시적으로 지정할 때만 실행됩니다. [Google 검색(Antigravity)](web-search.md#google-검색-antigravity) 참고.
 - 백그라운드 compaction은 토큰 추정치를 그대로 씁니다. choco-pi를 시작하기 전에 `CHOCO_PI_ANTIGRAVITY_COUNT_TOKENS=1`을 설정하면 요약 프롬프트를 Cloud Code Assist `countTokens`로 셉니다. 세션은 compaction이 시작될 때 이 값을 읽으므로, 나중에 바꾸면 새 세션에만 적용됩니다.

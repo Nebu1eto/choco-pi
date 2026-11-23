@@ -87,6 +87,11 @@ After sign-in, `loadCodeAssist` returns the project (consumer accounts get the s
 `aicode-consumers`). `onboardUser` runs only when no tier is onboarded yet. A project id is
 never invented: without one from Google or your `project_id`, login fails with a clear message.
 
+`/usage` labels the Google row with the paid tier's name from `loadCodeAssist` (else the current
+tier's). Google names both consumer Ultra plans "Google AI Ultra", so the tier id adds the size:
+`g1-ultra-lite-tier` shows as "Google AI Ultra (5x)" and `g1-ultra-tier` as "Google AI Ultra
+(20x)". Every other tier keeps Google's name unchanged.
+
 ## Models
 
 `fetchAvailableModels` is refreshed every four hours (cache-only when offline) and stored in Pi's
@@ -150,6 +155,12 @@ with pi-antigravity 0.15.0 (Rahularya01/pi-antigravity). No code was copied from
   table groups literals by length, so the position of an id or secret says nothing about which
   pair the consumer login uses; candidates keep file order and, when there are several, you pick.
 - Claude thinking parameters (`thinkingLevel` LOW/MEDIUM/HIGH) match captured agy requests for
-  Claude Opus 5.5; Claude Sonnet 5.5 was not captured.
+  Claude Opus 5.5. Claude Sonnet 5.5 was not captured from agy, but live Sonnet requests with
+  the same shape succeed, including tool turns.
 - Tool schemas go to every family as JSON Schema (`parametersJsonSchema`); the OpenAPI
   `parameters` field rejects unions for Claude (docs/transport.md, measured).
+- GPT-OSS 120B answered wrongly after tool results in live sessions although the transport
+  assembles its output correctly (docs/transport.md); treat it as the weakest family here.
+- `/usage` names the Ultra plan size only for the two tier ids in "Login and the OAuth client";
+  any other tier shows Google's own name. The 5x mapping was confirmed on a 5x account; the 20x
+  one is inferred (agy knows exactly two consumer Ultra tiers) and has not been seen live.

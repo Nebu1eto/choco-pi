@@ -182,22 +182,33 @@ adapter computes it. Subscription models are registered at zero cost, so cost is
 
 ## Unproven assumptions
 
-Everything rests on one capture of one simple Gemini turn, with no tools called and no thought
-text. None of the following has been exercised against the live service:
+The envelope derives from captured agy requests (one per model and effort). Live sessions on
+2026-11-22 (one consumer Google AI Ultra account, a real Pi 1.6 TUI and print mode) then
+exercised:
 
-- Tool schemas: see "Tool schemas, measured". Gemini is covered by real turns, Claude and
-  GPT-OSS by the probes; multi-turn Claude tool use with thinking is not yet covered.
-- Claude and GPT-OSS behind v1internal: the wire shape of their thinking parts, signatures,
-  tool-call ids, and finish reasons is inferred from the Gemini schema and the third-party
-  extension's behaviour. It has not been observed.
+- Gemini 4 Argon: plain text, a tool call, and the follow-up turn after its result.
+- Claude Sonnet 5.5: a tool call and a second tool turn replaying the first (explicit
+  tool-call ids, finish reasons STOP and tool use).
+- GPT-OSS 120B: a tool call and its follow-up. A function call or response without an `id` is
+  rejected with HTTP 400 ("Expected the 'id' of a(n) 'assistant' 'tool_calls' array element to
+  be populated"); pi-ai's `requiresToolCallId` already sends one. Its answers after a tool
+  result were wrong twice although replaying the captured SSE chunks through this transport
+  assembles the text correctly, so this is model behaviour, not transport.
+- Gemini 4 Neon and Hydrogen at xhigh: `thinkingLevel: 100` is accepted.
+
+Still unproven:
+
+- Tool schemas: see "Tool schemas, measured". Multi-turn Claude tool use with visible thinking
+  text, and Claude or GPT-OSS thought signatures, have not been observed.
 - Label semantics: `last_step_index` as the assistant-turn count and the derived `used_*` flags
   match the capture's format. Their server-side meaning is unknown. `model_enum` is sent only when
   the refreshed catalog provides it.
 - Whether the server keys caching or session state on `sessionId` or the labels, and whether a
   stable derived value is what it expects across turns, is unverified.
 - `toolChoice: "any"` / `"none"` (toolConfig) is absent from the capture and follows the public API.
-- In-stream `{error}` chunks, HTTP 200 JSON errors, `[DONE]` markers, and multi-candidate
-  responses have not been seen from this endpoint. They are handled defensively; only the
-  first candidate is read.
+- In-stream `{error}` chunks, `[DONE]` markers, and multi-candidate responses have not been
+  seen from this endpoint. They are handled defensively; only the first candidate is read. An
+  HTTP 200 body carrying a top-level `google.rpc` `error` (with a code or status) is
+  classified as that error before any success schema is applied (`src/client/http.ts`).
 - Long silent thinking phases may exceed a small `options.timeoutMs` if the backend sends no
   keep-alive chunks while thinking.

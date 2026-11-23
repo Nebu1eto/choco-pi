@@ -93,24 +93,30 @@ during the request is `stale-context`.
 
 ## Unproven assumptions
 
-No search request or response was captured from agy, and no live call has been made. These
-points rest on the protobuf descriptors and the agy binary strings only, and need a live
-check (plan step O5):
+No search request was captured from agy. Live checks on 2026-11-22 (one consumer Google AI
+Ultra account, the adapter's own envelope on `gemini-3.5-flash-lite`, no domain or time
+filters) settled two points:
 
-1. The response shape. `tests/fixtures/search/grounding-response.json` is synthetic, built
-   from the aiplatform `GroundingMetadata`, `GroundingChunk.Web`, `GroundingSupport` and
-   `Segment` descriptors in proto3 JSON naming, inside the v1internal `GenerateContentResponse`
-   wrapper.
-2. That consumer credentials may call non-streaming `v1internal:generateContent` (agy's chat
-   traffic used `streamGenerateContent`) and that the backend accepts this envelope without
-   `labels` or `sessionId`.
-3. That `includedDomains`, `excludeDomains` and `timeRangeFilter` are honored rather than
+- Consumer credentials may call non-streaming `v1internal:generateContent`, and the backend
+  accepts this envelope without `labels` or `sessionId` (HTTP 200).
+- The response is the v1internal wrapper around `candidates[0].groundingMetadata`;
+  `groundingChunks[].web.title` held the site domain (for example `pi.dev`) rather than a page
+  title, and `web.uri` a `vertexaisearch.cloud.google.com` grounding redirect. A `web_search`
+  call with `provider: "google"` from a live Pi session returned grounded results.
+
+Still unproven:
+
+1. `groundingSupports` and `Segment` contents were not inspected live, so the citation
+   fixture (`tests/fixtures/search/grounding-response.json`) remains built from the aiplatform
+   `GroundingMetadata`, `GroundingChunk.Web`, `GroundingSupport` and `Segment` descriptors.
+2. Whether `includedDomains`, `excludeDomains` and `timeRangeFilter` are honored rather than
    rejected or ignored for this account type. A rejection surfaces as `invalid-request`.
-4. Segment offsets are not used, because whether they count bytes or UTF-16 units is unproven;
+3. Segment offsets are not used, because whether they count bytes or UTF-16 units is unproven;
    segment text is matched instead, and a segment that cannot be located gets no marker.
-5. The catalog's `webSearchModelIds` is read from module state set by the provider extension's
-   model refresh. If Pi loads the two extensions as separate module instances, the adapter
-   sees the offline catalog and uses the `gemini-3.5-flash-lite` fallback.
+
+The adapter reads `webSearchModelIds` from the active catalog, which the provider publishes in
+a process-global slot (`src/catalog/group.ts`), so the separate module instance Pi loads for
+the search extension sees the refreshed catalog.
 
 ## Deferred
 
