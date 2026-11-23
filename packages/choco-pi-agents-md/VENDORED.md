@@ -1,7 +1,5 @@
-# Provenance: choco-pi-agents-md
+# Provenance
 
-First-party reimplementation in choco-pi (behavior reference only, not copied).
-
-- Behavior reference: `@howaboua/pi-markdown-workflows@0.2.20` (<https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/main/packages/pi-markdown-workflows>)
-- Written: 2026-08-20
-- License: MIT (see `LICENSE`)
+| Library                                                | Base Version |
+| ------------------------------------------------------ | ------------ |
+| `@howaboua/pi-markdown-workflows (behavior reference)` | `0.2.20`     |
