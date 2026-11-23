@@ -104,7 +104,7 @@ test("google is absent without a credential and makes no request", async (t) => 
   const cache = createUsageCache();
   assert.equal(await googleAntigravityUsage(context(undefined), cache), undefined);
   const report = await readProviderUsages(context(undefined), { cache });
-  assert.deepEqual(report.absent, ["Claude", "ChatGPT", "Synthetic", "Grok", "Google"]);
+  assert.deepEqual(report.absent, ["Claude", "ChatGPT", "Google", "Grok", "Synthetic"]);
   assert.deepEqual(calls, []);
 });
 
@@ -120,8 +120,8 @@ test("a Gemini API key on google is not signed in: no key read, no request", asy
   assert.deepEqual(keyReads, [], "the raw key is never resolved");
   const report = await readProviderUsages(context(GEMINI_KEY, "api_key"), { cache });
   assert.deepEqual(report.providers, []);
-  assert.deepEqual(report.absent, ["Claude", "ChatGPT", "Synthetic", "Grok", "Google"]);
-  assert.match(formatUsageReport(report), /Not signed in: .*Google$/u);
+  assert.deepEqual(report.absent, ["Claude", "ChatGPT", "Google", "Grok", "Synthetic"]);
+  assert.equal(formatUsageReport(report), "");
   // A host that cannot report the type: the resolved raw key is still not a sign-in.
   assert.equal(await googleAntigravityUsage(context(GEMINI_KEY, "unknown"), cache), undefined);
   assert.doesNotMatch(formatUsageReport(report), /AIza/u);
@@ -141,16 +141,8 @@ test("the captured quota summary becomes four used-share windows with resets", a
       window.scope,
     ]),
     [
-      ["Gemini Models weekly", 0, "used", "2026-11-28T15:06:23.000Z", 604_800, "Gemini Models"],
       ["Gemini Models 5h", 0, "used", "2026-11-21T20:06:23.000Z", 18_000, "Gemini Models"],
-      [
-        "Claude and GPT models weekly",
-        0,
-        "used",
-        "2026-11-28T15:06:23.000Z",
-        604_800,
-        "Claude and GPT models",
-      ],
+      ["Gemini Models weekly", 0, "used", "2026-11-28T15:06:23.000Z", 604_800, "Gemini Models"],
       [
         "Claude and GPT models 5h",
         0,
@@ -159,12 +151,50 @@ test("the captured quota summary becomes four used-share windows with resets", a
         18_000,
         "Claude and GPT models",
       ],
+      [
+        "Claude and GPT models weekly",
+        0,
+        "used",
+        "2026-11-28T15:06:23.000Z",
+        604_800,
+        "Claude and GPT models",
+      ],
     ],
   );
   // A full bucket is fresh capacity, never "exhausted".
   const now = Date.parse("2026-11-21T15:06:23Z");
   const text = formatProviderUsage(usage, undefined, now);
-  assert.match(text, /^Google\n {2}Gemini Models weekly\n.* 0% used\n {2}resets in /);
+  assert.match(text, /^Google\n {2}Gemini Models 5h\n.* 0% used\n {2}resets in /);
+});
+
+test("Google usage places Gemini groups before other models and 5h before weekly regardless of API order", () => {
+  const usage = normalizeGoogleAntigravityUsage({
+    groups: [
+      {
+        displayName: "Claude and GPT models",
+        buckets: [
+          { window: "weekly", remainingFraction: 0.75, resetTime: "2026-11-28T15:06:23Z" },
+          { window: "5h", remainingFraction: 0.5, resetTime: "2026-11-21T20:06:23Z" },
+        ],
+      },
+      {
+        displayName: "Gemini Models",
+        buckets: [
+          { window: "weekly", remainingFraction: 0.25, resetTime: "2026-11-28T15:06:23Z" },
+          { window: "5h", remainingFraction: 0, resetTime: "2026-11-21T20:06:23Z" },
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(
+    usage.windows.map((window) => [window.label, window.percent]),
+    [
+      ["Gemini Models 5h", 100],
+      ["Gemini Models weekly", 75],
+      ["Claude and GPT models 5h", 50],
+      ["Claude and GPT models weekly", 25],
+    ],
+  );
 });
 
 test("remaining fractions convert to used shares; disabled and amount-only buckets are skipped", () => {

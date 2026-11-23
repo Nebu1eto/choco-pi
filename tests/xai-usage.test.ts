@@ -295,18 +295,18 @@ test("a Grok OAuth sign-in reads the billing endpoint with its bearer token", as
   assert.equal(grok.usage.plan, undefined);
   assert.equal(grok.usage.windows[0]?.label, "Weekly");
   assert.equal(grok.usage.windows[0]?.percent, 2);
-  assert.deepEqual(report.absent, ["Claude", "ChatGPT", "Synthetic", "Google"]);
+  assert.deepEqual(report.absent, ["Claude", "ChatGPT", "Google", "Synthetic"]);
   assert.ok(hasUsageWindows(report));
   const text = formatUsageReport(report);
   assert.match(text, /^Grok\n {2}Weekly\n/);
   assert.match(text, /2% used/);
-  assert.match(text, /\n {2}(?:.* · )?Bot 23% · API 5% · Build 1%\n/);
+  assert.match(text, /\n {2}(?:.* · )?Bot 23% · API 5% · Build 1%$/);
   assert.doesNotMatch(text, /GrokBot|GrokBuild|Api /);
   // The structured host report carries the same labels as the text.
   const frame = usageReportFrame("session-xai", report);
   assert.equal(frame.usage?.providers[0]?.windows[0]?.detail, "Bot 23% · API 5% · Build 1%");
   assert.match(frame.sections[0]?.rows[0]?.hint ?? "", /(?:^|· )Bot 23% · API 5% · Build 1%$/);
-  assert.match(text, /\n\nNot signed in: Claude, ChatGPT, Synthetic, Google$/);
+  assert.doesNotMatch(text, /Not signed in/);
   assert.doesNotMatch(text, new RegExp(XAI_TOKEN));
 });
 
@@ -442,7 +442,7 @@ for (const [label, respond, error] of FAILURES) {
     assert.equal(grok.name, "Grok");
     assert.match(grok.error, error);
     assert.equal(hasUsageWindows(report), false);
-    assert.match(formatUsageReport(report), /^Grok — unavailable \(.+\)\n\nNot signed in: /);
+    assert.match(formatUsageReport(report), /^Grok — unavailable \(.+\)$/);
   });
 }
 
@@ -493,11 +493,8 @@ test("an absent xai credential is neither fetched nor shown as a row", async (t)
   assert.equal(await grokUsage(ctx, createUsageCache()), undefined);
   const report = await grokReading(ctx);
   assert.deepEqual(report.providers, []);
-  assert.deepEqual(report.absent, ["Claude", "ChatGPT", "Synthetic", "Grok", "Google"]);
-  assert.equal(
-    formatUsageReport(report),
-    "Not signed in: Claude, ChatGPT, Synthetic, Grok, Google",
-  );
+  assert.deepEqual(report.absent, ["Claude", "ChatGPT", "Google", "Grok", "Synthetic"]);
+  assert.equal(formatUsageReport(report), "");
   assert.deepEqual(calls, []);
   assert.deepEqual(tokenRequests, []);
   // Usage-limit corroboration is unchanged: xai has no snapshot reader.
@@ -530,7 +527,7 @@ test("absent providers: none, one, and three", async (t) => {
       google: "oauth",
     }).ctx,
   );
-  assert.deepEqual(names(none), ["Claude", "ChatGPT", "Synthetic", "Grok", "Google"]);
+  assert.deepEqual(names(none), ["Claude", "ChatGPT", "Google", "Grok", "Synthetic"]);
   assert.deepEqual(none.absent, []);
   assert.doesNotMatch(formatUsageReport(none), /Not signed in/);
   const style = {
@@ -542,19 +539,19 @@ test("absent providers: none, one, and three", async (t) => {
     registry({ anthropic: "oauth", openai: "oauth", synthetic: "api_key" }).ctx,
   );
   assert.deepEqual(names(one), ["Claude", "ChatGPT", "Synthetic"]);
-  assert.deepEqual(one.absent, ["Grok", "Google"]);
-  assert.match(formatUsageReport(one), /\n\nNot signed in: Grok, Google$/);
-  assert.match(formatUsageReport(one, style), /\n\n<dim>Not signed in: Grok, Google<\/dim>$/);
+  assert.deepEqual(one.absent, ["Google", "Grok"]);
+  assert.doesNotMatch(formatUsageReport(one), /Not signed in/);
+  assert.doesNotMatch(formatUsageReport(one, style), /Not signed in/);
 
   const three = await grokReading(registry({ xai: "oauth" }).ctx);
   assert.deepEqual(names(three), ["Grok"]);
-  assert.deepEqual(three.absent, ["Claude", "ChatGPT", "Synthetic", "Google"]);
+  assert.deepEqual(three.absent, ["Claude", "ChatGPT", "Google", "Synthetic"]);
   const text = formatUsageReport(three);
-  assert.equal(text.match(/Not signed in/g)?.length, 1);
+  assert.doesNotMatch(text, /Not signed in/);
   assert.doesNotMatch(text, /not connected/);
 });
 
-test("the host frame lists absent providers in their own section", () => {
+test("the host frame omits absent providers", () => {
   const at = new Date("2026-10-17T00:00:00.000Z");
   const report: ProviderUsageReport = {
     observedAt: at,
@@ -565,10 +562,7 @@ test("the host frame lists absent providers in their own section", () => {
   assert.ok(checkSchema(ReportFrameSchema, frame));
   assert.deepEqual(
     frame.sections.map((section) => [section.title, section.rows.map((row) => row.label)]),
-    [
-      ["Grok", ["Weekly"]],
-      ["Not signed in", ["Claude", "Synthetic"]],
-    ],
+    [["Grok", ["Weekly"]]],
   );
   assert.deepEqual(
     frame.usage?.providers.map((provider) => provider.name),
@@ -589,12 +583,7 @@ test("the host frame lists absent providers in their own section", () => {
   assert.equal(hasUsageWindows(onlyAbsent), false);
   const absentFrame = usageReportFrame("session-xai", onlyAbsent, at);
   assert.ok(checkSchema(ReportFrameSchema, absentFrame));
-  assert.deepEqual(absentFrame.sections, [
-    {
-      title: "Not signed in",
-      rows: [{ label: "Grok", value: "not signed in" }],
-    },
-  ]);
+  assert.deepEqual(absentFrame.sections, []);
 });
 
 /** Whether `value` matches `schema`, narrowing like the compiled validator's check. */

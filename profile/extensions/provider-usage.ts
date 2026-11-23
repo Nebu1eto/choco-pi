@@ -936,6 +936,17 @@ const ANTIGRAVITY_WINDOW_SECONDS = recordOf<string, number>()({
   "5h": 5 * HOUR_SECONDS,
 });
 
+function antigravityGroupRank(groupName: string | undefined): number {
+  return groupName !== undefined && /gemini/i.test(groupName) ? 0 : 1;
+}
+
+function antigravityWindowRank(windowName: string): number {
+  const normalized = windowName.toLowerCase();
+  if (normalized === "5h") return 0;
+  if (normalized === "weekly") return 1;
+  return 2;
+}
+
 /**
  * Converts the `retrieveUserQuotaSummary` reading (or the stored copy of one)
  * into a Usage row: one window per enabled bucket of every model group,
@@ -953,10 +964,14 @@ export function normalizeGoogleAntigravityUsage(payload: RuntimeValue): Provider
     };
   }
   const groups = isRecord(payload) && Array.isArray(payload.groups) ? payload.groups : [];
-  const windows: UsageWindow[] = [];
+  const normalizedGroups: Array<{
+    rank: number;
+    windows: Array<{ rank: number; window: UsageWindow }>;
+  }> = [];
   for (const group of groups) {
     if (!isRecord(group) || !Array.isArray(group.buckets)) continue;
     const groupName = stringValue(group.displayName);
+    const groupWindows: Array<{ rank: number; window: UsageWindow }> = [];
     for (const bucket of group.buckets) {
       if (!isRecord(bucket) || bucket.disabled === true) continue;
       const remaining = numberValue(bucket.remainingFraction);
@@ -973,9 +988,18 @@ export function normalizeGoogleAntigravityUsage(payload: RuntimeValue): Provider
       if (windowSeconds !== undefined) window.windowSeconds = windowSeconds;
       // Each group's buckets limit only the models of that group.
       if (groupName !== undefined) window.scope = groupName;
-      windows.push(window);
+      groupWindows.push({ rank: antigravityWindowRank(windowName), window });
+    }
+    if (groupWindows.length > 0) {
+      groupWindows.sort((a, b) => a.rank - b.rank);
+      normalizedGroups.push({
+        rank: antigravityGroupRank(groupName),
+        windows: groupWindows,
+      });
     }
   }
+  normalizedGroups.sort((a, b) => a.rank - b.rank);
+  const windows = normalizedGroups.flatMap((group) => group.windows.map((entry) => entry.window));
   return { name: GOOGLE_ANTIGRAVITY_USAGE_NAME, windows };
 }
 
@@ -1340,9 +1364,9 @@ export function formatProviderUsage(
 const PROVIDER_NAMES = [
   "Claude",
   CHATGPT_USAGE_NAME,
-  "Synthetic",
-  GROK_USAGE_NAME,
   GOOGLE_ANTIGRAVITY_USAGE_NAME,
+  GROK_USAGE_NAME,
+  "Synthetic",
 ] as const;
 
 /**
@@ -1374,8 +1398,8 @@ export type ProviderUsageReport = {
 };
 
 /**
- * Queries Claude, ChatGPT (`openai-codex` or `openai`), Synthetic, Grok
- * (`xai`), and Google (`google` with Google Antigravity OAuth) once; the list and
+ * Queries Claude, ChatGPT (`openai-codex` or `openai`), Google (`google` with
+ * Google Antigravity OAuth), Grok (`xai`), and Synthetic once; the list and
  * `PROVIDER_NAMES` are index-coupled. A provider without a credential is listed in `absent`
  * instead of producing a reading; a signed-in provider that fails becomes a
  * reading with its failure message, so this never rejects. The Usage tab and
@@ -1389,9 +1413,9 @@ export async function readProviderUsages(
   const settled = await Promise.allSettled([
     claudeUsage(ctx, cache),
     chatgptUsage(ctx, cache),
-    syntheticUsage(ctx, cache),
-    grokUsage(ctx, cache),
     googleAntigravityUsage(ctx, cache),
+    grokUsage(ctx, cache),
+    syntheticUsage(ctx, cache),
   ]);
   const providers: ProviderUsageReading[] = [];
   const absent: string[] = [];
@@ -1412,12 +1436,6 @@ export async function readProviderUsages(
   return { observedAt: new Date(), providers, absent };
 }
 
-/** The footer naming providers without a credential, or `undefined` when there are none. */
-export function absentProvidersLine(report: ProviderUsageReport): string | undefined {
-  const absent = report.absent ?? [];
-  return absent.length > 0 ? `Not signed in: ${absent.join(", ")}` : undefined;
-}
-
 export function formatUsageReport(report: ProviderUsageReport, style?: UsageStyle): string {
   const paint = usagePainter(style);
   const blocks = report.providers.map((reading) =>
@@ -1428,8 +1446,6 @@ export function formatUsageReport(report: ProviderUsageReport, style?: UsageStyl
           `unavailable (${reading.error})`,
         )}`,
   );
-  const absent = absentProvidersLine(report);
-  if (absent !== undefined) blocks.push(paint.dim(absent));
   return blocks.join("\n\n");
 }
 
