@@ -843,7 +843,12 @@ async function fixtureSource(directory: string): Promise<string> {
   );
   // The management CLI's own dependencies, vendored so pnpm links them offline.
   const vendored: Record<string, string> = {};
-  for (const name of ["@earendil-works/pi-schema", "@optique/core", "@logtape/logtape"]) {
+  for (const name of [
+    "@choco-pi/shared",
+    "@earendil-works/pi-schema",
+    "@optique/core",
+    "@logtape/logtape",
+  ]) {
     const directoryName = name.replace("/", "__");
     await cp(
       await realpath(path.join(ROOT, "node_modules", name)),
