@@ -255,3 +255,8 @@ The package now contains no first-party JavaScript. Earlier entries that name `.
 
 - Imports of the former profile/extensions/lib helpers (pi-paths, node-runtime, and where used lifecycle, value-guards) now resolve through the workspace package `@choco-pi/shared` instead of relative paths.
 - `scripts/doctor.ts` now imports `VERSION` directly from `@earendil-works/pi-coding-agent` instead of dynamically importing `../../../profile/extensions/lib/pi-runtime-identity.ts`.
+
+## 2026-11-23 choco-pi patch: decompose `runtime-extension.ts` monolith
+
+- Decomposed `extensions/agent-browser/lib/runtime-extension.ts` into cohesive submodules under `extensions/agent-browser/lib/extension/` (`compatibility.ts`, `artifacts.ts`, `branch-restore.ts`, `managed-resources.ts`, `state.ts`, `lifecycle.ts`, `tool-execution.ts`).
+- `extensions/agent-browser/lib/runtime-extension.ts` remains the entrypoint and re-export facade preserving every exported symbol and `resolveInstalledDocsPaths` relative depth. Behavior, schemas, tool contracts, and `agent_browser_web_search` standalone semantics are unchanged.

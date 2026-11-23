@@ -534,3 +534,9 @@ Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`),
 ## 2026-11-23 choco-pi patch: explicit `.ts` relative imports
 
 All relative TypeScript `import` and `export` specifiers across `extensions/zentui/*.ts` (120 specifiers in 27 files) now include explicit `.ts` extensions to comply with Node-erasable TypeScript source rules. Semantics are unchanged.
+
+## 2026-11-23 choco-pi patch: decompose `config.ts` and `settings-command.ts` monoliths
+
+- Decomposed `extensions/zentui/config.ts` into submodules under `extensions/zentui/config/` (`types.ts`, `defaults.ts`, `parse.ts`, `resolve.ts`, `storage.ts`, `mutations.ts`), keeping `config.ts` as a re-export facade preserving every exported symbol.
+- Decomposed `extensions/zentui/settings-command.ts` into submodules under `extensions/zentui/settings/` (`types.ts`, `sections.ts`, `layout.ts`, `direct-commands.ts`, `change-handler.ts`, `panel.ts`), keeping `settings-command.ts` as a re-export facade preserving every exported symbol.
+- All relative imports across `packages/choco-pi-ui/` use explicit `.ts` extensions. Behavior and interop symbols are unchanged.

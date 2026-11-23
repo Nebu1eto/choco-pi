@@ -74,7 +74,7 @@ async function compileZentui(): Promise<string | undefined> {
   let sources: string[];
   let compilerVersion: string;
   try {
-    sources = (await readdir(sourceDirectory))
+    sources = (await readdir(sourceDirectory, { recursive: true }))
       .filter((entry) => entry.endsWith(".ts"))
       .map((entry) => resolvePath(sourceDirectory, entry))
       .sort();
