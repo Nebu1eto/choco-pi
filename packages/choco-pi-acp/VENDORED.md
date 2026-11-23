@@ -491,3 +491,7 @@ D5 puts this vendored adapter in scope for structural decomposition; it no longe
   - `agent-pi-version.ts`: version, update-notice and changelog probes.
   - `agent-rpc.ts`: `missingPiCapability`, `attemptRpc` and `failureText`.
 - `/export` now checks the session file with async `pathExists` and reads it with `fs/promises` `readFile` instead of `existsSync` and `readFileSync`. Outcomes and messages are unchanged. No blocking call moved into a new file. The remaining `*Sync` sites (startup info, the package manifest, session-file deletion, edit snapshots) are unchanged pre-existing code in `agent.ts` and `session.ts`.
+
+## 2026-11-23 choco-pi patch: remove non-exempt source comments
+
+- Removed non-exempt comments across package source and test files (`d285398f`), preserving `SAFETY:` annotations, active `@ts-*` directives, MIT license headers, and shebangs. Runtime behavior and public APIs are unchanged.

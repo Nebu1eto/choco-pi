@@ -1455,3 +1455,7 @@ false })`), and warns once per extension load.
   `runtime-values-guards`, `trace-rendering`, `wait-missing-cell` and
   `universal-layer-boundary` (now a package-level scan).
   `tool-context-fixture.ts` is copied, since tests here still use it.
+
+## 2026-11-23 choco-pi patch: remove non-exempt source comments
+
+- Removed non-exempt comments across package source and test files (`d285398f`), preserving `SAFETY:` annotations, active `@ts-*` directives, MIT license headers, and shebangs. Runtime behavior and public APIs are unchanged.

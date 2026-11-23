@@ -275,3 +275,7 @@ Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`),
 - Replaced package-local `src/stop-control.ts` with `@choco-pi/shared/stop-control` and removed the duplicate file.
 - Replaced package-local `src/guards.ts` with `@choco-pi/shared/value-guards` (`finiteNum`, `isFiniteNumber`, `isString`) and removed the duplicate file.
 - Replaced the local `STALE_CONTEXT_ERROR_PREFIX` / `isStaleContextError` implementation in `src/goal-runtime-access.ts` with `@choco-pi/shared/lifecycle` (and `RuntimeValue` from `@choco-pi/shared/runtime-values`).
+
+## 2026-11-23 choco-pi patch: remove non-exempt source comments
+
+- Removed non-exempt comments across package source and test files (`d285398f`), preserving `SAFETY:` annotations, active `@ts-*` directives, MIT license headers, and shebangs. Runtime behavior and public APIs are unchanged.

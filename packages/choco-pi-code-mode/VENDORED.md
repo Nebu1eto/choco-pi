@@ -67,3 +67,8 @@ attached. `tests/code-mode-extension.test.ts` covers all three load shapes.
 `jpeg-js@0.4.4`, `pngjs@7.0.0` (half-block image fallback), `smol-toml@1.7.1`
 (custom tools), `web-tree-sitter@0.26.12` + `tree-sitter-bash@0.25.1` (shell
 parsing), the same pins choco-pi-codex used; they left its manifest.
+
+## 2026-11-23 choco-pi patch: remove non-exempt source comments and add public API JSDoc
+
+- Removed non-exempt comments across package source and test files (`d285398f`), preserving `SAFETY:` annotations, active `@ts-*` directives, MIT license headers, and shebangs.
+- Added concise English JSDoc to exported cross-package API interfaces in `src/adapter/code-mode/ports.ts` and `src/host-slot.ts` (`1b7e4231`). Runtime behavior and public APIs are unchanged.

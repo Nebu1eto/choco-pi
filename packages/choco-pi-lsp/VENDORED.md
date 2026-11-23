@@ -399,7 +399,7 @@ Internal-only cleanup; tool names, schemas, and runtime behavior are unchanged.
 - `clients/installer/index.ts`, `clients/installer/managed-tool-refresh.ts`, and `clients/mcp/review.ts` call `safeSpawnAsync` from `clients/safe-spawn.ts` directly. Their local wrappers only re-cast the already-typed `Promise<SpawnResult>`.
 - `clients/dispatch/runners/utils/helm-shared.ts` holds `isWithin` and `failedResult`, which had been identical in `helm-lint.ts` and `helm-render.ts`.
 - Removed `clients/lsp/path-utils.ts`, a re-export of `clients/path-utils.ts`; `clients/lsp/client.ts`, `edits.ts`, and `server.ts` import `../path-utils.ts`.
-- Removed two files that nothing imported: `clients/finding-delivery-gate.ts` (the #1634 delivery-surface documentation and registry; the `// @delivery-surface:` tags in `tools/diagnostics-report.ts` and `clients/runtime-turn.ts` remain as plain labels) and `clients/module-report-lsp.ts` (live-LSP enrichment for `module_report`, parked for #236 since #1090; it is in git history). `withinRemaining` in `clients/deadline-utils.ts` was used only by `module-report-lsp.ts` and is removed with it. Comments that pointed at the removed files are updated.
+- Removed two files that nothing imported: `clients/finding-delivery-gate.ts` (the #1634 delivery-surface documentation and registry; the `// @delivery-surface:` tags in `tools/diagnostics-report.ts` and `clients/runtime-turn.ts` were subsequently removed in `d285398f`) and `clients/module-report-lsp.ts` (live-LSP enrichment for `module_report`, parked for #236 since #1090; it is in git history). `withinRemaining` in `clients/deadline-utils.ts` was used only by `module-report-lsp.ts` and is removed with it. Comments that pointed at the removed files are updated.
 
 ## 2026-11-23: adopt @choco-pi/shared
 
@@ -440,3 +440,7 @@ Internal-only restructuring (decision D5, wave 4). The four files below keep the
   - A `createLSPClient` session against `marksman` returned identical capabilities, symbols, hover, definition, references, and shutdown state.
 - Comments and rule notes that pointed at moved code by file and line now name the new module (`managed-tool-refresh.ts`, `service-notify-pacing.ts`, `memory-sampler.ts`, `hardcoded-url.yml`, `python-thread-global-write.yml`).
 - Known remaining size: four units moved intact because splitting them without direct tests is a separate behavior risk. `applyPostFilter` is one 1,276-line switch (`tree-sitter/post-filters.ts`), `createLSPClient` one 672-line closure (`lsp/client/create-client.ts`), `TOOLS` one 950-line literal (`installer/tool-catalog.ts`), and `_doBuildGraph` one 446-line function (`review-graph/builder/build.ts`).
+
+## 2026-11-23 choco-pi patch: remove non-exempt source comments
+
+- Removed non-exempt comments across package source and test files (`d285398f`), preserving `SAFETY:` annotations, active `@ts-*` directives, MIT license headers, and shebangs. Runtime behavior and public APIs are unchanged.

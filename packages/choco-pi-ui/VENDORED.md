@@ -540,3 +540,7 @@ All relative TypeScript `import` and `export` specifiers across `extensions/zent
 - Decomposed `extensions/zentui/config.ts` into submodules under `extensions/zentui/config/` (`types.ts`, `defaults.ts`, `parse.ts`, `resolve.ts`, `storage.ts`, `mutations.ts`), keeping `config.ts` as a re-export facade preserving every exported symbol.
 - Decomposed `extensions/zentui/settings-command.ts` into submodules under `extensions/zentui/settings/` (`types.ts`, `sections.ts`, `layout.ts`, `direct-commands.ts`, `change-handler.ts`, `panel.ts`), keeping `settings-command.ts` as a re-export facade preserving every exported symbol.
 - All relative imports across `packages/choco-pi-ui/` use explicit `.ts` extensions. Behavior and interop symbols are unchanged.
+
+## 2026-11-23 choco-pi patch: remove non-exempt source comments
+
+- Removed non-exempt comments across package source and test files (`d285398f`), preserving `SAFETY:` annotations, active `@ts-*` directives, MIT license headers, and shebangs. Runtime behavior and public APIs are unchanged.

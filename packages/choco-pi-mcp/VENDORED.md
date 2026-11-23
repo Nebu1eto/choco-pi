@@ -344,3 +344,7 @@ Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`),
 ## 2026-11-23: adopt @choco-pi/shared
 
 - Imports of the former profile/extensions/lib helpers (pi-paths, node-runtime, and where used lifecycle, value-guards) now resolve through the workspace package `@choco-pi/shared` instead of relative paths.
+
+## 2026-11-23 choco-pi patch: remove non-exempt source comments
+
+- Removed non-exempt comments across package source and test files (`d285398f`), preserving `SAFETY:` annotations, active `@ts-*` directives, MIT license headers, and shebangs. Runtime behavior and public APIs are unchanged.

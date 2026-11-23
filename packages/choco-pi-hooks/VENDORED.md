@@ -182,3 +182,7 @@ Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`),
 - Replaced package-local `src/lifecycle.ts` with `@choco-pi/shared/lifecycle` and removed the duplicate file.
 - Replaced the relative `profile/extensions/lib/runtime-values.ts` import in `tests/scratch-warning.test.ts` with `@choco-pi/shared/runtime-values`.
 - Replaced the relative `profile/extensions/lib/scratch-path.ts` imports in `src/extension.ts` and `tests/scratch-warning.test.ts` with `@choco-pi/shared/scratch-path`.
+
+## 2026-11-23 choco-pi patch: remove non-exempt source comments
+
+- Removed non-exempt comments across package source and test files (`d285398f`), preserving `SAFETY:` annotations, active `@ts-*` directives, MIT license headers, and shebangs. Runtime behavior and public APIs are unchanged.

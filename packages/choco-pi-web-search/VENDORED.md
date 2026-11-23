@@ -96,3 +96,7 @@ Tests: `tests/core.test.ts` (family order; google and xai both explicit-only) an
 - Added namespaced `providerOptions?: Readonly<Record<string, JsonRecord>>` to `SearchRequest` and `canonicalSearchParams`, with legacy `exaSearchType` normalized into `providerOptions.exa.searchType`.
 - Decomposed the 1,635-line `index.ts` into `src/contract.ts`, `src/schema.ts`, `src/formatting.ts`, `src/scope.ts`, and `src/router.ts`, keeping `index.ts` as a clean public barrel.
 - Tests: `tests/extensibility.test.ts` added for custom family registration/routing and `providerOptions` passthrough/normalization.
+
+## 2026-11-23 choco-pi patch: remove non-exempt source comments
+
+- Removed non-exempt comments across package source and test files (`d285398f`), preserving `SAFETY:` annotations, active `@ts-*` directives, MIT license headers, and shebangs. Runtime behavior and public APIs are unchanged.

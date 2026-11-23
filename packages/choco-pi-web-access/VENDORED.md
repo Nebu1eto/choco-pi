@@ -342,3 +342,8 @@ shared router. Display-only edits so the new family type-checks and renders:
 - `extract.ts`: registered response-stage `ContentExtractor`s get the first claim on non-HTML, non-PDF responses before the unsupported-type and plain-text fallbacks.
 - `curator-lifecycle.ts`: the global glimpse lookup uses async `execFile` and `access` instead of `execFileSync` and `existsSync`; `tests/curator-fallback.test.ts` and `tests/summary-model-scope.test.ts` read sources with async `readFile`.
 - Tests: added `tests/auth-fetch-revocation.test.ts` and `tests/config-save.test.ts`, plus cross-copy scope and JSON response-extractor cases in `tests/fetch-registry.test.ts`, a `provider_options` case in `tests/canonical-tool-boundary.test.ts`, and a custom routing family case in `tests/search-routing.test.ts`. The invalid-routing-provider case now uses a malformed id.
+
+## 2026-11-23 choco-pi patch: remove non-exempt source comments and add public API JSDoc
+
+- Removed non-exempt comments across package source and test files (`d285398f`), preserving `SAFETY:` annotations, active `@ts-*` directives, MIT license headers, and shebangs.
+- Added concise English JSDoc to exported cross-package API interfaces in `fetch-registry.ts` (`1b7e4231`). Runtime behavior and public APIs are unchanged.

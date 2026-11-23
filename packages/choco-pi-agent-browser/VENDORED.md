@@ -260,3 +260,7 @@ The package now contains no first-party JavaScript. Earlier entries that name `.
 
 - Decomposed `extensions/agent-browser/lib/runtime-extension.ts` into cohesive submodules under `extensions/agent-browser/lib/extension/` (`compatibility.ts`, `artifacts.ts`, `branch-restore.ts`, `managed-resources.ts`, `state.ts`, `lifecycle.ts`, `tool-execution.ts`).
 - `extensions/agent-browser/lib/runtime-extension.ts` remains the entrypoint and re-export facade preserving every exported symbol and `resolveInstalledDocsPaths` relative depth. Behavior, schemas, tool contracts, and `agent_browser_web_search` standalone semantics are unchanged.
+
+## 2026-11-23 choco-pi patch: remove non-exempt source comments
+
+- Removed non-exempt comments across package source and test files (`d285398f`), preserving `SAFETY:` annotations, active `@ts-*` directives, MIT license headers, and shebangs. Runtime behavior and public APIs are unchanged.
