@@ -2,7 +2,6 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { obj, opt, str, type Static } from "@earendil-works/pi-schema";
 import { resolveModel } from "../../choco-pi-subagents/src/model-resolver.ts";
-import { loadEnabledModels } from "../../choco-pi-subagents/src/enabled-models.ts";
 import { buildAdvisorPrompt } from "./consult.ts";
 import { buildAdvisorExcerpt, countAdvisorCallsThisTurn } from "./excerpt.ts";
 import { resolveAdvisorManager } from "./manager-slot.ts";
@@ -40,12 +39,8 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     const owner = generation;
     const cwd = ctx.cwd;
-    // Both reads together: the preferences section shows only once the
-    // enabled-models snapshot for this cwd exists (see preferences-section.ts).
-    const [loaded] = await Promise.all([
-      loadAdvisorSettings(agentDir, cwd),
-      loadEnabledModels(cwd),
-    ]);
+    // The preferences section shows only once these settings are loaded (see preferences-section.ts).
+    const loaded = await loadAdvisorSettings(agentDir, cwd);
     if (!active || generation !== owner) return;
     settingsByCwd.set(cwd, loaded.settings);
     if (ctx.hasUI) for (const warning of loaded.warnings) ctx.ui.notify(warning, "warning");

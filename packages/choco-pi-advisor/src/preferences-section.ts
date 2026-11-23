@@ -1,18 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Input, type SettingItem } from "@earendil-works/pi-tui";
 import { modelPickerSubmenu } from "../../choco-pi-ui/extensions/zentui/model-picker.ts";
-import {
-  isModelInScope,
-  peekEnabledModels,
-  refreshEnabledModels,
-  resolveEnabledModels,
-} from "../../choco-pi-subagents/src/enabled-models.ts";
-import {
-  DEFAULT_SETTINGS,
-  EFFORTS,
-  type AdvisorSettings,
-  writeGlobalAdvisorSettings,
-} from "./settings.ts";
+import { EFFORTS, type AdvisorSettings, writeGlobalAdvisorSettings } from "./settings.ts";
 
 export const ADVISOR_PREFERENCES_PROVIDER_SYMBOL = Symbol.for(
   "choco-pi.advisor-preferences-provider",
@@ -48,18 +37,28 @@ interface AdvisorModelChoice {
   id: string;
 }
 
+function choiceKey(model: AdvisorModelChoice): string {
+  return `${model.provider}/${model.id}`.toLowerCase();
+}
+
+/**
+ * Picker choices: the current model, then each authenticated model, narrowed to
+ * the session's scoped models when a scope is active (the same source the
+ * session naming model picker uses).
+ */
 export function listAdvisorModelChoices(
-  all: readonly AdvisorModelChoice[],
+  available: readonly AdvisorModelChoice[],
   current: string,
-  allowed?: Set<string>,
+  scoped: readonly AdvisorModelChoice[] = [],
 ): string[] {
-  const candidates = [...all]
+  const allowed = new Set(scoped.map(choiceKey));
+  const candidates = [...available]
     .sort((left, right) =>
       left.provider === right.provider
         ? left.id.localeCompare(right.id)
         : left.provider.localeCompare(right.provider),
     )
-    .filter((model) => allowed === undefined || isModelInScope(model, allowed))
+    .filter((model) => allowed.size === 0 || allowed.has(choiceKey(model)))
     .map((model) => `${model.provider}/${model.id}`);
   return [...new Set([current, ...candidates])];
 }
@@ -210,20 +209,17 @@ export function registerAdvisorPreferencesProvider(
   const provider: AdvisorPreferencesProvider = {
     buildSections: (ctx) => {
       if (!isActive()) return [];
-      // The host calls buildSections synchronously, so the model list reads the
-      // enabled-models snapshot session_start loaded (src/index.ts awaits
-      // loadEnabledModels there). Until that load completes the section is
-      // omitted rather than rendered with an unfiltered model list. Each build
-      // starts a background revalidation, so an edited settings.json shows on
-      // the next open.
-      const snapshot = peekEnabledModels(ctx.cwd);
-      refreshEnabledModels(ctx.cwd);
-      if (snapshot === undefined) return [];
+      // The host calls buildSections synchronously; until session_start has
+      // loaded this cwd's advisor settings the section is omitted rather than
+      // rendered with defaults a later load would overwrite.
+      const settings = settingsByCwd.get(ctx.cwd);
+      if (settings === undefined) return [];
       surfaceAdvisorWriteError(ctx);
-      const settings = settingsByCwd.get(ctx.cwd) ?? { ...DEFAULT_SETTINGS };
-      settingsByCwd.set(ctx.cwd, settings);
-      const allowed = resolveEnabledModels(snapshot, ctx.modelRegistry);
-      const models = listAdvisorModelChoices(ctx.modelRegistry.getAll(), settings.model, allowed);
+      const models = listAdvisorModelChoices(
+        ctx.modelRegistry.getAvailable(),
+        settings.model,
+        ctx.scopedModels.map(({ model }) => model),
+      );
       return [buildAdvisorPreferencesSection({ agentDir, settings, models, ctx, isActive })];
     },
   };

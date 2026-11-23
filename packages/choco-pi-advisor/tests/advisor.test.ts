@@ -641,7 +641,7 @@ test("same-model skips do not consume the per-turn cap", () => {
   assert.equal(countAdvisorCallsThisTurn([user("question"), result("advisor", message)]), 0);
 });
 
-test("unscoped advisor model choices include the full registry in stable order", () => {
+test("unscoped advisor model choices include every available model in stable order", () => {
   assert.deepEqual(
     listAdvisorModelChoices(
       [
@@ -656,7 +656,7 @@ test("unscoped advisor model choices include the full registry in stable order",
   );
 });
 
-test("scoped advisor model choices keep only allowed case-insensitive model keys", () => {
+test("scoped advisor model choices keep only session-scoped models, case-insensitively", () => {
   assert.deepEqual(
     listAdvisorModelChoices(
       [
@@ -665,7 +665,7 @@ test("scoped advisor model choices keep only allowed case-insensitive model keys
         { provider: "alpha", id: "third" },
       ],
       "Alpha/First",
-      new Set(["alpha/first"]),
+      [{ provider: "alpha", id: "first" }],
     ),
     ["Alpha/First"],
   );
@@ -679,7 +679,7 @@ test("advisor model choices preserve the current model outside scope", () => {
         { provider: "beta", id: "second" },
       ],
       "custom/current",
-      new Set(["alpha/first"]),
+      [{ provider: "alpha", id: "first" }],
     ),
     ["custom/current", "alpha/first"],
   );
