@@ -1,14 +1,19 @@
 #!/usr/bin/env node
 
 import { spawn, execFile as execFileCallback } from "node:child_process";
-import { constants as fsConstants, realpathSync } from "node:fs";
+import { constants as fsConstants } from "node:fs";
 import { parseArgs, promisify } from "node:util";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveMacosHelperAppPath } from "../src/platform/macos/helper-path.mjs";
-import { helperSourceHash, helperSourcePaths } from "../src/platform/macos/helper-source.mjs";
+import { isJsonObject, isString, type JsonValue } from "../src/json.ts";
+import { resolveMacosHelperAppPath } from "../src/platform/macos/helper-path.ts";
+import {
+  helperSourceHash,
+  helperSourcePaths,
+  type HelperArch,
+} from "../src/platform/macos/helper-source.ts";
 
 const execFile = promisify(execFileCallback);
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -26,7 +31,7 @@ const localSigningLockPath = path.join(
 // --runtime marks the call from src/platform/macos/helper.ts; it changes nothing.
 // --arch overrides the host architecture (cross-compilation is untested).
 // --build-only --out <dir> compiles <dir>/bridge and installs nothing.
-function parseOptions(argv) {
+function parseOptions(argv: string[]) {
   return parseArgs({
     args: argv,
     options: {
@@ -42,31 +47,26 @@ function parseOptions(argv) {
 const archTriples = {
   arm64: "arm64-apple-macosx",
   x64: "x86_64-apple-macosx",
-};
+} as const satisfies Record<HelperArch, string>;
 const deploymentTarget = "14.0";
 const frameworks = ["ApplicationServices", "AppKit", "ScreenCaptureKit", "Foundation", "SwiftUI"];
 const defaultCodeSignIdentifier = "com.injaneity.pi-computer-use";
 
-function normalizeArch(arch) {
+function normalizeArch(arch: string): HelperArch {
   if (arch === "arm64" || arch === "x64") return arch;
   throw new Error(`Unsupported architecture '${arch}'. Supported: arm64, x64.`);
 }
 
-function isPrimitiveString(value) {
-  return (
-    value !== null && value !== undefined && Object(value) !== value && value.constructor === String
-  );
-}
-
-async function packageVersion() {
-  const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf8"));
-  if (!isPrimitiveString(packageJson.version) || packageJson.version.length === 0) {
+async function packageVersion(): Promise<string> {
+  const packageJson: JsonValue = JSON.parse(await fs.readFile(packageJsonPath, "utf8"));
+  const version = isJsonObject(packageJson) ? packageJson.version : undefined;
+  if (!isString(version) || version.length === 0) {
     throw new Error(`Could not read package version from ${packageJsonPath}.`);
   }
-  return packageJson.version;
+  return version;
 }
 
-async function exists(filePath) {
+async function exists(filePath: string): Promise<boolean> {
   try {
     await fs.access(filePath, fsConstants.F_OK);
     return true;
@@ -75,8 +75,8 @@ async function exists(filePath) {
   }
 }
 
-async function run(command, commandArgs) {
-  await new Promise((resolve, reject) => {
+async function run(command: string, commandArgs: string[]): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
     const child = spawn(command, commandArgs, { stdio: "inherit" });
     child.on("error", reject);
     child.on("close", (code) => {
@@ -89,12 +89,12 @@ async function run(command, commandArgs) {
   });
 }
 
-async function commandOutput(command, commandArgs) {
+async function commandOutput(command: string, commandArgs: string[]): Promise<string> {
   const { stdout } = await execFile(command, commandArgs, { encoding: "utf8" });
   return stdout;
 }
 
-async function findDeveloperIdIdentity() {
+async function findDeveloperIdIdentity(): Promise<string | undefined> {
   const output = await commandOutput("security", [
     "find-identity",
     "-p",
@@ -105,15 +105,18 @@ async function findDeveloperIdIdentity() {
   return line?.trim().split(/\s+/)[1];
 }
 
-export function parseCodeSigningIdentities(output, commonName = localCodeSignCommonName) {
+export function parseCodeSigningIdentities(
+  output: string,
+  commonName: string = localCodeSignCommonName,
+): string[] {
   return output
     .split("\n")
     .map((line) => line.match(/^\s*\d+\)\s+([0-9A-F]{40})\s+"([^"]+)"/i))
-    .filter((match) => match?.[2] === commonName)
+    .filter((match): match is RegExpMatchArray => match?.[2] === commonName)
     .map((match) => match[1].toUpperCase());
 }
 
-async function findLocalSigningIdentity() {
+async function findLocalSigningIdentity(): Promise<string | undefined> {
   // Self-signed local identities appear as CSSMERR_TP_NOT_TRUSTED and are
   // omitted by `-v`, but remain valid inputs to codesign. Match the identity
   // list directly and return its fingerprint rather than its display name.
@@ -123,22 +126,28 @@ async function findLocalSigningIdentity() {
   return parseCodeSigningIdentities(output)[0];
 }
 
-function delay(ms) {
+function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function withDirectoryLock(
-  lockPath,
-  callback,
-  { waitMs = 15_000, staleMs = 300_000, retryMs = 50 } = {},
-) {
+export interface DirectoryLockOptions {
+  waitMs?: number;
+  staleMs?: number;
+  retryMs?: number;
+}
+
+export async function withDirectoryLock<T>(
+  lockPath: string,
+  callback: () => Promise<T>,
+  { waitMs = 15_000, staleMs = 300_000, retryMs = 50 }: DirectoryLockOptions = {},
+): Promise<T> {
   const deadline = Date.now() + waitMs;
   while (true) {
     try {
       await fs.mkdir(lockPath);
       break;
     } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
       const stat = await fs.stat(lockPath).catch(() => undefined);
       if (stat && Date.now() - stat.mtimeMs > staleMs) {
         await fs.rm(lockPath, { force: true, recursive: true }).catch(() => undefined);
@@ -156,14 +165,20 @@ export async function withDirectoryLock(
   }
 }
 
-export async function ensureIdentityOnce(findIdentity, createIdentity, withLock) {
+type IdentityLookup = () => Promise<string | undefined>;
+
+export async function ensureIdentityOnce(
+  findIdentity: IdentityLookup,
+  createIdentity: IdentityLookup,
+  withLock: (callback: IdentityLookup) => Promise<string | undefined>,
+): Promise<string | undefined> {
   return (
     (await findIdentity()) ??
     (await withLock(async () => (await findIdentity()) ?? (await createIdentity())))
   );
 }
 
-async function loginKeychainPath() {
+async function loginKeychainPath(): Promise<string | undefined> {
   for (const candidate of [
     path.join(os.homedir(), "Library", "Keychains", "login.keychain-db"),
     path.join(os.homedir(), "Library", "Keychains", "login.keychain"),
@@ -173,7 +188,7 @@ async function loginKeychainPath() {
   return undefined;
 }
 
-async function ensureLocalSigningIdentity() {
+async function ensureLocalSigningIdentity(): Promise<string | undefined> {
   if (process.platform !== "darwin") return undefined;
   if (!(await commandOutput("which", ["codesign"]).catch(() => ""))) return undefined;
   const existingIdentity = await findLocalSigningIdentity();
@@ -189,7 +204,7 @@ async function ensureLocalSigningIdentity() {
   );
 }
 
-async function createLocalSigningIdentity() {
+async function createLocalSigningIdentity(): Promise<string | undefined> {
   const keychain = await loginKeychainPath();
   if (!keychain) return undefined;
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-computer-use-signing-"));
@@ -285,13 +300,16 @@ async function createLocalSigningIdentity() {
   }
 }
 
-async function resolveCodeSignIdentity() {
+async function resolveCodeSignIdentity(): Promise<string> {
   if (process.env.PI_COMPUTER_USE_CODESIGN_IDENTITY)
     return process.env.PI_COMPUTER_USE_CODESIGN_IDENTITY;
   return (await findDeveloperIdIdentity()) ?? (await ensureLocalSigningIdentity()) ?? "-";
 }
 
-async function signHelper(outputPath, identifier = defaultCodeSignIdentifier) {
+async function signHelper(
+  outputPath: string,
+  identifier: string = defaultCodeSignIdentifier,
+): Promise<string> {
   if (process.env.PI_COMPUTER_USE_NO_SIGN === "1") {
     return "unsigned";
   }
@@ -320,30 +338,36 @@ async function signHelper(outputPath, identifier = defaultCodeSignIdentifier) {
   return identity;
 }
 
-async function helperHasAdhocSignature() {
-  const output = await execFile("codesign", ["-dv", "--verbose=4", helperAppPath], {
-    encoding: "utf8",
-  }).then(
-    (result) => `${result.stdout ?? ""}\n${result.stderr ?? ""}`,
-    (error) => `${error.stdout ?? ""}\n${error.stderr ?? ""}`,
-  );
+async function helperHasAdhocSignature(): Promise<boolean> {
+  let output: string;
+  try {
+    const result = await execFile("codesign", ["-dv", "--verbose=4", helperAppPath], {
+      encoding: "utf8",
+    });
+    output = `${result.stdout}\n${result.stderr}`;
+  } catch (error) {
+    // codesign exits non-zero for an unsigned bundle; its output still counts.
+    const stdout = error instanceof Error && "stdout" in error ? String(error.stdout ?? "") : "";
+    const stderr = error instanceof Error && "stderr" in error ? String(error.stderr ?? "") : "";
+    output = `${stdout}\n${stderr}`;
+  }
   return /Signature=adhoc/i.test(output);
 }
 
-async function registerHelperApp() {
+async function registerHelperApp(): Promise<void> {
   const lsregister =
     "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
   if (!(await exists(lsregister))) return;
   await run(lsregister, ["-f", helperAppPath]).catch(() => {});
 }
 
-async function ensureHelperParentDirectory() {
+async function ensureHelperParentDirectory(): Promise<void> {
   const parentPath = path.dirname(helperAppPath);
   await fs.mkdir(parentPath, { recursive: true });
   await fs.access(parentPath, fsConstants.W_OK);
 }
 
-async function helperInfoPlist() {
+async function helperInfoPlist(): Promise<string> {
   const version = await packageVersion();
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -367,7 +391,10 @@ const infoPlistPath = path.join(helperAppPath, "Contents", "Info.plist");
  * Info.plist match is current. It is only re-signed when a real identity can
  * replace an older ad-hoc signature. Returns undefined when a build is needed.
  */
-async function refreshCurrentHelperApp(sourceHash, infoPlist) {
+async function refreshCurrentHelperApp(
+  sourceHash: string,
+  infoPlist: string,
+): Promise<boolean | undefined> {
   const existingSourceHash = await fs.readFile(helperSourceHashPath, "utf8").catch(() => undefined);
   const existingInfoPlist = await fs.readFile(infoPlistPath, "utf8").catch(() => undefined);
   if (existingSourceHash?.trim() !== sourceHash || existingInfoPlist !== infoPlist)
@@ -386,7 +413,7 @@ async function refreshCurrentHelperApp(sourceHash, infoPlist) {
   return false;
 }
 
-async function assertReplaceAllowed(allowAdhocUpdate) {
+async function assertReplaceAllowed(allowAdhocUpdate: boolean): Promise<void> {
   const signingIdentity =
     process.env.PI_COMPUTER_USE_NO_SIGN === "1" ? "-" : await resolveCodeSignIdentity();
   if (signingIdentity === "-" && (await exists(helperSourceHashPath)) && !allowAdhocUpdate) {
@@ -396,7 +423,11 @@ async function assertReplaceAllowed(allowAdhocUpdate) {
   }
 }
 
-async function installHelperApp(sourcePath, sourceHash, infoPlist) {
+async function installHelperApp(
+  sourcePath: string,
+  sourceHash: string,
+  infoPlist: string,
+): Promise<void> {
   await fs.mkdir(path.dirname(helperAppExecutablePath), { recursive: true });
   await fs.mkdir(path.dirname(helperSourceHashPath), { recursive: true });
   await fs.copyFile(sourcePath, helperAppExecutablePath);
@@ -407,7 +438,7 @@ async function installHelperApp(sourcePath, sourceHash, infoPlist) {
   await registerHelperApp();
 }
 
-async function assertSwiftcAvailable() {
+async function assertSwiftcAvailable(): Promise<void> {
   const swiftcPath = await commandOutput("xcrun", ["--find", "swiftc"]).catch(() => "");
   if (!swiftcPath.trim()) {
     throw new Error(
@@ -421,7 +452,11 @@ async function assertSwiftcAvailable() {
  * `scratchDir`. Compiler warnings are printed and do not fail the build.
  * The loose binary is not signed here; the installed app bundle is.
  */
-async function buildHelper(arch, outputPath, scratchDir) {
+async function buildHelper(
+  arch: HelperArch,
+  outputPath: string,
+  scratchDir: string,
+): Promise<void> {
   const sourcePaths = helperSourcePaths(rootDir);
   for (const sourcePath of sourcePaths) {
     if (!(await exists(sourcePath)))
@@ -450,7 +485,7 @@ async function buildHelper(arch, outputPath, scratchDir) {
   );
 }
 
-async function setup() {
+async function setup(): Promise<void> {
   if (process.platform !== "darwin") {
     throw new Error("This choco-pi fork supports helper installation on macOS only.");
   }
@@ -507,11 +542,23 @@ async function setup() {
   console.log(`[pi-computer-use] built and installed helper app (${arch}) at ${helperAppPath}`);
 }
 
-const isMain =
-  process.argv[1] &&
-  realpathSync(path.resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url));
-if (isMain)
-  setup().catch((error) => {
+async function isMainModule(): Promise<boolean> {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  const [entryPath, modulePath] = await Promise.all([
+    fs.realpath(path.resolve(entry)),
+    fs.realpath(fileURLToPath(import.meta.url)),
+  ]);
+  return entryPath === modulePath;
+}
+
+async function main(): Promise<void> {
+  try {
+    if (await isMainModule()) await setup();
+  } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
-  });
+  }
+}
+
+await main();

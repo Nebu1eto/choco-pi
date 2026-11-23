@@ -11,8 +11,8 @@ This directory is a **vendored, renamed fork** of the upstream open-source packa
 ## What was taken
 
 - `extensions/computer-use.ts`, the TypeScript extension entry.
-- All 27 files under `src/`, including the macOS, Linux, and Windows dispatch backends and the shared `helper-path.mjs` module.
-- `scripts/setup-helper.mjs`, retained at its original package-relative path for runtime macOS helper installation.
+- All 27 files under `src/`, including the macOS, Linux, and Windows dispatch backends and the shared helper-path module (`helper-path.ts` since 2026-11-23).
+- `scripts/setup-helper.mjs`, retained at its original package-relative path for runtime macOS helper installation (`scripts/setup-helper.ts` since 2026-11-23).
 - All four `native/macos/*.swift` files; three are compiled into the helper on every install (2026-10-16).
 - The arm64 and x64 loose helper binaries under `prebuilt/macos/` (about 1.1 MB total); removed from the tree on 2026-10-16 (see the last entry).
 - The upstream MIT `LICENSE` verbatim.
@@ -30,7 +30,7 @@ This directory is a **vendored, renamed fork** of the upstream open-source packa
 
 ### Runtime helper installation
 
-- Kept the package-relative runtime installer call. On macOS, `ensureComputerUseSetup` and tool execution reach the current platform's `ensureReady`; `ensureMacosReady` calls `MacosHelperClient.ensureInstalled`, which spawns `scripts/setup-helper.mjs --runtime` only when the resolved helper executable is absent.
+- Kept the package-relative runtime installer call. On macOS, `ensureComputerUseSetup` and tool execution reach the current platform's `ensureReady`; `ensureMacosReady` calls `MacosHelperClient.ensureInstalled`, which spawns `scripts/setup-helper.ts --runtime` only when the resolved helper executable is absent.
 - Removed the GitHub-release ZIP fallback from `scripts/setup-helper.mjs`, including release URL/tag constants, network fetches, timeout handling, archive extraction, SHA256SUMS parsing and verification, temporary release files, fallback warnings, and release-specific help text. The fork version would not name an upstream release, and the installer builds the helper from the committed Swift sources.
 - Retained Developer ID/local/ad-hoc signing, LaunchServices registration, and source-hash tracking. As of 2026-10-16 the pre-signed app bundle path, the loose-binary wrapping, and the `--allow-build`/`PI_COMPUTER_USE_ALLOW_BUILD` gate are removed; the script always compiles the host architecture (see the last entry).
 - Removed Windows and Linux setup/build branches, paths, Cargo invocation, prebuilt copying, and related help text from the setup script. The script now rejects non-macOS platforms explicitly.
@@ -95,7 +95,7 @@ The vendored base silently escalated to foreground delivery (app activation, win
 
 ## Updating
 
-Diff a fresh checkout of the upstream repository against base commit `de72583`, then reapply every divergence above. Preserve explicit `.ts` relative imports and the deliberate `helper-path.mjs` and `helper-source.mjs` imports. Do not restore npm lifecycle installation, network downloads, or non-macOS native helper support without an explicit fork decision.
+Diff a fresh checkout of the upstream repository against base commit `de72583`, then reapply every divergence above. Preserve explicit `.ts` relative imports; the installer and its shared modules are TypeScript (2026-11-23). Do not restore npm lifecycle installation, network downloads, or non-macOS native helper support without an explicit fork decision.
 
 ## Pi SDK target alignment
 
@@ -366,3 +366,12 @@ Standalone mode is the `choco-pi` launcher's env contract (`CHOCO_PI_STANDALONE=
 ## 2026-11-20 choco-pi patch: Pi SDK range ~1.6.0
 
 Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`), so later 1.6 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow. The e2e preflight accepts any launcher in that range.
+
+## 2026-11-23 choco-pi patch: TypeScript-only installer and helper modules (D6)
+
+The package no longer ships JavaScript. Decision D6 (TypeScript only, no exceptions) rests on the Node.js 24 floor, whose default type stripping runs `.ts` files directly. This supersedes the 2026-10-16 reason for plain JavaScript (an Electron or Bun host that does not strip types).
+
+- **Migrated.** `scripts/setup-helper.mjs` -> `scripts/setup-helper.ts`, `src/platform/macos/helper-path.mjs` -> `helper-path.ts`, `src/platform/macos/helper-source.mjs` -> `helper-source.ts`; `helper-path.d.mts` and `helper-source.d.mts` are deleted, and the types live in the modules (`MacosHelperPathOptions`, `HelperArch`, `DirectoryLockOptions`). Imports in `src/platform/macos/helper.ts` and `e2e/preflight.ts` and the `SETUP_HELPER_SCRIPT` paths in the macOS, Linux, and Windows helpers now name the `.ts` files. `tsconfig.json` includes `scripts/**/*.ts` so the installer is typechecked.
+- **Behavior preserved.** CLI flags (`--runtime`, `--allow-adhoc-update`, `--arch`, `--build-only`, `--out`, strict parsing), signing, registration, and the source-hash scheme are unchanged; `helperSourceHash` returns the same digests as the `.mjs` module for arm64 and x64 on the same tree. The package version is read through `src/json.ts` (`isJsonObject`/`isString`) instead of a local string check. The entry-point check uses `fs.promises.realpath` instead of `realpathSync`, and the script awaits `main()` at top level; a `realpath` failure now prints its message and exits 1 instead of throwing.
+- **Still synchronous.** `resolveMacosHelperAppPath` keeps its `existsSync`/`accessSync` default probes, because `helper.ts` resolves `HELPER_APP_PATH` at module load and the extension module graph cannot use top-level await.
+- **Runtime assumption.** `MacosHelperClient.ensureInstalled` still runs `process.execPath scripts/setup-helper.ts --runtime` with `ELECTRON_RUN_AS_NODE=1` and `BUN_BE_BUN=1`. That works on Node.js 24+ and Bun. An Electron host whose embedded Node.js does not strip types, or a package copy under a `node_modules` path (Node.js refuses to strip types there), cannot run the installer.

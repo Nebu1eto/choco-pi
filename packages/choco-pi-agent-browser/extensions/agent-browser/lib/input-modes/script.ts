@@ -34,9 +34,9 @@ import type {
   AgentBrowserResultCategory,
   AgentBrowserSuccessCategory,
 } from "../results/contracts.ts";
-import { AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES } from "./schema-constants.ts";
+import { AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES } from "./types.ts";
 
-export { AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES } from "./schema-constants.ts";
+export { AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES } from "./types.ts";
 export const AGENT_BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS = 120_000;
 export const AGENT_BROWSER_SCRIPT_NAMESPACE = "";
 export const AGENT_BROWSER_SCRIPT_MAX_TIMEOUT_MS = 300_000;

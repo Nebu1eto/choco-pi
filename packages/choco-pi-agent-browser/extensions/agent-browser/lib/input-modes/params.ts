@@ -3,11 +3,6 @@ import { arr, bool, int, lit, num, obj, opt, str, union } from "@earendil-works/
 import { compactDescription, stringEnum, type SchemaDescribe } from "../json-schema.ts";
 import { hostParams } from "../schema-bridge.ts";
 import {
-  ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS,
-  ELECTRON_DISCOVERY_MAX_RESULTS,
-} from "../electron/discovery-constants.ts";
-import { AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES } from "./schema-constants.ts";
-import {
   AGENT_BROWSER_ELECTRON_HANDOFFS,
   AGENT_BROWSER_ELECTRON_TARGET_TYPES,
   AGENT_BROWSER_JOB_STEP_ACTIONS,
@@ -15,7 +10,10 @@ import {
   AGENT_BROWSER_QA_LOAD_STATES,
   AGENT_BROWSER_SEMANTIC_ACTIONS,
   AGENT_BROWSER_SEMANTIC_LOCATORS,
+  AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES,
   DEFAULT_SESSION_MODE,
+  ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS,
+  ELECTRON_DISCOVERY_MAX_RESULTS,
   SOURCE_LOOKUP_MAX_WORKSPACE_FILES,
 } from "./types.ts";
 

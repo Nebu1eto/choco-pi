@@ -18,7 +18,7 @@ Vendored fork of `pi-agent-browser-native@0.5.0`. Read `VENDORED.md` before chan
 
 ## Operator commands
 
-Run the read-only doctor manually with `node scripts/doctor.ts`. Manage package configuration manually with `node scripts/config.mjs`; this private local package exposes no npm bin links.
+Run the read-only doctor manually with `node scripts/doctor.ts`. Manage package configuration manually with `node scripts/config.ts`; this private local package exposes no npm bin links.
 
 ## Verification
 

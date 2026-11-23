@@ -1,15 +1,15 @@
 /**
  * Purpose: Define the canonical upstream agent-browser capability baseline targeted by this package.
- * Responsibilities: Combine the canonical target from agent-browser-target.ts with sampled help commands and verifier/doc token expectations.
+ * Responsibilities: Combine the canonical target from extensions/agent-browser/lib/upstream-version.ts with sampled help commands and verifier/doc token expectations.
  * Scope: Versioned capability metadata only; it does not execute agent-browser or validate documentation by itself.
  * Usage: Imported by command-reference verifier, generated docs checker, and tests when upstream agent-browser is re-baselined; runtime imports compatibility-contract.ts.
  * Invariants/Assumptions: This package targets the current installed upstream agent-browser only and does not keep compatibility shims for older versions.
  * Related: `docs/SUPPORT_MATRIX.md` maps `CAPABILITY_BASELINE.inventorySections` to human docs, runtime behavior, tests, and verification gates; refresh that matrix whenever this baseline changes.
  */
 
-import { TARGET_AGENT_BROWSER_VERSION } from "./agent-browser-target.ts";
+import { TARGET_AGENT_BROWSER_VERSION } from "../extensions/agent-browser/lib/upstream-version.ts";
 
-export const CAPABILITY_BASELINE_SOURCE = "scripts/agent-browser-capability-baseline.mjs";
+export const CAPABILITY_BASELINE_SOURCE = "scripts/agent-browser-capability-baseline.ts";
 export const COMMAND_REFERENCE_DOC_PATH = "docs/COMMAND_REFERENCE.md";
 export const CAPABILITY_BASELINE_BLOCK_MARKER_PREFIX = "agent-browser-capability-baseline";
 export const COMMAND_REFERENCE_BASELINE_BLOCK_IDS = Object.freeze([
@@ -61,9 +61,17 @@ const sourceEvidence = Object.freeze({
   ]),
 });
 
-const helpCommand = (label, args) => Object.freeze({ label, args: Object.freeze(args) });
-const expectation = (help, token) => Object.freeze({ help, token });
-const section = (id, title, docTokens, upstreamExpectations = []) =>
+type UpstreamExpectationEntry = readonly [help: string, token: string];
+
+const helpCommand = (label: string, args: string[]) =>
+  Object.freeze({ label, args: Object.freeze(args) });
+const expectation = (help: string, token: string) => Object.freeze({ help, token });
+const section = (
+  id: string,
+  title: string,
+  docTokens: string[],
+  upstreamExpectations: readonly UpstreamExpectationEntry[] = [],
+) =>
   Object.freeze({
     id,
     title,
@@ -72,7 +80,7 @@ const section = (id, title, docTokens, upstreamExpectations = []) =>
       upstreamExpectations.map(([help, token]) => expectation(help, token)),
     ),
   });
-const root = (token) => ["root help", token];
+const root = (token: string): UpstreamExpectationEntry => ["root help", token];
 
 const helpCommands = Object.freeze([
   helpCommand("root help", ["--help"]),

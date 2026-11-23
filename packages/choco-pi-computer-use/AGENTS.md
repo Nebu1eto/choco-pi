@@ -5,7 +5,7 @@ Vendored fork of `@injaneity/pi-computer-use@0.5.0`. Read `VENDORED.md` before c
 ## Hard constraints
 
 - Use erasable TypeScript only: no enums, namespaces, decorators, or constructor parameter properties.
-- Every relative TypeScript import must use an explicit `.ts` suffix. Keep the deliberate `helper-path.mjs` and `helper-source.mjs` imports (shared with the plain-JavaScript installer); never use `.js` or an extensionless relative specifier.
+- Every first-party source file is Node-erasable TypeScript (`.ts`), including the installer `scripts/setup-helper.ts`; add no `.js`, `.mjs`, or `.d.mts` files. Every relative import must use an explicit `.ts` suffix; never use `.js`, `.mjs`, or an extensionless relative specifier.
 - Do not rename any tool (`find_roots`, `observe_ui`, `search_ui`, `expand_ui`, `inspect_ui`, `act_ui`, `read_text`, `wait_for`, `launch_browser`, `navigate_browser`, `evaluate_browser`) or change its schema without explicit authority.
 - No build step and no `dist/`. Pi loads `extensions/computer-use.ts` directly.
 - `typebox` (only `src/schema-bridge.ts`) and `@earendil-works/*` (including `pi-schema`, which owns validation) are host-provided peer dependencies. Exactly pin any other runtime dependency in this package's `package.json`; the root `pnpm-lock.yaml` installs it into this package's `node_modules/`.
@@ -26,14 +26,14 @@ To prove the build recipe without installing or signing anything, compile into a
 
 ```bash
 cd packages/choco-pi-computer-use
-node scripts/setup-helper.mjs --build-only --out /tmp/choco-pi/<scratch>
+node scripts/setup-helper.ts --build-only --out /tmp/choco-pi/<scratch>
 ```
 
 For an explicitly authorized manual installation on macOS only:
 
 ```bash
 cd packages/choco-pi-computer-use
-node scripts/setup-helper.mjs
+node scripts/setup-helper.ts
 ```
 
 That command changes machine state and is not part of routine verification.

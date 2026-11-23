@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { access, readFile, readlink, realpath, lstat } from "node:fs/promises";
 import { homedir, arch } from "node:os";
 import { join, resolve } from "node:path";
-import { helperSourceHash } from "../src/platform/macos/helper-source.mjs";
+import { helperSourceHash } from "../src/platform/macos/helper-source.ts";
 import { packagePath } from "./isolation.ts";
 import { isJsonObject, isString, type JsonValue } from "../src/json.ts";
 import { connect } from "node:net";

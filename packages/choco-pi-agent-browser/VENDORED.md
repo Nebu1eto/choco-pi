@@ -25,7 +25,7 @@ The fork lets choco-pi customize the extension in-tree and load its TypeScript s
 
 - Replaced upstream package metadata with private package `choco-pi-agent-browser@0.5.0-choco.0` and declared that it supersedes `pi-agent-browser-native`.
 - Changed the Pi entrypoint from compiled JavaScript to `./extensions/agent-browser/index.ts`.
-- Removed npm bin links. Operators invoke `node scripts/doctor.mjs` and `node scripts/config.mjs` manually.
+- Removed npm bin links. Operators invoke `node scripts/doctor.ts` and `node scripts/config.ts` manually (originally `.mjs`; see the TypeScript-only patch below).
 - Kept `@earendil-works/*` and `typebox` as optional peer dependencies supplied by the Pi host. No runtime dependency was vendored.
 - Replaced upstream `README.md` and `AGENTS.md` with fork-specific source-loading and maintenance guidance; added this provenance file and a root-extending `tsconfig.json`.
 - Updated package-root discovery in `index.ts` for the fork name. Reduced installed-document prompt guidance to the retained fork `README.md` and removed one link to the deleted architecture document; command and result guidance remains embedded in the tool prompt.
@@ -240,3 +240,13 @@ Under the `choco-pi` launcher, Pi itself can run on Bun (`CHOCO_PI_RUNTIME=bun`)
 Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`), so later 1.6 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
 
 - 2026-11-20: Tool result rendering forwards Pi's cached text rows as readonly.
+
+## 2026-11-23 choco-pi patch: TypeScript-only package
+
+The package now contains no first-party JavaScript. Earlier entries that name `.mjs` scripts or `scripts/agent-browser-target.d.mts` describe history; those files are gone.
+
+- `scripts/config.mjs` → `scripts/config.ts`: typed Node-erasable TypeScript. Config files are read and written with `node:fs/promises` (missing file detected by `ENOENT` instead of `existsSync`), status loads through the async `loadAgentBrowserConfig` in `lib/config.ts` instead of `loadAgentBrowserConfigStateSync`, and the file-existence summary uses async `pathExists`. Flags parse into a typed record; provider and policy arguments narrow to their literal unions. Commands, options, output lines, error messages, exit codes (0, 1, 2), file modes, and unknown-key preservation are unchanged. Help text now shows `node scripts/config.ts …` instead of the nonexistent upstream `npm exec … pi-agent-browser-config` bin. One malformed-input difference: a non-object `webSearch` or `browser` section is replaced by a fresh object rather than spread character-by-character. The entrypoint check compares `import.meta.url` with `pathToFileURL(process.argv[1])`, and failures set `process.exitCode` instead of calling `process.exit`.
+- `scripts/agent-browser-target.ts` deleted. It duplicated `lib/compatibility-contract.ts` and lacked the `TARGET_AGENT_BROWSER_VERSION` export that `scripts/agent-browser-capability-baseline.ts` imported, so the baseline module failed to load. The baseline now imports `TARGET_AGENT_BROWSER_VERSION` from `lib/upstream-version.ts`, its four helper arrows are typed, and `CAPABILITY_BASELINE_SOURCE` names the `.ts` file.
+- `tsconfig.json` includes `scripts/**/*.ts`, so `config.ts`, `doctor.ts`, and the capability baseline are typechecked directly.
+- `lib/input-modes/schema-constants.ts` and `lib/electron/discovery-constants.ts` merged into the import-free `lib/input-modes/types.ts`, which `params.ts` already loads at registration. `AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES`, `ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS`, and `ELECTRON_DISCOVERY_MAX_RESULTS` keep their values and their re-exports from `script.ts` and `electron/discovery.ts`; registration still imports neither the script runner nor Electron discovery.
+- Tests: `tests/agent-browser.config-cli.test.ts` runs the CLI against a temporary project for help, usage errors, set/clear/prefer mutations, unknown-key preservation, the 0600 file mode, and secret redaction.

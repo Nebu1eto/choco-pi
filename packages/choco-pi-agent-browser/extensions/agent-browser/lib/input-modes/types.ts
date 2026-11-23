@@ -71,6 +71,12 @@ export const SOURCE_LOOKUP_DEFAULT_MAX_WORKSPACE_FILES = 2_000;
 
 export const SOURCE_LOOKUP_MAX_WORKSPACE_FILES = 5_000;
 
+export const AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES = 64 * 1_024;
+
+export const ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS = 50;
+
+export const ELECTRON_DISCOVERY_MAX_RESULTS = 200;
+
 export type AgentBrowserSemanticActionName = (typeof AGENT_BROWSER_SEMANTIC_ACTIONS)[number];
 
 export type AgentBrowserSemanticLocator = (typeof AGENT_BROWSER_SEMANTIC_LOCATORS)[number];

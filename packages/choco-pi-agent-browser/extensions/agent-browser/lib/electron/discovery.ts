@@ -8,12 +8,12 @@ import { hasRuntimeType } from "../parsing.ts";
 import {
   ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS,
   ELECTRON_DISCOVERY_MAX_RESULTS,
-} from "./discovery-constants.ts";
+} from "../input-modes/types.ts";
 
 export {
   ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS,
   ELECTRON_DISCOVERY_MAX_RESULTS,
-} from "./discovery-constants.ts";
+} from "../input-modes/types.ts";
 
 const LINUX_ELECTRON_CANDIDATE_MAX_DEPTH = 7;
 const LINUX_ELECTRON_CANDIDATE_MAX_ENTRIES = 5_000;

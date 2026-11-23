@@ -25,7 +25,7 @@ import {
   type PlatformDiagnostics,
   type PlatformRequestSession,
 } from "../types.ts";
-import { resolveMacosHelperAppPath } from "./helper-path.mjs";
+import { resolveMacosHelperAppPath } from "./helper-path.ts";
 
 interface HelperResponseEnvelope {
   ok?: boolean;
@@ -88,7 +88,7 @@ export const HELPER_SOCKET_PATH = process.env.PI_CU_SOCKET_PATH ?? DEFAULT_HELPE
 const usingExternalHelperSocket = HELPER_SOCKET_PATH !== DEFAULT_HELPER_SOCKET_PATH;
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const SETUP_HELPER_SCRIPT = path.join(PACKAGE_ROOT, "scripts", "setup-helper.mjs");
+const SETUP_HELPER_SCRIPT = path.join(PACKAGE_ROOT, "scripts", "setup-helper.ts");
 
 /** What the helper answered on the original connection while a cancel was in flight. */
 export interface HelperInterruptedResponse {

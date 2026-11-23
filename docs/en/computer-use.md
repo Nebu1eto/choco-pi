@@ -17,7 +17,7 @@ The computer-use tools (`observe_ui`, `act_ui`, and related tools) work through 
 If `pi-computer-use.app` is missing when an interactive Pi session starts, Pi builds and installs it, which takes tens of seconds. To install it ahead of time, or to reinstall it, run this from the checkout:
 
 ```sh
-node packages/choco-pi-computer-use/scripts/setup-helper.mjs
+node packages/choco-pi-computer-use/scripts/setup-helper.ts
 ```
 
 The script prints the path it installed to. It:

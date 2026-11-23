@@ -17,7 +17,7 @@ computer-use 도구(`observe_ui`, `act_ui` 등)는 네이티브 helper 앱인 `p
 대화형 Pi 세션이 시작될 때 `pi-computer-use.app`이 없으면 Pi가 helper를 빌드해 설치합니다. 수십 초 정도 걸립니다. 미리 설치하거나 다시 설치하려면 체크아웃에서 다음 명령을 실행하세요.
 
 ```sh
-node packages/choco-pi-computer-use/scripts/setup-helper.mjs
+node packages/choco-pi-computer-use/scripts/setup-helper.ts
 ```
 
 스크립트는 설치한 경로를 출력하며, 다음 작업을 합니다.
