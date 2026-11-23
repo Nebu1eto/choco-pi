@@ -15,7 +15,7 @@ import {
   loadScratchGrants,
   scratchDirFor,
   scratchDestinations,
-} from "../../../profile/extensions/lib/scratch-path.ts";
+} from "@choco-pi/shared/scratch-path";
 import { loadHookSources } from "./config.ts";
 import { createPiHookBackends } from "./backends.ts";
 import { HookEngine } from "./engine.ts";

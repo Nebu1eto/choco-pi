@@ -6,10 +6,14 @@
  * manager, and re-reading configuration files on the compaction path would put
  * filesystem work inside a request the user is waiting on.
  */
-import type { Api, Model, RetryPolicy } from "@earendil-works/pi-ai";
-import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
-import { readEffectiveCodexConversionConfig } from "../../choco-pi-codex/src/adapter/activation/config-store.ts";
+import type { Api, Model, RetryPolicy } from "@earendil-works/pi-ai";
+import { CONFIG_DIR_NAME, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { readRegisteredCodexCompactionSnapshot } from "@choco-pi/shared/codex-compaction-contract";
+
+import { isBoolean, isRecord, isString, type RuntimeValue } from "./guards.ts";
 import type { CodexCompactionSnapshot } from "./ownership.ts";
 
 /** Everything the compaction handler reads from outside the event. */
@@ -93,9 +97,11 @@ export function readHostSettings(cwd: string): HostSettingsSnapshot {
 /**
  * Read the codex package's effective configuration for native compaction.
  *
- * Same call the codex extension makes in its own `session_start`, so both
- * packages decide from one configuration state. A missing or unreadable config
- * file yields the documented defaults rather than throwing.
+ * While the codex extension is loaded it publishes its effective-config reader
+ * on a global slot, so both packages decide from one configuration state.
+ * Without that reader (codex not loaded) the codex config files are read
+ * directly for the two fields this package needs. A missing or unreadable
+ * config file yields the codex defaults rather than throwing.
  *
  * This snapshot is the fallback for ownership: while the Codex package has
  * published its live eligibility slot (`ownership.ts` `readCodexEligibility`),
@@ -103,13 +109,79 @@ export function readHostSettings(cwd: string): HostSettingsSnapshot {
  * changes mid-session. The snapshot still feeds the derived background lanes
  * read at session start.
  */
-export function readCodexCompactionSnapshot(
+export async function readCodexCompactionSnapshot(
   cwd: string,
   projectTrusted: boolean,
-): CodexCompactionSnapshot {
-  const config = readEffectiveCodexConversionConfig({ cwd, projectTrusted });
-  return {
-    responsesCompaction: config.compaction.responsesCompaction,
-    additionalProviders: [...config.scope.additionalProviders],
-  };
+): Promise<CodexCompactionSnapshot> {
+  const registered = readRegisteredCodexCompactionSnapshot({ cwd, projectTrusted });
+  if (registered !== undefined) {
+    return {
+      responsesCompaction: registered.responsesCompaction,
+      additionalProviders: [...registered.additionalProviders],
+    };
+  }
+  return readCodexConfigFiles(cwd, projectTrusted);
+}
+
+const CODEX_CONFIG_BASENAME = "choco-pi-codex.json";
+/** Codex's own default: native Responses compaction is off until configured. */
+const DEFAULT_RESPONSES_COMPACTION = false;
+
+interface CodexConfigLayer {
+  responsesCompaction?: boolean;
+  additionalProviders?: string[];
+}
+
+async function readCodexConfigFiles(
+  cwd: string,
+  projectTrusted: boolean,
+): Promise<CodexCompactionSnapshot> {
+  const globalPath = resolve(getAgentDir(), CODEX_CONFIG_BASENAME);
+  const projectPath = resolve(cwd, CONFIG_DIR_NAME, CODEX_CONFIG_BASENAME);
+  const layers = [await readCodexConfigLayer(globalPath)];
+  if (projectTrusted && projectPath !== globalPath) {
+    layers.push(await readCodexConfigLayer(projectPath));
+  }
+  let responsesCompaction = DEFAULT_RESPONSES_COMPACTION;
+  let additionalProviders: string[] = [];
+  for (const layer of layers) {
+    if (layer.responsesCompaction !== undefined) responsesCompaction = layer.responsesCompaction;
+    if (layer.additionalProviders !== undefined) additionalProviders = layer.additionalProviders;
+  }
+  return { responsesCompaction, additionalProviders };
+}
+
+/** One config file's relevant fields; absent, unreadable, or malformed values are omitted. */
+async function readCodexConfigLayer(path: string): Promise<CodexConfigLayer> {
+  let parsed: RuntimeValue;
+  try {
+    parsed = JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    return {};
+  }
+  if (!isRecord(parsed)) return {};
+  const layer: CodexConfigLayer = {};
+  const compaction = parsed["compaction"];
+  if (isRecord(compaction)) {
+    const responsesCompaction = compaction["responsesCompaction"];
+    if (isBoolean(responsesCompaction)) layer.responsesCompaction = responsesCompaction;
+  }
+  const scope = parsed["scope"];
+  // A layer without the key keeps the lower layer's list, as codex's deep merge does.
+  if (isRecord(scope) && Object.hasOwn(scope, "additionalProviders")) {
+    layer.additionalProviders = providerList(scope["additionalProviders"]);
+  }
+  return layer;
+}
+
+/** Same normalization as codex: trimmed, lower-cased, de-duplicated non-empty strings. */
+function providerList(value: RuntimeValue): string[] {
+  if (!Array.isArray(value)) return [];
+  const providers = new Set<string>();
+  for (const entry of value) {
+    if (!isString(entry)) continue;
+    const provider = entry.trim().toLowerCase();
+    if (provider.length > 0) providers.add(provider);
+  }
+  return [...providers];
 }

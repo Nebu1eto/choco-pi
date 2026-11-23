@@ -135,20 +135,20 @@ async function checkPiVersion(): Promise<DoctorCheck> {
   let importedVersion: string | undefined;
   let identityError: string | undefined;
   try {
-    const identity = await import("../../../profile/extensions/lib/pi-runtime-identity.ts");
-    importedVersion = (await identity.readImportedSdkVersion()).version;
+    const sdk = await import("@earendil-works/pi-coding-agent");
+    importedVersion = sdk.VERSION;
   } catch (error: unknown) {
     const optionalModuleMissing =
       error instanceof Error &&
-      error.message.includes("pi-runtime-identity.ts") &&
-      /cannot find module|module not found/iu.test(error.message);
+      error.message.includes("@earendil-works/pi-coding-agent") &&
+      /cannot find (?:module|package)|module not found/iu.test(error.message);
     if (!optionalModuleMissing)
       identityError = error instanceof Error ? error.message : String(error);
   }
   if (identityError)
     return {
       status: "fail",
-      title: "Pi runtime identity helper failed to load.",
+      title: "Imported Pi SDK failed to load.",
       lines: [identityError],
     };
   const importedSupported = importedVersion

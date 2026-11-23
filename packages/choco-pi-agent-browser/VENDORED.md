@@ -254,3 +254,4 @@ The package now contains no first-party JavaScript. Earlier entries that name `.
 ## 2026-11-23: adopt @choco-pi/shared
 
 - Imports of the former profile/extensions/lib helpers (pi-paths, node-runtime, and where used lifecycle, value-guards) now resolve through the workspace package `@choco-pi/shared` instead of relative paths.
+- `scripts/doctor.ts` now imports `VERSION` directly from `@earendil-works/pi-coding-agent` instead of dynamically importing `../../../profile/extensions/lib/pi-runtime-identity.ts`.

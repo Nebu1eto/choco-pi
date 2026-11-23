@@ -32,28 +32,13 @@ const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
  * empty list.
  * Never add an entry: a new cycle is a regression to fix, not to baseline.
  */
-const KNOWN_LEGACY_CYCLES: readonly (readonly string[])[] = [
-  ["packages/choco-pi-codex", "packages/choco-pi-compaction"],
-  ["packages/choco-pi-codex", "packages/choco-pi-compaction", "packages/choco-pi-subagents"],
-  [
-    "packages/choco-pi-codex",
-    "packages/choco-pi-compaction",
-    "packages/choco-pi-subagents",
-    "profile",
-  ],
-  ["packages/choco-pi-codex", "profile"],
-  ["packages/choco-pi-compaction", "packages/choco-pi-subagents"],
-];
+const KNOWN_LEGACY_CYCLES: readonly (readonly string[])[] = [];
 
 /**
  * Package buckets that import `profile/` (as "importer -> profile").
  * Packages are meant to load without the profile tree; this list only shrinks.
  */
 const KNOWN_PACKAGE_TO_PROFILE_EDGES: readonly string[] = [
-  "packages/choco-pi-agent-browser -> profile",
-  "packages/choco-pi-codex -> profile",
-  "packages/choco-pi-hooks -> profile",
-  "packages/choco-pi-shells -> profile",
   "packages/choco-pi-subagents -> profile",
 ];
 

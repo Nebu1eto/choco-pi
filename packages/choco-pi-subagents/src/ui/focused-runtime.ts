@@ -1,4 +1,4 @@
-import { isCanonicalCodexSubscriptionModel } from "../../../choco-pi-codex/src/adapter/prompt/codex-model.ts";
+import { isCanonicalCodexSubscriptionModel } from "@choco-pi/shared/codex-model";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { AgentRecord } from "../types.ts";
 import { getSessionContextUsage, getSessionCost } from "../usage.ts";

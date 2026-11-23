@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { codexBackgroundAccountScope } from "@choco-pi/shared/codex-model";
 import { CODEX_TURN_STATE_HEADER } from "../../providers/openai-codex/turn-state.ts";
 import { compile, obj, str } from "@earendil-works/pi-schema";
 import { isNonEmptyString, isString } from "../../value-guards.ts";
@@ -154,9 +155,7 @@ export interface CodexBackgroundBackendOptions {
    */
   readonly userMessageRetentionTokens?: (() => number) | undefined;
 }
-export function codexBackgroundAccountScope(accountId: string): string {
-  return `sha256:${createHash("sha256").update(accountId).digest("hex")}`;
-}
+export { codexBackgroundAccountScope };
 function supportedScope(scope: ProviderScope): boolean {
   return (
     scope.provider === "openai-codex" &&

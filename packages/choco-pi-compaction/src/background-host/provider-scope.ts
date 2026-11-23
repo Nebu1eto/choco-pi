@@ -1,8 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { codexBackgroundAccountScope } from "../../../choco-pi-codex/src/adapter/compaction/background-v2.ts";
-import { extractAccountId } from "../../../choco-pi-codex/src/providers/openai-codex/headers.ts";
+import { codexBackgroundAccountScope, extractCodexAccountId } from "@choco-pi/shared/codex-model";
 import { ANTHROPIC_BACKEND_ID } from "../anthropic/backend.ts";
 import { authModeOf } from "../anthropic/capability.ts";
 import type { BackgroundCompactionSettings, ProviderScope } from "../background/contract.ts";
@@ -64,7 +63,7 @@ async function bindCodexAccount(
 
 function readCodexAccountId(apiKey: string): string | undefined {
   try {
-    return extractAccountId(apiKey);
+    return extractCodexAccountId(apiKey);
   } catch {
     // Not a Codex OAuth token: leave the scope unbound to an account.
     return undefined;

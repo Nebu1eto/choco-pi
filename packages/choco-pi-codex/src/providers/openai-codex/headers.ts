@@ -1,8 +1,4 @@
-import {
-  DEFAULT_CODEX_BASE_URL,
-  JWT_CLAIM_PATH,
-  OPENAI_BETA_RESPONSES_WEBSOCKETS,
-} from "./constants.ts";
+import { DEFAULT_CODEX_BASE_URL, OPENAI_BETA_RESPONSES_WEBSOCKETS } from "./constants.ts";
 import {
   CODEX_CLIENT_VERSION,
   codexTurnMetadataHeader,
@@ -12,6 +8,7 @@ import {
 } from "./client-identity.ts";
 import { RESPONSES_LITE_HEADER } from "./responses-lite.ts";
 export type { CodexTurnMetadata } from "./client-identity.ts";
+export { extractCodexAccountId as extractAccountId } from "@choco-pi/shared/codex-model";
 
 export function headersToRecord(headers: Headers): Record<string, string> {
   return Object.fromEntries(headers.entries());
@@ -44,19 +41,6 @@ export function resolveCodexRequestRouting(options: {
       ? `model=${options.model};tier=${options.serviceTier}`
       : `model=${options.model}`,
   };
-}
-
-export function extractAccountId(token: string): string {
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) throw new Error("Invalid token");
-    const payload = JSON.parse(Buffer.from(parts[1] ?? "", "base64").toString("utf8"));
-    const accountId = payload?.[JWT_CLAIM_PATH]?.chatgpt_account_id;
-    if (!accountId) throw new Error("No account ID in token");
-    return accountId;
-  } catch {
-    throw new Error("Failed to extract accountId from token");
-  }
 }
 
 export function resolveCodexUrl(baseUrl: string | undefined): string {

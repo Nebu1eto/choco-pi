@@ -5,7 +5,7 @@ import {
   createScratchWarner,
   loadScratchGrants,
   scratchDestinations,
-} from "../../../../../profile/extensions/lib/scratch-path.ts";
+} from "@choco-pi/shared/scratch-path";
 import {
   type CodeModeToolPreflight,
   type CodeModeToolPreflightCall,

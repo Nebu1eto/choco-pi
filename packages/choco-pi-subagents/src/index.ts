@@ -87,10 +87,7 @@ import {
   PRINT_WAIT_ENV,
   waitForBackgroundSettle,
 } from "@choco-pi/shared/print-settle-wait";
-import {
-  describeScratchChange,
-  setPreviousScratchDir,
-} from "../../../profile/extensions/lib/scratch-path.ts";
+import { describeScratchChange, setPreviousScratchDir } from "@choco-pi/shared/scratch-path";
 import { extractText } from "./context.ts";
 import { type RpcHandle, registerRpcHandlers } from "./cross-extension-rpc.ts";
 import { loadCustomAgents } from "./custom-agents.ts";

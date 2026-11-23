@@ -1,11 +1,7 @@
 import { defineTool, type ExtensionAPI, type Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { resolve } from "node:path";
-import {
-  createScratchWarner,
-  loadScratchGrants,
-  scratchEnv,
-} from "../../../profile/extensions/lib/scratch-path.ts";
+import { createScratchWarner, loadScratchGrants, scratchEnv } from "@choco-pi/shared/scratch-path";
 import { int, obj, opt, str } from "@earendil-works/pi-schema";
 
 import { inChildSessionContext } from "../../choco-pi-subagents/src/child-context.ts";

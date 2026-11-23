@@ -1,4 +1,4 @@
-import { isCanonicalCodexSubscriptionModel } from "../../../choco-pi-codex/src/adapter/prompt/codex-model.ts";
+import { isCanonicalCodexSubscriptionModel } from "@choco-pi/shared/codex-model";
 import type { AgentSession, MarkdownTransformer } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, Key, matchesKey, truncateToWidth, type TUI } from "@earendil-works/pi-tui";
 import type { AgentRecord } from "../types.ts";

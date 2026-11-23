@@ -48,7 +48,7 @@ import {
   scratchRootFor,
   setPreviousScratchDir,
   unregisterScratchRoot,
-} from "../../../profile/extensions/lib/scratch-path.ts";
+} from "@choco-pi/shared/scratch-path";
 import { isJsonRecord } from "@choco-pi/shared/runtime-values";
 import { createToolSearchToolDefinition } from "../../../profile/extensions/lib/tool-search-tool.ts";
 import { DEFAULT_AGENTS } from "./default-agents.ts";

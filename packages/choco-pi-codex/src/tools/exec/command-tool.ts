@@ -4,7 +4,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { keyHint, truncateToVisualLines } from "@earendil-works/pi-coding-agent";
 import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { bool, num, obj, opt, str } from "@earendil-works/pi-schema";
-import { scratchEnv } from "../../../../../profile/extensions/lib/scratch-path.ts";
+import { scratchEnv } from "@choco-pi/shared/scratch-path";
 import { hostParams } from "../../schema-bridge.ts";
 import { getPiConfiguredShellPath } from "../../adapter/prompt/runtime-shell.ts";
 import {

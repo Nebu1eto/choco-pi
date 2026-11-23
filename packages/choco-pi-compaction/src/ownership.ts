@@ -7,10 +7,7 @@ import {
   isRecord,
   readProperty,
 } from "./guards.ts";
-import {
-  isCodexTransportContext,
-  isResponsesContext,
-} from "../../choco-pi-codex/src/adapter/prompt/codex-model.ts";
+import { isCodexTransportContext, isResponsesContext } from "@choco-pi/shared/codex-model";
 
 /**
  * Which component owns the summary for the active model.
@@ -197,7 +194,7 @@ export interface OwnerOptions {
  * anything produced here; worse, cancelling here on a failure would stop the
  * codex handler from ever running. Codex's condition is
  * `responsesCompaction && (codex transport || configured extra provider)`
- * (`choco-pi-codex` `resolveCodexRuntimePlan`), where a configured extra
+ * (the Codex package's `resolveCodexRuntimePlan`), where a configured extra
  * provider is a responses-API model whose provider is listed in
  * `scope.additionalProviders`.
  *

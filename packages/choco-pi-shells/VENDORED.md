@@ -53,3 +53,4 @@ Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`),
 
 - Replaced package-local `src/stop-control.ts`, `src/lifecycle.ts`, `src/print-settle-wait.ts`, and `src/validation.ts` with `@choco-pi/shared/stop-control`, `@choco-pi/shared/lifecycle`, `@choco-pi/shared/print-settle-wait`, and `@choco-pi/shared/runtime-values`, and removed the duplicate files.
 - Replaced the hardcoded stale-context error string in `src/index.ts` with `STALE_CONTEXT_ERROR_PREFIX` from `@choco-pi/shared/lifecycle`.
+- Replaced the relative `profile/extensions/lib/scratch-path.ts` import in `src/index.ts` with `@choco-pi/shared/scratch-path`.

@@ -35,7 +35,7 @@ import {
   type DaybreakState,
 } from "./lib/daybreak-state.ts";
 import { DEFAULT_DAYBREAK, readAgentPreferencesAsync } from "./lib/agent-preferences.ts";
-import { isCanonicalCodexSubscriptionModel } from "../../packages/choco-pi-codex/src/adapter/prompt/codex-model.ts";
+import { isCanonicalCodexSubscriptionModel } from "@choco-pi/shared/codex-model";
 import { withLiveCtx } from "../../packages/choco-pi-codex/src/extension/live-context.ts";
 
 const THINKING_LEVELS: ThinkingLevel[] = [

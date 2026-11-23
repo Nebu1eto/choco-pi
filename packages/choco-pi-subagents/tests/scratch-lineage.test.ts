@@ -4,11 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after, before } from "node:test";
 
-import {
-  scratchDirFor,
-  scratchEnv,
-  scratchRootFor,
-} from "../../../profile/extensions/lib/scratch-path.ts";
+import { scratchDirFor, scratchEnv, scratchRootFor } from "@choco-pi/shared/scratch-path";
 import { registerAgents } from "../src/agent-types.ts";
 import { SUBAGENT_SCRATCH_ENTRY, runAgent } from "../src/agent-runner.ts";
 import { buildAgentPrompt } from "../src/prompts.ts";

@@ -32,12 +32,20 @@ import { compile, obj, opt, str } from "@earendil-works/pi-schema";
 import { type HostValue, isHostObject, isNonEmptyString } from "./value-guards.ts";
 
 import type {
-  AppendRecord,
   ArbitrationResult,
   CandidateState,
   CoordinatorApi,
   ReasonCode,
 } from "../../choco-pi-compaction/src/background/contract.ts";
+import {
+  publishChildCompactionProvider,
+  resolveChildCompactionProvider,
+  type ChildBoundary,
+  type ChildCompactionProvider,
+  type ChildCoordinatorAttachment,
+  type ChildCoordinatorContext,
+  type CreateChildCoordinator,
+} from "../../choco-pi-compaction/src/background/child-provider-contract.ts";
 import { ANCHOR_ENTRY_TYPE } from "../../choco-pi-compaction/src/background/entry-types.ts";
 import {
   getCoordinator,
@@ -47,60 +55,16 @@ import {
 import { refreshSessionNativeState } from "../../choco-pi-compaction/src/background-host/native-refresh.ts";
 import { isStaleContextError } from "@choco-pi/shared/lifecycle";
 
-/** Global slot the compaction extension publishes its child provider on. */
-const CHILD_COMPACTION_PROVIDER_SYMBOL: unique symbol = Symbol.for(
-  "choco-pi:compaction-child-provider",
-);
+export {
+  publishChildCompactionProvider,
+  resolveChildCompactionProvider,
+  type ChildCompactionProvider,
+  type ChildCoordinatorAttachment,
+  type ChildCoordinatorContext,
+};
+
 export const CHILD_COMPACTION_EXTENSION_NAME = "subagent-background-compaction";
 export const CHILD_OWNER_KEY_PREFIX = "subagent-child:";
-
-/** Everything a child coordinator may use; no parent session object is reachable from here. */
-export interface ChildCoordinatorContext {
-  readonly ownerKey: string;
-  readonly ownerGeneration: number;
-  readonly childSessionId: string;
-  readonly parentSessionId: string | undefined;
-  readonly mainSessionFork: boolean;
-  readonly readOnly: boolean;
-  readonly isolated: boolean;
-  /** The child's own (read-only) manager; for a /btw fork it is the in-memory fork. */
-  readonly sessionManager: ExtensionContext["sessionManager"];
-  readonly model: ExtensionContext["model"];
-  /** Persists through the child's `pi.appendEntry`; refused after detachment. */
-  readonly appendRecord: AppendRecord;
-  /**
-   * Appends a model-invisible anchor entry through the child's `pi.appendEntry`
-   * and returns its entry ID; returns "" (append nothing) after detachment.
-   */
-  readonly appendAnchor: () => string;
-  /** Aborted when the attachment is detached (cancel, timeout, disposal). */
-  readonly signal: AbortSignal;
-}
-
-interface ChildBoundary {
-  readonly kind: "turn_end" | "agent_before_settle";
-  readonly contextUsage: ContextUsage | undefined;
-}
-
-/** Returned by the provider: the coordinator plus optional runner-only observation hooks. */
-export interface ChildCoordinatorAttachment {
-  readonly coordinator: CoordinatorApi;
-  /** Synchronous boundary observation (threshold scheduling); never adopts. */
-  observeBoundary?(boundary: ChildBoundary): void;
-  /** Called once per committed checkpoint this bridge proposed, from the SDK `entry_appended` event. */
-  acknowledgeCommit?(entry: CompactionEntry): void;
-}
-
-type CreateChildCoordinator = (
-  context: ChildCoordinatorContext,
-) => ChildCoordinatorAttachment | undefined | Promise<ChildCoordinatorAttachment | undefined>;
-
-export interface ChildCompactionProvider {
-  readonly version: 1;
-  /** Background-compaction feature switch, read once per spawn. */
-  isEnabled(): boolean;
-  createChildCoordinator: CreateChildCoordinator;
-}
 
 /** Same shape as the runner's `onCompaction` callback. */
 interface ChildAdoptionInfo {
@@ -147,11 +111,6 @@ interface ChildCompactionBridge {
 // Foreign slots are host objects (class instances, accessors), so they are
 // probed with property reads rather than pi-schema, which sees only enumerable
 // own properties. Callables are checked structurally; signatures are not.
-interface ProviderCandidate {
-  version?: HostValue;
-  isEnabled?: HostValue;
-  createChildCoordinator?: HostValue;
-}
 interface AttachmentCandidate {
   coordinator?: CoordinatorCandidate | HostValue;
   observeBoundary?: HostValue;
@@ -211,16 +170,6 @@ function registerAdoptionOwner(sessionId: string, owner: ChildAdoptionOwner): ()
   return isUnregister(unregister) ? () => unregister() : () => {};
 }
 
-function isProvider<T extends HostValue>(value: T): value is T & ChildCompactionProvider {
-  if (!isHostObject(value)) return false;
-  const provider: ProviderCandidate = value;
-  return (
-    provider.version === 1 &&
-    provider.isEnabled instanceof Function &&
-    provider.createChildCoordinator instanceof Function
-  );
-}
-
 function isAttachment<T extends HostValue>(value: T): value is T & ChildCoordinatorAttachment {
   if (!isHostObject(value)) return false;
   const attachment: AttachmentCandidate = value;
@@ -234,36 +183,6 @@ function isAttachment<T extends HostValue>(value: T): value is T & ChildCoordina
     (attachment.observeBoundary === undefined || attachment.observeBoundary instanceof Function) &&
     (attachment.acknowledgeCommit === undefined || attachment.acknowledgeCommit instanceof Function)
   );
-}
-
-/** Resolve a published, structurally valid provider; foreign or corrupt slots are ignored. */
-export function resolveChildCompactionProvider(): ChildCompactionProvider | undefined {
-  const found: unknown = Object.getOwnPropertyDescriptor(
-    globalThis,
-    CHILD_COMPACTION_PROVIDER_SYMBOL,
-  )?.value;
-  return isProvider(found) ? found : undefined;
-}
-
-/**
- * Publish the provider; the compaction extension calls this. Returns an
- * unpublish callback that only removes this instance.
- */
-export function publishChildCompactionProvider(provider: ChildCompactionProvider): () => void {
-  if (!isProvider(provider)) throw new Error("Invalid child compaction provider");
-  Object.defineProperty(globalThis, CHILD_COMPACTION_PROVIDER_SYMBOL, {
-    value: provider,
-    configurable: true,
-  });
-  return () => {
-    const current: unknown = Object.getOwnPropertyDescriptor(
-      globalThis,
-      CHILD_COMPACTION_PROVIDER_SYMBOL,
-    )?.value;
-    if (current === provider) {
-      Reflect.deleteProperty(globalThis, CHILD_COMPACTION_PROVIDER_SYMBOL);
-    }
-  };
 }
 
 const bridges = new WeakMap<AgentSession, ChildCompactionBridge>();

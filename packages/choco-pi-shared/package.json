@@ -7,11 +7,14 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./codex-compaction-contract": "./src/codex-compaction-contract.ts",
+    "./codex-model": "./src/codex-model.ts",
     "./lifecycle": "./src/lifecycle.ts",
     "./node-runtime": "./src/node-runtime.ts",
     "./pi-paths": "./src/pi-paths.ts",
     "./print-settle-wait": "./src/print-settle-wait.ts",
     "./runtime-values": "./src/runtime-values.ts",
+    "./scratch-path": "./src/scratch-path.ts",
     "./stop-control": "./src/stop-control.ts",
     "./symbols": "./src/symbols.ts",
     "./value-guards": "./src/value-guards.ts"

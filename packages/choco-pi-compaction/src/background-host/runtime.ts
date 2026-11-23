@@ -5,7 +5,7 @@ import type {
   SessionBeforeCompactEvent,
 } from "@earendil-works/pi-coding-agent";
 
-import type { ChildCompactionProvider } from "../../../choco-pi-subagents/src/child-compaction-bridge.ts";
+import type { ChildCompactionProvider } from "../background/child-provider-contract.ts";
 import type { LaneRecordInput, LaneTransitionMemo } from "../background/lane-journal.ts";
 import type { LoadedBackgroundSettings } from "../background/settings.ts";
 import { registryAvailability } from "../background/registry.ts";

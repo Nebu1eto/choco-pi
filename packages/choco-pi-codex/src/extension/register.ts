@@ -19,6 +19,7 @@ import { resolveCodexRuntimePlan } from "../adapter/activation/runtime-plan.ts";
 import { captureActiveProviderSystemPrompt } from "../adapter/provider-prompt-capture.ts";
 import { withLiveCtx } from "./live-context.ts";
 import { createCodexCompactionEligibility } from "./compaction-eligibility.ts";
+import { publishCodexCompactionConfigReaderIfVacant } from "./compaction-config-reader.ts";
 import { assertCodexRequestAllowed } from "./background-compaction.ts";
 import { registerCodexWebRunSearchAdapter } from "./search-adapter.ts";
 import {
@@ -40,16 +41,24 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
     findModel: () => findModel,
   });
   let unpublishBudget: (() => void) | undefined = publishNativeCompactionBudgetHook(budgetHook);
+  // Published once registration succeeds; withdrawn at shutdown, re-published at session start.
+  let configReaderPublished = false;
+  let unpublishConfigReader: (() => void) | undefined;
   pi.on("session_start", (_event, ctx) => {
     const registry = ctx.modelRegistry;
     findModel = (provider, id) => registry.find(provider, id);
     unpublishBudget ??= publishNativeCompactionBudgetHook(budgetHook);
+    if (configReaderPublished)
+      unpublishConfigReader ??= publishCodexCompactionConfigReaderIfVacant();
   });
   pi.on("session_shutdown", () => {
     findModel = undefined;
     const unpublish = unpublishBudget;
     unpublishBudget = undefined;
     unpublish?.();
+    const unpublishReader = unpublishConfigReader;
+    unpublishConfigReader = undefined;
+    unpublishReader?.();
   });
   const nativeFeatures = registerNativeFeatures(
     pi,
@@ -157,7 +166,12 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
     });
     registerCodexEvents(pi, runtime, tools, ui, codeMode, proxyProvider, eligibility);
     eligibility.publish();
+    configReaderPublished = true;
+    unpublishConfigReader = publishCodexCompactionConfigReaderIfVacant();
   } catch (registrationError) {
+    configReaderPublished = false;
+    unpublishConfigReader?.();
+    unpublishConfigReader = undefined;
     eligibility.unpublish();
     searchAdapter.unregister();
     unpublishBudget?.();

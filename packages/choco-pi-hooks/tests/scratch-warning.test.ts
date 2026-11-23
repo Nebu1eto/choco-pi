@@ -13,7 +13,7 @@ import {
   registerScratchRoot,
   scratchDirFor,
   unregisterScratchRoot,
-} from "../../../profile/extensions/lib/scratch-path.ts";
+} from "@choco-pi/shared/scratch-path";
 import chocoPiHooks from "../src/extension.ts";
 import { HookEngine, mergeResults } from "../src/engine.ts";
 import { isJsonRecord, isString, type JsonRecord } from "@choco-pi/shared/runtime-values";

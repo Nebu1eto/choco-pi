@@ -6,7 +6,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
-import type { ChildCompactionProvider } from "../../../choco-pi-subagents/src/child-compaction-bridge.ts";
+import type { ChildCompactionProvider } from "../background/child-provider-contract.ts";
 import { ANTHROPIC_BACKEND_ID } from "../anthropic/backend.ts";
 import {
   AnthropicCapabilityGate,
@@ -602,21 +602,22 @@ function locationOf(ctx: ExtensionContext): SettingsLocation {
  * Codex's current `responsesCompaction`, re-read so an OpenAI-row change made
  * earlier in this session is seen; the session-start snapshot when unreadable.
  */
-function codexServerSide(rt: HostRuntime, location: SettingsLocation): boolean {
+async function codexServerSide(rt: HostRuntime, location: SettingsLocation): Promise<boolean> {
   try {
-    return readCodexCompactionSnapshot(location.cwd, location.projectTrusted).responsesCompaction;
+    const snapshot = await readCodexCompactionSnapshot(location.cwd, location.projectTrusted);
+    return snapshot.responsesCompaction;
   } catch {
     return rt.readState().codexCompaction?.responsesCompaction ?? false;
   }
 }
 
-function lanesFor(
+async function lanesFor(
   rt: HostRuntime,
   location: SettingsLocation,
   anthropicMode: AnthropicCompactionMode,
-): BackgroundLaneSwitches {
+): Promise<BackgroundLaneSwitches> {
   return deriveBackgroundLanes({
-    openaiServerSide: codexServerSide(rt, location),
+    openaiServerSide: await codexServerSide(rt, location),
     anthropicServerSide: anthropicMode === "server-side",
   });
 }
@@ -689,7 +690,7 @@ async function applyEnabled(
     const location = locationOf(change.commandCtx);
     await writeGlobalBackgroundSettings(location.agentDir, {
       enabled: change.enabled,
-      lanes: lanesFor(rt, location, rt.anthropicMode),
+      lanes: await lanesFor(rt, location, rt.anthropicMode),
     });
     const ctx = rt.parent?.ctx;
     if (ctx === undefined) return;
@@ -722,7 +723,7 @@ async function applyAnthropicMode(
     if (lifecycle === rt.lifecycle) rt.anthropicMode = change.mode;
     try {
       await writeGlobalBackgroundSettings(location.agentDir, {
-        lanes: lanesFor(rt, location, change.mode),
+        lanes: await lanesFor(rt, location, change.mode),
         onlyIfExists: true,
       });
     } catch (cause) {

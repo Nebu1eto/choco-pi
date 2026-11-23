@@ -6,7 +6,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
   publishChildCompactionProvider,
   type ChildCompactionProvider,
-} from "../../../choco-pi-subagents/src/child-compaction-bridge.ts";
+} from "../background/child-provider-contract.ts";
 import { ANTHROPIC_BACKEND_ID } from "../anthropic/backend.ts";
 import { readAnthropicCompactionMode, readOpaqueHistoryMode } from "../anthropic/mode.ts";
 import { findActiveAnthropicCheckpoint } from "../anthropic/replay-rewrite.ts";

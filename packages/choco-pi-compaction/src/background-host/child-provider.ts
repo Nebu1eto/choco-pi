@@ -4,7 +4,7 @@ import type {
   ChildCompactionProvider,
   ChildCoordinatorAttachment,
   ChildCoordinatorContext,
-} from "../../../choco-pi-subagents/src/child-compaction-bridge.ts";
+} from "../background/child-provider-contract.ts";
 import type { ProviderScope } from "../background/contract.ts";
 import type { LaneRecordInput } from "../background/lane-journal.ts";
 import { backgroundCompactionActive } from "../background/settings.ts";

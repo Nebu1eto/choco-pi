@@ -172,14 +172,21 @@ export default function registerCompaction(
   };
   const readState = (): CompactionSessionState => state;
 
-  pi.on("session_start", (_event, ctx) => {
+  pi.on("session_start", async (_event, ctx) => {
     const host = injectedRetryPolicy === undefined ? readHostSettings(ctx.cwd) : undefined;
+    const cwd = ctx.cwd;
+    const projectTrusted = ctx.isProjectTrusted();
+    const generation = state.generation + 1;
     state = {
-      generation: state.generation + 1,
+      generation,
       retryPolicy: injectedRetryPolicy ?? host?.retryPolicy,
-      codexCompaction: readCodexCompactionSnapshot(ctx.cwd, ctx.isProjectTrusted()),
+      codexCompaction: undefined,
       compactionPolicy: injectedCompactionPolicy ?? host?.compactionPolicy,
     };
+    const codexCompaction = await readCodexCompactionSnapshot(cwd, projectTrusted);
+    // A later start or a shutdown superseded this one while the config was read.
+    if (state.generation !== generation) return;
+    state = { ...state, codexCompaction };
   });
   pi.on("session_shutdown", () => {
     state = { ...state, generation: state.generation + 1 };

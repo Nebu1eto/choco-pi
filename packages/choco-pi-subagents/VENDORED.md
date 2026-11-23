@@ -2564,3 +2564,9 @@ Duplicated contracts and root-profile utility imports now come from the `@choco-
 - `src/child-compaction-bridge.ts`, `src/ui/fleet-panel.ts`: `isStaleContextError` comes from `@choco-pi/shared/lifecycle` instead of `choco-pi-compaction/src/lifecycle.ts`.
 - `src/agent-runner.ts`, `src/verdict-record.ts`: `@choco-pi/shared/runtime-values` replaces `profile/extensions/lib/runtime-values.ts`. `src/memory.ts`, `src/skill-loader.ts`: `@choco-pi/shared/pi-paths` replaces `profile/extensions/lib/pi-paths.ts` (see "standalone state paths").
 - Other `profile/extensions/lib/*` imports (scratch-path, tool-search-tool, verdict-blocks, verdict-summary, changes/terminal-text, and test-only fast-mode-state, daybreak-state, tool-surface, usage-limit) are not shared contracts and are unchanged.
+
+## 2026-11-23 choco-pi patch: break `choco-pi-codex` edge & adopt shared `scratch-path` and `child-provider-contract` (Wave 2B)
+
+- `src/ui/focus-mode.ts`, `src/ui/focused-runtime.ts`: import `isCanonicalCodexSubscriptionModel` from `@choco-pi/shared/codex-model` instead of `../../../choco-pi-codex/src/adapter/prompt/codex-model.ts`, eliminating the `choco-pi-subagents -> choco-pi-codex` source dependency.
+- `src/child-compaction-bridge.ts`: import and re-export `ChildCompactionProvider`, `ChildCoordinatorAttachment`, `ChildCoordinatorContext`, `publishChildCompactionProvider`, and `resolveChildCompactionProvider` (plus internal types `ChildBoundary` and `CreateChildCoordinator`) from `../../choco-pi-compaction/src/background/child-provider-contract.ts`, removing the duplicate local definitions.
+- `src/agent-manager.ts`, `src/agent-runner.ts`, `src/index.ts`, `tests/scratch-lineage.test.ts`: import scratch-path helpers from `@choco-pi/shared/scratch-path` instead of `../../../profile/extensions/lib/scratch-path.ts`.

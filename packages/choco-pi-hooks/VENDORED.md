@@ -181,3 +181,4 @@ Pi SDK dependencies move from the range `~1.5.2` to `~1.6.0` (`>=1.6.0 <1.7.0`),
 - Replaced package-local `src/stop-control.ts` with `@choco-pi/shared/stop-control` and removed the duplicate file.
 - Replaced package-local `src/lifecycle.ts` with `@choco-pi/shared/lifecycle` and removed the duplicate file.
 - Replaced the relative `profile/extensions/lib/runtime-values.ts` import in `tests/scratch-warning.test.ts` with `@choco-pi/shared/runtime-values`.
+- Replaced the relative `profile/extensions/lib/scratch-path.ts` imports in `src/extension.ts` and `tests/scratch-warning.test.ts` with `@choco-pi/shared/scratch-path`.

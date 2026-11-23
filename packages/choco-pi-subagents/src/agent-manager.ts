@@ -28,10 +28,7 @@ import {
   type ToolActivity,
 } from "./agent-runner.ts";
 import { unregisterChildSessionId } from "./child-context.ts";
-import {
-  scratchDirForSession,
-  unregisterScratchRoot,
-} from "../../../profile/extensions/lib/scratch-path.ts";
+import { scratchDirForSession, unregisterScratchRoot } from "@choco-pi/shared/scratch-path";
 import { cleanupChildSessionOwner, emitChildSessionShutdown } from "./child-session-cleanup.ts";
 import { setSessionFastMode, snapshotFastMode } from "./fast-mode-bridge.ts";
 import { setSessionDaybreak, snapshotDaybreak } from "./daybreak-bridge.ts";
