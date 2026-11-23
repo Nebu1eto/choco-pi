@@ -473,3 +473,21 @@ Standalone mode is the `choco-pi` launcher's env contract (`CHOCO_PI_STANDALONE=
 ## 2026-11-23: adopt @choco-pi/shared
 
 - Imports of the former profile/extensions/lib helpers (pi-paths, node-runtime, and where used lifecycle, value-guards) now resolve through the workspace package `@choco-pi/shared` instead of relative paths.
+
+## 2026-11-23 choco-pi patch: decompose `session.ts` and `agent.ts` (Wave 3 / D5)
+
+D5 puts this vendored adapter in scope for structural decomposition; it no longer tracks upstream file layout. Protocol behavior and every public export are unchanged. `session.ts` re-exports `SessionManager`, the live-session constants, `boundedSessionIdleMs` and `sanitizeExtensionUiText`, and `agent.ts` re-exports `readPiVersion`, `findPiChangelog` and `startupInfoAgentDirs`.
+
+- `src/acp/session.ts` (2,213 → 990 lines) keeps `PiAcpSession`, `AcpConnection` and `StopReason`. New modules:
+  - `session-extension-ui.ts`: extension UI sanitizing, bounds, and the `ExtensionUiBridge` class, which holds the former `handleExtension*`, permission, settle and native-diff methods. The session constructs it with its own `pendingExtensionUi` map and tombstones, shared by reference so tests that read those fields keep working, and with live getters for the extension UI generation and active flag.
+  - `session-tool-calls.ts`: tool-call locations, bounded raw input, metadata, tool kinds, and the pure `bashToolCallUpdate` and `bashOutputUpdate` builders. The session still records bash ids and output snapshots before it emits.
+  - `session-manager.ts`: `SessionManager` and the live-session limits. It imports `PiAcpSession` from `session.ts`, which re-exports it. That cycle is evaluation-safe because neither module uses the other's values at top level.
+  - `session-turns.ts`: turn records and `settleTurn`.
+- `src/acp/agent.ts` (2,019 → 1,035 lines) keeps `PiAcpAgent`, `buildStartupInfo` and `readNearestPackageJson`. New modules:
+  - `agent-builtin-commands.ts`: `builtinAvailableCommands` and `runBuiltinCommand`, the former inline builtin branch of `promptActive`. Generation checks run through an `assertCurrent` callback, and an unmatched builtin still falls through to `session.prompt`.
+  - `agent-command-catalogs.ts`: `SessionCommandCatalogs`, with the same process-ownership rule as before.
+  - `agent-history-replay.ts`: `replayPiMessages`, used by `session/load`.
+  - `agent-session-config.ts`: model and thinking state, and config options.
+  - `agent-pi-version.ts`: version, update-notice and changelog probes.
+  - `agent-rpc.ts`: `missingPiCapability`, `attemptRpc` and `failureText`.
+- `/export` now checks the session file with async `pathExists` and reads it with `fs/promises` `readFile` instead of `existsSync` and `readFileSync`. Outcomes and messages are unchanged. No blocking call moved into a new file. The remaining `*Sync` sites (startup info, the package manifest, session-file deletion, edit snapshots) are unchanged pre-existing code in `agent.ts` and `session.ts`.

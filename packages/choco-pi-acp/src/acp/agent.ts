@@ -1,86 +1,70 @@
+import { PiRpcProcess, PiRpcSpawnError } from "../pi-rpc/process.ts";
+import { parseSlashInvocation } from "./pi-commands.ts";
 import {
-  RequestError,
-  type Agent as ACPAgent,
-  type AuthenticateRequest,
-  type CancelNotification,
-  type InitializeRequest,
-  type InitializeResponse,
-  type ListSessionsRequest,
-  type ListSessionsResponse,
   type LoadSessionRequest,
-  type LoadSessionResponse,
+  type InitializeRequest,
+  type ListSessionsRequest,
+  type Agent as ACPAgent,
+  RequestError,
+  type InitializeResponse,
   type NewSessionRequest,
+  type AuthenticateRequest,
   type PromptRequest,
   type PromptResponse,
-  type SessionConfigOption,
-  type SessionInfo,
-  type SetSessionConfigOptionRequest,
-  type SetSessionConfigOptionResponse,
-  type SetSessionModeRequest,
-  type SetSessionModeResponse,
   type StopReason,
+  type CancelNotification,
+  type ListSessionsResponse,
+  type SessionInfo,
+  type LoadSessionResponse,
   type DeleteSessionRequest,
   type DeleteSessionResponse,
+  type SetSessionModeRequest,
+  type SetSessionModeResponse,
+  type SetSessionConfigOptionRequest,
+  type SetSessionConfigOptionResponse,
 } from "@agentclientprotocol/sdk";
-import { getAuthMethods } from "./auth.ts";
 import {
-  PI_ACP_MAX_LIVE_SESSIONS,
   SessionManager,
   type AcpConnection,
   type PiAcpSession,
+  PI_ACP_MAX_LIVE_SESSIONS,
 } from "./session.ts";
 import { SessionStore } from "./session-store.ts";
-import { PiRpcProcess, type PiRpcProcessLike, PiRpcSpawnError } from "../pi-rpc/process.ts";
-import { type BoundaryValue, errorMessage, isString } from "../boundary.ts";
 import {
-  arrayField,
-  booleanField,
   recordField,
+  booleanField,
   stringField,
-  type PiAvailableModels,
   type PiCommands,
-  type PiMessages,
   type PiState,
+  type PiAvailableModels,
+  type PiMessages,
+  arrayField,
 } from "../pi-rpc/protocol.ts";
-import { listPiSessions, findPiSession } from "./pi-sessions.ts";
-import { normalizePiAssistantText, normalizePiMessageText } from "./translate/pi-messages.ts";
-import { toolResultToText } from "./translate/pi-tools.ts";
-import {
-  bashCommand,
-  bashExitCode,
-  bashResultText,
-  bashTerminalContent,
-  bashTerminalExitMeta,
-  bashTerminalInfoMeta,
-  bashTerminalOutputMeta,
-  isBashTool,
-} from "./translate/bash.ts";
-import { promptToPiMessage } from "./translate/prompt.ts";
-import { loadSlashCommands, parseCommandArgs } from "./slash-commands.ts";
-import { getAgentDir, getEnableSkillCommands, getQuietStartup } from "./pi-settings.ts";
-import {
-  buildCommandCatalog,
-  parseSlashInvocation,
-  SessionCommandCatalog,
-  type CommandCatalogEntry,
-} from "./pi-commands.ts";
+import { type BoundaryValue, isString } from "../boundary.ts";
+import { getEnableSkillCommands, getQuietStartup, getAgentDir } from "./pi-settings.ts";
+import { existsSync, unlinkSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { findPiSession, listPiSessions } from "./pi-sessions.ts";
+import { getAuthMethods } from "./auth.ts";
+import { SessionCommandCatalogs } from "./agent-command-catalogs.ts";
+import { replayPiMessages } from "./agent-history-replay.ts";
+import { runBuiltinCommand } from "./agent-builtin-commands.ts";
+import { isAbsolute, join, basename, dirname } from "node:path";
+import { loadSlashCommands } from "./slash-commands.ts";
+import { missingPiCapability, attemptRpc, failureText } from "./agent-rpc.ts";
 import { maybeAuthRequiredError } from "./auth-required.ts";
-import { isAbsolute } from "node:path";
-import { existsSync, readFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { access, readFile, realpath } from "node:fs/promises";
-import type { AvailableCommand } from "@agentclientprotocol/sdk";
-import { join, dirname, basename } from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { piAgentDir, standaloneHome } from "@choco-pi/shared/pi-paths";
-import { resolvePiLaunch } from "../pi-rpc/command.ts";
+import {
+  getSessionConfiguration,
+  setSessionModel,
+  emitConfigOptionsUpdate,
+  isThinkingLevel,
+  MODEL_CONFIG_ID,
+  THOUGHT_LEVEL_CONFIG_ID,
+} from "./agent-session-config.ts";
+import { promptToPiMessage } from "./translate/prompt.ts";
+import { fileURLToPath } from "node:url";
+import { probePiStartup, startupInfoAgentDirs } from "./agent-pi-version.ts";
 
-type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-type AdvertisedModel = {
-  modelId: string;
-  name: string;
-  description?: string | null;
-};
+export { readPiVersion, findPiChangelog, startupInfoAgentDirs } from "./agent-pi-version.ts";
 
 /** The `name`/`version` pair read out of the nearest package manifest. */
 type PackageIdentity = {
@@ -92,54 +76,6 @@ type PackageIdentity = {
 type StoredSessionLocation = {
   cwd: string;
   sessionFile: string;
-};
-
-/** One selectable reasoning-effort entry advertised to the client. */
-type SessionModeDescriptor = {
-  id: string;
-  name: string;
-  description?: string | null;
-};
-
-/** Reasoning-effort options plus the level Pi currently applies. */
-type ThinkingState = {
-  availableModes: SessionModeDescriptor[];
-  currentModeId: string;
-};
-
-/** Advertised models plus the model Pi currently applies. */
-type ModelState = {
-  availableModels: AdvertisedModel[];
-  currentModelId: string;
-};
-
-/** The model and reasoning selections a config-option list is rendered from. */
-type SessionConfigState = {
-  models: ModelState | null;
-  modes: ThinkingState;
-};
-
-/** A full session configuration snapshot returned to the client. */
-type SessionConfiguration = SessionConfigState & {
-  configOptions: SessionConfigOption[];
-};
-
-/** Pi RPC answers already fetched by the caller, so configuration does not re-probe. */
-type PiPreloadedState = {
-  state?: PiState | null;
-  availableModels?: PiAvailableModels | null;
-};
-
-/** A command catalog together with the Pi process that produced it. */
-type CommandCatalogOwner = {
-  proc: PiRpcProcessLike;
-  catalog: SessionCommandCatalog;
-};
-
-/** One RPC probe settled without rejecting the surrounding parallel startup batch. */
-type RpcAttempt<Value> = {
-  value: Value | null;
-  error: BoundaryValue;
 };
 
 /** Construction options for {@link PiAcpAgent}. */
@@ -176,28 +112,6 @@ export type SessionManagerLike = Pick<
 /** The persistent session-index operations used by the agent. */
 export type SessionStoreLike = Pick<SessionStore, "get" | "upsert" | "delete">;
 
-/** Report a Pi RPC capability the current session process does not expose. */
-function missingPiCapability(name: string): Error {
-  return new Error(`pi ${name} is unavailable for this session`);
-}
-
-/** Read the message of a rejected promise or thrown value the way `String(e?.message ?? e)` did. */
-function failureText(failure: BoundaryValue): string {
-  return errorMessage(failure);
-}
-
-/** Settle an RPC probe while retaining its typed success payload. */
-async function attemptRpc<Value>(request: Promise<Value>): Promise<RpcAttempt<Value>> {
-  try {
-    return { value: await request, error: null };
-  } catch (error) {
-    // SAFETY: promise rejections may contain any JavaScript value; BoundaryValue is the
-    // repository's recursive undecoded boundary contract and is inspected only by decoders.
-    const failure = error as BoundaryValue;
-    return { value: null, error: failure };
-  }
-}
-
 /** Decode Zed's terminal-auth capability from ACP's open metadata object. */
 function clientSupportsTerminalAuthMeta(params: InitializeRequest): boolean {
   const capabilities = recordField(params, "clientCapabilities");
@@ -211,55 +125,6 @@ function listSessionsCwd(params: ListSessionsRequest): string | undefined {
   return cwd?.trim() ? cwd : undefined;
 }
 
-const MODEL_CONFIG_ID = "model";
-const THOUGHT_LEVEL_CONFIG_ID = "thought_level";
-
-function builtinAvailableCommands(): AvailableCommand[] {
-  return [
-    {
-      name: "compact",
-      description: "Manually compact the session context",
-      input: { hint: "optional custom instructions" },
-    },
-    {
-      name: "autocompact",
-      description: "Toggle automatic context compaction",
-      input: { hint: "on|off|toggle" },
-    },
-    {
-      name: "export",
-      description: "Export session to an HTML file in the session cwd",
-    },
-    {
-      name: "session",
-      description: "Show session stats (messages, tokens, cost, session file)",
-    },
-    {
-      name: "name",
-      description: "Set session display name",
-      input: { hint: "<name>" },
-    },
-    {
-      name: "steering",
-      description:
-        "Get/set pi steering message delivery mode (how queued steering messages are delivered)",
-      input: { hint: "(no args to show) all | one-at-a-time" },
-    },
-    {
-      name: "follow-up",
-      description:
-        "Get/set pi follow-up message delivery mode (how queued follow-up messages are delivered)",
-      input: { hint: "(no args to show) all | one-at-a-time" },
-    },
-    {
-      name: "changelog",
-      description: "Show pi changelog",
-    },
-  ];
-}
-
-import { fileURLToPath } from "node:url";
-
 const pkg = readNearestPackageJson(import.meta.url);
 
 export class PiAcpAgent implements ACPAgent {
@@ -267,7 +132,7 @@ export class PiAcpAgent implements ACPAgent {
   private readonly sessions: SessionManagerLike;
   private readonly store: SessionStoreLike = new SessionStore();
   private readonly restoringSessions = new Map<string, Promise<PiAcpSession>>();
-  private readonly commandCatalogs = new Map<string, CommandCatalogOwner>();
+  private readonly commandCatalogs = new SessionCommandCatalogs();
   private readonly piCommand?: string;
   private generation = 0;
   private active = true;
@@ -304,23 +169,6 @@ export class PiAcpAgent implements ACPAgent {
     }
   }
 
-  private replaceCommandCatalog(
-    sessionId: string,
-    proc: PiRpcProcessLike,
-    data: BoundaryValue,
-    enableSkillCommands: boolean,
-  ): SessionCommandCatalog {
-    const owned = this.commandCatalogs.get(sessionId);
-    const catalog = owned?.proc === proc ? owned.catalog : new SessionCommandCatalog();
-    catalog.replace(
-      buildCommandCatalog(data, builtinAvailableCommands(), {
-        enableSkillCommands,
-      }),
-    );
-    this.commandCatalogs.set(sessionId, { proc, catalog });
-    return catalog;
-  }
-
   private async publishCommandCatalog(session: PiAcpSession, data?: BoundaryValue): Promise<void> {
     const generation = this.generation;
     const sessionId = session.sessionId;
@@ -339,7 +187,7 @@ export class PiAcpAgent implements ACPAgent {
       throw new Error(`Pi ACP session was replaced while refreshing commands: ${sessionId}`);
     }
 
-    const catalog = this.replaceCommandCatalog(sessionId, proc, commandData, enableSkillCommands);
+    const catalog = this.commandCatalogs.replace(sessionId, proc, commandData, enableSkillCommands);
     const { availableCommands } = catalog.snapshot();
     await conn.sessionUpdate({
       sessionId,
@@ -364,15 +212,6 @@ export class PiAcpAgent implements ACPAgent {
   /** Integration callback for lifecycle owners that observe a Pi extension reload. */
   createCommandRefreshHook(sessionId: string): () => Promise<void> {
     return () => this.refreshAvailableCommands(sessionId);
-  }
-
-  private commandEntry(
-    sessionId: string,
-    proc: PiRpcProcessLike,
-    name: string,
-  ): CommandCatalogEntry | undefined {
-    const owned = this.commandCatalogs.get(sessionId);
-    return owned?.proc === proc ? owned.catalog.resolve(name) : undefined;
   }
 
   private cleanupFailedNewSession(sessionId: string, state?: PiState | null): void {
@@ -644,7 +483,7 @@ export class PiAcpAgent implements ACPAgent {
       })),
     };
     const initialCommandData: BoundaryValue = commands ?? fallbackCommandData;
-    this.replaceCommandCatalog(sessionId, proc, initialCommandData, enableSkillCommands);
+    this.commandCatalogs.replace(sessionId, proc, initialCommandData, enableSkillCommands);
 
     const response = {
       sessionId,
@@ -745,7 +584,7 @@ export class PiAcpAgent implements ACPAgent {
     }
 
     const command = invocation
-      ? this.commandEntry(session.sessionId, session.proc, invocation.name)
+      ? this.commandCatalogs.entry(session.sessionId, session.proc, invocation.name)
       : undefined;
     if (invocation && !command) {
       throw RequestError.invalidParams(
@@ -778,381 +617,11 @@ export class PiAcpAgent implements ACPAgent {
 
     // Adapter-owned builtins remain local, unless Pi discovered the same canonical name.
     if (invocation && command?.source === "builtin") {
-      const trimmed = invocation.text;
-      const space = trimmed.indexOf(" ");
-      const cmd = invocation.name;
-      const argsString = space === -1 ? "" : trimmed.slice(space + 1);
-      const args = parseCommandArgs(argsString);
-
-      if (cmd === "compact") {
-        const customInstructions = args.join(" ").trim() || undefined;
-        const compact = session.proc.compact;
-        if (!compact) throw missingPiCapability("compact");
-        const result = await compact.call(session.proc, customInstructions);
-
-        const tokensBefore = result.tokensBefore ?? null;
-        const summary = result.summary ?? null;
-
-        const headerLines = [
-          `Compaction completed.${customInstructions ? " (custom instructions applied)" : ""}`,
-          tokensBefore !== null ? `Tokens before: ${tokensBefore}` : null,
-        ].filter(Boolean);
-
-        const text = headerLines.join("\n") + (summary ? `\n\n${summary}` : "");
-
-        await session.sendUpdate({
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text },
-        });
-
-        return { stopReason: "end_turn" };
-      }
-
-      if (cmd === "session") {
-        const getSessionStats = session.proc.getSessionStats;
-        if (!getSessionStats) throw missingPiCapability("get_session_stats");
-        const stats = await getSessionStats.call(session.proc);
-
-        const lines: string[] = [];
-        if (stats.sessionId) lines.push(`Session: ${stats.sessionId}`);
-        if (stats.sessionFile) lines.push(`Session file: ${stats.sessionFile}`);
-        if (stats.totalMessages !== undefined) lines.push(`Messages: ${stats.totalMessages}`);
-
-        if (stats.cost !== undefined) lines.push(`Cost: ${stats.cost}`);
-
-        const t = stats.tokens;
-        if (t) {
-          const parts: string[] = [];
-          if (t.input !== undefined) parts.push(`in ${t.input}`);
-          if (t.output !== undefined) parts.push(`out ${t.output}`);
-          if (t.cacheRead !== undefined) parts.push(`cache read ${t.cacheRead}`);
-          if (t.cacheWrite !== undefined) parts.push(`cache write ${t.cacheWrite}`);
-          if (t.total !== undefined) parts.push(`total ${t.total}`);
-          if (parts.length) lines.push(`Tokens: ${parts.join(", ")}`);
-        }
-
-        // Fallback if stats shape changes.
-        const text = lines.length
-          ? lines.join("\n")
-          : `Session stats:\n${JSON.stringify(stats, null, 2)}`;
-
-        await session.sendUpdate({
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text },
-        });
-
-        return { stopReason: "end_turn" };
-      }
-
-      if (cmd === "name") {
-        const name = args.join(" ").trim();
-        if (!name) {
-          await session.sendUpdate({
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: "Usage: /name <name>" },
-          });
-          return { stopReason: "end_turn" };
-        }
-
-        try {
-          const setSessionName = session.proc.setSessionName;
-          if (!setSessionName) throw missingPiCapability("set_session_name");
-          await setSessionName.call(session.proc, name);
-        } catch (error) {
-          // SAFETY: catch bindings may contain any thrown JavaScript value; `errorMessage`
-          // handles Error instances and stringifies every other boundary value.
-          const msg = errorMessage(error as BoundaryValue);
-          const hint = /set_session_name/i.test(msg)
-            ? " This requires a newer pi version that supports `set_session_name` in RPC mode."
-            : "";
-
-          await session.sendUpdate({
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: `Failed to set session name: ${msg}${hint}` },
-          });
-          return { stopReason: "end_turn" };
-        }
-
-        await session.sendUpdate({
-          sessionUpdate: "session_info_update",
-          title: name,
-          updatedAt: new Date().toISOString(),
-        });
-
-        await session.sendUpdate({
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: `Session name set: ${name}` },
-        });
-
-        return { stopReason: "end_turn" };
-      }
-
-      if (cmd === "steering") {
-        const modeRaw = String(args[0] ?? "").toLowerCase();
-        const getState = session.proc.getState;
-        if (!getState) throw missingPiCapability("get_state");
-        const state = await getState.call(session.proc);
-        const current = String(state.steeringMode ?? "");
-
-        // If no arg, just report current.
-        if (!modeRaw) {
-          await session.sendUpdate({
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: `Steering mode: ${current || "unknown"}`,
-            },
-          });
-          return { stopReason: "end_turn" };
-        }
-
-        if (modeRaw !== "all" && modeRaw !== "one-at-a-time") {
-          await session.sendUpdate({
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: "Usage: /steering all | /steering one-at-a-time",
-            },
-          });
-          return { stopReason: "end_turn" };
-        }
-
-        const setSteeringMode = session.proc.setSteeringMode;
-        if (!setSteeringMode) throw missingPiCapability("set_steering_mode");
-        await setSteeringMode.call(session.proc, modeRaw);
-
-        await session.sendUpdate({
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: `Steering mode set to: ${modeRaw}` },
-        });
-
-        return { stopReason: "end_turn" };
-      }
-
-      if (cmd === "follow-up") {
-        const modeRaw = String(args[0] ?? "").toLowerCase();
-        const getState = session.proc.getState;
-        if (!getState) throw missingPiCapability("get_state");
-        const state = await getState.call(session.proc);
-        const current = String(state.followUpMode ?? "");
-
-        // If no arg, just report current.
-        if (!modeRaw) {
-          await session.sendUpdate({
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: `Follow-up mode: ${current || "unknown"}`,
-            },
-          });
-          return { stopReason: "end_turn" };
-        }
-
-        if (modeRaw !== "all" && modeRaw !== "one-at-a-time") {
-          await session.sendUpdate({
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: "Usage: /follow-up all | /follow-up one-at-a-time",
-            },
-          });
-          return { stopReason: "end_turn" };
-        }
-
-        const setFollowUpMode = session.proc.setFollowUpMode;
-        if (!setFollowUpMode) throw missingPiCapability("set_follow_up_mode");
-        await setFollowUpMode.call(session.proc, modeRaw);
-
-        await session.sendUpdate({
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: `Follow-up mode set to: ${modeRaw}` },
-        });
-
-        return { stopReason: "end_turn" };
-      }
-
-      if (cmd === "changelog") {
-        // Read pi's installed CHANGELOG.md. Adapter-side, no model call.
-        const changelogPath = await findPiChangelog(this.piCommand);
-        this.assertCurrent(generation);
-        if (!changelogPath) {
-          await session.sendUpdate({
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: "Changelog not found (couldn't locate pi installation).",
-            },
-          });
-          return { stopReason: "end_turn" };
-        }
-
-        let text = "";
-        try {
-          text = await readFile(changelogPath, "utf-8");
-        } catch (error) {
-          this.assertCurrent(generation);
-          // SAFETY: catch bindings may contain any thrown JavaScript value; `errorMessage`
-          // handles Error instances and stringifies every other boundary value.
-          const message = errorMessage(error as BoundaryValue);
-          await session.sendUpdate({
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: `Failed to read changelog: ${message}`,
-            },
-          });
-          return { stopReason: "end_turn" };
-        }
-        this.assertCurrent(generation);
-
-        // Keep it reasonably sized in chat.
-        const maxChars = 20_000;
-        if (text.length > maxChars) text = text.slice(0, maxChars) + "\n\n...(truncated)...";
-
-        await session.sendUpdate({
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text },
-        });
-
-        return { stopReason: "end_turn" };
-      }
-
-      if (cmd === "export") {
-        // For now we always export into the session cwd and do not accept a user-provided path.
-        // IMPORTANT: pi's export_html reads the session JSONL file. If it doesn't exist yet
-        // (no messages) or is empty, pi throws and RPC mode emits an uncorrelated parse error
-        // (no id), which would otherwise hang our request. So we guard here.
-        const getState = session.proc.getState;
-        if (!getState) throw missingPiCapability("get_state");
-        const state = await getState.call(session.proc);
-        const sessionFile = state.sessionFile ?? null;
-        const messageCount = state.messageCount ?? 0;
-
-        if (!sessionFile || messageCount === 0 || !existsSync(sessionFile)) {
-          await session.sendUpdate({
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: "Nothing to export yet (no session messages). Send a prompt first.",
-            },
-          });
-          return { stopReason: "end_turn" };
-        }
-
-        try {
-          const raw = readFileSync(sessionFile, "utf-8");
-          if (raw.trim().length === 0) {
-            await session.sendUpdate({
-              sessionUpdate: "agent_message_chunk",
-              content: {
-                type: "text",
-                text: "Nothing to export yet (empty session file). Send a prompt first.",
-              },
-            });
-            return { stopReason: "end_turn" };
-          }
-        } catch {
-          await session.sendUpdate({
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: "Couldn't read session file for export. Try sending a prompt first.",
-            },
-          });
-          return { stopReason: "end_turn" };
-        }
-
-        const safeSessionId = session.sessionId.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const outputPath = join(session.cwd, `pi-session-${safeSessionId}.html`);
-
-        let resultPath = "";
-        try {
-          const exportHtml = session.proc.exportHtml;
-          if (!exportHtml) throw missingPiCapability("export_html");
-          const result = await exportHtml.call(session.proc, outputPath);
-          resultPath = result.path;
-        } catch (error) {
-          // SAFETY: catch bindings may contain any thrown JavaScript value; `errorMessage`
-          // handles Error instances and stringifies every other boundary value.
-          const message = errorMessage(error as BoundaryValue);
-          await session.sendUpdate({
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: `Export failed: ${message}`,
-            },
-          });
-          return { stopReason: "end_turn" };
-        }
-
-        if (!resultPath) {
-          await session.sendUpdate({
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: "Export failed: no output path returned by pi.",
-            },
-          });
-          return { stopReason: "end_turn" };
-        }
-
-        const uri = `file://${resultPath}`;
-
-        // Emit a short prefix + a resource link. Many clients concatenate chunks into a single
-        // assistant message, so this avoids the "link + duplicate plain text" look.
-        await session.sendUpdate({
-          sessionUpdate: "agent_message_chunk",
-          content: {
-            type: "text",
-            text: "Session exported: ",
-          },
-        });
-
-        await session.sendUpdate({
-          sessionUpdate: "agent_message_chunk",
-          content: {
-            type: "resource_link",
-            name: `pi-session-${safeSessionId}.html`,
-            uri,
-            mimeType: "text/html",
-            title: "Session exported",
-          },
-        });
-
-        return { stopReason: "end_turn" };
-      }
-
-      if (cmd === "autocompact") {
-        const mode = (args[0] ?? "toggle").toLowerCase();
-        let enabled: boolean | null = null;
-        if (mode === "on" || mode === "true" || mode === "enable" || mode === "enabled")
-          enabled = true;
-        else if (mode === "off" || mode === "false" || mode === "disable" || mode === "disabled")
-          enabled = false;
-
-        if (enabled === null) {
-          // toggle: read current state and invert.
-          const getState = session.proc.getState;
-          if (!getState) throw missingPiCapability("get_state");
-          const state = await getState.call(session.proc);
-          const current = Boolean(state.autoCompactionEnabled);
-          enabled = !current;
-        }
-
-        const setAutoCompaction = session.proc.setAutoCompaction;
-        if (!setAutoCompaction) throw missingPiCapability("set_auto_compaction");
-        await setAutoCompaction.call(session.proc, enabled);
-
-        await session.sendUpdate({
-          sessionUpdate: "agent_message_chunk",
-          content: {
-            type: "text",
-            text: `Auto-compaction ${enabled ? "enabled" : "disabled"}.`,
-          },
-        });
-
-        return { stopReason: "end_turn" };
-      }
+      const handled = await runBuiltinCommand(session, invocation, {
+        piCommand: this.piCommand,
+        assertCurrent: () => this.assertCurrent(generation),
+      });
+      if (handled) return handled;
     }
 
     const result = await session.prompt(message, images);
@@ -1246,86 +715,7 @@ export class PiAcpAgent implements ACPAgent {
     const getMessages = proc.getMessages;
     if (!getMessages) throw missingPiCapability("get_messages");
     const data: PiMessages = await getMessages.call(proc);
-    const messages = data.messages;
-
-    for (const m of messages) {
-      if (m.role === "user") {
-        const text = normalizePiMessageText(m.content);
-        if (text) {
-          await session.sendUpdate({
-            sessionUpdate: "user_message_chunk",
-            content: { type: "text", text },
-          });
-        }
-      }
-
-      if (m.role === "assistant") {
-        const text = normalizePiAssistantText(m.content);
-        if (text) {
-          await session.sendUpdate({
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text },
-          });
-        }
-      }
-
-      if (m.role === "toolResult") {
-        const toolName = String(m.toolName ?? "tool");
-        const toolCallId = String(m.toolCallId ?? crypto.randomUUID());
-        const isError = Boolean(m.isError);
-        const isBash = isBashTool(toolName);
-
-        if (isBash) {
-          const text = bashResultText(m);
-          const terminalExitMetadata = bashTerminalExitMeta(toolCallId, bashExitCode(m, isError));
-          const updateMetadata = text
-            ? Object.assign(bashTerminalOutputMeta(toolCallId, text), terminalExitMetadata)
-            : terminalExitMetadata;
-          await session.sendUpdate({
-            sessionUpdate: "tool_call",
-            toolCallId,
-            title: bashCommand(m) ?? toolName,
-            kind: "execute",
-            status: "in_progress",
-            content: bashTerminalContent(toolCallId),
-            _meta: bashTerminalInfoMeta(toolCallId, params.cwd),
-          });
-
-          await session.sendUpdate({
-            sessionUpdate: "tool_call_update",
-            toolCallId,
-            status: isError ? "failed" : "completed",
-            _meta: updateMetadata,
-          });
-          continue;
-        }
-
-        // Create a synthetic ACP tool call to render historic tool usage.
-        await session.sendUpdate({
-          sessionUpdate: "tool_call",
-          toolCallId,
-          title: toolName,
-          kind:
-            toolName === "read"
-              ? "read"
-              : toolName === "write" || toolName === "edit"
-                ? "edit"
-                : "other",
-          status: "in_progress",
-          rawInput: null,
-          rawOutput: m,
-        });
-
-        const text = toolResultToText(m);
-        await session.sendUpdate({
-          sessionUpdate: "tool_call_update",
-          toolCallId,
-          status: isError ? "failed" : "completed",
-          content: text ? [{ type: "content", content: { type: "text", text } }] : null,
-          rawOutput: m,
-        });
-      }
-    }
+    await replayPiMessages(session, data.messages, params.cwd);
 
     const { configOptions, models, modes } = await getSessionConfiguration(proc);
     let loadCommandData: BoundaryValue;
@@ -1343,7 +733,7 @@ export class PiAcpAgent implements ACPAgent {
         })),
       };
     }
-    const loadCatalog = this.replaceCommandCatalog(
+    const loadCatalog = this.commandCatalogs.replace(
       session.sessionId,
       proc,
       loadCommandData,
@@ -1469,380 +859,6 @@ export class PiAcpAgent implements ACPAgent {
     const configOptions = await emitConfigOptionsUpdate(this.conn, session.sessionId, session.proc);
     return { configOptions };
   }
-}
-
-function isThinkingLevel(x: string): x is ThinkingLevel {
-  return (
-    x === "off" || x === "minimal" || x === "low" || x === "medium" || x === "high" || x === "xhigh"
-  );
-}
-
-async function getThinkingState(
-  proc: PiRpcProcessLike,
-  pre?: Pick<PiPreloadedState, "state">,
-): Promise<ThinkingState> {
-  // Ask pi for current thinking level.
-  let current: ThinkingLevel = "medium";
-
-  const state =
-    pre?.state ??
-    (await (async () => {
-      try {
-        const getState = proc.getState;
-        if (!getState) throw missingPiCapability("get_state");
-        return await getState.call(proc);
-      } catch {
-        return null;
-      }
-    })());
-
-  const tl = state?.thinkingLevel ?? null;
-  if (tl && isThinkingLevel(tl)) current = tl;
-
-  const available: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
-
-  return {
-    currentModeId: current,
-    availableModes: available.map((id) => ({
-      id,
-      name: `Thinking: ${id}`,
-      description: null,
-    })),
-  };
-}
-
-async function getSessionConfiguration(
-  proc: PiRpcProcessLike,
-  pre?: PiPreloadedState,
-): Promise<SessionConfiguration> {
-  const [models, modes] = await Promise.all([
-    getModelState(proc, pre),
-    getThinkingState(proc, { state: pre?.state }),
-  ]);
-
-  return {
-    configOptions: buildConfigOptions({ models, modes }),
-    models,
-    modes,
-  };
-}
-
-function buildConfigOptions(state: SessionConfigState): SessionConfigOption[] {
-  const configOptions: SessionConfigOption[] = [
-    {
-      type: "select",
-      id: THOUGHT_LEVEL_CONFIG_ID,
-      category: "thought_level",
-      name: "Thinking",
-      description: "Set the reasoning effort for this session",
-      currentValue: state.modes.currentModeId,
-      options: state.modes.availableModes.map((mode) => ({
-        value: mode.id,
-        name: mode.name,
-        description: mode.description ?? null,
-      })),
-    },
-  ];
-
-  if (state.models?.availableModels.length) {
-    configOptions.unshift({
-      type: "select",
-      id: MODEL_CONFIG_ID,
-      category: "model",
-      name: "Model",
-      description: "Select the model for this session",
-      currentValue: state.models.currentModelId,
-      options: state.models.availableModels.map((model) => ({
-        value: model.modelId,
-        name: model.name,
-        description: model.description ?? null,
-      })),
-    });
-  }
-
-  return configOptions;
-}
-
-async function getModelState(
-  proc: PiRpcProcessLike,
-  pre?: PiPreloadedState,
-): Promise<ModelState | null> {
-  // Ask pi for available models.
-  let availableModels: AdvertisedModel[] = [];
-
-  const data =
-    pre?.availableModels ??
-    (await (async () => {
-      try {
-        const getAvailableModels = proc.getAvailableModels;
-        if (!getAvailableModels) throw missingPiCapability("get_available_models");
-        return await getAvailableModels.call(proc);
-      } catch {
-        return null;
-      }
-    })());
-
-  const models = data?.models ?? [];
-  for (const model of models) {
-    const provider = model.provider.trim();
-    const id = model.id.trim();
-    if (!provider || !id) continue;
-
-    const name = String(model.name ?? id);
-    availableModels.push({
-      modelId: `${provider}/${id}`,
-      name: `${provider}/${name}`,
-      description: null,
-    });
-  }
-
-  // Ask pi what model is currently active.
-  let currentModelId: string | null = null;
-
-  const state =
-    pre?.state ??
-    (await (async () => {
-      try {
-        const getState = proc.getState;
-        if (!getState) throw missingPiCapability("get_state");
-        return await getState.call(proc);
-      } catch {
-        return null;
-      }
-    })());
-
-  const model = state?.model;
-  if (model) {
-    const provider = String(model.provider ?? "").trim();
-    const id = String(model.id ?? "").trim();
-    if (provider && id) currentModelId = `${provider}/${id}`;
-  }
-
-  if (!availableModels.length && !currentModelId) return null;
-
-  // Fallback if current model is unknown: use first in list.
-  if (!currentModelId) currentModelId = availableModels[0]?.modelId ?? "default";
-
-  return {
-    availableModels,
-    currentModelId: currentModelId ?? availableModels[0]?.modelId ?? "default",
-  };
-}
-
-async function emitConfigOptionsUpdate(
-  conn: AcpConnection,
-  sessionId: string,
-  proc: PiRpcProcessLike,
-): Promise<SessionConfigOption[]> {
-  const { configOptions } = await getSessionConfiguration(proc);
-
-  await conn.sessionUpdate({
-    sessionId,
-    update: {
-      sessionUpdate: "config_option_update",
-      configOptions,
-    },
-  });
-
-  return configOptions;
-}
-
-async function setSessionModel(proc: PiRpcProcessLike, requestedModelId: string): Promise<void> {
-  // Accept either:
-  //  - "provider/model" (preferred, matches how we advertise)
-  //  - "model" (fallback, resolve via available models)
-  let provider: string | null = null;
-  let modelId: string | null = null;
-
-  if (requestedModelId.includes("/")) {
-    const [candidateProvider, ...rest] = requestedModelId.split("/");
-    provider = candidateProvider;
-    modelId = rest.join("/");
-  } else {
-    modelId = requestedModelId;
-  }
-
-  if (!provider) {
-    const getAvailableModels = proc.getAvailableModels;
-    if (!getAvailableModels) throw missingPiCapability("get_available_models");
-    const data = await getAvailableModels.call(proc);
-    const found = data.models.find((model) => String(model.id) === modelId);
-    if (found) {
-      provider = String(found.provider);
-      modelId = String(found.id);
-    }
-  }
-
-  if (!provider || !modelId) {
-    throw RequestError.invalidParams(`Unknown modelId: ${requestedModelId}`);
-  }
-
-  const setModel = proc.setModel;
-  if (!setModel) throw missingPiCapability("set_model");
-  await setModel.call(proc, provider, modelId);
-}
-
-function isSemver(v: string): boolean {
-  return /^\d+\.\d+\.\d+(?:[-+].+)?$/.test(v);
-}
-
-function compareSemver(a: string, b: string): number {
-  // Very small comparator for x.y.z (ignores pre-release/build beyond making them "not greater" unless base differs)
-  const pa = a
-    .split(/[.-]/)
-    .slice(0, 3)
-    .map((n) => Number(n));
-  const pb = b
-    .split(/[.-]/)
-    .slice(0, 3)
-    .map((n) => Number(n));
-  for (let i = 0; i < 3; i++) {
-    const da = pa[i] ?? 0;
-    const db = pb[i] ?? 0;
-    if (da > db) return 1;
-    if (da < db) return -1;
-  }
-  return 0;
-}
-
-const execFileAsync = promisify(execFile);
-
-/** Upper bound for `pi --version`; the previous blocking call had none. */
-const PI_VERSION_TIMEOUT_MS = 10_000;
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * The command whose installation the version header, update notice and `/changelog` describe.
- * Legacy mode keeps the upstream lookup of `pi` on PATH; standalone mode uses the configured
- * command, which defaults to the `choco-pi` launcher that sessions run.
- */
-function piInfoCommand(piCommand: string | undefined, env: NodeJS.ProcessEnv): string | undefined {
-  return standaloneHome(env) === undefined ? "pi" : piCommand;
-}
-
-/**
- * The installed Pi version (without a leading `v`), read from `--version` of
- * {@link piInfoCommand}. Null when Pi cannot be run.
- */
-export async function readPiVersion(
-  piCommand?: string,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<string | null> {
-  try {
-    const launch = await resolvePiLaunch(piInfoCommand(piCommand, env), env);
-    const { stdout, stderr } = await execFileAsync(
-      launch.command,
-      [...launch.argsPrefix, "--version"],
-      { encoding: "utf8", env, timeout: PI_VERSION_TIMEOUT_MS, windowsHide: true },
-    );
-    const installed = (stdout.trim() || stderr.trim()).replace(/^v/i, "");
-    return installed || null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Locate Pi's CHANGELOG.md from {@link piInfoCommand}. A Node install of `pi` resolves to
- * `.../@earendil-works/pi-coding-agent/dist/cli.js`; the standalone launcher resolves to
- * `<app>/bin/choco-pi`, whose pinned Pi lives in `<app>/node_modules`. Only legacy mode falls
- * back to the global npm root, which in standalone mode would describe a different Pi.
- */
-export async function findPiChangelog(
-  piCommand?: string,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<string | null> {
-  const standalone = standaloneHome(env) !== undefined;
-  try {
-    const launch = await resolvePiLaunch(piInfoCommand(piCommand, env), env);
-    const resolved = await realpath(launch.argsPrefix[0] ?? launch.command);
-    const pkgRoot = standalone
-      ? join(dirname(dirname(resolved)), "node_modules", "@earendil-works", "pi-coding-agent")
-      : dirname(dirname(resolved));
-    const p = join(pkgRoot, "CHANGELOG.md");
-    if (await pathExists(p)) return p;
-  } catch {
-    // ignore
-  }
-  if (standalone) return null;
-
-  // Fallback: ask npm where global modules live.
-  try {
-    const { stdout } = await execFileAsync("npm", ["root", "-g"], {
-      encoding: "utf8",
-      env,
-      windowsHide: true,
-    });
-    const root = stdout.trim();
-    if (root) {
-      const p = join(root, "@earendil-works", "pi-coding-agent", "CHANGELOG.md");
-      if (await pathExists(p)) return p;
-    }
-  } catch {
-    // ignore
-  }
-  return null;
-}
-
-/**
- * Best-effort latest Pi version from the npm registry. Standalone mode runs the
- * lockfile-pinned Pi, which `npm i -g` cannot update, so it never asks.
- */
-async function readLatestPiVersion(env: NodeJS.ProcessEnv): Promise<string | null> {
-  // Important: keep it fast to not slow down session/new.
-  if (standaloneHome(env) !== undefined) return null;
-  try {
-    const { stdout } = await execFileAsync(
-      "npm",
-      ["view", "@earendil-works/pi-coding-agent", "version"],
-      { encoding: "utf8", env, timeout: 800, windowsHide: true },
-    );
-    return stdout.trim().replace(/^v/i, "") || null;
-  } catch {
-    return null;
-  }
-}
-
-function buildUpdateNotice(installed: string | null, latest: string | null): string | null {
-  if (!installed || !isSemver(installed)) return null;
-  if (!latest || !isSemver(latest)) return null;
-  if (compareSemver(latest, installed) <= 0) return null;
-
-  return `New version available: v${latest} (installed v${installed}). Run: \`npm i -g @earendil-works/pi-coding-agent\``;
-}
-
-/** The Pi version header and npm update notice for session/new, probed in parallel. */
-type PiStartupProbe = Readonly<{ piVersion: string | null; updateNotice: string | null }>;
-
-async function probePiStartup(
-  piCommand: string | undefined,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<PiStartupProbe> {
-  const [piVersion, latest] = await Promise.all([
-    readPiVersion(piCommand, env),
-    readLatestPiVersion(env),
-  ]);
-  return { piVersion, updateNotice: buildUpdateNotice(piVersion, latest) };
-}
-
-/** Agent-directory folders listed in the startup info. */
-type StartupInfoAgentDirs = Readonly<{ prompts: string; extensions: string }>;
-
-/**
- * Agent-directory folders listed in the startup info: Pi's agent directory
- * (`PI_CODING_AGENT_DIR`, else `$CHOCO_PI_HOME/agent` in standalone mode, else `$HOME/.pi/agent`).
- */
-export function startupInfoAgentDirs(env: NodeJS.ProcessEnv = process.env): StartupInfoAgentDirs {
-  const agentDir = piAgentDir(env, env.HOME ?? "");
-  return { prompts: join(agentDir, "prompts"), extensions: join(agentDir, "extensions") };
 }
 
 function buildStartupInfo(opts: {
