@@ -10,4 +10,3 @@ First-party universal Code Mode package: the `exec`/`wait` programmatic tool hos
 - `typebox` is imported only in `src/schema-bridge.ts`.
 - Erasable Node 24+ TypeScript with explicit `.ts` relative imports and no new blocking `*Sync` calls.
 - Consumers import through the explicit `exports` subpaths in `package.json`; add a subpath there rather than reaching into `src/` from another package.
-- Record divergences in `VENDORED.md`.

@@ -1,6 +1,6 @@
 # choco-pi-agent-browser — working rules
 
-Vendored fork of `pi-agent-browser-native@0.5.0`. Read `VENDORED.md` before changing vendored code.
+Independent hard fork of `pi-agent-browser-native@0.5.0` maintained in choco-pi (see `VENDORED.md` for origin and license provenance).
 
 ## Hard constraints
 
@@ -14,7 +14,6 @@ Vendored fork of `pi-agent-browser-native@0.5.0`. Read `VENDORED.md` before chan
   discovery and the companion name must not be advertised or revivable.
 - Keep `typebox` and all `@earendil-works/*` imports as host-provided peer dependencies.
 - Validate with `@earendil-works/pi-schema`; import `typebox` only in `extensions/agent-browser/lib/schema-bridge.ts` (`Type.Unsafe` at the `registerTool` boundary). Pi's loader aliases only `typebox`, `typebox/compile`, and `typebox/value`; any other subpath breaks extension loading.
-- Record every difference from upstream in `VENDORED.md` when making it.
 
 ## Operator commands
 

@@ -1,6 +1,6 @@
 # choco-pi-shells — working rules
 
-First-party package. `VENDORED.md` records its package notes and divergences; update it with each such change.
+First-party package maintained in choco-pi.
 
 ## Process-singleton ownership
 

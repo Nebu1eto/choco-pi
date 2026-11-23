@@ -1,6 +1,6 @@
 # choco-pi-web-access working rules
 
-Vendored fork of `pi-web-access@0.24.1`. Read `VENDORED.md` before changing source files.
+Independent hard fork of `pi-web-access@0.24.1` maintained in choco-pi (see `VENDORED.md` for origin and license provenance).
 
 ## Hard constraints
 
@@ -12,7 +12,6 @@ Vendored fork of `pi-web-access@0.24.1`. Read `VENDORED.md` before changing sour
 - Every relative import uses an explicit `.ts` extension.
 - Pi loads `index.ts` directly. Do not add a build step or `dist/`.
 - Runtime dependencies are exactly pinned in `package.json` and installed into `node_modules/` from the root `pnpm-lock.yaml`. `typebox` (only `schema-bridge.ts`) and `@earendil-works/*` (including `pi-schema`, which owns validation) remain host-provided peer dependencies.
-- Record every upstream divergence in `VENDORED.md` as it is made.
 
 ## Verify
 

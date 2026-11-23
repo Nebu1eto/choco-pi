@@ -1,7 +1,6 @@
 # choco-pi-subagents — working rules
 
-Vendored fork of `@tintinweb/pi-subagents@0.17.1`. Read `VENDORED.md` before
-changing anything under `src/`, and `ARCHITECTURE.md` before adding a feature.
+Independent hard fork of `@tintinweb/pi-subagents@0.17.1` maintained in choco-pi (see `VENDORED.md` for origin and license provenance). Read `ARCHITECTURE.md` before adding a feature.
 
 ## Hard constraints
 
@@ -31,9 +30,3 @@ cd <repo root> && node --test tests/subagent-config.test.ts
 Any change to `src/index.ts`, `src/agent-manager.ts` or `src/agent-runner.ts`
 also needs a real pi session to be trusted: their behavior only exists against a
 live extension host, and neither check above starts one.
-
-## Upstream drift
-
-Record every divergence from the base tarball in `VENDORED.md` as you make it,
-not afterwards. A resync diffs this tree against a fresh `npm pack`, and an
-undocumented edit is indistinguishable from an upstream change at that point.

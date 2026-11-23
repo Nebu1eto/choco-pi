@@ -1,6 +1,6 @@
 # choco-pi-computer-use — working rules
 
-Vendored fork of `@injaneity/pi-computer-use@0.5.0`. Read `VENDORED.md` before changing this package.
+Independent hard fork of `@injaneity/pi-computer-use@0.5.0` maintained in choco-pi (see `VENDORED.md` for origin and license provenance).
 
 ## Hard constraints
 
@@ -11,7 +11,6 @@ Vendored fork of `@injaneity/pi-computer-use@0.5.0`. Read `VENDORED.md` before c
 - `typebox` (only `src/schema-bridge.ts`) and `@earendil-works/*` (including `pi-schema`, which owns validation) are host-provided peer dependencies. Exactly pin any other runtime dependency in this package's `package.json`; the root `pnpm-lock.yaml` installs it into this package's `node_modules/`.
 - Native helper installation is supported only on macOS. Keep Linux and Windows TypeScript backends dispatch-guarded; do not restore their native crates or build paths without an explicit support decision.
 - Keep `native/macos/*.swift`; no binaries are tracked. The installer compiles the helper for the host architecture on every install; never commit a built `bridge` or `prebuilt/` tree.
-- Record every upstream divergence in `VENDORED.md` when making it.
 
 ## Verification
 
