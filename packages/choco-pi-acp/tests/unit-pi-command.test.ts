@@ -14,10 +14,10 @@ test("defaultPiCommand: uses the shell-independent pi name", () => {
 
   try {
     Object.defineProperty(process, "platform", { value: "win32" });
-    assert.equal(defaultPiCommand(), "pi");
+    assert.equal(defaultPiCommand({}), "pi");
 
     Object.defineProperty(process, "platform", { value: "darwin" });
-    assert.equal(defaultPiCommand(), "pi");
+    assert.equal(defaultPiCommand({}), "pi");
   } finally {
     Object.defineProperty(process, "platform", { value: originalPlatform });
   }

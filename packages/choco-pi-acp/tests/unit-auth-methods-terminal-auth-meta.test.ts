@@ -4,7 +4,7 @@ import { getAuthMethods, PI_SETUP_METHOD_ID } from "../src/acp/auth.ts";
 import { isBoundaryRecord, isString, parseJsonLine } from "../src/boundary.ts";
 
 test("getAuthMethods: includes Zed terminal-auth metadata when enabled", () => {
-  const methods = getAuthMethods({ supportsTerminalAuthMeta: true });
+  const methods = getAuthMethods({ supportsTerminalAuthMeta: true, env: {} });
   assert.equal(methods.length, 1);
   const m = methods[0];
 

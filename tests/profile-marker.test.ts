@@ -29,7 +29,17 @@ import {
   type HarnessCheckExecutionDependencies,
 } from "../profile/extensions/harness-check.ts";
 import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
-import { installProfile } from "../scripts/install-profile.ts";
+import { installProfile, PROFILE_SEEDS } from "../scripts/install-profile.ts";
+
+async function createFakeCheckout(root: string): Promise<void> {
+  await mkdir(path.join(root, ".pi"), { recursive: true });
+  await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({ packages: [] }));
+  for (const [sourceRelative] of PROFILE_SEEDS) {
+    const source = path.join(root, sourceRelative);
+    await mkdir(path.dirname(source), { recursive: true });
+    await writeFile(source, "{}");
+  }
+}
 
 async function fakeLauncher(directory: string, version: string): Promise<string> {
   await mkdir(directory, { recursive: true });
@@ -82,8 +92,7 @@ test("launcher selection prefers explicit override, then environment, then compa
 test("installer records an explicitly selected launcher and harness rechecks it for version drift", async () => {
   await fixture(async (directory) => {
     const root = path.join(directory, "checkout");
-    await mkdir(path.join(root, ".pi"), { recursive: true });
-    await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({ packages: [] }));
+    await createFakeCheckout(root);
     const launcher = await fakeLauncher(path.join(directory, "launcher"), PI_SDK_MINIMUM);
     const agentDir = path.join(directory, "agent");
     const result = await installProfile({
@@ -247,8 +256,7 @@ test("installer publishes the marker only after success and respects the selecte
   await fixture(async (directory) => {
     const root = path.join(directory, "checkout");
     const agentDir = path.join(directory, "custom-agent");
-    await mkdir(path.join(root, ".pi"), { recursive: true });
-    await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({ packages: [] }));
+    await createFakeCheckout(root);
     const result = await installProfile({ root, agentDir });
     assert.equal(result.markerPath, profileMarkerPath(agentDir));
     const marker = await readProfileMarker(agentDir);

@@ -12,7 +12,11 @@ test("component harness: ACP adapter initializes fake Pi RPC and shuts it down o
   const cwd = mkdtempSync(join(tmpdir(), "choco-pi-acp cwd "));
   const harness = createFakeAcpToPiHarness(cwd);
   const previousMarker = process.env.PI_ACP_HARNESS_MARKER;
+  const previousStandalone = process.env.CHOCO_PI_STANDALONE;
+  const previousChocoHome = process.env.CHOCO_PI_HOME;
   process.env.PI_ACP_HARNESS_MARKER = "preserved";
+  delete process.env.CHOCO_PI_STANDALONE;
+  delete process.env.CHOCO_PI_HOME;
 
   try {
     const initialized = await harness.agent.initialize({ protocolVersion: 1 });
@@ -42,6 +46,10 @@ test("component harness: ACP adapter initializes fake Pi RPC and shuts it down o
   } finally {
     if (previousMarker === undefined) delete process.env.PI_ACP_HARNESS_MARKER;
     else process.env.PI_ACP_HARNESS_MARKER = previousMarker;
+    if (previousStandalone === undefined) delete process.env.CHOCO_PI_STANDALONE;
+    else process.env.CHOCO_PI_STANDALONE = previousStandalone;
+    if (previousChocoHome === undefined) delete process.env.CHOCO_PI_HOME;
+    else process.env.CHOCO_PI_HOME = previousChocoHome;
   }
 });
 

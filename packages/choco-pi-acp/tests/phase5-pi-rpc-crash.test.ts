@@ -195,6 +195,10 @@ test("a failed child startup is cleaned up and a new-session retry uses a fresh 
   const root = mkdtempSync(join(tmpdir(), "choco-pi-phase5-retry-"));
   const counterPath = join(root, "spawn-count");
   const recordsPath = join(root, "records.jsonl");
+  const previousStandalone = process.env.CHOCO_PI_STANDALONE;
+  const previousChocoHome = process.env.CHOCO_PI_HOME;
+  delete process.env.CHOCO_PI_STANDALONE;
+  delete process.env.CHOCO_PI_HOME;
   const piCommand = executable(
     root,
     `
@@ -237,6 +241,10 @@ if (spawnNumber === 1) {
     assert.equal(readFileSync(recordsPath, "utf8").trim().split("\n").length, 2);
   } finally {
     await bounded(agent.shutdown(100), "shutdown retry session");
+    if (previousStandalone === undefined) delete process.env.CHOCO_PI_STANDALONE;
+    else process.env.CHOCO_PI_STANDALONE = previousStandalone;
+    if (previousChocoHome === undefined) delete process.env.CHOCO_PI_HOME;
+    else process.env.CHOCO_PI_HOME = previousChocoHome;
     rmSync(root, { recursive: true, force: true });
   }
 });

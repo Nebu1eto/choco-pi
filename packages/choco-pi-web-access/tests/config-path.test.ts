@@ -60,6 +60,8 @@ test("XDG_CONFIG_HOME is used when PI_CODING_AGENT_DIR is absent", async () => {
   await mkdir(join(xdg, "pi"), { recursive: true });
   const env = { ...process.env, XDG_CONFIG_HOME: xdg };
   delete env.PI_CODING_AGENT_DIR;
+  delete env.CHOCO_PI_HOME;
+  delete env.CHOCO_PI_STANDALONE;
   const result = spawnSync(process.execPath, ["--input-type=module"], {
     input: `const { getWebSearchConfigPath } = await import(${JSON.stringify(utilsUrl)}); console.log(getWebSearchConfigPath());`,
     encoding: "utf8",

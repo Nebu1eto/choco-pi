@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after, before } from "node:test";
 
 import { PiAcpAgent } from "../src/acp/agent.ts";
 import {
@@ -17,6 +17,23 @@ import { PiAcpSession } from "../src/acp/session.ts";
 import { PiRpcProcess } from "../src/pi-rpc/process.ts";
 import { ToolPresentationTracker } from "../src/translate/tool-presentation.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
+
+let previousStandalone: string | undefined;
+let previousChocoHome: string | undefined;
+
+before(() => {
+  previousStandalone = process.env.CHOCO_PI_STANDALONE;
+  previousChocoHome = process.env.CHOCO_PI_HOME;
+  delete process.env.CHOCO_PI_STANDALONE;
+  delete process.env.CHOCO_PI_HOME;
+});
+
+after(() => {
+  if (previousStandalone === undefined) delete process.env.CHOCO_PI_STANDALONE;
+  else process.env.CHOCO_PI_STANDALONE = previousStandalone;
+  if (previousChocoHome === undefined) delete process.env.CHOCO_PI_HOME;
+  else process.env.CHOCO_PI_HOME = previousChocoHome;
+});
 
 function executable(root: string, source: string): string {
   const path = join(root, "fake-pi");
