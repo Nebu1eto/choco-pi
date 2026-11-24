@@ -17,6 +17,7 @@ import {
   scratchDestinations,
 } from "@choco-pi/shared/scratch-path";
 import { loadHookSources } from "./config.ts";
+import { SkillGate } from "./skill-gate.ts";
 import { createPiHookBackends } from "./backends.ts";
 import { HookEngine } from "./engine.ts";
 import { PROJECT_DIR_FIELD, sessionEndBudget } from "./executor.ts";
@@ -41,6 +42,7 @@ import { createHookWatchers, type HookWatchers } from "./watchers.ts";
 import { applyHookEnvironment, hookEnvironmentFile, removeHookEnvironment } from "./environment.ts";
 import { registerClaudeTaskTools } from "./tasks.ts";
 import { isStringValue, type RuntimeValue } from "./validation.ts";
+import { isJsonRecord } from "@choco-pi/shared/runtime-values";
 import { isStaleContextError, rethrowUnlessStaleContext } from "@choco-pi/shared/lifecycle";
 import { readStopState } from "@choco-pi/shared/stop-control";
 
@@ -229,6 +231,8 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   });
   const pendingScratchWarnings = new Map<string, string[]>();
   const MAX_PENDING_SCRATCH_WARNINGS = 256;
+  const skillGate = new SkillGate();
+  const pendingSkillWarnings = new Map<string, string[]>();
 
   function reload(ctx: ExtensionContext): void {
     const loaded = loadHookSources({ cwd: ctx.cwd });
@@ -439,6 +443,8 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     scratchGrants = undefined;
     scratchWarner.reset();
     pendingScratchWarnings.clear();
+    skillGate.reset();
+    pendingSkillWarnings.clear();
     preToolContext.clear();
     toolStarts.clear();
     injectedSubagentContext.clear();
@@ -595,7 +601,28 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
         pendingScratchWarnings.clear();
       pendingScratchWarnings.set(event.toolCallId, scratchWarnings);
     }
-    if (result.blocked || result.permissionDecision === "deny" || !result.continue)
+    const blocked = result.blocked || result.permissionDecision === "deny" || !result.continue;
+    const skillWarnings = blocked
+      ? []
+      : skillGate.check({
+          toolName: event.toolName,
+          input: isJsonRecord(event.input) ? event.input : {},
+          cwd: ctx.cwd,
+          rootSession: !identity,
+        });
+    if (skillWarnings.length) {
+      const owner = event.toolCallId.split("/")[0] ?? event.toolCallId;
+      if (
+        !pendingSkillWarnings.has(owner) &&
+        pendingSkillWarnings.size >= MAX_PENDING_SCRATCH_WARNINGS
+      )
+        pendingSkillWarnings.clear();
+      pendingSkillWarnings.set(owner, [
+        ...(pendingSkillWarnings.get(owner) ?? []),
+        ...skillWarnings,
+      ]);
+    }
+    if (blocked)
       return {
         block: true,
         reason: result.reason ?? "Blocked by hook",
@@ -630,6 +657,10 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     }
     const scratchWarnings = pendingScratchWarnings.get(event.toolCallId) ?? [];
     pendingScratchWarnings.delete(event.toolCallId);
+    const skillWarnings = event.parentToolCallId
+      ? []
+      : (pendingSkillWarnings.get(event.toolCallId) ?? []);
+    if (!event.parentToolCallId) pendingSkillWarnings.delete(event.toolCallId);
     const beforeContext = preToolContext.get(event.toolCallId) ?? [];
     preToolContext.delete(event.toolCallId);
     const feedback = [
@@ -641,6 +672,7 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
       ...result.additionalContext,
       ...new Set(feedback),
       ...scratchWarnings,
+      ...skillWarnings,
     ].map((value) => ({
       type: "text" as const,
       text: value,
@@ -670,6 +702,7 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   });
   pi.on("session_compact", async (event, ctx) => {
     injectedSubagentContext.clear();
+    skillGate.reset();
     const interactive = ctx.mode === "tui" || ctx.mode === "rpc";
     const generation = lifecycleGeneration;
     if (!isBackgroundAdoptionEntry(ctx, event.compactionEntry))
@@ -687,6 +720,10 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     applySessionStart(result, "compact", interactive);
   });
   pi.on("before_agent_start", async (event, ctx) => {
+    const skills = event.systemPromptOptions.skills;
+    if (Array.isArray(skills)) skillGate.setSkills(skills);
+    if (event.messageType === "user" && isStringValue(event.prompt))
+      skillGate.notePrompt(event.prompt);
     if (identity) {
       const result = await dispatch("SubagentStart", ctx);
       const fresh = result.additionalContext.filter((text) => !injectedSubagentContext.has(text));

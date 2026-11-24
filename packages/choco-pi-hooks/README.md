@@ -36,6 +36,15 @@ Each subagent is a separate Pi session in the parent's process, but Claude Code 
 
 For `write`, `edit`, `apply_patch` and `ast_grep_replace`, a destination under `/tmp` but outside `/tmp/choco-pi/<root session id>/` adds a warning to the tool result; the call still runs. To allow other temporary directories, list absolute paths under `scratchGrants` in a user-level settings file (`~/.claude/settings.json`, `~/.agents/settings.json` or `$PI_CODING_AGENT_DIR/settings.json`). Project settings are not read for this key. Command contents (`bash`, `exec_command`, `write_stdin`), browser, image and MCP tools are not inspected.
 
+### Skill checks
+
+The extension also warns, without blocking, when a step runs before the skill that governs it has been read in the current context. It is built in and needs no settings. The skills come from the session's loaded skill list, so a check applies only when that skill is installed:
+
+- a `bash` or `exec_command` call that runs `git commit` before the `commit` skill was read;
+- in a top-level session, the first `write`, `edit`, `apply_patch` or `ast_grep_replace` outside temporary directories before any of `task-inline`, `task`, `task-hotfix` or `task-dynamic` was read. This warns once per context.
+
+A skill counts as read when a `read` path, `bash` command or `exec_command` command names its `SKILL.md`, or when `/skill:<name>` expanded it into the prompt. Compaction forgets every read. A warning from a Code Mode call is attached to the top-level `exec` result, because nested results reach only the calling script.
+
 ## Public API
 
 ```ts
