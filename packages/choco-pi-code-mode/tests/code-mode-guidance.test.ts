@@ -189,3 +189,13 @@ test("the prompt says Code Mode has no read or grep tool, and names tool_search 
     "byte-identical for the same tools",
   );
 });
+
+test("prompt marks shell_start/shell_read as direct-only, clarifies Add File + prefix, and warns against template literals with backticks", () => {
+  const prompt = buildCodeModeToolsPrompt([tool("apply_patch"), tool("exec_command")]);
+  assert.match(prompt, /direct-only shell_start.*direct-only shell_read.*outside exec/u);
+  assert.match(prompt, /Add File \(\+ every line\)/u);
+  assert.match(
+    prompt,
+    /array of quoted lines joined by "\\n" instead of String\.raw or a template literal/u,
+  );
+});

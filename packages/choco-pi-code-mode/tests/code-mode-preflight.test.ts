@@ -202,6 +202,15 @@ test("code-mode apply_patch rejects object arguments with the exact call shape",
   assert.deepEqual(prepareCodeModeApplyPatchInput("patch"), { input: "patch" });
 });
 
+test("code-mode apply_patch rejects array arguments with a join hint", () => {
+  const message = messageFromThrown(() =>
+    prepareCodeModeApplyPatchInput(["*** Begin Patch", "*** End Patch"]),
+  );
+  assert.match(message, /\[invalid_arguments\]/);
+  assert.match(message, /not an array/u);
+  assert.match(message, /join line arrays with "\\n"/u);
+});
+
 test("bridged read errors include current EOF and accurate recovery", async () => {
   const enhanced = await enhanceCodeModeNestedToolError(
     "read",

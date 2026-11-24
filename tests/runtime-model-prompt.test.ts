@@ -150,3 +150,15 @@ test("model identity is bounded and XML/JSON safe", () => {
   assert.match(prompt, /\\u2028/);
   assert.ok(prompt.length < 1_500);
 });
+
+test("mixed-case model IDs such as Kimi K3.1 Pro receive their exact guidance section", () => {
+  const kimiKey = "synthetic/hf:moonshotai/Kimi-K3.1-Pro";
+  const expected = guidance.models.get(kimiKey);
+  assert.ok(expected, "Kimi K3.1 Pro guidance section must parse");
+  const prompt = runtimeResult("Base {{PI_CURRENT_MODEL}}", {
+    provider: "synthetic",
+    id: "hf:moonshotai/Kimi-K3.1-Pro",
+  });
+  assertOnlySection(prompt, expected);
+  assert.ok(prompt.includes("Current model: " + JSON.stringify(kimiKey)));
+});

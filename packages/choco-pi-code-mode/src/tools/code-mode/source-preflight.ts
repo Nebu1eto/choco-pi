@@ -111,7 +111,7 @@ function validateRestrictedJavaScript(source: string): void {
     const message = parsedError.message;
     const line = syntaxErrorLine(parsedError);
     throw new Error(
-      `Code mode source preflight [invalid_javascript]${line ? ` at line ${line}` : ""}: restricted code mode accepts JavaScript source only; it did not parse (${message}). Check quotes and nested backticks/template interpolation; use String.raw only as a tag (String.raw\`...\`) or move complex text into an ordinary quoted string. ${RESTRICTED_CAPABILITIES}`,
+      `Code mode source preflight [invalid_javascript]${line ? ` at line ${line}` : ""}: restricted code mode accepts JavaScript source only; it did not parse (${message}). Check quotes and nested backticks/template interpolation; String.raw\`...\` still terminates on backticks and interpolates \${...} — for text with backticks or \${...}, build an array of quoted lines joined by "\\n" instead of a template literal. ${RESTRICTED_CAPABILITIES}`,
     );
   }
 }

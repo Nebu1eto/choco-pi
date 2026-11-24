@@ -3,7 +3,7 @@ export const MODEL_GUIDANCE_END = "</choco_pi_model_guidance>";
 export const CURRENT_MODEL_PLACEHOLDER = "{{PI_CURRENT_MODEL}}";
 
 const SECTION_PATTERN =
-  /<!-- choco-pi:model-guidance ([a-z0-9./:_-]+(?:,[a-z0-9./:_-]+)*) -->\r?\n([\s\S]*?)\r?\n<!-- choco-pi:model-guidance:end -->/g;
+  /<!-- choco-pi:model-guidance ([A-Za-z0-9./:_-]+(?:,[A-Za-z0-9./:_-]+)*) -->\r?\n([\s\S]*?)\r?\n<!-- choco-pi:model-guidance:end -->/g;
 const OWNED_BLOCK_PATTERN =
   /(?:\r?\n){0,2}<choco_pi_model_guidance>\r?\n[\s\S]*?\r?\n<\/choco_pi_model_guidance>/g;
 const LEGACY_RUNTIME_BLOCK_PATTERN =

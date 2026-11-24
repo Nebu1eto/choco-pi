@@ -6,6 +6,11 @@ export interface CodeModeApplyPatchInput {
 
 export function prepareCodeModeApplyPatchInput(input: BoundaryValue): CodeModeApplyPatchInput {
   if (!isStringValue(input)) {
+    if (Array.isArray(input)) {
+      throw new Error(
+        'Code mode apply_patch input error [invalid_arguments]: tools.apply_patch accepts one patch string, not an array — join line arrays with "\\n" before calling await tools.apply_patch(patch), where patch is the full *** Begin Patch / *** End Patch envelope.',
+      );
+    }
     throw new Error(
       "Code mode apply_patch input error [invalid_arguments]: tools.apply_patch accepts one patch string, not an object. Call await tools.apply_patch(patch), where patch is the full *** Begin Patch / *** End Patch envelope.",
     );
