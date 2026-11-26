@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readCallUsage, totalTokens } from "./records.ts";
+import { readCallUsage, recordedModelId, totalTokens } from "./records.ts";
 import { TIMING_ENTRY_TYPE } from "./scan.ts";
 
 const FIRST_TOKEN_EVENTS: ReadonlySet<string> = new Set([
@@ -57,7 +57,8 @@ export function registerStatsTiming(pi: TimingApi, now: () => number = Date.now)
       v: 1,
       at: message.timestamp,
       provider: message.provider,
-      model: message.responseModel ?? message.model,
+      model:
+        recordedModelId(message.provider, message.model, message.responseModel) ?? message.model,
       ttftMs: Math.max(0, first.firstAt - message.timestamp),
       firstEvent: first.firstEvent,
     };

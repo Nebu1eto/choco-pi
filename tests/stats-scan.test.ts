@@ -708,3 +708,89 @@ test("compaction checkpoints become events with method, provider, and trigger fr
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("Synthetic calls preserve requested model id and join both current and historical responseModel timings", async () => {
+  const { root, project } = await makeRoot();
+  try {
+    const file = path.join(project, "2026-10-20T10-00-00-000Z_syn.jsonl");
+    const glmEntry = assistant("a1", "t1", 2_000, {
+      provider: "synthetic",
+      model: "hf:zai-org/GLM-4.7-Flash",
+    });
+    const infEntry = assistant("a2", "a1", 3_000, {
+      provider: "synthetic",
+      model: "infinite:small:vision",
+      usage: {
+        input: 100,
+        output: 20,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 120,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    });
+    await writeFile(
+      file,
+      lines([
+        header("s-syn", "/proj", 0),
+        {
+          type: "custom",
+          id: "f1",
+          parentId: null,
+          timestamp: iso(1_000),
+          customType: FAST_MODE_ENTRY_TYPE,
+          data: { enabled: true, source: "explicit", revision: 1 },
+        },
+        {
+          type: "custom",
+          id: "t1",
+          parentId: "f1",
+          timestamp: iso(2_000),
+          customType: TIMING_ENTRY_TYPE,
+          data: {
+            v: 1,
+            at: glmEntry.message.timestamp,
+            provider: "synthetic",
+            model: "zai-org/GLM-4.7-Flash",
+            ttftMs: 180,
+            firstEvent: "text_delta",
+          },
+        },
+        {
+          ...glmEntry,
+          message: { ...glmEntry.message, responseModel: "zai-org/GLM-4.7-Flash" },
+        },
+        {
+          ...infEntry,
+          message: { ...infEntry.message, responseModel: "deepseek-ai/DeepSeek-V4.1-Flash-1017" },
+        },
+        {
+          type: "custom",
+          id: "t2",
+          parentId: "a2",
+          timestamp: iso(3_100),
+          customType: TIMING_ENTRY_TYPE,
+          data: {
+            v: 1,
+            at: infEntry.message.timestamp,
+            provider: "synthetic",
+            model: "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+            ttftMs: 420,
+            firstEvent: "text_delta",
+          },
+        },
+      ]),
+    );
+    const scanned = await scanSessions([root], new Map());
+    const records = scanned.sessions[0]?.records ?? [];
+    assert.equal(records.length, 2);
+    assert.equal(records[0]?.model, "hf:zai-org/GLM-4.7-Flash");
+    assert.equal(records[0]?.responseModel, "zai-org/GLM-4.7-Flash");
+    assert.equal(records[0]?.ttftMs, 180);
+    assert.equal(records[1]?.model, "infinite:small:vision");
+    assert.equal(records[1]?.responseModel, "deepseek-ai/DeepSeek-V4.1-Flash-1017");
+    assert.equal(records[1]?.ttftMs, 420);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

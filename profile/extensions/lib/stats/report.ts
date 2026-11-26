@@ -14,6 +14,7 @@ import {
   type Scope,
   type StatsReport,
 } from "./aggregate.ts";
+import { baseModelId } from "./fast.ts";
 import type { CompactionEvent, LaneEvent } from "./compaction.ts";
 import {
   formatStats,
@@ -300,16 +301,28 @@ export type StatsModelRegistry = {
     | undefined;
 };
 
+function findRegistryModel(registry: StatsModelRegistry, provider: string, model: string) {
+  const direct = registry.find(provider, model);
+  if (direct !== undefined || provider !== "synthetic") return direct;
+  const base = baseModelId(model);
+  if (base !== model) {
+    const stripped = registry.find(provider, base);
+    if (stripped !== undefined) return stripped;
+  }
+  if (!base.includes(":")) return registry.find(provider, `hf:${base}`);
+  return undefined;
+}
+
 export function registryModelNames(registry: StatsModelRegistry): ModelNameLookup {
   return (provider, model) => {
-    const name = registry.find(provider, model)?.name;
+    const name = findRegistryModel(registry, provider, model)?.name;
     return name === undefined || name.length === 0 ? undefined : name;
   };
 }
 
 export function registryPriceLookup(registry: StatsModelRegistry): PriceLookup {
   return (provider, model) => {
-    const found = registry.find(provider, model);
+    const found = findRegistryModel(registry, provider, model);
     if (!found) return undefined;
     const { input, output, cacheRead, cacheWrite, tiers } = found.cost;
     if (input + output + cacheRead + cacheWrite <= 0) return undefined;

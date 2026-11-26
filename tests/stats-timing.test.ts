@@ -171,3 +171,27 @@ test("a clock that lags the request start clamps TTFT at zero", () => {
   assert.ok(isJsonRecord(data));
   assert.equal(data["ttftMs"], 0);
 });
+
+test("Synthetic timing preserves the requested model id instead of Synthetic's stripped responseModel", () => {
+  const { pi, emit, entries } = fakePi();
+  let clock = 2_000;
+  registerStatsTiming(pi, () => clock);
+  const message = {
+    ...assistant(2_000, { responseModel: "zai-org/GLM-4.7-Flash" }),
+    provider: "synthetic",
+    model: "hf:zai-org/GLM-4.7-Flash",
+  };
+  emit("message_start", { type: "message_start", message });
+  clock = 2_250;
+  emit("message_update", {
+    type: "message_update",
+    message,
+    assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "ok", partial: message },
+  });
+  emit("message_end", { type: "message_end", message });
+  assert.equal(entries.length, 1);
+  const data = entries[0]?.data;
+  assert.ok(isJsonRecord(data));
+  assert.equal(data["model"], "hf:zai-org/GLM-4.7-Flash");
+  assert.equal(data["ttftMs"], 250);
+});

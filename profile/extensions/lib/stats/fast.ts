@@ -30,6 +30,7 @@ export type PriceLookup = (provider: string, model: string) => ModelPrices | und
 const FAST_PROVIDERS: ReadonlySet<string> = new Set(["openai", "openai-codex", "xai", "synthetic"]);
 
 const SYNTHETIC_FAST_PREFIX = "fast:";
+const SYNTHETIC_INFINITE_PREFIX = "infinite:";
 
 const XAI_FAST_VARIANTS: ReadonlyMap<string, string> = new Map([
   ["grok-4.7-build-fast", "grok-4.7"],
@@ -46,6 +47,10 @@ export function supportsFast(provider: string): boolean {
 export function baseModelId(model: string): string {
   if (model.startsWith(SYNTHETIC_FAST_PREFIX)) return model.slice(SYNTHETIC_FAST_PREFIX.length);
   return XAI_FAST_VARIANTS.get(model) ?? model;
+}
+
+export function isKnownFreeModel(provider: string, model: string): boolean {
+  return provider === "synthetic" && baseModelId(model).startsWith(SYNTHETIC_INFINITE_PREFIX);
 }
 
 export function tierRates(prices: ModelPrices, record: CallRecord): PriceRates {
@@ -90,15 +95,20 @@ export function fastStateOf(
   lookup: PriceLookup | undefined,
 ): FastState | undefined {
   if (!supportsFast(record.provider)) return undefined;
+  if (record.provider === "synthetic") {
+    if (baseModelId(record.model).startsWith(SYNTHETIC_INFINITE_PREFIX)) return undefined;
+    if (
+      record.model.startsWith(SYNTHETIC_FAST_PREFIX) ||
+      record.responseModel?.startsWith(SYNTHETIC_FAST_PREFIX) === true ||
+      record.fastRequested === true
+    )
+      return "on";
+    if (record.fastRequested === false) return "off";
+    return "unknown";
+  }
   if (
     XAI_FAST_VARIANTS.has(record.model) ||
     (record.responseModel !== undefined && XAI_FAST_VARIANTS.has(record.responseModel))
-  )
-    return "on";
-  if (
-    record.provider === "synthetic" &&
-    (record.model.startsWith(SYNTHETIC_FAST_PREFIX) ||
-      record.responseModel?.startsWith(SYNTHETIC_FAST_PREFIX) === true)
   )
     return "on";
   const priced = fastFromPrice(record, lookup?.(record.provider, baseModelId(record.model)));

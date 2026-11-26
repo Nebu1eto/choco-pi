@@ -4,8 +4,10 @@ import {
   baseModelId,
   fastFromPrice,
   fastStateOf,
+  isKnownFreeModel,
   listOutputRate,
   type ModelPrices,
+  type PriceLookup,
 } from "../profile/extensions/lib/stats/fast.ts";
 import type { CallRecord } from "../profile/extensions/lib/stats/records.ts";
 
@@ -190,4 +192,51 @@ test("fastStateOf: price evidence first, then the xAI variant id, then the reque
     ),
     "off",
   );
+  const synLookup: PriceLookup = (provider, model) =>
+    provider === "synthetic" && model === "hf:zai-org/GLM-4.7-Flash"
+      ? { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0 }
+      : undefined;
+  assert.equal(
+    fastStateOf(
+      call(
+        {
+          provider: "synthetic",
+          model: "hf:zai-org/GLM-4.7-Flash",
+          responseModel: "zai-org/GLM-4.7-Flash",
+          fastRequested: true,
+        },
+        0.5,
+      ),
+      synLookup,
+    ),
+    "on",
+    "Synthetic Fast does not double dollar cost, so list-priced turns with fastRequested=true stay on",
+  );
+  assert.equal(
+    fastStateOf(
+      call({ provider: "synthetic", model: "hf:zai-org/GLM-4.7-Flash", fastRequested: false }, 0.5),
+      synLookup,
+    ),
+    "off",
+  );
+  assert.equal(
+    fastStateOf(
+      call(
+        { provider: "synthetic", model: "hf:zai-org/GLM-4.7-Flash", fastRequested: undefined },
+        0.5,
+      ),
+      synLookup,
+    ),
+    "unknown",
+  );
+  assert.equal(
+    fastStateOf(
+      call({ provider: "synthetic", model: "infinite:small:vision", fastRequested: true }, 0),
+      synLookup,
+    ),
+    undefined,
+    "infinite: models are mutually exclusive with Synthetic Fast and carry no Fast tag",
+  );
+  assert.equal(isKnownFreeModel("synthetic", "infinite:small:vision"), true);
+  assert.equal(isKnownFreeModel("synthetic", "hf:zai-org/GLM-4.7-Flash"), false);
 });

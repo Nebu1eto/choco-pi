@@ -463,3 +463,86 @@ test("hour buckets keep both occurrences of a DST fall-back hour: America/New_Yo
   );
   assert.equal(kathmandu.trim(), "2026-10-27T11:15:00.000Z", "17:45 NPT floors to 17:00 NPT");
 });
+
+test("Synthetic Fast splits speed rows without doubling cost, infinite: is not unpriced, and registry lookup handles stripped hf: ids", async () => {
+  const { registryModelNames, registryPriceLookup } =
+    await import("../profile/extensions/lib/stats/report.ts");
+  const registry = {
+    find(provider: string, modelId: string) {
+      if (provider === "synthetic" && modelId === "hf:zai-org/GLM-4.7-Flash")
+        return {
+          name: "zai-org/GLM-4.7-Flash",
+          cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0 },
+        };
+      if (provider === "synthetic" && modelId === "infinite:small:vision")
+        return {
+          name: "infinite:small:vision",
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        };
+      return undefined;
+    },
+  };
+  const priceLookup = registryPriceLookup(registry);
+  const modelNames = registryModelNames(registry);
+  assert.equal(modelNames("synthetic", "zai-org/GLM-4.7-Flash"), "zai-org/GLM-4.7-Flash");
+  assert.equal(modelNames("synthetic", "fast:hf:zai-org/GLM-4.7-Flash"), "zai-org/GLM-4.7-Flash");
+  assert.equal(priceLookup("synthetic", "zai-org/GLM-4.7-Flash")?.output, 0.5);
+
+  const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+  const listCost = { input: 0.0001, output: 0.0005, cacheRead: 0, cacheWrite: 0, total: 0.0006 };
+  const tokens = { input: 1000, output: 1000, cacheRead: 0, cacheWrite: 0 };
+  const report = aggregateStats(
+    [
+      record({
+        key: "syn-fast",
+        provider: "synthetic",
+        model: "hf:zai-org/GLM-4.7-Flash",
+        responseModel: "zai-org/GLM-4.7-Flash",
+        tokens,
+        cost: listCost,
+        durationMs: 1000,
+        ttftMs: 100,
+        fastRequested: true,
+      }),
+      record({
+        key: "syn-std",
+        provider: "synthetic",
+        model: "hf:zai-org/GLM-4.7-Flash",
+        responseModel: "zai-org/GLM-4.7-Flash",
+        tokens,
+        cost: listCost,
+        durationMs: 2000,
+        ttftMs: 200,
+        fastRequested: false,
+      }),
+      record({
+        key: "syn-inf",
+        provider: "synthetic",
+        model: "infinite:small:vision",
+        responseModel: "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+        tokens,
+        cost: zero,
+        durationMs: 3000,
+        ttftMs: 500,
+        fastRequested: true,
+      }),
+    ],
+    { priceLookup },
+  );
+  assert.equal(report.unpricedCalls, 0, "known free infinite: model is not unpriced");
+  assert.equal(report.unpricedTokens, 0);
+  assert.equal(report.estimatedCalls, 0);
+  const fastRow = report.speed.byModel.find(
+    (row) => row.model === "synthetic/hf:zai-org/GLM-4.7-Flash" && row.fast === "on",
+  );
+  const stdRow = report.speed.byModel.find(
+    (row) => row.model === "synthetic/hf:zai-org/GLM-4.7-Flash" && row.fast === "off",
+  );
+  const infRow = report.speed.byModel.find(
+    (row) => row.model === "synthetic/infinite:small:vision",
+  );
+  assert.equal(fastRow?.calls, 1);
+  assert.equal(stdRow?.calls, 1);
+  assert.equal(infRow?.calls, 1);
+  assert.equal(infRow?.fast, undefined, "infinite: model gets no Fast tag");
+});

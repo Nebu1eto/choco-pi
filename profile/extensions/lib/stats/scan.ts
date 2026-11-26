@@ -24,6 +24,7 @@ import {
 import {
   numberField,
   readCallUsage,
+  recordedModelId,
   stringField,
   totalTokens,
   type CallKind,
@@ -222,7 +223,10 @@ function applyMessage(scan: SessionScan, entry: RuntimeValue, message: RuntimeVa
   if (role !== "assistant") return;
   const usage = readCallUsage(message["usage"]);
   const provider = stringField(message, "provider");
-  const model = stringField(message, "responseModel") ?? stringField(message, "model");
+  const rawModel = stringField(message, "model");
+  const responseModel = stringField(message, "responseModel");
+  const model =
+    provider === undefined ? undefined : recordedModelId(provider, rawModel, responseModel);
   if (usage === undefined || provider === undefined || model === undefined) return;
   const messageAt = numberField(message, "timestamp");
   const at = messageAt ?? entryAt(entry);
@@ -230,8 +234,15 @@ function applyMessage(scan: SessionScan, entry: RuntimeValue, message: RuntimeVa
   const parentId = stringField(entry, "parentId");
   const trigger = parentId === undefined ? undefined : scan.parents.get(parentId);
   const key = timingKey(provider, model, at);
-  const ttftMs = scan.timings.get(key);
+  const fallbackKey =
+    responseModel !== undefined && responseModel !== model
+      ? timingKey(provider, responseModel, at)
+      : undefined;
+  const ttftMs =
+    scan.timings.get(key) ??
+    (fallbackKey === undefined ? undefined : scan.timings.get(fallbackKey));
   scan.timings.delete(key);
+  if (fallbackKey !== undefined) scan.timings.delete(fallbackKey);
   const failed = totalTokens(usage.tokens) === 0 && usage.cost.total === 0;
   scan.lastModel = { provider, model };
   const record = pushRecord(scan, entry, {
@@ -244,12 +255,15 @@ function applyMessage(scan: SessionScan, entry: RuntimeValue, message: RuntimeVa
     durationMs: numberField(message, "durationMs"),
     ttftMs,
     stopReason: stringField(message, "stopReason"),
-    responseModel: stringField(message, "responseModel"),
+    responseModel,
     feature: featureForTrigger(trigger),
     nestedCalls: trigger?.nestedCalls ?? [],
     failed,
   });
-  if (ttftMs === undefined && !failed) scan.untimed.set(key, record);
+  if (ttftMs === undefined && !failed) {
+    scan.untimed.set(key, record);
+    if (fallbackKey !== undefined) scan.untimed.set(fallbackKey, record);
+  }
 }
 
 function applySummary(scan: SessionScan, entry: RuntimeValue, kind: CallKind): void {
@@ -386,6 +400,10 @@ function applyCustom(scan: SessionScan, entry: RuntimeValue): void {
   if (waiting !== undefined) {
     waiting.ttftMs = ttftMs;
     scan.untimed.delete(key);
+    if (waiting.responseModel !== undefined && waiting.responseModel !== waiting.model) {
+      scan.untimed.delete(timingKey(waiting.provider, waiting.model, at));
+      scan.untimed.delete(timingKey(waiting.provider, waiting.responseModel, at));
+    }
     return;
   }
   scan.timings.set(key, ttftMs);

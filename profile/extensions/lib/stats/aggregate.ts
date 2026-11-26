@@ -17,6 +17,7 @@ import {
   baseModelId,
   fastPriceMultiplier,
   fastStateOf,
+  isKnownFreeModel,
   tierRates,
   type FastState,
   type ModelPrices,
@@ -538,13 +539,14 @@ export function aggregateStats(
     let cost = record.cost.total;
     const fast = fastStateOf(record, options.priceLookup);
     if (cost === 0 && total > 0) {
-      const prices = options.priceLookup?.(record.provider, baseModelId(record.model));
+      const base = baseModelId(record.model);
+      const prices = options.priceLookup?.(record.provider, base);
       const estimate = prices === undefined ? 0 : estimateCost(record, prices, fast);
       if (estimate > 0) {
         estimatedCost += estimate;
         estimatedCalls += 1;
         cost = estimate;
-      } else {
+      } else if (!isKnownFreeModel(record.provider, base)) {
         unpricedCalls += 1;
         unpricedTokens += total;
       }

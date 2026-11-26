@@ -45,6 +45,15 @@ export function totalTokens(tokens: CallTokens): number {
   return tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite;
 }
 
+export function recordedModelId(
+  provider: string,
+  model: string | undefined,
+  responseModel: string | undefined,
+): string | undefined {
+  if (provider === "synthetic") return model ?? responseModel;
+  return responseModel ?? model;
+}
+
 export function readCallUsage(
   value: RuntimeValue,
 ): { tokens: CallTokens; cost: CallCost } | undefined {
