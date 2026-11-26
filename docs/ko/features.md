@@ -12,7 +12,7 @@
 - `/preferences`에서 응답 언어, 응답 스타일, 에이전트 페르소나를 설정합니다. 응답 스타일은 `balanced`(기본값. 최종 답은 짧게 하고, 긴 작업 중에는 몇 문장으로 진행 상황을 알림), `concise`(모든 진행 보고를 한 줄로 줄임), `explanatory` 중에서 고릅니다. 페르소나는 `unset`, `critical`, `pessimistic`(기본값) 중 하나이며, 에이전트가 자기 주장과 계획을 얼마나 엄격하게 검증할지 정합니다.
 - `/preferences` → Agent → On usage limit(`agentOnUsageLimit`)은 현재 공급자가 사용량 한도가 다 찼다고 알려 올 때 어떻게 할지 정합니다.
   - `none`(기본값): 실행을 오류 상태로 끝냅니다.
-  - `fallback`: [`profile/model-fallbacks.json`](../../profile/model-fallbacks.json)에서 다른 공급자의 비슷한 등급 모델을 골라 바꾼 뒤 작업을 이어 갑니다. 같은 등급에 쓸 수 있는 후보가 없으면 최후 수단으로 `xai/grok-4.7`, `synthetic/hf:moonshotai/Kimi-K3.1-Pro`(Kimi K3보다 우선), `synthetic/hf:moonshotai/Kimi-K3` 순으로 넘어갑니다.
+  - `fallback`: [`profile/model-fallbacks.json`](../../profile/model-fallbacks.json)에서 다른 공급자의 비슷한 등급 모델을 골라 바꾼 뒤 작업을 이어 갑니다. 같은 등급에 쓸 수 있는 후보가 없으면 최후 수단으로 `xai/grok-4.7`, `synthetic/hf:moonshotai/Kimi-K3.1-Pro` 순으로 넘어갑니다.
   - `auto-resume`: 한도가 초기화될 때까지 기다렸다가 작업을 이어 갑니다.
 
   서브 에이전트는 한도에 걸리면 예상 초기화 시각과 범위 안에서 쓸 수 있는 추천 모델을 부모 에이전트에 보고합니다. `auto-resume`일 때는 대기 상태로 있다가 초기화 뒤 다시 실행됩니다. `/goal`이 active나 paused 상태이면 복구는 goal 런타임이 대신 맡습니다.
@@ -100,7 +100,7 @@
 
 ## 모델과 사용량
 
-- `/effort`는 추론 effort를, `/fast`는 세션의 Fast 모드 설정을 바꿉니다. Fast 모드를 켜면 OpenAI 모델에는 priority 서비스 티어로 요청합니다. 단, `openai`로 로그인한 경우에는 적용되지 않습니다([인증](authentication.md) 참고). `xai/grok-4.7`(api.x.ai)에서는 choco-pi가 Grok 4.7의 Fast 변형인 `grok-4.7-build-fast`로 요청하고, 그 턴의 비용을 기본 가격의 두 배로 기록합니다. 다른 Grok 모델에서는 저장된 설정이 적용되지 않으며, `/fast status`가 그 이유를 알려 줍니다. 모델별 기본 thinking 수준은 설정의 `modelThinkingLevels`로 지정합니다.
+- `/effort`는 추론 effort를, `/fast`는 세션의 Fast 모드 설정을 바꿉니다. Fast 모드를 켜면 OpenAI 모델에는 priority 서비스 티어로 요청합니다. 단, `openai`로 로그인한 경우에는 적용되지 않습니다([인증](authentication.md) 참고). `xai/grok-4.7`(api.x.ai)에서는 choco-pi가 Grok 4.7의 Fast 변형인 `grok-4.7-build-fast`로 요청하고, 그 턴의 비용을 기본 가격의 두 배로 기록합니다. Synthetic(`api.synthetic.new`)에서는 요청 모델에 `fast:` 접두사(예: `fast:syn:large:text`, `fast:hf:moonshotai/Kimi-K3.1-Pro`)를 붙여 전송하며, 지원 구독 플랜에서 최대 2배 속도와 2배 한도 소모로 동작합니다. `infinite:` 모델은 Fast 모드와 함께 쓸 수 없으므로 비활성 상태로 남습니다. 지원하지 않는 모델에서는 저장된 설정이 적용되지 않으며, `/fast status`가 그 이유를 알려 줍니다. 모델별 기본 thinking 수준은 설정의 `modelThinkingLevels`로 지정합니다.
 - choco-pi는 `PI_CACHE_RETENTION`의 기본값을 `long`으로 두어, 지원하는 공급자에 프롬프트 캐시를 1시간 동안 유지해 달라고 요청합니다. 값을 직접 지정하면 그 값이 우선합니다.
 - `/usage`(별칭 `/quota`)는 Claude, ChatGPT, Synthetic, Grok의 사용량과 초기화 시각을, `/synthetic:quotas`는 Synthetic 할당량을 보여 줍니다. Grok은 OAuth로 로그인했으면 구독 크레딧 사용 구간을, API 키를 쓰면 상태만 담은 행을 표시합니다. 인증 정보가 없는 공급자는 목록에서 빼고, 흐린 글씨의 `Not signed in: …` 한 줄에 이름만 모아 보여 줍니다.
 

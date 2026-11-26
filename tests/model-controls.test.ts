@@ -211,6 +211,54 @@ test("xAI grok-4.7 Fast swaps the request model, reprices confirmed turns, and n
   }
 });
 
+test("Synthetic Fast prefixes requests on api.synthetic.new, skips infinite:, and shows editor badge", async () => {
+  const session = fastModeSession("fast-synthetic", true);
+  session.start();
+  const syn = (id: string, baseUrl = "https://api.synthetic.new/openai/v1"): Model<Api> => ({
+    ...model("synthetic"),
+    id,
+    api: "openai-completions",
+    baseUrl,
+  });
+  const request = (id: string, baseUrl?: string) =>
+    session.handlers.get("before_provider_request")?.(
+      { payload: { model: id, messages: [] } },
+      { ...session.ctx, model: syn(id, baseUrl) },
+    );
+  try {
+    assert.deepEqual(request("hf:moonshotai/Kimi-K3.1-Pro"), {
+      model: "fast:hf:moonshotai/Kimi-K3.1-Pro",
+      messages: [],
+    });
+    assert.deepEqual(request("syn:large:text"), {
+      model: "fast:syn:large:text",
+      messages: [],
+    });
+    assert.equal(request("infinite:small:vision"), undefined);
+    assert.equal(request("syn:large:text", "https://proxy.example/openai/v1"), undefined);
+
+    session.ctx.model = syn("infinite:small:vision");
+    await session.toggle("status");
+    assert.equal(
+      session.notices.at(-1),
+      "Fast mode: on (saved; Synthetic Fast is mutually exclusive with infinite: models)",
+    );
+
+    const lines = ["─".repeat(80), "", " syn:large:text  Synthetic  high", "─".repeat(80)];
+    const decorated = appendFastModeToEditorMetadata(lines, 80, syn("syn:large:text"), true);
+    assert.match(decorated[2] ?? "", /fast  $/);
+    const infiniteDecorated = appendFastModeToEditorMetadata(
+      ["─".repeat(80), "", " infinite:small:vision  Synthetic  high", "─".repeat(80)],
+      80,
+      syn("infinite:small:vision"),
+      true,
+    );
+    assert.doesNotMatch(infiniteDecorated[2] ?? "", /fast/);
+  } finally {
+    session.stop();
+  }
+});
+
 test("OpenAI Codex editor metadata shows only fast with a two-column right margin", () => {
   const lines = ["─".repeat(80), "", " gpt-5.6-sol  OpenAI  high", "─".repeat(80)];
   const decorated = appendFastModeToEditorMetadata(lines, 80, model("openai-codex"), true);

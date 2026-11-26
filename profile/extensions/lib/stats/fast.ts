@@ -27,7 +27,9 @@ export type ModelPrices = {
 
 export type PriceLookup = (provider: string, model: string) => ModelPrices | undefined;
 
-const FAST_PROVIDERS: ReadonlySet<string> = new Set(["openai", "openai-codex", "xai"]);
+const FAST_PROVIDERS: ReadonlySet<string> = new Set(["openai", "openai-codex", "xai", "synthetic"]);
+
+const SYNTHETIC_FAST_PREFIX = "fast:";
 
 const XAI_FAST_VARIANTS: ReadonlyMap<string, string> = new Map([
   ["grok-4.7-build-fast", "grok-4.7"],
@@ -42,6 +44,7 @@ export function supportsFast(provider: string): boolean {
 }
 
 export function baseModelId(model: string): string {
+  if (model.startsWith(SYNTHETIC_FAST_PREFIX)) return model.slice(SYNTHETIC_FAST_PREFIX.length);
   return XAI_FAST_VARIANTS.get(model) ?? model;
 }
 
@@ -90,6 +93,12 @@ export function fastStateOf(
   if (
     XAI_FAST_VARIANTS.has(record.model) ||
     (record.responseModel !== undefined && XAI_FAST_VARIANTS.has(record.responseModel))
+  )
+    return "on";
+  if (
+    record.provider === "synthetic" &&
+    (record.model.startsWith(SYNTHETIC_FAST_PREFIX) ||
+      record.responseModel?.startsWith(SYNTHETIC_FAST_PREFIX) === true)
   )
     return "on";
   const priced = fastFromPrice(record, lookup?.(record.provider, baseModelId(record.model)));

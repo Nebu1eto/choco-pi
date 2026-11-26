@@ -11,6 +11,8 @@ import {
   isOpenAISubscriptionSignIn,
   OPENAI_SIGN_IN_FAST_REASON,
   supportsFastMode,
+  SYNTHETIC_FAST_HOST_REASON,
+  SYNTHETIC_FAST_INFINITE_REASON,
   XAI_FAST_HOST_REASON,
   XAI_FAST_MODEL_REASON,
   type FastModeExtensionContext,
@@ -459,6 +461,92 @@ test("xAI Fast pricing doubles only server-confirmed Fast responses, once", () =
   pricing.observe("xai", { response: { id: "r4", model: "grok-4.7-build-fast" } });
   assert.equal(
     pricing.apply({ ...message("r4"), responseModel: "grok-4.7-build-fast" }),
+    undefined,
+  );
+});
+
+const synthetic = (id: string, baseUrl = "https://api.synthetic.new/openai/v1") => ({
+  ...model("synthetic"),
+  api: "openai-completions" as const,
+  id,
+  baseUrl,
+});
+
+test("Synthetic Fast prefixes non-infinite models on api.synthetic.new and rejects others with reasons", () => {
+  const state = { sessionId: "s", requested: true, source: "explicit" as const, revision: 1 };
+  assert.deepEqual(decideFastMode(state, synthetic("hf:moonshotai/Kimi-K3.1-Pro")), {
+    ...state,
+    supported: true,
+    active: true,
+    serviceTier: undefined,
+    fastModelId: "fast:hf:moonshotai/Kimi-K3.1-Pro",
+  });
+  assert.deepEqual(decideFastMode(state, synthetic("syn:large:text")), {
+    ...state,
+    supported: true,
+    active: true,
+    serviceTier: undefined,
+    fastModelId: "fast:syn:large:text",
+  });
+  assert.equal(
+    decideFastMode(state, synthetic("fast:hf:moonshotai/Kimi-K3.1-Pro")).fastModelId,
+    "fast:hf:moonshotai/Kimi-K3.1-Pro",
+    "never double-prefixes an already fast: model id",
+  );
+  assert.equal(
+    decideFastMode({ ...state, requested: false }, synthetic("syn:large:text")).active,
+    false,
+  );
+  assert.equal(supportsFastMode(synthetic("hf:moonshotai/Kimi-K3.1-Pro")), true);
+  assert.deepEqual(decideFastMode(state, synthetic("infinite:small:vision")), {
+    ...state,
+    supported: false,
+    active: false,
+    serviceTier: undefined,
+    reason: SYNTHETIC_FAST_INFINITE_REASON,
+  });
+  assert.equal(supportsFastMode(synthetic("infinite:small:vision")), false);
+  const foreign = decideFastMode(
+    state,
+    synthetic("syn:large:text", "https://proxy.example/openai/v1"),
+  );
+  assert.equal(foreign.supported, false);
+  assert.equal(foreign.reason, SYNTHETIC_FAST_HOST_REASON);
+  assert.equal(
+    supportsFastMode(synthetic("syn:large:text", "https://proxy.example/openai/v1")),
+    false,
+  );
+  assert.equal(supportsFastMode(synthetic("syn:large:text", "not a url")), false);
+  assert.equal(supportsFastMode(synthetic("")), false);
+});
+
+test("Synthetic request prefixes model id only when active and never adds or strips service_tier", () => {
+  const state = { sessionId: "s", requested: true, source: "explicit" as const, revision: 1 };
+  const kimi = synthetic("hf:moonshotai/Kimi-K3.1-Pro");
+  const on = decideFastMode(state, kimi);
+  const off = decideFastMode({ ...state, requested: false }, kimi);
+  assert.deepEqual(applyFastModeRequest({ model: kimi.id, messages: [] }, on, kimi), {
+    model: "fast:hf:moonshotai/Kimi-K3.1-Pro",
+    messages: [],
+  });
+  assert.equal(applyFastModeRequest({ model: kimi.id }, off, kimi), undefined);
+  assert.equal(
+    applyFastModeRequest({ model: kimi.id, service_tier: "auto" }, off, kimi),
+    undefined,
+  );
+  assert.equal(applyFastModeRequest({ model: "other" }, on, kimi), undefined);
+  const alreadyFast = synthetic("fast:syn:large:text");
+  assert.equal(
+    applyFastModeRequest(
+      { model: alreadyFast.id },
+      decideFastMode(state, alreadyFast),
+      alreadyFast,
+    ),
+    undefined,
+  );
+  const infinite = synthetic("infinite:small:vision");
+  assert.equal(
+    applyFastModeRequest({ model: infinite.id }, decideFastMode(state, infinite), infinite),
     undefined,
   );
 });

@@ -608,7 +608,7 @@ export function createSearchRuntime(pi: ExtensionAPI, _toolNames: ToolNames, cur
       { provider: "anthropic", id: "claude-haiku-5-5" },
       { provider: "openai", id: "gpt-6-luna" },
       { provider: "openai-codex", id: "gpt-6-luna" },
-      { provider: "synthetic", id: "hf:deepseek-ai/DeepSeek-V4.1-Flash" },
+      { provider: "synthetic", id: "hf:deepseek-ai/DeepSeek-V4.1-Flash-1017" },
       { provider: "anthropic", id: "claude-haiku-4-5" },
       { provider: "openai", id: "gpt-5.6-luna" },
       { provider: "openai", id: "gpt-6.1-terra" },

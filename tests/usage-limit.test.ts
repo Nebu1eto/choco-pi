@@ -754,7 +754,6 @@ test("the repository table offers xai/grok-4.7 only after every first-party cand
     });
     const grok = { provider: "xai", id: "grok-4.7" };
     const kimi = { provider: "synthetic", id: "hf:moonshotai/Kimi-K3.1-Pro" };
-    const kimiK3 = { provider: "synthetic", id: "hf:moonshotai/Kimi-K3" };
     const closedOnly =
       (...providers: string[]) =>
       (provider: string): boolean =>
@@ -814,7 +813,7 @@ test("the repository table offers xai/grok-4.7 only after every first-party cand
         scoped: [],
         isClosed: firstPartyClosed,
       }),
-      kimiK3,
+      undefined,
     );
     assert.deepEqual(
       pickFallback(table, opus, {
@@ -1211,11 +1210,7 @@ test("the repository fallback table loads and mirrors the model-guidance tiers",
       "openai-codex/gpt-6-luna",
       "anthropic/claude-haiku-5-5",
     ]);
-    assert.deepEqual(table.lastResort, [
-      "xai/grok-4.7",
-      "synthetic/hf:moonshotai/Kimi-K3.1-Pro",
-      "synthetic/hf:moonshotai/Kimi-K3",
-    ]);
+    assert.deepEqual(table.lastResort, ["xai/grok-4.7", "synthetic/hf:moonshotai/Kimi-K3.1-Pro"]);
     assert.deepEqual(table.preferWhenAvailable, {
       "anthropic/claude-fable-5-2": "anthropic/claude-mythos-5-2",
       "anthropic/claude-fable-5-1": "anthropic/claude-mythos-5-1",

@@ -48,6 +48,13 @@ export const XAI_FAST_PRICE_MULTIPLIER = 2;
 export const XAI_FAST_MODEL_REASON = `xAI Fast exists only for ${[...XAI_FAST_MODEL_IDS.keys()].join(", ")}`;
 export const XAI_FAST_HOST_REASON = `xAI Fast requires ${XAI_FAST_HOST}`;
 
+export const SYNTHETIC_FAST_HOST = "api.synthetic.new";
+export const SYNTHETIC_FAST_PREFIX = "fast:";
+export const SYNTHETIC_INFINITE_PREFIX = "infinite:";
+export const SYNTHETIC_FAST_HOST_REASON = `Synthetic Fast requires ${SYNTHETIC_FAST_HOST}`;
+export const SYNTHETIC_FAST_INFINITE_REASON =
+  "Synthetic Fast is mutually exclusive with infinite: models";
+
 function baseUrlHostname(model: Model<Api>): string | undefined {
   try {
     return new URL(model.baseUrl).hostname;
@@ -64,6 +71,23 @@ export function xaiFastModelId(model: Model<Api> | undefined): string | undefine
 function xaiFastUnsupportedReason(model: Model<Api> | undefined): string | undefined {
   if (model?.provider !== "xai" || xaiFastModelId(model) !== undefined) return undefined;
   return baseUrlHostname(model) === XAI_FAST_HOST ? XAI_FAST_MODEL_REASON : XAI_FAST_HOST_REASON;
+}
+
+export function syntheticFastModelId(model: Model<Api> | undefined): string | undefined {
+  if (model?.provider !== "synthetic" || baseUrlHostname(model) !== SYNTHETIC_FAST_HOST)
+    return undefined;
+  if (!model.id || model.id.startsWith(SYNTHETIC_INFINITE_PREFIX)) return undefined;
+  return model.id.startsWith(SYNTHETIC_FAST_PREFIX)
+    ? model.id
+    : `${SYNTHETIC_FAST_PREFIX}${model.id}`;
+}
+
+function syntheticFastUnsupportedReason(model: Model<Api> | undefined): string | undefined {
+  if (model?.provider !== "synthetic" || syntheticFastModelId(model) !== undefined)
+    return undefined;
+  if (baseUrlHostname(model) !== SYNTHETIC_FAST_HOST) return SYNTHETIC_FAST_HOST_REASON;
+  if (model.id.startsWith(SYNTHETIC_INFINITE_PREFIX)) return SYNTHETIC_FAST_INFINITE_REASON;
+  return undefined;
 }
 
 export function isOpenAISubscriptionSignIn(
@@ -162,7 +186,7 @@ export function supportsFastMode(
   model: Model<Api> | undefined,
   registry?: FastModeAuthRegistry,
 ): boolean {
-  if (xaiFastModelId(model) !== undefined) return true;
+  if (xaiFastModelId(model) !== undefined || syntheticFastModelId(model) !== undefined) return true;
   if (!model || (model.provider !== "openai" && model.provider !== "openai-codex")) return false;
   if (isOpenAISubscriptionSignIn(model, registry)) return false;
   try {
@@ -188,10 +212,17 @@ export function decideFastMode(
       serviceTier: undefined,
       reason: OPENAI_SIGN_IN_FAST_REASON,
     };
-  const xaiReason = xaiFastUnsupportedReason(model);
-  if (xaiReason !== undefined)
-    return { ...state, supported: false, active: false, serviceTier: undefined, reason: xaiReason };
-  const fastModelId = xaiFastModelId(model);
+  const unsupportedReason =
+    xaiFastUnsupportedReason(model) ?? syntheticFastUnsupportedReason(model);
+  if (unsupportedReason !== undefined)
+    return {
+      ...state,
+      supported: false,
+      active: false,
+      serviceTier: undefined,
+      reason: unsupportedReason,
+    };
+  const fastModelId = xaiFastModelId(model) ?? syntheticFastModelId(model);
   if (fastModelId !== undefined)
     return {
       ...state,
@@ -222,7 +253,13 @@ export function applyFastModeRequest(
   }
   if (!decision.supported) return undefined;
   if (decision.fastModelId !== undefined) {
-    if (!decision.active || model === undefined || payload.model !== model.id) return undefined;
+    if (
+      !decision.active ||
+      model === undefined ||
+      payload.model !== model.id ||
+      decision.fastModelId === payload.model
+    )
+      return undefined;
     return { ...payload, model: decision.fastModelId };
   }
   if (decision.active) return { ...payload, service_tier: "priority" };

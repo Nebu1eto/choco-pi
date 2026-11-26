@@ -162,5 +162,32 @@ test("fastStateOf: price evidence first, then the xAI variant id, then the reque
     "Anthropic never splits",
   );
   assert.equal(baseModelId("grok-4.7-build-fast"), "grok-4.7");
+  assert.equal(baseModelId("fast:hf:moonshotai/Kimi-K3.1-Pro"), "hf:moonshotai/Kimi-K3.1-Pro");
+  assert.equal(baseModelId("fast:syn:large:text"), "syn:large:text");
   assert.equal(baseModelId("gpt-6-astra"), "gpt-6-astra");
+  assert.equal(
+    fastStateOf(call({ provider: "synthetic", model: "fast:syn:large:text" }, 0), lookup),
+    "on",
+  );
+  assert.equal(
+    fastStateOf(
+      call(
+        {
+          provider: "synthetic",
+          model: "hf:moonshotai/Kimi-K3.1-Pro",
+          responseModel: "fast:hf:moonshotai/Kimi-K3.1-Pro",
+        },
+        0,
+      ),
+      lookup,
+    ),
+    "on",
+  );
+  assert.equal(
+    fastStateOf(
+      call({ provider: "synthetic", model: "syn:large:text", fastRequested: false }, 0),
+      lookup,
+    ),
+    "off",
+  );
 });

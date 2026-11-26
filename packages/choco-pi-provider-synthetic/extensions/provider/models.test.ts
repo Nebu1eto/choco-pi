@@ -327,17 +327,17 @@ describe("Synthetic models", () => {
   it("buildSyntheticProviderModelsFromApi falls back to the static map without reasoning_parameters", () => {
     const apiModels: SyntheticApiModel[] = [
       {
-        id: "hf:moonshotai/Kimi-K3",
-        name: "moonshotai/Kimi-K3",
+        id: "hf:moonshotai/Kimi-K3.1-Pro",
+        name: "moonshotai/Kimi-K3.1-Pro",
         provider: "synthetic",
         input_modalities: ["text", "image"],
         output_modalities: ["text"],
         context_length: 524288,
         max_output_length: 65536,
         pricing: {
-          prompt: "$0.000003",
-          completion: "$0.000015",
-          input_cache_reads: "$0.00000045",
+          prompt: "$0.000002",
+          completion: "$0.00001",
+          input_cache_reads: "$0.0000002",
           input_cache_writes: "0",
         },
         supported_features: ["reasoning"],
@@ -346,7 +346,7 @@ describe("Synthetic models", () => {
 
     const models = buildSyntheticProviderModelsFromApi(apiModels);
     expect(models[0]?.thinkingLevelMap).toEqual(
-      SYNTHETIC_MODELS.find((m) => m.id === "hf:moonshotai/Kimi-K3")?.thinkingLevelMap,
+      SYNTHETIC_MODELS.find((m) => m.id === "hf:moonshotai/Kimi-K3.1-Pro")?.thinkingLevelMap,
     );
   });
 

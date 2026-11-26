@@ -44,13 +44,17 @@ Once installed, select `synthetic` as your provider and choose from available mo
 /model synthetic hf:moonshotai/Kimi-K3.1-Pro
 ```
 
-Kimi K3.1 Pro is recommended over Kimi K3: it is Synthetic's newer Kimi model, with the same 524288-token context and image input at lower per-token prices. `hf:moonshotai/Kimi-K3` remains available.
-
 ### Models
 
 Models are discovered dynamically from Synthetic's models API and cached for four hours. The hardcoded catalog in `extensions/provider/models.ts` is an offline fallback and the override source for model-specific compatibility settings (`thinkingLevelMap`, `compat`) that the API does not expose. When the API returns a model whose `id` matches a static entry, the static entry's `thinkingLevelMap` and `compat` are merged on top of the API-sourced fields.
 
 Synthetic publishes permanent category model IDs — `syn:large:text`, `syn:small:text`, `syn:large:vision`, `syn:small:vision` — that route to the current best model for each category. These IDs are stable across model rotations, so using one means no reconfiguration when Synthetic swaps the underlying model. They appear in the catalog like any other model and carry their own `thinkingLevelMap` overrides in the static catalog.
+
+Synthetic also exposes `infinite:small:vision` for background tasks that do not count against subscription rate limits.
+
+### Fast Mode
+
+With `/fast on`, choco-pi prefixes Synthetic chat-completion request models with `fast:` (e.g., `fast:syn:large:text`, `fast:hf:moonshotai/Kimi-K3.1-Pro`) when talking to `api.synthetic.new`. Fast mode runs up to 2× faster and consumes 2× rate limit on eligible Synthetic subscriptions. Fast mode is mutually exclusive with `infinite:` models, so `/fast` stays inactive on `infinite:small:vision`.
 
 All user-facing model selection uses the Pi provider name `synthetic`.
 
@@ -84,17 +88,15 @@ Synthetic exposes model-specific reasoning efforts. The extension builds the
 live model map from each API entry's `reasoning_parameters.efforts` and hides
 levels that the API does not advertise. Its offline catalog currently maps:
 
-- `syn:large:text` and `hf:deepseek-ai/DeepSeek-V4.1-Flash`: off, low, high,
+- `syn:large:text`, `infinite:small:vision`, and `hf:deepseek-ai/DeepSeek-V4.1-Flash-1017`: off, low, high,
   xhigh, and max.
-- `syn:small:text`, `hf:openai/gpt-oss-120b`, `hf:zai-org/GLM-4.7-Flash`, and
-  `hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4`: off, low, medium, and
-  high.
-- `syn:large:vision`, `hf:moonshotai/Kimi-K3`, and `hf:moonshotai/Kimi-K3.1-Pro`: low, high, and max. These
+- `syn:small:text`, `hf:openai/gpt-oss-120b`, and `hf:zai-org/GLM-4.7-Flash`: off, low, medium, and high.
+- `syn:large:vision` and `hf:moonshotai/Kimi-K3.1-Pro`: low, high, and max. These
   models do not advertise an off effort.
 - `hf:zai-org/GLM-5.3-Flash` and `hf:zai-org/GLM-5.3`: high and max. Their
   advertised low effort is hidden because probes returned empty content or
   failed to complete.
-- `syn:small:vision` and `hf:Qwen/Qwen3.8-27B`: low, medium, and xhigh. These
+- `syn:small:vision`, `hf:thinkingmachines/Inkling-2-Mini`, and `hf:Qwen/Qwen3.8-27B`: low, medium, and xhigh. These
   models do not advertise an off effort.
 
 Pi's `off` level sends Synthetic's `none` effort only when the API advertises
