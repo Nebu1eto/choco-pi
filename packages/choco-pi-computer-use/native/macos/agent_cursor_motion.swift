@@ -7,7 +7,8 @@ import Observation
 final class AgentCursorRenderer {
     static let shared = AgentCursorRenderer()
 
-    private(set) var position = CGPoint(x: -200, y: -200)
+    private(set) var position = CGPoint.zero
+    private(set) var isPlaced = false
     private(set) var heading: Double = .pi / 4
     private(set) var isAnimating = false
 
@@ -32,10 +33,12 @@ final class AgentCursorRenderer {
         distanceSoFar = 0
         lastFrameTime = nil
         isAnimating = true
+        isPlaced = true
     }
 
     func setInitialPosition(_ point: CGPoint) {
         position = point
+        isPlaced = true
         cancelAnimation()
     }
 

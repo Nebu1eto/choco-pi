@@ -433,6 +433,10 @@ final class Box<T> {
 	}
 }
 
+func rectPayload(_ rect: CGRect) -> [String: Any] {
+	["x": rect.origin.x, "y": rect.origin.y, "w": rect.width, "h": rect.height]
+}
+
 final class InputSuppressionGuard {
 	static let maxSuppressionSeconds: TimeInterval = 30
 
@@ -1211,6 +1215,8 @@ final class Bridge {
 			return try axReadText(request)
 		case "getMousePosition":
 			return getMousePosition()
+		case "agentCursorState":
+			return try agentCursorState(request)
 		default:
 			throw BridgeFailure(message: "Unknown command '\(cmd)'", code: "unknown_command")
 		}
@@ -4519,35 +4525,162 @@ final class Bridge {
 
 	private func displayScaleFactor(for frame: CGRect) -> Double {
 		var displayCount: UInt32 = 0
-		guard CGGetOnlineDisplayList(0, nil, &displayCount) == .success, displayCount > 0 else {
-			return Double(NSScreen.main?.backingScaleFactor ?? 1.0)
-		}
-
-		var displays = Array(repeating: CGDirectDisplayID(), count: Int(displayCount))
-		guard CGGetOnlineDisplayList(displayCount, &displays, &displayCount) == .success else {
-			return Double(NSScreen.main?.backingScaleFactor ?? 1.0)
-		}
-
-		var chosenDisplay: CGDirectDisplayID?
-		var chosenArea: CGFloat = -1
-		for display in displays {
-			let bounds = CGDisplayBounds(display)
-			let overlap = bounds.intersection(frame)
-			let area = overlap.isNull ? 0 : overlap.width * overlap.height
-			if area > chosenArea {
-				chosenArea = area
-				chosenDisplay = display
+		var displays: [CGDirectDisplayID] = []
+		if CGGetOnlineDisplayList(0, nil, &displayCount) == .success, displayCount > 0 {
+			var listed = Array(repeating: CGDirectDisplayID(), count: Int(displayCount))
+			if CGGetOnlineDisplayList(displayCount, &listed, &displayCount) == .success {
+				displays = Array(listed.prefix(Int(displayCount)))
 			}
 		}
+		let chosen = DisplayGeometry.bestDisplayIndex(for: frame, among: displays.map { CGDisplayBounds($0) })
+			.map { displays[$0] } ?? CGMainDisplayID()
+		return displayModeScale(chosen) ?? displayModeScale(CGMainDisplayID()) ?? 1.0
+	}
 
-		guard let display = chosenDisplay, let mode = CGDisplayCopyDisplayMode(display) else {
-			return Double(NSScreen.main?.backingScaleFactor ?? 1.0)
-		}
-
+	private func displayModeScale(_ display: CGDirectDisplayID) -> Double? {
+		guard let mode = CGDisplayCopyDisplayMode(display) else { return nil }
 		let width = Double(mode.width)
-		guard width > 0 else { return 1.0 }
+		guard width > 0 else { return nil }
 		let scale = Double(mode.pixelWidth) / width
-		return scale > 0 ? scale : 1.0
+		return scale > 0 ? scale : nil
+	}
+
+	private func agentCursorState(_ request: [String: Any]) throws -> [String: Any] {
+		guard supportsAgentCursor else { return ["supported": false] }
+		guard !Thread.isMainThread else {
+			throw BridgeFailure(message: "agentCursorState must not run on the main thread", code: "invalid_state")
+		}
+		let semaphore = DispatchSemaphore(value: 0)
+		let state = Box<(snapshot: AgentCursorSnapshot, displays: [[String: Any]])?>(nil)
+		Task { @MainActor in
+			defer { semaphore.signal() }
+			let displays = NSScreen.screens.compactMap { screen -> [String: Any]? in
+				guard let id = DisplayGeometry.displayID(of: screen) else { return nil }
+				return [
+					"id": Int(id),
+					"bounds": rectPayload(CGDisplayBounds(id)),
+					"frame": rectPayload(screen.frame),
+					"scale": Double(screen.backingScaleFactor),
+					"keyScreen": screen == NSScreen.main,
+				]
+			}
+			state.value = (AgentCursor.shared.snapshot(), displays)
+		}
+		guard semaphore.wait(timeout: .now() + .seconds(3)) == .success, let current = state.value else {
+			throw BridgeFailure(message: "The agent cursor state did not arrive from the main thread", code: "timeout")
+		}
+		let snapshot = current.snapshot
+		var output: [String: Any] = ["supported": true, "displays": current.displays]
+		if let number = snapshot.windowNumber, let display = snapshot.display {
+			var overlay: [String: Any] = [
+				"windowNumber": number,
+				"visible": snapshot.visible,
+				"displayId": Int(display.id),
+				"displayBounds": rectPayload(display.bounds),
+			]
+			if let frame = snapshot.windowFrame { overlay["frame"] = rectPayload(frame) }
+			if let entry = windowServerEntry(windowNumber: number) {
+				overlay["windowServerBounds"] = rectPayload(entry.bounds)
+				overlay["windowServerOnscreen"] = entry.onscreen
+			}
+			output["overlay"] = overlay
+			if request["capture"] as? Bool == true {
+				output["capture"] = captureOverlayPointer(windowNumber: number, pointsWide: display.bounds.width)
+			}
+		} else {
+			output["overlay"] = NSNull()
+		}
+		var pointer: [String: Any] = ["animating": snapshot.animating]
+		if let target = snapshot.target { pointer["target"] = ["x": target.x, "y": target.y] }
+		if let local = snapshot.localTarget { pointer["local"] = ["x": local.x, "y": local.y] }
+		if let position = snapshot.position { pointer["position"] = ["x": position.x, "y": position.y] }
+		output["pointer"] = pointer
+		if let unplaced = snapshot.unplacedPoint { output["unplacedPoint"] = ["x": unplaced.x, "y": unplaced.y] }
+		return output
+	}
+
+	private func windowServerEntry(windowNumber: Int) -> (bounds: CGRect, onscreen: Bool)? {
+		guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(windowNumber)) as? [[String: Any]],
+			let info = list.first(where: { ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == windowNumber }),
+			let raw = info[kCGWindowBounds as String] as? NSDictionary,
+			let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary)
+		else { return nil }
+		return (bounds, (info[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false)
+	}
+
+	private func captureOverlayPointer(windowNumber: Int, pointsWide: CGFloat) -> [String: Any] {
+		let semaphore = DispatchSemaphore(value: 0)
+		let captured = Box<CGImage?>(nil)
+		let failure = Box<String?>(nil)
+		let task = Task {
+			defer { semaphore.signal() }
+			do {
+				let shareable = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+				guard let window = shareable.windows.first(where: { Int($0.windowID) == windowNumber }) else {
+					failure.value = "the overlay window is not capturable"
+					return
+				}
+				let config = SCStreamConfiguration()
+				config.width = max(1, Int(window.frame.width.rounded()))
+				config.height = max(1, Int(window.frame.height.rounded()))
+				config.showsCursor = false
+				config.ignoreShadowsSingleWindow = true
+				captured.value = try await SCScreenshotManager.captureImage(
+					contentFilter: SCContentFilter(desktopIndependentWindow: window),
+					configuration: config
+				)
+			} catch {
+				failure.value = error.localizedDescription
+			}
+		}
+		if semaphore.wait(timeout: .now() + .seconds(5)) == .timedOut {
+			task.cancel()
+			return ["error": "capture timed out"]
+		}
+		if let message = failure.value { return ["error": message] }
+		guard let image = captured.value else { return ["error": "capture returned no image"] }
+		return pointerPixels(in: image, pointsWide: pointsWide)
+	}
+
+	private func pointerPixels(in image: CGImage, pointsWide: CGFloat) -> [String: Any] {
+		let width = image.width
+		let height = image.height
+		var bytes = [UInt8](repeating: 0, count: width * height * 4)
+		let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
+			guard let context = CGContext(
+				data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+				space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+			) else { return false }
+			context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+			return true
+		}
+		guard drawn, pointsWide > 0 else { return ["error": "could not read the captured pixels"] }
+		var count = 0
+		var minX = width, minY = height, maxX = -1, maxY = -1
+		for row in 0..<height {
+			for column in 0..<width {
+				let offset = (row * width + column) * 4
+				guard bytes[offset + 3] >= 153, bytes[offset] >= 180 else { continue }
+				count += 1
+				minX = min(minX, column)
+				maxX = max(maxX, column)
+				minY = min(minY, row)
+				maxY = max(maxY, row)
+			}
+		}
+		let pixelsPerPoint = Double(width) / Double(pointsWide)
+		var output: [String: Any] = ["width": width, "height": height, "pixelsPerPoint": pixelsPerPoint, "opaquePixels": count]
+		if count > 0 {
+			output["bounds"] = [
+				"x": Double(minX) / pixelsPerPoint,
+				"y": Double(minY) / pixelsPerPoint,
+				"w": Double(maxX - minX + 1) / pixelsPerPoint,
+				"h": Double(maxY - minY + 1) / pixelsPerPoint,
+			]
+		} else {
+			output["bounds"] = NSNull()
+		}
+		return output
 	}
 
 	private func captureWindow(windowId: UInt32) throws -> CapturedWindowImage {

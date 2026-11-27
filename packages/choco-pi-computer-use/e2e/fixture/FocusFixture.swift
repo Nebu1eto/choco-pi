@@ -38,6 +38,14 @@ let windowOffset: NSPoint = {
 	guard let parts = numbers("CU_FIXTURE_OFFSET"), parts.count == 2 else { return .zero }
 	return NSPoint(x: parts[0], y: parts[1])
 }()
+// Display placement (safety/displays.ts): CU_FIXTURE_ORIGIN=x,y in global top-left points translates every
+let layoutOrigin: NSPoint? = {
+	guard let parts = numbers("CU_FIXTURE_ORIGIN"), parts.count == 2 else { return nil }
+	return NSPoint(x: parts[0], y: parts[1])
+}()
+let layoutEnabled = layoutOrigin != nil
+let screensOnly = flag("CU_FIXTURE_SCREENS_ONLY")
+let windowShift = NSPoint(x: windowOffset.x + (layoutOrigin?.x ?? 0), y: windowOffset.y - (layoutOrigin?.y ?? 0))
 
 final class EventLog {
 	private let handle: FileHandle?
@@ -88,13 +96,57 @@ func cocoaRect(fromTopLeft rect: NSRect) -> NSRect {
 	return NSRect(x: rect.origin.x, y: primaryHeight - rect.origin.y - rect.size.height, width: rect.size.width, height: rect.size.height)
 }
 
+func topLeftRect(fromCocoa rect: NSRect) -> NSRect {
+	let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+	return NSRect(x: rect.origin.x, y: primaryHeight - rect.origin.y - rect.size.height, width: rect.size.width, height: rect.size.height)
+}
+
+func globalPoint(_ event: NSEvent) -> [String: Any]? {
+	guard layoutEnabled, let window = event.window else { return nil }
+	let screen = window.convertPoint(toScreen: event.locationInWindow)
+	let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+	return ["x": screen.x, "y": primaryHeight - screen.y]
+}
+
+func screensPayload() -> [[String: Any]] {
+	NSScreen.screens.enumerated().map { index, screen in
+		let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
+		return [
+			"id": Int(id),
+			"name": screen.localizedName,
+			"primary": index == 0,
+			"main": screen == NSScreen.main,
+			"frame": frameFields(screen.frame),
+			"bounds": frameFields(CGDisplayBounds(id)),
+			"topLeftFrame": frameFields(topLeftRect(fromCocoa: screen.frame)),
+			"backingScale": Double(screen.backingScaleFactor),
+		]
+	}
+}
+
+func ownerWindows(pid: Int32) -> [[String: Any]] {
+	guard let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] else { return [] }
+	return list.compactMap { info in
+		guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid else { return nil }
+		var bounds = CGRect.zero
+		if let raw = info[kCGWindowBounds as String] as? NSDictionary, let parsed = CGRect(dictionaryRepresentation: raw) { bounds = parsed }
+		return [
+			"number": (info[kCGWindowNumber as String] as? NSNumber)?.intValue ?? 0,
+			"bounds": frameFields(bounds),
+			"layer": (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0,
+			"onscreen": (info[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false,
+			"alpha": (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1,
+		]
+	}
+}
+
 func matrixOrigin(left: Double, top: Double, width: Double, height: Double) -> NSPoint {
 	cocoaRect(fromTopLeft: NSRect(x: left, y: top, width: width, height: height)).origin
 }
 
 final class CustomView: NSView {
 	var hits = 0
-	var onHit: ((Int) -> Void)?
+	var onHit: ((Int, [String: Any]?) -> Void)?
 
 	override var acceptsFirstResponder: Bool { true }
 	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -114,7 +166,7 @@ final class CustomView: NSView {
 	override func mouseDown(with event: NSEvent) {
 		hits += 1
 		needsDisplay = true
-		onHit?(hits)
+		onHit?(hits, globalPoint(event))
 	}
 }
 
@@ -167,14 +219,18 @@ final class DragView: NSView {
 		let point = convert(event.locationInWindow, from: nil)
 		start = point
 		moves = 0
-		log.write("dragDown", ["region": region(point)])
+		var fields: [String: Any] = ["region": region(point)]
+		if let at = globalPoint(event) { fields["at"] = at }
+		log.write("dragDown", fields)
 	}
 
 	override func mouseDragged(with event: NSEvent) { moves += 1 }
 
 	override func mouseUp(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
-		log.write("dragUp", ["startRegion": start.map(region) ?? "none", "endRegion": region(point), "moves": moves])
+		var fields: [String: Any] = ["startRegion": start.map(region) ?? "none", "endRegion": region(point), "moves": moves]
+		if let at = globalPoint(event) { fields["at"] = at }
+		log.write("dragUp", fields)
 		start = nil
 	}
 }
@@ -305,7 +361,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 
 	func makeWindow(_ title: String, _ label: String, origin: NSPoint, size: NSSize) -> NSWindow {
 		let made = NSWindow(
-			contentRect: NSRect(origin: NSPoint(x: origin.x + windowOffset.x, y: origin.y + windowOffset.y), size: size),
+			contentRect: NSRect(origin: NSPoint(x: origin.x + windowShift.x, y: origin.y + windowShift.y), size: size),
 			styleMask: [.titled, .closable, .miniaturizable, .resizable],
 			backing: .buffered,
 			defer: false
@@ -321,6 +377,11 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 	}
 
 	func applicationDidFinishLaunching(_ notification: Notification) {
+		if screensOnly {
+			log.write("screens", ["screens": screensPayload()])
+			log.write("launched", ["bundleId": bundleId, "screensOnly": true])
+			exit(0)
+		}
 		let origin = isHolder ? NSPoint(x: 60, y: 520) : NSPoint(x: 560, y: 160)
 		let size = isHolder ? NSSize(width: 420, height: 160) : NSSize(width: 640, height: 480)
 		window = makeWindow(windowTitle, "main", origin: origin, size: size)
@@ -335,7 +396,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 	func buildOptionalExtras() {
 		if unpairedWindowEnabled {
 			let hidden = UnpairedWindow(
-				contentRect: NSRect(x: 560 + windowOffset.x, y: 40 + windowOffset.y, width: 200, height: 80),
+				contentRect: NSRect(x: 560 + windowShift.x, y: 40 + windowShift.y, width: 200, height: 80),
 				styleMask: [.titled], backing: .buffered, defer: false
 			)
 			hidden.title = "CU Unpaired Window"
@@ -379,7 +440,11 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 			counterLabel.frame = NSRect(x: 160, y: size.height - 105, width: 200, height: 20)
 			counterLabel.setAccessibilityIdentifier("cu-count")
 			content.addSubview(counterLabel)
-			customView.onHit = { hits in log.write("customHit", ["count": hits]) }
+			customView.onHit = { hits, at in
+				var fields: [String: Any] = ["count": hits]
+				if let at { fields["at"] = at }
+				log.write("customHit", fields)
+			}
 			content.addSubview(customView)
 			if deadViewEnabled { content.addSubview(deadView) }
 			if noise {
@@ -582,12 +647,14 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 			NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
 				var fields = self?.windowFields(event.window) ?? [:]
 				fields["button"] = Int(event.buttonNumber)
+				if let at = globalPoint(event) { fields["at"] = at }
 				log.write("targetMouseDown", fields)
 				return event
 			}
 			NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
 				var fields = self?.windowFields(event.window) ?? [:]
 				fields["deltaY"] = Double(event.scrollingDeltaY)
+				if let at = globalPoint(event) { fields["at"] = at }
 				log.write("targetScrollWheel", fields)
 				return event
 			}
@@ -626,6 +693,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 		launched["options"] = ["sticky": sticky, "noise": noise, "deadView": deadViewEnabled, "web": webEnabled, "windowCount": windowCount, "keyWindow": keyWindowIndex, "sameTitle": sameTitle]
 		if matrixEnabled { launched["matrix"] = true }
 		log.write("launched", launched)
+		if layoutEnabled { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.logLayout() } }
 	}
 
 	func reactivate(_ reason: String) {
@@ -722,6 +790,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 			let parts = body.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
 			coverRect(parts, reason: "trigger")
 		}
+		if layoutEnabled { pollLayoutTriggers() }
 	}
 
 	func resize(_ reason: String) {
@@ -753,6 +822,58 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 
 	func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 	func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { false }
+}
+
+extension Fixture {
+	func globalFrame(_ view: NSView) -> [String: Any] {
+		guard let window = view.window else { return [:] }
+		return frameFields(topLeftRect(fromCocoa: window.convertToScreen(view.convert(view.bounds, to: nil))))
+	}
+
+	func screenId(_ screen: NSScreen?) -> Int {
+		Int((screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0)
+	}
+
+	func logLayout() {
+		var views: [String: Any] = ["customView": globalFrame(customView), "field": globalFrame(field)]
+		if matrixEnabled {
+			views["scrollView"] = globalFrame(scrollView)
+			views["dragView"] = globalFrame(dragView)
+		}
+		let rows = windows.map { each -> [String: Any] in
+			[
+				"window": label(each),
+				"windowNumber": each.windowNumber,
+				"title": each.title,
+				"frame": frameFields(topLeftRect(fromCocoa: each.frame)),
+				"onActiveSpace": each.isOnActiveSpace,
+				"visible": each.isVisible,
+				"screen": screenId(each.screen),
+			]
+		}
+		let origin: [String: Any] = ["x": layoutOrigin?.x ?? 0, "y": layoutOrigin?.y ?? 0]
+		log.write("layout", ["origin": origin, "screens": screensPayload(), "windows": rows, "views": views])
+	}
+
+	func pollLayoutTriggers() {
+		if trigger(".cu-layout-\(triggerName)") != nil { logLayout() }
+		if let body = trigger(".cu-front-\(triggerName)") {
+			let name = body.trimmingCharacters(in: .whitespacesAndNewlines)
+			if let window = windows.first(where: { label($0) == name }) {
+				window.orderFrontRegardless()
+				log.write("orderedFront", ["window": name, "active": NSApp.isActive])
+			} else {
+				log.write("orderedFront", ["invalid": name])
+			}
+		}
+		guard let body = trigger(".cu-owner-windows-\(triggerName)") else { return }
+		let parts = body.split(whereSeparator: { $0 == " " || $0 == "\n" }).map(String.init)
+		guard parts.count == 2, let pid = Int32(parts[0]), let seq = Int(parts[1]) else {
+			log.write("ownerWindows", ["invalid": body])
+			return
+		}
+		log.write("ownerWindows", ["pid": Int(pid), "seq": seq, "windows": ownerWindows(pid: pid)])
+	}
 }
 
 let app = NSApplication.shared

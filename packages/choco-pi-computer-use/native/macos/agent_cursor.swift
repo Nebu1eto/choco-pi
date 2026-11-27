@@ -1,9 +1,101 @@
 import AppKit
 import SwiftUI
 
+struct AgentCursorDisplay: Equatable {
+    let id: CGDirectDisplayID
+    let bounds: CGRect
+    let frame: CGRect
+}
+
+struct AgentCursorPlacement: Equatable {
+    let display: AgentCursorDisplay
+    let localPoint: CGPoint
+}
+
+enum DisplayGeometry {
+    static func placement(of point: CGPoint, among displays: [AgentCursorDisplay]) -> AgentCursorPlacement? {
+        guard point.x.isFinite, point.y.isFinite else { return nil }
+        let usable = displays.filter { !$0.bounds.isEmpty }
+        let halfOpen = usable.first { display in
+            let bounds = display.bounds
+            return point.x >= bounds.minX && point.x < bounds.maxX && point.y >= bounds.minY && point.y < bounds.maxY
+        }
+        let closed = halfOpen ?? usable.first { display in
+            let bounds = display.bounds
+            return point.x >= bounds.minX && point.x <= bounds.maxX && point.y >= bounds.minY && point.y <= bounds.maxY
+        }
+        guard let display = closed else { return nil }
+        return AgentCursorPlacement(
+            display: display,
+            localPoint: CGPoint(x: point.x - display.bounds.minX, y: point.y - display.bounds.minY)
+        )
+    }
+
+    static func initialCursorPosition(near local: CGPoint, displaySize size: CGSize) -> CGPoint {
+        CGPoint(
+            x: min(max(local.x - 140, 2), max(2, size.width - 2)),
+            y: min(max(local.y - 140, 2), max(2, size.height - 2))
+        )
+    }
+
+    static func bestDisplayIndex(for frame: CGRect, among bounds: [CGRect]) -> Int? {
+        guard !bounds.isEmpty else { return nil }
+        var best: Int?
+        var bestArea: CGFloat = 0
+        for (index, display) in bounds.enumerated() {
+            let overlap = display.intersection(frame)
+            let area = overlap.isNull ? 0 : overlap.width * overlap.height
+            if area > bestArea {
+                bestArea = area
+                best = index
+            }
+        }
+        if let best { return best }
+        let centre = CGPoint(x: frame.midX, y: frame.midY)
+        var nearest = 0
+        var nearestDistance = CGFloat.infinity
+        for (index, display) in bounds.enumerated() {
+            let dx = max(display.minX - centre.x, 0, centre.x - display.maxX)
+            let dy = max(display.minY - centre.y, 0, centre.y - display.maxY)
+            let distance = hypot(dx, dy)
+            if distance < nearestDistance {
+                nearestDistance = distance
+                nearest = index
+            }
+        }
+        return nearest
+    }
+
+    @MainActor
+    static func liveDisplays() -> [AgentCursorDisplay] {
+        NSScreen.screens.compactMap { screen in
+            guard let id = displayID(of: screen) else { return nil }
+            return AgentCursorDisplay(id: id, bounds: CGDisplayBounds(id), frame: screen.frame)
+        }
+    }
+
+    @MainActor
+    static func displayID(of screen: NSScreen) -> CGDirectDisplayID? {
+        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+    }
+}
+
+struct AgentCursorSnapshot {
+    let windowNumber: Int?
+    let visible: Bool
+    let display: AgentCursorDisplay?
+    let windowFrame: CGRect?
+    let target: CGPoint?
+    let localTarget: CGPoint?
+    let position: CGPoint?
+    let animating: Bool
+    let unplacedPoint: CGPoint?
+}
+
 @MainActor
 final class AgentCursor {
     typealias IdleHideScheduler = @MainActor (@escaping @MainActor () -> Void) -> Task<Void, Never>
+    typealias DisplayProvider = @MainActor () -> [AgentCursorDisplay]
 
     static let shared = AgentCursor(scheduleIdleHide: scheduleDefaultIdleHide)
 
@@ -11,29 +103,41 @@ final class AgentCursor {
     private var idleHideTask: Task<Void, Never>?
     private var idleGeneration: UInt = 0
     private let scheduleIdleHide: IdleHideScheduler
+    private let displays: DisplayProvider
+    private var currentDisplay: AgentCursorDisplay?
+    private var lastTarget: CGPoint?
+    private var lastPlacement: AgentCursorPlacement?
+    private var unplacedPoint: CGPoint?
 
-    init(scheduleIdleHide: @escaping IdleHideScheduler) {
+    init(scheduleIdleHide: @escaping IdleHideScheduler, displays: @escaping DisplayProvider = DisplayGeometry.liveDisplays) {
         self.scheduleIdleHide = scheduleIdleHide
+        self.displays = displays
     }
 
     func animate(to point: CGPoint, above windowId: UInt32) {
+        guard let placement = DisplayGeometry.placement(of: point, among: displays()) else {
+            unplacedPoint = point
+            return
+        }
+        unplacedPoint = nil
         idleHideTask?.cancel()
         idleHideTask = nil
         idleGeneration &+= 1
 
-        let window = ensureWindow()
+        let renderer = AgentCursorRenderer.shared
+        let window = ensureWindow(frame: placement.display.frame)
+        if window.frame != placement.display.frame { window.setFrame(placement.display.frame, display: false) }
+        let displayChanged = currentDisplay != placement.display
+        currentDisplay = placement.display
         if !window.isVisible { window.orderFrontRegardless() }
         window.order(.above, relativeTo: Int(windowId))
 
-        let renderer = AgentCursorRenderer.shared
-        if renderer.position.x < -100 {
-            let frame = NSScreen.main?.frame ?? .zero
-            renderer.setInitialPosition(CGPoint(
-                x: min(max(point.x - 140, frame.minX + 2), frame.maxX - 2),
-                y: min(max(point.y - 140, frame.minY + 2), frame.maxY - 2)
-            ))
+        if displayChanged || !renderer.isPlaced {
+            renderer.setInitialPosition(DisplayGeometry.initialCursorPosition(near: placement.localPoint, displaySize: placement.display.bounds.size))
         }
-        renderer.moveTo(point: point)
+        renderer.moveTo(point: placement.localPoint)
+        lastTarget = point
+        lastPlacement = placement
 
         let generation = idleGeneration
         idleHideTask = scheduleIdleHide { [weak self, weak window] in
@@ -49,6 +153,21 @@ final class AgentCursor {
         }
     }
 
+    func snapshot() -> AgentCursorSnapshot {
+        let renderer = AgentCursorRenderer.shared
+        return AgentCursorSnapshot(
+            windowNumber: overlay?.windowNumber,
+            visible: overlay?.isVisible ?? false,
+            display: overlay == nil ? nil : currentDisplay,
+            windowFrame: overlay?.frame,
+            target: lastTarget,
+            localTarget: lastPlacement?.localPoint,
+            position: renderer.isPlaced ? renderer.position : nil,
+            animating: renderer.isAnimating,
+            unplacedPoint: unplacedPoint
+        )
+    }
+
     private static func scheduleDefaultIdleHide(_ hide: @escaping @MainActor () -> Void) -> Task<Void, Never> {
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(8))
@@ -57,10 +176,10 @@ final class AgentCursor {
         }
     }
 
-    private func ensureWindow() -> AgentCursorOverlayWindow {
+    private func ensureWindow(frame: CGRect) -> AgentCursorOverlayWindow {
         if let overlay { return overlay }
         let window = AgentCursorOverlayWindow(
-            contentRect: NSScreen.main?.frame ?? NSScreen.screens.first?.frame ?? .zero,
+            contentRect: frame,
             styleMask: .borderless,
             backing: .buffered,
             defer: false
@@ -100,11 +219,12 @@ private struct AgentCursorView: View {
             .ignoresSafeArea()
             .allowsHitTesting(false)
         }
+        .ignoresSafeArea()
     }
 
     private func drawCursor(in graphics: GraphicsContext) {
+        guard renderer.isPlaced else { return }
         let point = renderer.position
-        guard point.x > -100 else { return }
 
         let bloom = Color(nsColor: NSColor(red: 1, green: 0x78 / 255, blue: 0x18 / 255, alpha: 1))
         let radius: CGFloat = 22
