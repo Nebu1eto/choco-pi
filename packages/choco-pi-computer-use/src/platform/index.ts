@@ -6,7 +6,11 @@ import {
   macosManagedBrowserExecutableCandidates,
   openBrowserLocationWithAppleScript,
 } from "./macos/browser.ts";
-import { ensureMacosReady, releaseMacosOwnership } from "./macos/permissions.ts";
+import {
+  ensureMacosReady,
+  macosForegroundSection,
+  releaseMacosOwnership,
+} from "./macos/permissions.ts";
 import type {
   ComputerUsePlatformBackend,
   HelperActResult,
@@ -28,6 +32,7 @@ async function shutdownMacos(): Promise<void> {
 const macosPlatformBackend: ComputerUsePlatformBackend = {
   name: "macos",
   shutdown: shutdownMacos,
+  foregroundSection: macosForegroundSection,
   ensureReady: ensureMacosReady,
   listApps: macosBackend.listApps,
   listRoots: macosBackend.listRoots,
@@ -116,6 +121,13 @@ export const currentPlatformBackend: ComputerUsePlatformBackend = {
   },
   shutdown() {
     return activePlatformBackend.shutdown?.();
+  },
+  get foregroundSection() {
+    const section = activePlatformBackend.foregroundSection;
+    return section
+      ? (op: "acquire" | "release", waitMs: number, signal?: AbortSignal) =>
+          section.call(activePlatformBackend, op, waitMs, signal)
+      : undefined;
   },
   ensureReady(ctx, state, signal) {
     return activePlatformBackend.ensureReady(ctx, state, signal);

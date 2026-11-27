@@ -492,6 +492,60 @@ export function foregroundRequiredResult(
   };
 }
 
+const SESSION_CONFLICT_CODES = ["target_busy", "foreground_busy", "key_window_conflict"] as const;
+type SessionConflictCode = (typeof SESSION_CONFLICT_CODES)[number];
+
+export function busyCodeOf(error: Error): SessionConflictCode | undefined {
+  if (!(error instanceof PlatformCommandError)) return undefined;
+  return SESSION_CONFLICT_CODES.find((code) => code === error.code);
+}
+
+export function sessionConflictResult(
+  target: ResolvedTarget,
+  baseStateId: string,
+  dispatched: ExecutionTrace,
+  failure: DesktopDispatchFailure,
+  code: SessionConflictCode,
+): AgentToolResult<TerminalDesktopActionDetails> {
+  const failedStep = failedStepTrace(failure);
+  const execution = aggregateExecutions([...(dispatched.steps ?? []), failedStep]);
+  execution.stoppedAt = failure.index;
+  execution.error = failedStep.error;
+  execution.focusRestored = dispatched.focusRestored;
+  execution.focusRestoreReason = dispatched.focusRestoreReason;
+  const nextStep = code === "key_window_conflict" ? "retry_later_or_other_window" : "retry_later";
+  const details: TerminalDesktopActionDetails = {
+    tool: "act_ui",
+    status: code,
+    baseStateId,
+    target: {
+      app: target.appName,
+      bundleId: target.bundleId,
+      pid: target.pid,
+      windowTitle: target.windowTitle,
+      windowId: target.windowId,
+      windowRef: target.windowRef,
+      nativeWindowRef: target.nativeWindowRef,
+    },
+    execution,
+    error: { code, message: failure.error.message, inputSent: false, effectPossible: false },
+    nextStep,
+    config: detailsConfig(),
+  };
+  const where = `${target.appName} — ${target.windowTitle}`;
+  const headline =
+    code === "target_busy"
+      ? `target_busy: another computer-use session was acting on ${where} and did not finish within the wait; nothing was sent.`
+      : code === "foreground_busy"
+        ? `foreground_busy: another computer-use session held the foreground and did not finish within the wait; nothing was sent to ${where}.`
+        : `key_window_conflict: keyboard input of ${target.appName} goes to another of its windows, not ${where}; no key was sent.`;
+  const advice =
+    code === "key_window_conflict"
+      ? "next step: retry_later_or_other_window — another session or the user may be using that window; retry later, or observe and act on the window that has the keyboard focus. The state_id is still usable."
+      : "next step: retry_later — the state_id is still usable; retry this act_ui later.";
+  return { content: [{ type: "text", text: `${headline}\n${advice}` }], details };
+}
+
 export function helperInterruption(error: Error): HelperInterruptionOutcome | undefined {
   const interruption =
     "interruption" in error && error.interruption instanceof HelperInterruption
@@ -585,8 +639,8 @@ export function helperInterruptedResult(
     config: detailsConfig(),
   };
   const ownership = delivered
-    ? `owned_by_other_session: the computer-use helper is controlled by another session; it refused action ${delivered.index + 1} on ${target.appName} — ${target.windowTitle}.`
-    : `owned_by_other_session: the computer-use helper is controlled by another session; ${target.appName} — ${target.windowTitle} was not touched by this request.`;
+    ? `owned_by_other_session: the computer-use helper refused this session (a helper that admits one session at a time is held by another session, or another generation of this session holds it); it refused action ${delivered.index + 1} on ${target.appName} — ${target.windowTitle}.`
+    : `owned_by_other_session: the computer-use helper refused this session (a helper that admits one session at a time is held by another session, or another generation of this session holds it); ${target.appName} — ${target.windowTitle} was not touched by this request.`;
   const headline = code === "owned_by_other_session" ? ownership : cancelledHeadline(execution);
   return {
     content: [
@@ -745,6 +799,8 @@ export async function performDesktopTransaction(
         failure.index > 0 ? { index: failure.index, execution } : undefined,
       );
     if (failure?.index === 0) {
+      const busy = busyCodeOf(failure.error);
+      if (busy) return sessionConflictResult(target, baseView.stateId, execution, failure, busy);
       const destination = destinationFailureOf(failure.error);
       if (!destination) throw failure.error;
       if (!destination.inputSent)

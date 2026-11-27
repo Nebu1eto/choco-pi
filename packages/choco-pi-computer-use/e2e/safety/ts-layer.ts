@@ -11,7 +11,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { isJsonObject, isString, type JsonObject, type JsonValue } from "../../src/json.ts";
 
-async function createContext(cwd: string): Promise<ExtensionContext> {
+export async function createContext(cwd: string): Promise<ExtensionContext> {
   const runtime = await ModelRuntime.create({
     credentials: {
       read: async () => undefined,

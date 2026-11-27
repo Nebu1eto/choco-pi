@@ -31,6 +31,7 @@ export interface PlatformReadyState {
   permissionStatus?: PermissionStatus;
   lastPermissionCheckAt: number;
   helperDiagnostics?: PlatformDiagnostics;
+  session?: PlatformRequestSession;
 }
 
 export interface PlatformRootQuery {
@@ -387,6 +388,11 @@ export interface PlatformWaitForResponse {
 export interface ComputerUsePlatformBackend {
   name: PlatformName;
   shutdown?(): void | Promise<void>;
+  foregroundSection?(
+    op: "acquire" | "release",
+    waitMs: number,
+    signal?: AbortSignal,
+  ): Promise<boolean | undefined>;
   ensureReady(
     ctx: ExtensionContext,
     state: PlatformReadyState,

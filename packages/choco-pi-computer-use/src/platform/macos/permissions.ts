@@ -103,6 +103,16 @@ export async function releaseMacosOwnership(signal?: AbortSignal): Promise<boole
   return await macosHelper.release(signal);
 }
 
+export async function macosForegroundSection(
+  op: "acquire" | "release",
+  waitMs: number,
+  signal?: AbortSignal,
+): Promise<boolean | undefined> {
+  const result = await macosHelper.foregroundSection(op, waitMs, signal);
+  if (result === undefined) return undefined;
+  return op === "acquire" ? result.acquired === true : result.released === true;
+}
+
 async function registerPermissions(signal?: AbortSignal): Promise<void> {
   await macosHelper.command("registerPermissions", {}, { signal, timeoutMs: 15_000 });
 }
@@ -120,6 +130,7 @@ export async function ensureMacosReady(
   }
   const helperDiagnostics = await macosHelper.ensureProtocol(signal);
   assertPlatformArchitecture("macOS", helperDiagnostics);
+  if (state.session && macosHelper.coordinatesSessions) macosHelper.adoptSession(state.session);
   await macosHelper.claim(signal);
 
   const now = Date.now();

@@ -47,6 +47,7 @@ import type {
   DeliveryPolicy,
   ExecutionTrace,
   ForegroundRefusal,
+  ForegroundSectionTrace,
   ForegroundSession,
   HelperAttempt,
   HelperRefusalSignal,
@@ -271,8 +272,44 @@ export async function enterForegroundSection(
   signal?: AbortSignal,
 ): Promise<void> {
   if (!session) return;
-  session.section ??= await acquireForegroundSection(signal);
+  if (!session.section) {
+    const lease = await acquireForegroundSection(signal);
+    try {
+      await acquireHelperForegroundSection(session, lease.trace, signal);
+    } catch (error) {
+      lease.release();
+      throw error;
+    }
+    session.section = lease;
+  }
   await captureUserFocus(session, signal);
+}
+
+export const HELPER_FOREGROUND_WAIT_MS = 10_000;
+
+async function acquireHelperForegroundSection(
+  session: ForegroundSession,
+  trace: ForegroundSectionTrace,
+  signal?: AbortSignal,
+): Promise<void> {
+  const section = currentPlatformBackend.foregroundSection;
+  if (!section) return;
+  const started = performance.now();
+  try {
+    const held = await section("acquire", HELPER_FOREGROUND_WAIT_MS, signal);
+    if (held !== true) return;
+  } catch (error) {
+    if (signal?.aborted) releaseHelperForegroundSection();
+    throw error;
+  }
+  session.helperSection = true;
+  trace.helperWaitedMs = Math.round(performance.now() - started);
+}
+
+function releaseHelperForegroundSection(): void {
+  const section = currentPlatformBackend.foregroundSection;
+  if (!section) return;
+  void section("release", 0, AbortSignal.timeout(COMMAND_TIMEOUT_MS)).catch(() => undefined);
 }
 
 export const UNFINISHED_DELIVERY_GRACE_MS = 2_000;
@@ -284,7 +321,13 @@ export function endForegroundSection(
   const lease = session.section;
   session.section = undefined;
   if (!lease) return;
-  if (!unfinished) return lease.release();
+  const helperHeld = session.helperSection === true;
+  session.helperSection = false;
+  const release = (unconfirmedRequestId?: string) => {
+    if (helperHeld) releaseHelperForegroundSection();
+    lease.release(unconfirmedRequestId);
+  };
+  if (!unfinished) return release();
   const request = session.lastRequest;
   const requestId = request?.requestId ?? "unknown";
   const budgetEnd = request ? request.sentAt + request.budgetMs : performance.now();
@@ -302,7 +345,7 @@ export function endForegroundSection(
     : bound;
   void Promise.race([confirmed, bound]).then((settled) => {
     clearTimeout(timer);
-    lease.release(settled ? undefined : requestId);
+    release(settled ? undefined : requestId);
   });
 }
 

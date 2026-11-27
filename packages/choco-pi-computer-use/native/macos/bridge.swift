@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import ApplicationServices
+import Carbon
 import Darwin
 import Vision
 import ImageIO
@@ -22,6 +23,61 @@ struct CancelTombstone {
 	let id: String
 	let at: Double
 	let sessionId: String?
+}
+
+struct InputSourceInfo {
+	let id: String
+	let type: String
+	let asciiCapable: Bool
+
+	var composes: Bool { type != (kTISTypeKeyboardLayout as String) && !type.isEmpty }
+
+	static func current() -> InputSourceInfo {
+		if Thread.isMainThread { return read() }
+		var info = InputSourceInfo(id: "", type: "", asciiCapable: true)
+		DispatchQueue.main.sync { info = read() }
+		return info
+	}
+
+	private static func read() -> InputSourceInfo {
+		guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else {
+			return InputSourceInfo(id: "", type: "", asciiCapable: true)
+		}
+		func string(_ key: CFString) -> String {
+			guard let raw = TISGetInputSourceProperty(source, key) else { return "" }
+			return (Unmanaged<CFString>.fromOpaque(raw).takeUnretainedValue() as String)
+		}
+		var ascii = true
+		if let raw = TISGetInputSourceProperty(source, kTISPropertyInputSourceIsASCIICapable) {
+			ascii = CFBooleanGetValue(Unmanaged<CFBoolean>.fromOpaque(raw).takeUnretainedValue())
+		}
+		return InputSourceInfo(id: string(kTISPropertyInputSourceID), type: string(kTISPropertyInputSourceType), asciiCapable: ascii)
+	}
+
+	func diagnostics() -> [String: Any] {
+		["id": id, "type": type, "asciiCapable": asciiCapable, "composes": composes]
+	}
+}
+
+let requestSessionKey = "pi.computer-use.request-session"
+
+func currentRequestSessionId() -> String? {
+	Thread.current.threadDictionary[requestSessionKey] as? String
+}
+
+func sessionMayUse(owner: String?, caller: String?) -> Bool {
+	owner == nil || owner == caller
+}
+
+struct ForegroundSectionState {
+	let id: String
+	let holder: String
+	var explicit: Bool
+	var lastSeen: Double
+	var targets: Set<Int32>
+	var activeRequests: Int
+	var userPid: Int32?
+	var userWindow: AXUIElement?
 }
 
 struct HIDDestination {
@@ -107,6 +163,7 @@ final class RequestContext {
 	var lastDestinationCheck: Date?
 	var charactersSent: Int?
 	var extendedDelivery: ExtendedDeliveryTarget?
+	var pidScrollWindow: ExtendedDeliveryTarget?
 	var extendedDeliveryStatus: String?
 	var extendedDeliveryReason: String?
 	var extendedDeliveryActivated = false
@@ -224,21 +281,30 @@ final class AXRefStore {
 
 	private var nextId: UInt64 = 0
 	private var windows: [String: AXUIElement] = [:]
+	private var windowOwners: [String: Set<String>] = [:]
+	private var openWindows: Set<String> = []
 	private var elements: [String: AXUIElement] = [:]
+	private var elementOwners: [String: String] = [:]
 	private var snapshots: [String: Snapshot] = [:]
 	private let lock = NSLock()
 
 	func storeWindow(_ window: AXUIElement) -> String {
 		lock.lock()
 		defer { lock.unlock() }
+		let caller = currentRequestSessionId()
+		func grant(_ ref: String) {
+			if let caller { windowOwners[ref, default: []].insert(caller) } else { openWindows.insert(ref) }
+		}
 		for (ref, existing) in windows {
 			if CFEqual(existing, window) {
+				grant(ref)
 				return ref
 			}
 		}
 		nextId += 1
 		let ref = "w\(nextId)"
 		windows[ref] = window
+		grant(ref)
 		return ref
 	}
 
@@ -248,25 +314,46 @@ final class AXRefStore {
 		nextId += 1
 		let ref = "e\(nextId)"
 		elements[ref] = element
+		if let caller = currentRequestSessionId() { elementOwners[ref] = caller }
 		snapshots[ref] = snapshot
 		return ref
+	}
+
+	func callerMayUse(_ ref: String) -> Bool {
+		lock.lock()
+		defer { lock.unlock() }
+		return mayUseLocked(ref)
+	}
+
+	private func mayUseLocked(_ ref: String) -> Bool {
+		let caller = currentRequestSessionId()
+		if windows[ref] != nil {
+			if openWindows.contains(ref) { return true }
+			guard let caller else { return windowOwners[ref] == nil }
+			return windowOwners[ref]?.contains(caller) ?? true
+		}
+		if elements[ref] != nil { return sessionMayUse(owner: elementOwners[ref], caller: caller) }
+		return true
 	}
 
 	func window(for ref: String) -> AXUIElement? {
 		lock.lock()
 		defer { lock.unlock() }
+		guard mayUseLocked(ref) else { return nil }
 		return windows[ref]
 	}
 
 	func element(for ref: String) -> AXUIElement? {
 		lock.lock()
 		defer { lock.unlock() }
+		guard mayUseLocked(ref) else { return nil }
 		return elements[ref]
 	}
 
 	func snapshot(for ref: String) -> Snapshot? {
 		lock.lock()
 		defer { lock.unlock() }
+		guard mayUseLocked(ref) else { return nil }
 		return snapshots[ref]
 	}
 }
@@ -313,6 +400,7 @@ private struct LookRecord {
 	let hasImage: Bool
 	let rootElement: AXUIElement?
 	let observedFrame: CGRect?
+	var sessionId: String? = currentRequestSessionId()
 }
 
 private struct RootAXEvent {
@@ -634,6 +722,8 @@ final class Bridge {
 	private var lookRecords: [String: LookRecord] = [:]
 	private var lookRecordOrder: [String] = []
 	private let lookRecordLock = NSLock()
+	private var caretMemory: [(element: AXUIElement, range: CFRange)] = []
+	private let caretLock = NSLock()
 	private let rootObserverLock = NSLock()
 	private var rootObservers: [Int32: RootAXObserverState] = [:]
 	private let maxRootObservers = 4
@@ -649,10 +739,15 @@ final class Bridge {
 	private let tombstoneLimit = 256
 	private static let requestContextKey = "pi.computer-use.request-context"
 	private let ownerLock = NSLock()
-	private var owner: (id: String, generation: Int, lastSeen: Double)?
-	private var ownerActiveRequests = 0
+	private var sessions: [String: (generation: Int, lastSeen: Double, active: Int)] = [:]
+	private var sessionlessActiveRequests = 0
 	private let ownerTTL: TimeInterval = 30
-	private let ownerGatedCommands: Set<String> = ["act", "actBatch", "focusWindow", "setWindowFrame", "beginInputSuppression", "endInputSuppression", "restoreUserFocus"]
+	private let ownerGatedCommands: Set<String> = ["act", "actBatch", "focusWindow", "setWindowFrame", "beginInputSuppression", "endInputSuppression", "restoreUserFocus", "foregroundSection"]
+	private let coordination = NSCondition()
+	private var targetHolders: [Int32: String] = [:]
+	private var foregroundSection: ForegroundSectionState?
+	private let coordinationWaitLimit: TimeInterval = 10
+	private let foregroundSectionIdleTTL: TimeInterval = 10
 	private let extendedActivationLock = NSLock()
 	private var extendedActivations: [Int32: (count: Int, target: ExtendedDeliveryTarget)] = [:]
 	private var extendedShuttingDown = false
@@ -868,66 +963,303 @@ final class Bridge {
 	}
 
 	private func authorizeOwner(_ session: (id: String, generation: Int)?, pin: Bool) throws {
+		let expired = pruneExpiredSessions()
+		defer { finishExpiredSessions(expired) }
+		ownerLock.lock()
+		defer { ownerLock.unlock() }
+		guard let session else {
+			if pin { sessionlessActiveRequests += 1 }
+			return
+		}
+		let now = monotonicSeconds()
+		if let live = sessions[session.id] {
+			func refuse(_ message: String) -> BridgeFailure {
+				BridgeFailure(message: message, code: "owned_by_other_session", effectPossible: false, details: ["activeRequests": live.active])
+			}
+			if session.generation < live.generation {
+				throw refuse("The helper session is held by a newer generation of this session")
+			}
+			if session.generation > live.generation && live.active > 0 {
+				throw refuse("An older generation of this session still has requests in flight")
+			}
+			sessions[session.id] = (session.generation, now, live.active + (pin ? 1 : 0))
+		} else {
+			sessions[session.id] = (session.generation, now, pin ? 1 : 0)
+		}
+	}
+
+	private func pruneExpiredSessions() -> [String] {
 		ownerLock.lock()
 		defer { ownerLock.unlock() }
 		let now = monotonicSeconds()
-		let pinned = ownerActiveRequests > 0
-		let live = owner.flatMap { pinned || now - $0.lastSeen < ownerTTL ? $0 : nil }
-		let active = ownerActiveRequests
-		func refuse(_ message: String) -> BridgeFailure {
-			BridgeFailure(message: message, code: "owned_by_other_session", effectPossible: false, details: ["activeRequests": active])
+		let expired = sessions.filter { $0.value.active == 0 && now - $0.value.lastSeen >= ownerTTL }.map { $0.key }
+		for id in expired { sessions.removeValue(forKey: id) }
+		return expired
+	}
+
+	private func finishExpiredSessions(_ ids: [String]) {
+		for id in ids {
+			dropLookRecords(sessionId: id)
+			releaseForegroundSection(holder: id, restore: true)
 		}
-		guard let session else {
-			if live != nil { throw refuse("The helper is owned by another session; this request carries no session") }
-			owner = nil
-			if pin { ownerActiveRequests += 1 }
-			return
-		}
-		if let live {
-			if live.id != session.id {
-				throw refuse(pinned ? "The helper is owned by another session with requests in flight" : "The helper is owned by another session")
-			}
-			if session.generation < live.generation {
-				throw refuse("The helper is owned by a newer generation of this session")
-			}
-			if session.generation > live.generation && pinned {
-				throw refuse("An older generation of this session still has requests in flight")
-			}
-		} else if owner == nil && pinned {
-			throw refuse("Requests without a session are in flight")
-		}
-		owner = (session.id, session.generation, now)
-		if pin { ownerActiveRequests += 1 }
 	}
 
 	private func endOwnedRequest(_ session: (id: String, generation: Int)?) {
 		ownerLock.lock()
-		ownerActiveRequests = max(0, ownerActiveRequests - 1)
-		if let session, let current = owner, current.id == session.id, current.generation == session.generation {
-			owner = (current.id, current.generation, monotonicSeconds())
+		if let session, let current = sessions[session.id], current.generation == session.generation {
+			sessions[session.id] = (current.generation, monotonicSeconds(), max(0, current.active - 1))
+		} else if session == nil {
+			sessionlessActiveRequests = max(0, sessionlessActiveRequests - 1)
+		} else if let session, let current = sessions[session.id] {
+			sessions[session.id] = (current.generation, current.lastSeen, max(0, current.active - 1))
 		}
 		ownerLock.unlock()
 	}
 
 	private func refreshOwner(_ session: (id: String, generation: Int)) {
 		ownerLock.lock()
-		if let current = owner, current.id == session.id, current.generation == session.generation,
-			ownerActiveRequests > 0 || monotonicSeconds() - current.lastSeen < ownerTTL
-		{
-			owner = (current.id, current.generation, monotonicSeconds())
+		if let current = sessions[session.id] {
+			if current.generation == session.generation {
+				sessions[session.id] = (current.generation, monotonicSeconds(), current.active)
+			}
+		} else {
+			sessions[session.id] = (session.generation, monotonicSeconds(), 0)
 		}
 		ownerLock.unlock()
+		coordination.lock()
+		if var section = foregroundSection, section.holder == session.id {
+			section.lastSeen = monotonicSeconds()
+			foregroundSection = section
+		}
+		coordination.unlock()
 	}
 
 	private func releaseOwner(_ session: (id: String, generation: Int)?) throws -> Bool {
 		ownerLock.lock()
-		defer { ownerLock.unlock() }
-		guard let session, let current = owner, current.id == session.id, session.generation >= current.generation else { return false }
-		if ownerActiveRequests > 0 {
-			throw BridgeFailure(message: "release refused: the owner has \(ownerActiveRequests) request(s) in flight", code: "owner_busy", effectPossible: false, details: ["activeRequests": ownerActiveRequests])
+		guard let session, let current = sessions[session.id], session.generation >= current.generation else {
+			ownerLock.unlock()
+			return false
 		}
-		owner = nil
+		if current.active > 0 {
+			ownerLock.unlock()
+			throw BridgeFailure(message: "release refused: this session has \(current.active) request(s) in flight", code: "owner_busy", effectPossible: false, details: ["activeRequests": current.active])
+		}
+		sessions.removeValue(forKey: session.id)
+		ownerLock.unlock()
+		dropLookRecords(sessionId: session.id)
+		releaseForegroundSection(holder: session.id, restore: false)
 		return true
+	}
+
+	private func otherSessionsActive(caller: String?) -> Int {
+		ownerLock.lock()
+		defer { ownerLock.unlock() }
+		var count = caller == nil ? max(0, sessionlessActiveRequests - 1) : sessionlessActiveRequests
+		for (id, entry) in sessions where id != caller { count += entry.active }
+		return count
+	}
+
+	private func sessionDiagnostics() -> [String: Any] {
+		let now = monotonicSeconds()
+		ownerLock.lock()
+		let live = sessions.values.filter { $0.active > 0 || now - $0.lastSeen < ownerTTL }
+		let active = live.reduce(0) { $0 + $1.active } + sessionlessActiveRequests
+		ownerLock.unlock()
+		coordination.lock()
+		let held = foregroundSection != nil
+		let busyTargets = targetHolders.count
+		coordination.unlock()
+		return ["live": live.count, "activeRequests": active, "foregroundSectionHeld": held, "busyTargets": busyTargets, "ttlMs": Int(ownerTTL * 1000)]
+	}
+
+	private func waitForCoordination(context: RequestContext?, limit: TimeInterval, _ condition: () -> Bool) throws -> Bool {
+		let end = min(monotonicSeconds() + limit, context?.deadline ?? .infinity)
+		coordination.lock()
+		while !condition() {
+			let now = monotonicSeconds()
+			if now >= end { coordination.unlock(); return false }
+			_ = coordination.wait(until: Date().addingTimeInterval(min(0.05, end - now)))
+			if context?.stopRequested == true {
+				coordination.unlock()
+				try context?.checkpoint()
+				coordination.lock()
+			}
+		}
+		return true
+	}
+
+	private func acquireTarget(_ pid: Int32, requestKey: String, sessionKey: String, context: RequestContext?) throws {
+		let start = monotonicSeconds()
+		var blockedBy = "act"
+		let acquired = try waitForCoordination(context: context, limit: coordinationWaitLimit) {
+			expireIdleForegroundSectionLocked()
+			if let holder = targetHolders[pid], holder != requestKey { blockedBy = "act"; return false }
+			if let section = foregroundSection, section.holder != sessionKey, section.targets.contains(pid) { blockedBy = "foreground_section"; return false }
+			return true
+		}
+		guard acquired else {
+			throw BridgeFailure(
+				message: blockedBy == "foreground_section"
+					? "target_busy: another computer-use session is driving this app in the foreground; nothing was sent. Retry later"
+					: "target_busy: another computer-use session is acting on this app; nothing was sent. Retry later",
+				code: "target_busy",
+				effectPossible: false,
+				details: ["inputSent": false, "busyReason": blockedBy, "waitedMs": Int((monotonicSeconds() - start) * 1000), "retry": "later"]
+			)
+		}
+		targetHolders[pid] = requestKey
+		coordination.unlock()
+	}
+
+	private func releaseTarget(_ pid: Int32, requestKey: String) {
+		coordination.lock()
+		if targetHolders[pid] == requestKey { targetHolders.removeValue(forKey: pid) }
+		coordination.broadcast()
+		coordination.unlock()
+	}
+
+	private func onTarget<T>(_ pid: Int32, keys: (request: String, session: String), context: RequestContext?, _ body: () throws -> T) throws -> T {
+		try acquireTarget(pid, requestKey: keys.request, sessionKey: keys.session, context: context)
+		defer { releaseTarget(pid, requestKey: keys.request) }
+		return try body()
+	}
+
+	private func isForegroundRequest(_ request: [String: Any]) -> Bool {
+		switch request["cmd"] as? String {
+		case "act", "actBatch":
+			return isGrantedHIDRequest(request)
+		case "focusWindow", "restoreUserFocus":
+			return (request["foregroundGrant"] as? Bool) == true
+		default:
+			return false
+		}
+	}
+
+	private func inForeground<T>(_ request: [String: Any], keys: (request: String, session: String), pid: Int32?, context: RequestContext?, _ body: () throws -> T) throws -> T {
+		guard isForegroundRequest(request) else { return try body() }
+		let implicit = try enterForegroundRequest(key: keys.session, pid: pid, context: context)
+		defer { leaveForegroundRequest(key: keys.session, implicit: implicit) }
+		return try body()
+	}
+
+	private func enterForegroundRequest(key: String, pid: Int32?, context: RequestContext?) throws -> Bool {
+		let start = monotonicSeconds()
+		let entered = try waitForCoordination(context: context, limit: coordinationWaitLimit) {
+			expireIdleForegroundSectionLocked()
+			guard let section = foregroundSection else { return true }
+			return section.holder == key
+		}
+		guard entered else {
+			throw BridgeFailure(
+				message: "foreground_busy: another computer-use session holds the foreground; nothing was sent. Retry later",
+				code: "foreground_busy",
+				effectPossible: false,
+				details: ["inputSent": false, "waitedMs": Int((monotonicSeconds() - start) * 1000), "retry": "later"]
+			)
+		}
+		defer { coordination.unlock() }
+		let now = monotonicSeconds()
+		if var section = foregroundSection {
+			section.lastSeen = now
+			section.activeRequests += 1
+			if let pid { section.targets.insert(pid) }
+			foregroundSection = section
+			return false
+		}
+		foregroundSection = ForegroundSectionState(
+			id: UUID().uuidString, holder: key, explicit: false, lastSeen: now,
+			targets: pid.map { [$0] } ?? [], activeRequests: 1, userPid: nil, userWindow: nil
+		)
+		return true
+	}
+
+	private func leaveForegroundRequest(key: String, implicit: Bool) {
+		coordination.lock()
+		if var section = foregroundSection, section.holder == key {
+			section.activeRequests = max(0, section.activeRequests - 1)
+			section.lastSeen = monotonicSeconds()
+			foregroundSection = implicit && !section.explicit && section.activeRequests == 0 ? nil : section
+		}
+		coordination.broadcast()
+		coordination.unlock()
+	}
+
+	private func foregroundSectionCommand(_ request: [String: Any], session: (id: String, generation: Int)?) throws -> [String: Any] {
+		guard let session else { throw BridgeFailure(message: "foregroundSection requires session {id, generation}", code: "invalid_args", effectPossible: false) }
+		let op = optionalStringArg(request, "op") ?? "acquire"
+		if op == "release" {
+			return ["released": releaseForegroundSection(holder: session.id, restore: false)]
+		}
+		guard op == "acquire" else { throw BridgeFailure(message: "foregroundSection op must be acquire or release", code: "invalid_args", effectPossible: false) }
+		let waitMs = Double(max(0, min(30_000, optionalIntArg(request, "waitMs") ?? 0)))
+		let start = monotonicSeconds()
+		let entered = try waitForCoordination(context: nil, limit: waitMs / 1000) {
+			expireIdleForegroundSectionLocked()
+			guard let section = foregroundSection else { return true }
+			return section.holder == session.id
+		}
+		guard entered else {
+			throw BridgeFailure(
+				message: "foreground_busy: another computer-use session holds the foreground; nothing was sent. Retry later",
+				code: "foreground_busy",
+				effectPossible: false,
+				details: ["waitedMs": Int((monotonicSeconds() - start) * 1000), "retry": "later"]
+			)
+		}
+		let waited = Int((monotonicSeconds() - start) * 1000)
+		if var section = foregroundSection {
+			section.explicit = true
+			section.lastSeen = monotonicSeconds()
+			foregroundSection = section
+			coordination.unlock()
+			return ["acquired": true, "alreadyHeld": true, "sectionId": section.id, "waitedMs": waited]
+		}
+		let id = UUID().uuidString
+		foregroundSection = ForegroundSectionState(id: id, holder: session.id, explicit: true, lastSeen: monotonicSeconds(), targets: [], activeRequests: 0, userPid: nil, userWindow: nil)
+		coordination.unlock()
+		let userPid = currentFrontmostPid()
+		let userWindow = userPid.flatMap { keyWindow(pid: $0)?.window }
+		coordination.lock()
+		if var section = foregroundSection, section.id == id {
+			section.userPid = userPid
+			section.userWindow = userWindow
+			foregroundSection = section
+		}
+		coordination.unlock()
+		var result: [String: Any] = ["acquired": true, "alreadyHeld": false, "sectionId": id, "waitedMs": waited]
+		if let userPid { result["frontmostPid"] = Int(userPid) }
+		return result
+	}
+
+	@discardableResult
+	private func releaseForegroundSection(holder: String, restore: Bool) -> Bool {
+		coordination.lock()
+		guard let section = foregroundSection, section.holder == holder else {
+			coordination.unlock()
+			return false
+		}
+		foregroundSection = nil
+		coordination.broadcast()
+		coordination.unlock()
+		if restore { restoreAfterExpiredSection(section) }
+		return true
+	}
+
+	private func expireIdleForegroundSectionLocked() {
+		guard let section = foregroundSection, section.explicit, section.activeRequests == 0,
+			monotonicSeconds() - section.lastSeen >= foregroundSectionIdleTTL
+		else { return }
+		foregroundSection = nil
+		coordination.broadcast()
+		DispatchQueue.global().async { [self] in restoreAfterExpiredSection(section) }
+	}
+
+	private func restoreAfterExpiredSection(_ section: ForegroundSectionState) {
+		guard let userPid = section.userPid, let front = currentFrontmostPid(), front != userPid, section.targets.contains(front),
+			let app = NSRunningApplication(processIdentifier: userPid), !app.isTerminated
+		else { return }
+		if let window = section.userWindow { _ = AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue) }
+		_ = app.activate()
 	}
 
 	private func activeRequestContext() -> RequestContext? {
@@ -993,6 +1325,129 @@ final class Bridge {
 		let status = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
 		guard status == .success else { return (nil, "selected_text_failed_\(status.rawValue)") }
 		return (stringAttribute(element, attribute: kAXValueAttribute as CFString) ?? "", "written")
+	}
+
+	private func rememberCaret(_ element: AXUIElement) {
+		guard let range = textBaseline(element)?.selection else { return }
+		caretLock.lock()
+		defer { caretLock.unlock() }
+		caretMemory.removeAll { CFEqual($0.element, element) }
+		caretMemory.append((element, range))
+		if caretMemory.count > 64 { caretMemory.removeFirst(caretMemory.count - 64) }
+	}
+
+	private func rememberedCaret(_ element: AXUIElement) -> CFRange? {
+		caretLock.lock()
+		defer { caretLock.unlock() }
+		return caretMemory.last { CFEqual($0.element, element) }?.range
+	}
+
+	private func focusKeepingCaret(_ element: AXUIElement, foregroundGranted: Bool) throws -> AXError {
+		if boolAttribute(element, attribute: kAXFocusedAttribute as CFString) == true { return .success }
+		let status = try setAXFocus(element, foregroundGranted: foregroundGranted)
+		guard status == .success, let after = textBaseline(element), let selection = after.selection else { return status }
+		let length = (after.value as NSString).length
+		guard length > 0, selection.location == 0, selection.length == length else { return status }
+		var caret = CFRange(location: length, length: 0)
+		if let remembered = rememberedCaret(element), remembered.location >= 0, remembered.length >= 0, remembered.location + remembered.length <= length {
+			caret = remembered
+		}
+		if let value = AXValueCreate(.cfRange, &caret) {
+			_ = AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, value)
+		}
+		return status
+	}
+
+	struct TextBaseline {
+		let value: String
+		let selection: CFRange?
+	}
+
+	private func textBaseline(_ element: AXUIElement) -> TextBaseline? {
+		guard let value = stringAttribute(element, attribute: kAXValueAttribute as CFString) else { return nil }
+		var selection: CFRange?
+		if let raw = copyAttribute(element, attribute: kAXSelectedTextRangeAttribute as CFString), CFGetTypeID(raw as CFTypeRef) == AXValueGetTypeID() {
+			let axValue = unsafeBitCast(raw as CFTypeRef, to: AXValue.self)
+			var range = CFRange()
+			if AXValueGetType(axValue) == .cfRange, AXValueGetValue(axValue, .cfRange, &range) { selection = range }
+		}
+		return TextBaseline(value: value, selection: selection)
+	}
+
+	private func expectedTypedValue(_ baseline: TextBaseline, text: String) -> String {
+		let current = baseline.value as NSString
+		guard let range = baseline.selection, range.location >= 0, range.length >= 0, range.location + range.length <= current.length else {
+			return baseline.value + text
+		}
+		return current.replacingCharacters(in: NSRange(location: range.location, length: range.length), with: text)
+	}
+
+	private func insertTextThroughEditor(_ element: AXUIElement, text: String, foregroundGranted: Bool) throws -> (value: String?, expected: String)? {
+		guard !text.isEmpty, !text.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
+		let role = stringAttribute(element, attribute: kAXRoleAttribute as CFString) ?? ""
+		let subrole = stringAttribute(element, attribute: kAXSubroleAttribute as CFString) ?? ""
+		guard ["AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"].contains(role), !isSecureTextElement(role: role, subrole: subrole) else { return nil }
+		guard ancestorRole(element, role: "AXWebArea") == .notFound else { return nil }
+		func settable(_ attribute: String) -> Bool {
+			var flag = DarwinBoolean(false)
+			return AXUIElementIsAttributeSettable(element, attribute as CFString, &flag) == .success && flag.boolValue
+		}
+		if boolAttribute(element, attribute: kAXFocusedAttribute as CFString) != true {
+			guard settable(kAXFocusedAttribute), try focusKeepingCaret(element, foregroundGranted: foregroundGranted) == .success else { return nil }
+		}
+		guard settable(kAXSelectedTextAttribute), let baseline = textBaseline(element) else { return nil }
+		try checkpoint()
+		activeRequestContext()?.markEffect()
+		let status = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
+		let value = stringAttribute(element, attribute: kAXValueAttribute as CFString)
+		if status != .success && value == baseline.value { return nil }
+		return (value, expectedTypedValue(baseline, text: text))
+	}
+
+	private func requirePidKeyDestination(pid: Int32, record: LookRecord, element: AXUIElement?) throws -> String {
+		let appElement = AXUIElementCreateApplication(pid)
+		AXUIElementSetMessagingTimeout(appElement, 0.5)
+		let observed = lookWindowElement(record, pid: pid) ?? windowElement(pid: pid, windowId: record.windowId)
+		let effect = activeRequestContext()?.effectPossible ?? false
+		func conflict(_ window: AXUIElement) -> BridgeFailure {
+			let title = stringAttribute(window, attribute: kAXTitleAttribute as CFString) ?? ""
+			return BridgeFailure(
+				message: "key_window_conflict: keyboard input of \(appLabel(pid)) goes to another of its windows (\"\(title)\"), not the observed one; no key was sent. Another session or the user may be using that window: retry later, or observe and act on the window that has the keyboard focus",
+				code: "key_window_conflict",
+				effectPossible: effect,
+				details: ["inputSent": false, "focusedWindowTitle": title, "retry": "later_or_other_window"]
+			)
+		}
+		if let keyWindow = copyAttribute(appElement, attribute: kAXFocusedWindowAttribute as CFString).flatMap(asAXElement),
+			let observed, !windowsRelated(keyWindow, observed)
+		{
+			throw conflict(keyWindow)
+		}
+		if let focused = copyAttribute(appElement, attribute: kAXFocusedUIElementAttribute as CFString).flatMap(asAXElement) {
+			let focusedRole = stringAttribute(focused, attribute: kAXRoleAttribute as CFString) ?? ""
+			let focusedWindow = copyAttribute(focused, attribute: kAXWindowAttribute as CFString).flatMap(asAXElement)
+				?? (Bridge.windowLevelFocusRoles.contains(focusedRole) ? focused : nil)
+			if let focusedWindow, let observed, !windowsRelated(focusedWindow, observed) { throw conflict(focusedWindow) }
+			if let element, !(sameElement(focused, element) || isElement(focused, descendantOf: element) || isElement(element, descendantOf: focused)) {
+				throw BridgeFailure(message: "The app's keyboard focus is not on the target element; no key was sent. Pointer input or a foreground grant is needed to focus it", code: "foreground_required", effectPossible: effect, details: ["inputSent": false])
+			}
+			if focusedWindow != nil && observed != nil { return "verified" }
+		}
+		let windows = axElementArray(appElement, attribute: kAXWindowsAttribute as CFString)
+		if windows.count == 1, let observed, windowsRelated(windows[0], observed) { return "single_window" }
+		throw BridgeFailure(message: "The helper could not verify which window of the app receives keys; no key was sent", code: "foreground_required", effectPossible: effect, details: ["inputSent": false])
+	}
+
+	private func requireKeyTextSource(delivery: String) throws {
+		guard delivery == "hid" else { return }
+		let source = InputSourceInfo.current()
+		guard source.composes else { return }
+		throw BridgeFailure(
+			message: "input_source_composes: the current input source (\(source.id)) composes typed keys, so this text would not arrive as requested; no key was sent. Use set_text on a native field, or switch to a keyboard layout input source",
+			code: "input_source_composes",
+			effectPossible: activeRequestContext()?.effectPossible ?? false,
+			details: ["inputSent": false, "inputSource": source.diagnostics()]
+		)
 	}
 
 	private func tracked(requestIds: [String], deadline: Double?, session: (id: String, generation: Int)?, grantedHID: Bool = false, _ body: () throws -> [String: Any]) throws -> [String: Any] {
@@ -1137,10 +1592,16 @@ final class Bridge {
 	private func dispatchRequest(_ request: [String: Any], receivedAt: Double) throws -> Any {
 		let cmd = try stringArg(request, "cmd")
 		let session = requestSession(request)
+		let threadDictionary = Thread.current.threadDictionary
+		if let session { threadDictionary[requestSessionKey] = session.id } else { threadDictionary.removeObject(forKey: requestSessionKey) }
+		defer { threadDictionary.removeObject(forKey: requestSessionKey) }
+		let requestKey = "req:" + UUID().uuidString
+		let keys = (request: requestKey, session: session?.id ?? requestKey)
 		let gated = ownerGatedCommands.contains(cmd)
 		if gated {
 			try authorizeOwner(session, pin: true)
 		} else if let session {
+			finishExpiredSessions(pruneExpiredSessions())
 			refreshOwner(session)
 		}
 		defer { if gated { endOwnedRequest(session) } }
@@ -1154,6 +1615,8 @@ final class Bridge {
 			return ["released": try releaseOwner(session)]
 		case "cancel":
 			return try cancelRequest(request, session: session)
+		case "foregroundSection":
+			return try foregroundSectionCommand(request, session: session)
 		case "diagnostics":
 			return diagnostics()
 		case "checkPermissions":
@@ -1163,6 +1626,10 @@ final class Bridge {
 		case "openPermissionPane":
 			return try openPermissionPane(request)
 		case "shutdown":
+			let busy = otherSessionsActive(caller: session?.id)
+			if busy > 0 {
+				throw BridgeFailure(message: "shutdown refused: other sessions have \(busy) request(s) in flight", code: "helper_busy", effectPossible: false, details: ["activeRequests": busy])
+			}
 			DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { [self] in
 				deactivateExtendedTargets()
 				exit(0)
@@ -1183,11 +1650,14 @@ final class Bridge {
 		case "endInputSuppression":
 			return endInputSuppression()
 		case "restoreUserFocus":
-			return try restoreUserFocus(request)
+			return try inForeground(request, keys: keys, pid: nil, context: nil) { try restoreUserFocus(request) }
 		case "focusWindow":
-			return try focusWindow(request)
+			let pid = Int32(try intArg(request, "pid"))
+			return try onTarget(pid, keys: keys, context: nil) {
+				try inForeground(request, keys: keys, pid: pid, context: nil) { try focusWindow(request) }
+			}
 		case "setWindowFrame":
-			return try setWindowFrame(request)
+			return try onTarget(Int32(try intArg(request, "pid")), keys: keys, context: nil) { try setWindowFrame(request) }
 		case "look":
 			return try look(request)
 		case "act":
@@ -1196,7 +1666,13 @@ final class Bridge {
 				deadline: try requestDeadline([request], receivedAt: receivedAt),
 				session: session,
 				grantedHID: isGrantedHIDAct(request)
-			) { try act(request) }
+			) {
+				let context = activeRequestContext()
+				let pid = Int32(try intArg(request, "pid"))
+				return try inForeground(request, keys: keys, pid: pid, context: context) {
+					try onTarget(pid, keys: keys, context: context) { try act(request) }
+				}
+			}
 		case "actBatch":
 			let actions = request["actions"] as? [[String: Any]] ?? []
 			return try tracked(
@@ -1204,7 +1680,14 @@ final class Bridge {
 				deadline: try requestDeadline([request] + actions, receivedAt: receivedAt),
 				session: session,
 				grantedHID: isGrantedHIDRequest(request)
-			) { try actBatch(request) }
+			) {
+				let context = activeRequestContext()
+				guard let first = actions.first else { return try actBatch(request) }
+				let pid = Int32(try intArg(first, "pid"))
+				return try inForeground(request, keys: keys, pid: pid, context: context) {
+					try onTarget(pid, keys: keys, context: context) { try actBatch(request) }
+				}
+			}
 		case "hitTest":
 			return try hitTest(request)
 		case "axWaitFor":
@@ -1318,7 +1801,8 @@ final class Bridge {
 				"verified-focus-restore", "owner-checked-app-blocklist", "local-pointer-evidence",
 				"client-ancestry-blocklist", "hid-input-sent-on-every-error", "observed-window-destination",
 				"post-release-destination-check", "path-segment-pointer-evidence", "editor-text-commit",
-				"extended-background-delivery",
+				"extended-background-delivery", "multi-session", "per-target-serialization", "exclusive-foreground-section",
+				"session-scoped-looks", "layout-independent-text", "verified-text-entry", "pid-key-destination-check",
 			],
 			"pid": Int32(getpid()),
 			"parentPid": parentPid,
@@ -1330,6 +1814,8 @@ final class Bridge {
 			"screenRecording": permissions["screenRecording"] ?? false,
 			"recentCompletedRequestIds": completedRequestIds(),
 			"extendedDelivery": ExtendedDeliverySupport.shared.diagnostics(),
+			"sessions": sessionDiagnostics(),
+			"inputSource": InputSourceInfo.current().diagnostics(),
 		]
 		if let parentPath {
 			output["parentPath"] = parentPath
@@ -2118,7 +2604,7 @@ final class Bridge {
 		}
 
 		let lookId = freshLookId()
-		let baseRecord = baseLookId.flatMap { lookRecord(for: $0) }
+		let baseRecord = try baseLookId.flatMap { try lookRecord(for: $0) }
 		let observedFrame: CGRect? = baseRecord != nil ? baseRecord?.observedFrame : frameForElement(window)
 		storeLookRecord(LookRecord(
 			lookId: lookId,
@@ -2166,10 +2652,20 @@ final class Bridge {
 		defer { lookRecordLock.unlock() }
 		lookRecords[record.lookId] = record
 		lookRecordOrder.append(record.lookId)
-		while lookRecordOrder.count > 8 {
-			let oldest = lookRecordOrder.removeFirst()
-			lookRecords.removeValue(forKey: oldest)
+		let sameOwner = lookRecordOrder.filter { lookRecords[$0]?.sessionId == record.sessionId }
+		if sameOwner.count > 8 {
+			let evicted = Set(sameOwner.prefix(sameOwner.count - 8))
+			lookRecordOrder.removeAll { evicted.contains($0) }
+			for id in evicted { lookRecords.removeValue(forKey: id) }
 		}
+	}
+
+	private func dropLookRecords(sessionId: String) {
+		lookRecordLock.lock()
+		defer { lookRecordLock.unlock() }
+		let dropped = Set(lookRecordOrder.filter { lookRecords[$0]?.sessionId == sessionId })
+		lookRecordOrder.removeAll { dropped.contains($0) }
+		for id in dropped { lookRecords.removeValue(forKey: id) }
 	}
 
 	private func freshLookId() -> String {
@@ -2179,10 +2675,14 @@ final class Bridge {
 		return "look_\(nextLookId)"
 	}
 
-	private func lookRecord(for lookId: String) -> LookRecord? {
+	private func lookRecord(for lookId: String) throws -> LookRecord? {
 		lookRecordLock.lock()
-		defer { lookRecordLock.unlock() }
-		return lookRecords[lookId]
+		let record = lookRecords[lookId]
+		lookRecordLock.unlock()
+		if let record, !sessionMayUse(owner: record.sessionId, caller: currentRequestSessionId()) {
+			throw BridgeFailure(message: "Look id '\(lookId)' belongs to another session; nothing was sent. Observe the window in this session first", code: "not_look_owner", effectPossible: false)
+		}
+		return record
 	}
 
 	private func windowFrameStaleness(_ record: LookRecord) -> BridgeFailure? {
@@ -2572,7 +3072,7 @@ final class Bridge {
 
 	private func hitTest(_ request: [String: Any]) throws -> [String: Any] {
 		let lookId = try stringArg(request, "lookId")
-		guard let record = lookRecord(for: lookId) else {
+		guard let record = try lookRecord(for: lookId) else {
 			throw BridgeFailure(message: "Look id '\(lookId)' is no longer available", code: "stale_look")
 		}
 		let point = lookPoint(record: record, x: try doubleArg(request, "x"), y: try doubleArg(request, "y"))
@@ -2631,7 +3131,7 @@ final class Bridge {
 		activeRequestContext()?.extendedDeliveryReason = nil
 		activeRequestContext()?.extendedDeliveryActivated = false
 		let lookId = try stringArg(request, "lookId")
-		guard let record = lookRecord(for: lookId) else {
+		guard let record = try lookRecord(for: lookId) else {
 			throw BridgeFailure(message: "Look id '\(lookId)' is no longer available", code: "stale_look")
 		}
 		let pid = Int32(try intArg(request, "pid"))
@@ -2973,6 +3473,10 @@ final class Bridge {
 				try postMouseMove(to: point, pid: pid, delivery: delivery)
 			case "scroll":
 				animateCursor(at: point)
+				if delivery == "pid", context?.extendedDelivery == nil, record.windowId != 0 {
+					context?.pidScrollWindow = ExtendedDeliveryTarget(pid: pid, windowId: record.windowId, windowFrame: record.windowFrame)
+				}
+				defer { context?.pidScrollWindow = nil }
 				try postScrollWheel(at: point, deltaX: (params["scrollX"] as? NSNumber)?.intValue ?? 0, deltaY: (params["scrollY"] as? NSNumber)?.intValue ?? 0, pid: pid, delivery: delivery)
 			case "drag":
 				let points = try dragPoints()
@@ -3123,20 +3627,44 @@ final class Bridge {
 			try executeCoordinates(coordinatePoint())
 		} else if action == "typeText" {
 			let preserveFocus = params["preserveFocus"] as? Bool ?? false
-			if let element, !focusResolved, try setAXFocus(element, foregroundGranted: foregroundGranted) == .success {
+			let text = params["text"] as? String ?? ""
+			if let element, !focusResolved, try focusKeepingCaret(element, foregroundGranted: foregroundGranted) == .success {
 				performed["focused"] = true
+			}
+			if let element, let inserted = try insertTextThroughEditor(element, text: text, foregroundGranted: foregroundGranted) {
+				performed["delivery"] = "ax"
+				performed["grounding"] = "description"
+				performed["textEntry"] = "selected_text"
+				performed["focused"] = true
+				let matches = inserted.value == inserted.expected
+				rememberCaret(element)
+				var evidence: [String: Any] = ["valueChanged": inserted.value != beforeValue, "valueMatches": matches]
+				if let value = inserted.value { evidence["value"] = value } else { evidence["valueReadable"] = false }
+				return try finish(["outcome": matches ? "worked" : "unknown", "performed": performed, "evidence": evidence])
 			}
 			acquirePhysicalInputIfNeeded()
 			if delivery == "hid" && !preserveFocus { try focusTargetForPhysicalInput() }
-			let text = params["text"] as? String ?? ""
+			try requireKeyTextSource(delivery: delivery)
+			if delivery == "pid" && extendedTarget == nil {
+				performed["keyDestination"] = try requirePidKeyDestination(pid: pid, record: record, element: element)
+			}
+			let baseline = element.flatMap { textBaseline($0) }
 			if delivery == "hid" { context?.charactersSent = 0 }
 			try postUnicodeText(text, pid: pid, delivery: delivery)
 			performed["grounding"] = "coordinates"
+			performed["textEntry"] = "characters"
 			if let element, !text.isEmpty {
 				usleep(30_000)
-				let afterValue = stringAttribute(element, attribute: kAXValueAttribute as CFString) ?? ""
-				let changed = afterValue != (beforeValue ?? "")
-				return try finish(["outcome": changed ? "worked" : "didnt", "performed": performed, "evidence": ["value": afterValue, "valueChanged": changed]])
+				let read = stringAttribute(element, attribute: kAXValueAttribute as CFString)
+				let afterValue = read ?? ""
+				let changed = afterValue != (baseline?.value ?? beforeValue ?? "")
+				let expected = baseline.map { expectedTypedValue($0, text: text) }
+				let matches = expected.map { afterValue == $0 } ?? false
+				var evidence: [String: Any] = ["value": afterValue, "valueChanged": changed, "valueMatches": matches]
+				if read == nil { evidence["valueReadable"] = false }
+				rememberCaret(element)
+				let outcome = matches ? "worked" : (changed ? "unknown" : "didnt")
+				return try finish(["outcome": outcome, "performed": performed, "evidence": evidence])
 			}
 		} else if action == "keypress" {
 			let preserveFocus = params["preserveFocus"] as? Bool ?? false
@@ -3144,7 +3672,7 @@ final class Bridge {
 				throw BridgeFailure(message: "keypress requires keys", code: "invalid_args")
 			}
 			if let element {
-				if !focusResolved, try setAXFocus(element, foregroundGranted: foregroundGranted) == .success {
+				if !focusResolved, try focusKeepingCaret(element, foregroundGranted: foregroundGranted) == .success {
 					performed["focused"] = true
 				}
 				let normalizedKeys = keys.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
@@ -3165,8 +3693,18 @@ final class Bridge {
 			}
 			acquirePhysicalInputIfNeeded()
 			if delivery == "hid" && !preserveFocus { try focusTargetForPhysicalInput() }
+			if delivery == "hid", keys.contains(where: { keyCharacters($0, flags: []) != nil && keyChord($0.split(separator: "+").map(String.init)) == nil }), keyChord(keys) == nil {
+				try requireKeyTextSource(delivery: delivery)
+			}
+			if delivery == "pid" && extendedTarget == nil {
+				performed["keyDestination"] = try requirePidKeyDestination(pid: pid, record: record, element: element)
+			}
 			try postKeyPress(keys: keys, pid: pid, delivery: delivery)
 			performed["grounding"] = "coordinates"
+			if let element {
+				usleep(30_000)
+				rememberCaret(element)
+			}
 		} else if let element, action == "scroll" {
 			let cursorPoint = try? coordinatePoint()
 			let before = scrollPositionSignature(element)
@@ -3581,7 +4119,7 @@ final class Bridge {
 		guard actions.allSatisfy({ ($0["lookId"] as? String) == lookId }) else {
 			throw BridgeFailure(message: "actBatch actions must belong to one look", code: "invalid_args")
 		}
-		if let record = lookRecord(for: lookId) {
+		if let record = try lookRecord(for: lookId) {
 			try enforceWindowOwners(pid: pid, windowId: record.windowId, windowRef: nil, request: request, act: true)
 		} else {
 			try enforceAppPolicy(owner: pid, request: request, act: true)
@@ -5095,7 +5633,8 @@ final class Bridge {
 	]
 
 	private func addressPointerEvent(_ event: CGEvent, pid: Int32, context: RequestContext?) {
-		guard let target = context?.extendedDelivery, target.pid == pid, Self.extendedPointerTypes.contains(event.type),
+		let scrollTarget = event.type == .scrollWheel ? context?.pidScrollWindow : nil
+		guard let target = context?.extendedDelivery ?? scrollTarget, target.pid == pid, Self.extendedPointerTypes.contains(event.type),
 			let windowField = CGEventField(rawValue: 51)
 		else { return }
 		event.setIntegerValueField(windowField, value: Int64(target.windowId))
@@ -5563,7 +6102,27 @@ final class Bridge {
 		}
 	}
 
-	private func postKey(_ key: String, flags: CGEventFlags, pid: Int32, delivery: String = "hid") throws {
+	private func keyCharacters(_ key: String, flags: CGEventFlags) -> String? {
+		if flags.contains(.maskControl) || flags.contains(.maskAlternate) { return nil }
+		let normalized = key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+		if normalized == "space" || key == " " { return " " }
+		guard normalized.count == 1, let scalar = normalized.unicodeScalars.first, scalar.isASCII, scalar.value >= 0x21, scalar.value < 0x7f else { return nil }
+		if flags.contains(.maskShift), let shifted = Self.shiftedCharacters[normalized] { return shifted }
+		return normalized
+	}
+
+	private static let shiftedCharacters: [String: String] = {
+		var table: [String: String] = [
+			"1": "!", "2": "@", "3": "#", "4": "$", "5": "%", "6": "^", "7": "&", "8": "*", "9": "(", "0": ")",
+			"-": "_", "=": "+", "[": "{", "]": "}", "\\": "|", ";": ":", "'": "\"", ",": "<", ".": ">", "/": "?", "`": "~",
+		]
+		for scalar in UnicodeScalar("a").value...UnicodeScalar("z").value {
+			if let letter = UnicodeScalar(scalar) { table[String(letter)] = String(letter).uppercased() }
+		}
+		return table
+	}()
+
+	private func postKey(_ key: String, flags: CGEventFlags, pid: Int32, delivery: String = "hid", characters: String? = nil) throws {
 		if delivery == "hid" { physicalInputLock.lock() }
 		defer { if delivery == "hid" { physicalInputLock.unlock() } }
 		guard let code = keyCode(key) else {
@@ -5580,6 +6139,10 @@ final class Bridge {
 		}
 		down.flags = flags
 		up.flags = flags
+		if let text = characters ?? keyCharacters(key, flags: flags) {
+			setUnicodeString(event: down, text: text)
+			setUnicodeString(event: up, text: text)
+		}
 		try hidGesture(.keyboard, pid: pid, delivery: delivery) {
 			try checkpoint()
 			try postEvent(down, pid: pid, delivery: delivery)
@@ -5600,7 +6163,7 @@ final class Bridge {
 				try recheckHIDDestinationIfDue(pid: pid, delivery: delivery)
 				let char = String(scalar)
 				if let stroke = physicalKeyStroke(for: char) {
-					try postKey(stroke.key, flags: stroke.flags, pid: pid, delivery: delivery)
+					try postKey(stroke.key, flags: stroke.flags, pid: pid, delivery: delivery, characters: char)
 				} else {
 					guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
 						let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)

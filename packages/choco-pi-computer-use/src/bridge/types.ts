@@ -199,7 +199,10 @@ export interface TerminalDesktopActionDetails {
     | "foreground_required"
     | "foreground_not_acquired"
     | "cancelled"
-    | "owned_by_other_session";
+    | "owned_by_other_session"
+    | "target_busy"
+    | "foreground_busy"
+    | "key_window_conflict";
   baseStateId: string;
   target: {
     app: string;
@@ -212,7 +215,7 @@ export interface TerminalDesktopActionDetails {
   };
   execution: ExecutionTrace | InterruptedExecutionTrace;
   error: { code: string; message: string; inputSent?: boolean; effectPossible?: boolean };
-  nextStep?: "observe_then_retry";
+  nextStep?: "observe_then_retry" | "retry_later" | "retry_later_or_other_window";
   config?: ComputerUseDetailsConfig;
 }
 
@@ -405,6 +408,7 @@ export interface CapturedFocus {
 export interface ForegroundSectionTrace {
   waitedMs: number;
   previousDeliveryUnconfirmed?: string;
+  helperWaitedMs?: number;
 }
 
 export interface ForegroundSectionLease {
@@ -418,6 +422,7 @@ export interface ForegroundSession {
   focusBefore?: CapturedFocus;
   lastRequest?: { requestId: string; policy: DeliveryPolicy; budgetMs: number; sentAt: number };
   section?: ForegroundSectionLease;
+  helperSection?: boolean;
 }
 
 export interface HelperRefusalSignal {

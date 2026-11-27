@@ -30,6 +30,8 @@ let webEnabled = !isHolder && flag("CU_FIXTURE_WEB")
 let activateAtLaunch = !isHolder && flag("CU_FIXTURE_ACTIVATE")
 // Matrix mode (safety/matrix.ts): extra AppKit and SwiftUI windows, the web page loaded from
 let matrixEnabled = !isHolder && flag("CU_FIXTURE_MATRIX")
+// Parallel mode (safety/parallel.ts): a scroll view and a drag view in the main window and, with
+let parallelEnabled = !isHolder && flag("CU_FIXTURE_PARALLEL")
 let unpairedWindowEnabled = !isHolder && flag("CU_FIXTURE_UNPAIRED_WINDOW")
 // A chain of nested shells of this depth under the target (safety ancestry check), or nil.
 let chainDepth: Int? = isHolder ? nil : env["CU_FIXTURE_SPAWN_CHAIN"].flatMap { Int($0) }.map { max(1, min(200, $0)) }
@@ -344,6 +346,8 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 	var checkbox: NSButton?
 	let swiftModel = SwiftUIModel()
 	var lastScrollY: Double?
+	let field2 = NSTextField(string: "")
+	var lastValue2 = ""
 	var lastResponder: [String: String] = [:]
 	var lastSelection: [String: String] = [:]
 	var unpairedWindow: NSWindow?
@@ -447,6 +451,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 			}
 			content.addSubview(customView)
 			if deadViewEnabled { content.addSubview(deadView) }
+			if parallelEnabled && !matrixEnabled { buildParallelControls(content) }
 			if noise {
 				noiseView.wantsLayer = true
 				noiseView.layer?.backgroundColor = NSColor.systemRed.cgColor
@@ -463,6 +468,14 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 			let note = NSTextField(labelWithString: "Second window")
 			note.frame = NSRect(x: 20, y: 100, width: 300, height: 20)
 			second.contentView?.addSubview(note)
+			if parallelEnabled {
+				field2.frame = NSRect(x: 20, y: 40, width: 360, height: 24)
+				field2.setAccessibilityLabel("Field 2")
+				field2.setAccessibilityIdentifier("cu-field-2")
+				field2.placeholderString = "Field 2"
+				field2.delegate = self
+				second.contentView?.addSubview(field2)
+			}
 		}
 
 		if webEnabled {
@@ -517,6 +530,21 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 	func scrollToMiddle() {
 		scrollView.contentView.scroll(to: NSPoint(x: 0, y: 500))
 		scrollView.reflectScrolledClipView(scrollView.contentView)
+	}
+
+	func buildParallelControls(_ content: NSView) {
+		scrollView.frame = NSRect(x: 20, y: 180, width: 220, height: 170)
+		scrollView.hasVerticalScroller = true
+		scrollView.documentView = StripeView(frame: NSRect(x: 0, y: 0, width: 200, height: 1200))
+		scrollView.setAccessibilityIdentifier("cu-scroll")
+		scrollView.contentView.postsBoundsChangedNotifications = true
+		NotificationCenter.default.addObserver(
+			forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main
+		) { [weak self] _ in self?.logScroll() }
+		content.addSubview(scrollView)
+		dragView.frame = NSRect(x: 260, y: 180, width: 360, height: 170)
+		content.addSubview(dragView)
+		scrollToMiddle()
 	}
 
 	func logScroll() {
@@ -748,6 +776,13 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 			lastValue = value
 			log.write("fieldValue", describe(value))
 		}
+		if parallelEnabled && windowCount >= 2 {
+			let second = (field2.currentEditor() as? NSTextView)?.string ?? field2.stringValue
+			if second != lastValue2 {
+				lastValue2 = second
+				log.write("field2Value", describe(second))
+			}
+		}
 		if sticky && !quitting && !NSApp.isActive { reactivate("poll") }
 		guard let directory = log.directory else { return }
 		if matrixEnabled {
@@ -813,6 +848,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 		state["reason"] = reason
 		state["increments"] = increments
 		state["customHits"] = customView.hits
+		if parallelEnabled && windowCount >= 2 { state["field2"] = (field2.currentEditor() as? NSTextView)?.string ?? field2.stringValue }
 		if noise { state["noiseTicks"] = noiseTicks }
 		state["keyWindow"] = label(NSApp.keyWindow)
 		state["active"] = NSApp.isActive

@@ -36,6 +36,10 @@ export interface FakeHelperDaemonOptions {
   cancelBlockMs?: number;
   pidSettleHoldMs?: number;
   ownerTtlMs?: number;
+  sessionModel?: "single" | "multi";
+  actHoldMs?: number;
+  coordinationWaitMs?: number;
+  foregroundSectionIdleMs?: number;
   refusalActivates?: boolean;
   secondTarget?: boolean;
   foregroundHoldMs?: number;
@@ -58,6 +62,7 @@ export interface FakeHelperDaemon {
   readonly socketPath: string;
   readonly script: FakeScript;
   readonly requests: JsonObject[];
+  readonly actSpans: JsonObject[];
   close(): Promise<void>;
 }
 
@@ -140,6 +145,7 @@ const OWNER_GATED = new Set([
   "beginInputSuppression",
   "endInputSuppression",
   "restoreUserFocus",
+  "foregroundSection",
 ]);
 
 export function resolveFakeScript(name: string): FakeScript {
@@ -242,6 +248,25 @@ class FakeHelperState {
   private readonly extendedAnswer: NonNullable<FakeHelperDaemonOptions["extendedAnswer"]>;
   private owner?: Session & { lastSeen: number };
   private ownerActive = 0;
+  private readonly multi: boolean;
+  private readonly sessions = new Map<
+    string,
+    { generation: number; lastSeen: number; active: number }
+  >();
+  private sessionlessActive = 0;
+  private readonly lookOwners = new Map<string, string | undefined>();
+  private readonly targetHolders = new Map<number, string>();
+  private section?: {
+    holder: string;
+    explicit: boolean;
+    lastSeen: number;
+    active: number;
+    targets: Set<number>;
+  };
+  private readonly actHoldMs: number;
+  private readonly coordinationWaitMs: number;
+  private readonly sectionIdleMs: number;
+  readonly actSpans: JsonObject[] = [];
   private readonly active = new Map<string, Tracked>();
   private readonly completed: { id: string; sessionId?: string }[] = [];
   private readonly tombstones: { id: string; at: number; sessionId?: string }[] = [];
@@ -272,6 +297,10 @@ class FakeHelperState {
     this.cancelBlockMs = options.cancelBlockMs ?? 0;
     this.pidSettleHoldMs = options.pidSettleHoldMs ?? 0;
     this.ownerTtlMs = options.ownerTtlMs ?? OWNER_TTL_MS;
+    this.multi = (options.sessionModel ?? "multi") === "multi" && this.script !== "s7-ownership";
+    this.actHoldMs = options.actHoldMs ?? 0;
+    this.coordinationWaitMs = options.coordinationWaitMs ?? 10_000;
+    this.sectionIdleMs = options.foregroundSectionIdleMs ?? 10_000;
     this.refusalActivates = options.refusalActivates ?? true;
     this.secondTarget = options.secondTarget === true;
     this.foregroundHoldMs = options.foregroundHoldMs ?? 0;
@@ -316,9 +345,22 @@ class FakeHelperState {
           source: { attribution: "helper-app", pid: process.pid },
         };
       case "shutdown":
+        if (this.multi) {
+          const busy = this.otherSessionsActive(session?.id);
+          if (busy > 0)
+            throw new FakeFailure(
+              "helper_busy",
+              `shutdown refused: other sessions have ${busy} request(s) in flight`,
+              false,
+              undefined,
+              { activeRequests: busy },
+            );
+        }
         this.protocolVersion = FAKE_PROTOCOL_VERSION;
         this.startedAt = Date.now() / 1000;
         this.owner = undefined;
+        this.sessions.clear();
+        this.section = undefined;
         return { shuttingDown: true };
       case "claim":
         if (!session) throw new FakeFailure("invalid_args", "claim requires session");
@@ -332,6 +374,8 @@ class FakeHelperState {
         return { released: this.release(session) };
       case "cancel":
         return await this.cancel(stringField(request, "target") ?? "", session);
+      case "foregroundSection":
+        return await this.foregroundSectionCommand(request, session);
       case "listApps":
         return {
           apps: [
@@ -348,14 +392,14 @@ class FakeHelperState {
       case "getFrontmost":
         return this.getFrontmost();
       case "look":
-        return this.look(request);
+        return this.look(request, session);
       case "act":
         return await this.tracked([request], session, (tracked) =>
-          this.act(request, false, tracked),
+          this.coordinated(request, session, tracked, () => this.act(request, false, tracked)),
         );
       case "actBatch":
         return await this.tracked(this.batchActions(request), session, (tracked) =>
-          this.actBatch(request, tracked),
+          this.coordinated(request, session, tracked, () => this.actBatch(request, tracked)),
         );
       case "axWaitFor":
         return { found: true, gone: false, timedOut: false, nodeCount: 4 };
@@ -586,6 +630,14 @@ class FakeHelperState {
         "request-cancellation",
         "session-ownership",
         "fake-helper",
+        ...(this.multi
+          ? [
+              "multi-session",
+              "per-target-serialization",
+              "exclusive-foreground-section",
+              "session-scoped-looks",
+            ]
+          : []),
       ],
       pid: process.pid,
       macOS: "fake",
@@ -606,6 +658,7 @@ class FakeHelperState {
   }
 
   private authorize(session: Session | undefined, pin: boolean): void {
+    if (this.multi) return this.authorizeMulti(session, pin);
     const now = Date.now();
     const pinned = this.ownerActive > 0;
     const live =
@@ -637,6 +690,15 @@ class FakeHelperState {
   }
 
   private endOwned(session: Session | undefined): void {
+    if (this.multi) {
+      if (!session) this.sessionlessActive = Math.max(0, this.sessionlessActive - 1);
+      const entry = session ? this.sessions.get(session.id) : undefined;
+      if (entry) {
+        entry.active = Math.max(0, entry.active - 1);
+        if (entry.generation === session?.generation) entry.lastSeen = Date.now();
+      }
+      return;
+    }
     this.ownerActive = Math.max(0, this.ownerActive - 1);
     const owner = this.owner;
     if (session && owner && owner.id === session.id && owner.generation === session.generation)
@@ -644,6 +706,18 @@ class FakeHelperState {
   }
 
   private refresh(session: Session): void {
+    if (this.multi) {
+      const entry = this.sessions.get(session.id);
+      if (!entry)
+        this.sessions.set(session.id, {
+          generation: session.generation,
+          lastSeen: Date.now(),
+          active: 0,
+        });
+      else if (entry.generation === session.generation) entry.lastSeen = Date.now();
+      if (this.section?.holder === session.id) this.section.lastSeen = Date.now();
+      return;
+    }
     const owner = this.owner;
     if (
       owner &&
@@ -655,6 +729,20 @@ class FakeHelperState {
   }
 
   private release(session: Session | undefined): boolean {
+    if (this.multi) {
+      const entry = session ? this.sessions.get(session.id) : undefined;
+      if (!session || !entry || session.generation < entry.generation) return false;
+      if (entry.active > 0)
+        throw new FakeFailure(
+          "owner_busy",
+          `release refused: this session has ${entry.active} request(s) in flight`,
+          false,
+          undefined,
+          { activeRequests: entry.active },
+        );
+      this.endSession(session.id);
+      return true;
+    }
     if (
       !session ||
       !this.owner ||
@@ -672,6 +760,230 @@ class FakeHelperState {
       );
     this.owner = undefined;
     return true;
+  }
+
+  private authorizeMulti(session: Session | undefined, pin: boolean): void {
+    this.pruneSessions();
+    if (!session) {
+      if (pin) this.sessionlessActive += 1;
+      return;
+    }
+    const now = Date.now();
+    const live = this.sessions.get(session.id);
+    if (live) {
+      const refuse = (message: string) =>
+        new FakeFailure("owned_by_other_session", message, false, undefined, {
+          activeRequests: live.active,
+        });
+      if (session.generation < live.generation)
+        throw refuse("The helper session is held by a newer generation of this session");
+      if (session.generation > live.generation && live.active > 0)
+        throw refuse("An older generation of this session still has requests in flight");
+      live.generation = session.generation;
+      live.lastSeen = now;
+      if (pin) live.active += 1;
+    } else
+      this.sessions.set(session.id, {
+        generation: session.generation,
+        lastSeen: now,
+        active: pin ? 1 : 0,
+      });
+  }
+
+  private pruneSessions(): void {
+    const now = Date.now();
+    for (const [id, entry] of this.sessions)
+      if (entry.active === 0 && now - entry.lastSeen >= this.ownerTtlMs) this.endSession(id);
+  }
+
+  private endSession(id: string): void {
+    this.sessions.delete(id);
+    for (const [lookId, owner] of this.lookOwners)
+      if (owner === id) {
+        this.lookOwners.delete(lookId);
+        this.validLooks.delete(lookId);
+      }
+    if (this.section?.holder === id) this.section = undefined;
+  }
+
+  private otherSessionsActive(caller: string | undefined): number {
+    let count =
+      caller === undefined ? Math.max(0, this.sessionlessActive - 1) : this.sessionlessActive;
+    for (const [id, entry] of this.sessions) if (id !== caller) count += entry.active;
+    return count;
+  }
+
+  private async waitUntil(
+    tracked: Tracked | undefined,
+    limitMs: number,
+    ready: () => boolean,
+  ): Promise<boolean> {
+    const end = Date.now() + limitMs;
+    while (!ready()) {
+      if (tracked) this.checkpoint(tracked);
+      if (Date.now() >= end) return false;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    return true;
+  }
+
+  private expireIdleSection(): void {
+    const section = this.section;
+    if (
+      section?.explicit &&
+      section.active === 0 &&
+      Date.now() - section.lastSeen >= this.sectionIdleMs
+    )
+      this.section = undefined;
+  }
+
+  private async coordinated(
+    request: JsonObject,
+    session: Session | undefined,
+    tracked: Tracked,
+    body: () => Promise<JsonObject>,
+  ): Promise<JsonObject> {
+    if (!this.multi) return await body();
+    const first = this.batchActions(request)[0] ?? request;
+    const lookId = stringField(first, "lookId") ?? "";
+    const owner = this.lookOwners.get(lookId);
+    if (owner !== undefined && owner !== session?.id)
+      throw new FakeFailure(
+        "not_look_owner",
+        `Look id '${lookId}' belongs to another session; nothing was sent. Observe the window in this session first`,
+        false,
+      );
+    const pid = this.lookApps.get(lookId) ?? numberField(first, "pid") ?? FAKE_APP.pid;
+    const requestKey = `req:${Math.random()}`;
+    const sessionKey = session?.id ?? requestKey;
+    const foreground = isGrantedHidRequest(first);
+    let implicit = false;
+    if (foreground) {
+      const started = Date.now();
+      const entered = await this.waitUntil(tracked, this.coordinationWaitMs, () => {
+        this.expireIdleSection();
+        return !this.section || this.section.holder === sessionKey;
+      });
+      if (!entered)
+        throw new FakeFailure(
+          "foreground_busy",
+          "foreground_busy: another computer-use session holds the foreground; nothing was sent. Retry later",
+          false,
+          undefined,
+          { inputSent: false, waitedMs: Date.now() - started, retry: "later" },
+        );
+      if (this.section) {
+        this.section.active += 1;
+        this.section.targets.add(pid);
+      } else {
+        implicit = true;
+        this.section = {
+          holder: sessionKey,
+          explicit: false,
+          lastSeen: Date.now(),
+          active: 1,
+          targets: new Set([pid]),
+        };
+      }
+    }
+    try {
+      const started = Date.now();
+      let reason = "act";
+      const acquired = await this.waitUntil(tracked, this.coordinationWaitMs, () => {
+        this.expireIdleSection();
+        const holder = this.targetHolders.get(pid);
+        if (holder !== undefined && holder !== requestKey) return false;
+        if (this.section && this.section.holder !== sessionKey && this.section.targets.has(pid)) {
+          reason = "foreground_section";
+          return false;
+        }
+        return true;
+      });
+      if (!acquired)
+        throw new FakeFailure(
+          "target_busy",
+          "target_busy: another computer-use session is acting on this app; nothing was sent. Retry later",
+          false,
+          undefined,
+          { inputSent: false, busyReason: reason, waitedMs: Date.now() - started, retry: "later" },
+        );
+      this.targetHolders.set(pid, requestKey);
+      const span: JsonObject = {
+        requestId: stringField(first, "requestId") ?? null,
+        session: session?.id ?? null,
+        pid,
+        foreground,
+        start: Date.now(),
+      };
+      try {
+        if (this.actHoldMs > 0) await this.sleep(tracked, this.actHoldMs);
+        return await body();
+      } finally {
+        span.end = Date.now();
+        this.actSpans.push(span);
+        if (this.targetHolders.get(pid) === requestKey) this.targetHolders.delete(pid);
+      }
+    } finally {
+      if (foreground && this.section?.holder === sessionKey) {
+        this.section.active = Math.max(0, this.section.active - 1);
+        this.section.lastSeen = Date.now();
+        if (implicit && !this.section.explicit && this.section.active === 0)
+          this.section = undefined;
+      }
+    }
+  }
+
+  private async foregroundSectionCommand(
+    request: JsonObject,
+    session: Session | undefined,
+  ): Promise<JsonObject> {
+    if (!session)
+      throw new FakeFailure(
+        "invalid_args",
+        "foregroundSection requires session {id, generation}",
+        false,
+      );
+    const op = stringField(request, "op") ?? "acquire";
+    if (op === "release") {
+      const held = this.section?.holder === session.id;
+      if (held) this.section = undefined;
+      return { released: held };
+    }
+    const waitMs = Math.max(
+      0,
+      Math.min(this.coordinationWaitMs, numberField(request, "waitMs") ?? 0),
+    );
+    const started = Date.now();
+    const entered = await this.waitUntil(undefined, waitMs, () => {
+      this.expireIdleSection();
+      return !this.section || this.section.holder === session.id;
+    });
+    if (!entered)
+      throw new FakeFailure(
+        "foreground_busy",
+        "foreground_busy: another computer-use session holds the foreground; nothing was sent. Retry later",
+        false,
+        undefined,
+        { waitedMs: Date.now() - started, retry: "later" },
+      );
+    const alreadyHeld = this.section !== undefined;
+    if (this.section) {
+      this.section.explicit = true;
+      this.section.lastSeen = Date.now();
+    } else
+      this.section = {
+        holder: session.id,
+        explicit: true,
+        lastSeen: Date.now(),
+        active: 0,
+        targets: new Set(),
+      };
+    return {
+      acquired: true,
+      alreadyHeld,
+      waitedMs: Date.now() - started,
+      frontmostPid: this.frontmost.pid,
+    };
   }
 
   private pruneTombstones(now: number): void {
@@ -870,7 +1182,7 @@ class FakeHelperState {
     };
   }
 
-  private look(request: JsonObject): JsonObject {
+  private look(request: JsonObject, session?: Session): JsonObject {
     const requested =
       this.secondTarget &&
       (request.windowId === WINDOW_ID_B ||
@@ -899,6 +1211,12 @@ class FakeHelperState {
         request.windowRef === ROOT_REF_B ||
         request.pid === FAKE_APP_B.pid);
     this.lookApps.set(lookId, second ? FAKE_APP_B.pid : FAKE_APP.pid);
+    this.lookOwners.set(lookId, session?.id);
+    const sameOwner = [...this.lookOwners].filter(([, owner]) => owner === session?.id);
+    for (const [evicted] of sameOwner.slice(0, Math.max(0, sameOwner.length - 8))) {
+      this.lookOwners.delete(evicted);
+      this.validLooks.delete(evicted);
+    }
     const label =
       this.pressCount > 0
         ? `Clicked ${this.pressCount}`
@@ -1440,6 +1758,7 @@ export async function startFakeHelperDaemon(
     socketPath: options.socketPath,
     script: state.script,
     requests,
+    actSpans: state.actSpans,
     close() {
       closing ??= (async () => {
         const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));

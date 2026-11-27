@@ -368,55 +368,6 @@ test("timeout cancels a partially delivered request and reports a possible effec
   assert.equal(error.interruption?.result?.outcome, "partial");
 });
 
-test("a second session is refused with owned_by_other_session", async () => {
-  const fake = await startDaemon({ script: "s7-ownership" });
-  const first = new helper.MacosHelperClient();
-  const second = new helper.MacosHelperClient();
-  const firstSession = session("session-a");
-  const secondSession = session("session-b");
-  const look = await lookId(first);
-
-  const worked = await first.command<{ outcome?: string }>(
-    "act",
-    actArgs(firstSession, look, { action: "click", target: { ref: "button-1" } }),
-  );
-  assert.equal(worked.outcome, "worked");
-  assert.deepEqual(first.currentSession, firstSession);
-  assert.deepEqual(await first.claim(), {
-    claimed: true,
-    owner: firstSession,
-    ttlMs: 30_000,
-  });
-
-  const refused = await rejection(
-    second.command(
-      "act",
-      actArgs(secondSession, look, { action: "click", target: { ref: "button-1" } }),
-    ),
-  );
-  assert.ok(refused instanceof helper.HelperCommandError);
-  assert.equal(refused.code, "owned_by_other_session");
-  assert.equal(refused.effectPossible, false);
-  assert.equal(refused.interruption?.code, "owned_by_other_session");
-
-  const claim = await rejection(second.claim());
-  assert.ok(claim instanceof helper.HelperCommandError);
-  assert.equal(claim.code, "owned_by_other_session");
-
-  const focus = await rejection(second.command("focusWindow", { pid: FAKE_APP.pid }));
-  assert.ok(focus instanceof helper.HelperCommandError);
-  assert.equal(focus.code, "owned_by_other_session");
-  const focusRequest = fake.requests.findLast((request) => request.cmd === "focusWindow");
-  assert.deepEqual(focusRequest?.session, secondSession);
-
-  assert.equal(await first.release(), true);
-  const afterRelease = await second.command<{ outcome?: string }>(
-    "act",
-    actArgs(secondSession, look, { action: "click", target: { ref: "button-1" } }),
-  );
-  assert.equal(afterRelease.outcome, "worked");
-});
-
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -531,51 +482,6 @@ test("a cancel before registration tombstones the id and the act is refused befo
   assert.equal(other.outcome, "worked");
   const acts = fake.requests.filter((request) => request.cmd === "act");
   assert.equal(field(field(acts[0]!, "response"), "result").outcome, "rejected_before_delivery");
-});
-
-test("ownership is pinned while an act is in flight: TTL expiry, claims, and release are refused", async () => {
-  await startDaemon({ script: "s4-slow-type", ownerTtlMs: 50 });
-  const first = new helper.MacosHelperClient();
-  const second = new helper.MacosHelperClient();
-  const firstSession = session("session-a");
-  const secondSession = session("session-b");
-  const look = await lookId(first);
-  const controller = new AbortController();
-  const inflight = rejection(
-    first.command(
-      "act",
-      actArgs(firstSession, look, {
-        action: "typeText",
-        target: { ref: "field-1" },
-        params: { text: "abcdefgh" },
-      }),
-      { signal: controller.signal, timeoutMs: 30_000 },
-    ),
-  );
-  await delay(250);
-
-  const claim = await rejection(second.command("claim", { session: secondSession }));
-  assert.ok(claim instanceof helper.HelperCommandError);
-  assert.equal(claim.code, "owned_by_other_session");
-  assert.equal(claim.effectPossible, false);
-  assert.equal(claim.activeRequests, 1);
-
-  const release = await rejection(first.command("release", { session: firstSession }));
-  assert.ok(release instanceof helper.HelperCommandError);
-  assert.equal(release.code, "owner_busy");
-  assert.equal(release.activeRequests, 1);
-
-  controller.abort();
-  const aborted = await inflight;
-  assert.ok(aborted instanceof helper.HelperAbortedError);
-  assert.equal(aborted.cancel?.state, "stopped");
-
-  await delay(150);
-  assert.deepEqual(await second.command("claim", { session: secondSession }), {
-    claimed: true,
-    owner: secondSession,
-    ttlMs: 50,
-  });
 });
 
 test("ensureProtocol shuts down a protocol-7 daemon once and accepts protocol 8", async () => {

@@ -84,15 +84,16 @@ const SETTLED_STATES: ReadonlySet<HelperCancelState> = new Set([
   "completed",
   "not_found",
 ]);
-const OWNER_GATED_COMMANDS = new Set([
-  "act",
-  "actBatch",
-  "focusWindow",
-  "setWindowFrame",
-  "beginInputSuppression",
-  "endInputSuppression",
-  "restoreUserFocus",
+const SESSIONLESS_COMMANDS = new Set([
+  "diagnostics",
+  "checkPermissions",
+  "registerPermissions",
+  "openPermissionPane",
+  "claim",
+  "release",
+  "cancel",
 ]);
+export const MULTI_SESSION_INVARIANT = "exclusive-foreground-section";
 const HELPER_SETUP_TIMEOUT_MS = 180_000;
 
 export const HELPER_BUNDLE_ID = "com.injaneity.pi-computer-use";
@@ -453,6 +454,29 @@ export class MacosHelperClient {
     return this.session;
   }
 
+  adoptSession(session: PlatformRequestSession): void {
+    if (this.session?.id === session.id && this.session.generation >= session.generation) return;
+    this.session = { id: session.id, generation: session.generation };
+  }
+
+  get coordinatesSessions(): boolean {
+    return this.diagnosticsCache?.invariants?.includes(MULTI_SESSION_INVARIANT) === true;
+  }
+
+  async foregroundSection(
+    op: "acquire" | "release",
+    waitMs: number,
+    signal?: AbortSignal,
+  ): Promise<JsonObject | undefined> {
+    const session = this.session;
+    if (!session || !this.coordinatesSessions) return undefined;
+    return await this.command<JsonObject>(
+      "foregroundSection",
+      { op, waitMs, session: { id: session.id, generation: session.generation } },
+      { signal, timeoutMs: waitMs + COMMAND_TIMEOUT_MS },
+    );
+  }
+
   get diagnostics(): PlatformDiagnostics | undefined {
     return this.diagnosticsCache;
   }
@@ -722,7 +746,7 @@ export class MacosHelperClient {
       this.session = carried;
       return wire;
     }
-    if (!this.session || !OWNER_GATED_COMMANDS.has(cmd)) return wire;
+    if (!this.session || SESSIONLESS_COMMANDS.has(cmd)) return wire;
     return { ...wire, session: { id: this.session.id, generation: this.session.generation } };
   }
 

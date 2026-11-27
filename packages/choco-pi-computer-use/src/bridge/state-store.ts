@@ -672,6 +672,7 @@ export async function ensureReady(ctx: ExtensionContext, signal?: AbortSignal): 
       permissionStatus: runtimeState.permissionStatus,
       lastPermissionCheckAt: runtimeState.lastPermissionCheckAt,
       helperDiagnostics: runtimeState.helperDiagnostics,
+      session: { id: helperRequestSession.id, generation: helperRequestSession.generation },
     },
     signal,
   );
