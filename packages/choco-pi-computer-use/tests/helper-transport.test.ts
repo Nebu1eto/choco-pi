@@ -550,6 +550,92 @@ test("ensureProtocol restarts a same-protocol daemon that reports no startedAt",
   assert.ok(diagnostics.startedAt !== undefined && diagnostics.startedAt > scratchExecutableMtime);
 });
 
+class RebuildingClient extends helper.MacosHelperClient {
+  setups = 0;
+  onSetup: () => Promise<void> = async () => undefined;
+
+  override canRebuildInstalledHelper(): boolean {
+    return true;
+  }
+
+  override async runHelperSetup(): Promise<void> {
+    this.setups += 1;
+    await this.onSetup();
+  }
+}
+
+test("ensureProtocol rebuilds an installed helper that is still an older protocol after relaunch", async () => {
+  const fake = await startDaemon({
+    script: "s1-ok",
+    initialProtocolVersion: 7,
+    relaunchProtocolVersion: 7,
+  });
+  const client = new RebuildingClient();
+  client.onSetup = async () => fake.setProtocolVersion(8);
+  const diagnostics = await client.ensureProtocol();
+
+  assert.equal(diagnostics.protocolVersion, 8);
+  assert.equal(client.setups, 1);
+  const commands = fake.requests.map((request) => request.cmd);
+  assert.equal(commands.filter((cmd) => cmd === "shutdown").length, 2);
+});
+
+test("ensureProtocol reports the mismatch when the rebuild leaves the helper on the older protocol", async () => {
+  await startDaemon({ script: "s1-ok", initialProtocolVersion: 7, relaunchProtocolVersion: 7 });
+  const client = new RebuildingClient();
+
+  await assert.rejects(
+    client.ensureProtocol(),
+    /mismatch after relaunch: protocol 7 \(expected 8\)/,
+  );
+  assert.equal(client.setups, 1);
+});
+
+test("ensureProtocol names a failed rebuild and the command that repairs it", async () => {
+  await startDaemon({ script: "s1-ok", initialProtocolVersion: 7, relaunchProtocolVersion: 7 });
+  const client = new RebuildingClient();
+  client.onSetup = async () => {
+    throw new Error("swiftc not found");
+  };
+
+  await assert.rejects(
+    client.ensureProtocol(),
+    /protocol 7, older than the expected 8, and rebuilding it failed: swiftc not found\. Run `node .*setup-helper\.ts`/,
+  );
+});
+
+test("ensureProtocol never rebuilds over a helper newer than this code", async () => {
+  await startDaemon({ script: "s1-ok", initialProtocolVersion: 9, relaunchProtocolVersion: 9 });
+  const client = new RebuildingClient();
+
+  await assert.rejects(
+    client.ensureProtocol(),
+    /mismatch after relaunch: protocol 9 \(expected 8\)/,
+  );
+  assert.equal(client.setups, 0);
+});
+
+test("two clients that find an older helper rebuild it once", async () => {
+  const fake = await startDaemon({
+    script: "s1-ok",
+    initialProtocolVersion: 7,
+    relaunchProtocolVersion: 7,
+  });
+  const first = new RebuildingClient();
+  const second = new RebuildingClient();
+  const setup = async (): Promise<void> => {
+    await new Promise<void>((resolve) => setTimeout(resolve, 300));
+    fake.setProtocolVersion(8);
+  };
+  first.onSetup = setup;
+  second.onSetup = setup;
+  const [a, b] = await Promise.all([first.ensureProtocol(), second.ensureProtocol()]);
+
+  assert.equal(a.protocolVersion, 8);
+  assert.equal(b.protocolVersion, 8);
+  assert.equal(first.setups + second.setups, 1);
+});
+
 test("ensureProtocol restarts a daemon started before the executable was rebuilt", async () => {
   const fake = await startDaemon({
     script: "s1-ok",

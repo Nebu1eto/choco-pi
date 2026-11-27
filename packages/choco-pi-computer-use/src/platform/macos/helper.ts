@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, realpath, stat } from "node:fs/promises";
+import { access, mkdir, realpath, rm, stat } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -148,6 +148,8 @@ const DEFAULT_HELPER_SOCKET_PATH = path.join(
 );
 export const HELPER_SOCKET_PATH = process.env.PI_CU_SOCKET_PATH ?? DEFAULT_HELPER_SOCKET_PATH;
 const usingExternalHelperSocket = HELPER_SOCKET_PATH !== DEFAULT_HELPER_SOCKET_PATH;
+const HELPER_SETUP_LOCK_PATH = path.join(path.dirname(HELPER_SOCKET_PATH), "setup.lock");
+const HELPER_SETUP_LOCK_POLL_MS = 250;
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const SETUP_HELPER_SCRIPT = path.join(PACKAGE_ROOT, "scripts", "setup-helper.ts");
@@ -415,6 +417,34 @@ async function isExecutable(filePath: string): Promise<boolean> {
   }
 }
 
+async function acquireHelperSetupLock(signal?: AbortSignal): Promise<() => Promise<void>> {
+  const deadline = Date.now() + HELPER_SETUP_TIMEOUT_MS * 2;
+  await mkdir(path.dirname(HELPER_SETUP_LOCK_PATH), { recursive: true });
+  for (;;) {
+    try {
+      await mkdir(HELPER_SETUP_LOCK_PATH);
+      return async () => {
+        await rm(HELPER_SETUP_LOCK_PATH, { recursive: true, force: true });
+      };
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+    }
+    const ageMs = await stat(HELPER_SETUP_LOCK_PATH).then(
+      (stats) => Date.now() - stats.mtimeMs,
+      () => 0,
+    );
+    if (ageMs > HELPER_SETUP_TIMEOUT_MS + 30_000) {
+      await rm(HELPER_SETUP_LOCK_PATH, { recursive: true, force: true });
+      continue;
+    }
+    if (Date.now() > deadline)
+      throw new Error(
+        `Timed out waiting for another process to finish installing the pi-computer-use helper (${HELPER_SETUP_LOCK_PATH}).`,
+      );
+    await sleep(HELPER_SETUP_LOCK_POLL_MS, signal);
+  }
+}
+
 async function isResolvedHelperExecutable(filePath?: string): Promise<boolean> {
   if (!filePath) return true;
   const [actualPath, expectedPath] = await Promise.all([
@@ -557,6 +587,18 @@ export class MacosHelperClient {
       return;
     }
 
+    await this.runHelperSetup(signal);
+
+    if (!(await isExecutable(HELPER_APP_EXECUTABLE_PATH))) {
+      throw new Error(`Failed to install pi-computer-use helper app at ${HELPER_APP_PATH}.`);
+    }
+  }
+
+  canRebuildInstalledHelper(): boolean {
+    return !usingExternalHelperSocket;
+  }
+
+  async runHelperSetup(signal?: AbortSignal): Promise<void> {
     await runProcess(
       process.execPath,
       [SETUP_HELPER_SCRIPT, "--runtime"],
@@ -568,9 +610,21 @@ export class MacosHelperClient {
         BUN_BE_BUN: "1",
       },
     );
+  }
 
-    if (!(await isExecutable(HELPER_APP_EXECUTABLE_PATH))) {
-      throw new Error(`Failed to install pi-computer-use helper app at ${HELPER_APP_PATH}.`);
+  async rebuildInstalledHelper(signal?: AbortSignal): Promise<PlatformDiagnostics | undefined> {
+    if (!this.canRebuildInstalledHelper()) return undefined;
+    const release = await acquireHelperSetupLock(signal);
+    try {
+      const current = await this.diagnosticsCommand(signal).catch(() => undefined);
+      if (current !== undefined && (await helperStaleReason(current)) === undefined) return current;
+      await this.command("shutdown", {}, { signal, timeoutMs: 2_000 }).catch(() => undefined);
+      this.daemonAvailable = false;
+      await sleep(400, signal);
+      await this.runHelperSetup(signal);
+      return await this.diagnosticsCommand(signal);
+    } finally {
+      await release();
     }
   }
 
@@ -855,11 +909,14 @@ export class MacosHelperClient {
 
   async ensureDaemon(signal?: AbortSignal): Promise<boolean> {
     if (this.daemonAvailable) return true;
-    try {
-      await this.daemonCommand("diagnostics", {}, 1_000, signal);
+    const reachable = await this.daemonCommand("diagnostics", {}, 1_000, signal).then(
+      () => true,
+      () => false,
+    );
+    if (reachable) {
       this.daemonAvailable = true;
       return true;
-    } catch {}
+    }
     await this.launchDaemon(signal).catch(() => undefined);
     for (let index = 0; index < 30; index += 1) {
       try {
@@ -938,7 +995,27 @@ export class MacosHelperClient {
 
     await this.restart(signal);
     diagnostics = await this.diagnosticsCommand(signal);
-    const relaunchedStaleReason = await helperStaleReason(diagnostics);
+    let relaunchedStaleReason = await helperStaleReason(diagnostics);
+    if (
+      relaunchedStaleReason !== undefined &&
+      diagnostics.protocolVersion < HELPER_PROTOCOL_VERSION
+    ) {
+      const installedProtocol = diagnostics.protocolVersion;
+      let rebuilt: PlatformDiagnostics | undefined;
+      try {
+        rebuilt = await this.rebuildInstalledHelper(signal);
+      } catch (error) {
+        this.daemonAvailable = false;
+        throw new Error(
+          `pi-computer-use helper at ${HELPER_APP_PATH} is protocol ${installedProtocol}, older than the expected ${HELPER_PROTOCOL_VERSION}, and rebuilding it failed: ${error instanceof Error ? error.message : String(error)}. Run \`node ${SETUP_HELPER_SCRIPT}\` to rebuild it.`,
+          { cause: error },
+        );
+      }
+      if (rebuilt !== undefined) {
+        diagnostics = rebuilt;
+        relaunchedStaleReason = await helperStaleReason(diagnostics);
+      }
+    }
     if (relaunchedStaleReason !== undefined) {
       this.daemonAvailable = false;
       throw new Error(

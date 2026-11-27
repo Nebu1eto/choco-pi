@@ -30,6 +30,7 @@ export interface FakeHelperDaemonOptions {
   logPath?: string;
   executablePath?: string;
   initialProtocolVersion?: number;
+  relaunchProtocolVersion?: number;
   initialStartedAt?: number | null;
   slowChunkMs?: number;
   slowHoldMs?: number;
@@ -69,6 +70,7 @@ export interface FakeHelperDaemon {
   readonly actSpans: JsonObject[];
   offSpaceDiscoveries(): number;
   foregroundSectionHolder(): string | undefined;
+  setProtocolVersion(version: number): void;
   close(): Promise<void>;
 }
 
@@ -237,6 +239,7 @@ function isGrantedHidRequest(request: JsonObject): boolean {
 class FakeHelperState {
   readonly script: FakeScript;
   private protocolVersion: number;
+  private readonly relaunchProtocolVersion: number;
   private startedAt?: number;
   private readonly executablePath?: string;
   private readonly slowChunkMs: number;
@@ -307,6 +310,7 @@ class FakeHelperState {
   constructor(options: FakeHelperDaemonOptions) {
     this.script = resolveFakeScript(options.script);
     this.protocolVersion = options.initialProtocolVersion ?? FAKE_PROTOCOL_VERSION;
+    this.relaunchProtocolVersion = options.relaunchProtocolVersion ?? FAKE_PROTOCOL_VERSION;
     this.startedAt =
       options.initialStartedAt === null
         ? undefined
@@ -404,7 +408,7 @@ class FakeHelperState {
               { activeRequests: busy },
             );
         }
-        this.protocolVersion = FAKE_PROTOCOL_VERSION;
+        this.protocolVersion = this.relaunchProtocolVersion;
         this.startedAt = Date.now() / 1000;
         this.owner = undefined;
         this.sessions.clear();
@@ -600,6 +604,11 @@ class FakeHelperState {
 
   foregroundSectionHolder(): string | undefined {
     return this.section?.holder;
+  }
+
+  setProtocolVersion(version: number): void {
+    this.protocolVersion = version;
+    this.startedAt = Date.now() / 1000;
   }
 
   shutdown(): void {
@@ -1972,6 +1981,7 @@ export async function startFakeHelperDaemon(
     actSpans: state.actSpans,
     offSpaceDiscoveries: () => state.offSpaceDiscoveries,
     foregroundSectionHolder: () => state.foregroundSectionHolder(),
+    setProtocolVersion: (version) => state.setProtocolVersion(version),
     close() {
       closing ??= (async () => {
         const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));
