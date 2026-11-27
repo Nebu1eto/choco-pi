@@ -54,7 +54,7 @@ Tier B requires both `--helper-app` and `--helper-socket`, and it refuses the ma
 
 **Request log.** The native helper keeps no request log. Pi's `PI_CU_SOCKET_PATH` therefore points to `<scratch>/b/bridge.sock`, where `CU/e2e/proxy.ts` forwards every byte unchanged to the helper socket. The proxy writes one row per request line in arrival order, using the fake daemon's shape: the request fields plus `origin`, `seq`, `at` (ms), and, once the request is answered, `respondedAt` and `response`. `cancel` rows also carry `ack`. Observation replies are reduced to `ok`, `error`, and the look id, so the log holds no outlines or images. The proxy's stdout and stderr go to `<scenario>.daemon.log`.
 
-**Fixture.** `CU/e2e/fixture/FocusFixture.swift` is one `swiftc` binary, built by `CU/e2e/fixture/build.ts` into `<scratch>/b/fixture/<source-hash>/` and reused while the hash is unchanged. It is copied into two bundles:
+**Fixture.** `CU/e2e/fixture/main.swift`, `fixture_app.swift`, and `fixture_views.swift` compile into one `swiftc` binary, built by `CU/e2e/fixture/build.ts` into `<scratch>/b/fixture/<source-hash>/` and reused while the hash is unchanged. It is copied into two bundles:
 
 - `CUFixtureTarget.app` (`com.choco-pi.FocusFixture`, window "CU Fixture Target", 640×480) has a text field labelled `Field`, an `Increment` button with a visible counter, and `Custom View`, an AX group whose `mouseDown` increments a second counter and which exposes no `AXPress`.
 - `CUFocusHolder.app` (`com.choco-pi.FocusHolder`, "CU Focus Holder") has one text field. It stands in for the user's frontmost app.

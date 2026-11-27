@@ -6,7 +6,9 @@ Vendored, private fork of [`@injaneity/pi-computer-use`](https://github.com/inja
 
 This fork supports native helper installation on macOS only. The Linux and Windows TypeScript backends remain for dispatch compatibility, but their native helpers, prebuilts, and build paths are not included.
 
-No helper binaries are tracked. `scripts/setup-helper.ts` compiles `native/macos/{agent_cursor,agent_cursor_motion,bridge}.swift` for the host architecture with `xcrun swiftc -target <arm64|x86_64>-apple-macosx14.0 -O` into a scratch directory under the system temporary directory, then wraps, signs, and registers the app bundle. At runtime, a UI session setup or tool operation checks the helper; if it is missing, `src/platform/macos/helper.ts` launches the script.
+No helper binaries are tracked. `scripts/setup-helper.ts` compiles the Swift sources listed in `HELPER_SWIFT_SOURCES` (`src/platform/macos/helper-source.ts`: `native/macos/agent_cursor*.swift` and `native/macos/bridge*.swift`, without `agent_cursor_tests.swift`) for the host architecture with `xcrun swiftc -target <arm64|x86_64>-apple-macosx14.0 -O` into a scratch directory under the system temporary directory, then wraps, signs, and registers the app bundle. At runtime, a UI session setup or tool operation checks the helper; if it is missing, `src/platform/macos/helper.ts` launches the script.
+
+The agent cursor unit tests are a separate program, run from this package directory: `xcrun swiftc -O native/macos/agent_cursor.swift native/macos/agent_cursor_art.swift native/macos/agent_cursor_model.swift native/macos/agent_cursor_motion.swift native/macos/agent_cursor_tests.swift -o <scratch>/agent-cursor-tests`, then run the binary, which ends with `agent cursor tests passed`.
 
 ### Installing
 

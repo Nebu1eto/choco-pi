@@ -21,7 +21,8 @@ export interface FixtureBuild {
   holder: string;
 }
 
-const source = fileURLToPath(new URL("./FocusFixture.swift", import.meta.url));
+const sourceNames = ["fixture_app.swift", "fixture_views.swift", "main.swift"] as const;
+const sources = sourceNames.map((name) => fileURLToPath(new URL(`./${name}`, import.meta.url)));
 
 function plist(role: FixtureRole): string {
   const app = fixtureApps[role];
@@ -66,13 +67,12 @@ async function exists(path: string): Promise<boolean> {
 }
 
 export async function buildFixture(outDir: string): Promise<FixtureBuild> {
-  const swift = await readFile(source);
-  const hash = createHash("sha256")
-    .update(swift)
-    .update(plist("target"))
-    .update(plist("holder"))
-    .digest("hex")
-    .slice(0, 16);
+  const digest = createHash("sha256");
+  for (const [index, source] of sources.entries()) {
+    const swift = await readFile(source);
+    digest.update(`${sourceNames[index]}\0${swift.length}\0`).update(swift);
+  }
+  const hash = digest.update(plist("target")).update(plist("holder")).digest("hex").slice(0, 16);
   const dir = join(outDir, hash);
   const result: FixtureBuild = {
     hash,
@@ -97,7 +97,7 @@ export async function buildFixture(outDir: string): Promise<FixtureBuild> {
     "WebKit",
     "-framework",
     "SwiftUI",
-    source,
+    ...sources,
     "-o",
     binary,
   ]);
