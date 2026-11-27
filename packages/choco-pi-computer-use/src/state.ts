@@ -9,7 +9,7 @@ import {
   type Outline,
   type SerializedOutline,
 } from "./outline.ts";
-import { StateStore, type StoredState } from "./runtime.ts";
+import { currentSessionScope, StateStore, type SessionScope, type StoredState } from "./runtime.ts";
 
 interface StateTargetSnapshot {
   pid: number;
@@ -69,8 +69,18 @@ interface BrowserObservation {
 export type UiObservation = DesktopObservation | BrowserObservation;
 
 export class SavedStates {
-  readonly store = new StateStore<UiObservation>(128);
+  private readonly stores = new WeakMap<SessionScope, StateStore<UiObservation>>();
   readonly operations = new AsyncLocalStorage<OperationState>();
+
+  get store(): StateStore<UiObservation> {
+    const scope = currentSessionScope();
+    let store = this.stores.get(scope);
+    if (!store) {
+      store = new StateStore<UiObservation>(128);
+      this.stores.set(scope, store);
+    }
+    return store;
+  }
 
   current(): OperationState {
     const state = this.operations.getStore();

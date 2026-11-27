@@ -1,4 +1,70 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
+
+export class SessionScope {
+  readonly key: string;
+  private retiredFlag = false;
+
+  constructor(key: string) {
+    this.key = key;
+  }
+
+  get retired(): boolean {
+    return this.retiredFlag;
+  }
+
+  retire(): void {
+    this.retiredFlag = true;
+  }
+}
+
+const activeScope = new AsyncLocalStorage<SessionScope>();
+const scopesByKey = new Map<string, SessionScope>();
+let lastEnteredScope: SessionScope | undefined;
+let detachedScope = new SessionScope("");
+
+export function currentSessionScope(): SessionScope {
+  const scope = activeScope.getStore();
+  if (scope) return scope;
+  if (lastEnteredScope && !lastEnteredScope.retired) return lastEnteredScope;
+  return detachedScope;
+}
+
+export function sessionScopeFor(key: string): SessionScope {
+  let scope = scopesByKey.get(key);
+  if (!scope) {
+    scope = new SessionScope(key);
+    scopesByKey.set(key, scope);
+  }
+  return scope;
+}
+
+export function resetSessionScope(key: string): SessionScope {
+  scopesByKey.get(key)?.retire();
+  const scope = new SessionScope(key);
+  scopesByKey.set(key, scope);
+  return scope;
+}
+
+export function retireSessionScope(key: string): void {
+  const scope = scopesByKey.get(key);
+  if (!scope) return;
+  scope.retire();
+  scopesByKey.delete(key);
+}
+
+export function retireAllSessionScopes(): void {
+  for (const scope of scopesByKey.values()) scope.retire();
+  scopesByKey.clear();
+  lastEnteredScope = undefined;
+  detachedScope.retire();
+  detachedScope = new SessionScope("");
+}
+
+export function runInSessionScope<T>(scope: SessionScope, work: () => T): T {
+  lastEnteredScope = scope;
+  return activeScope.run(scope, work);
+}
 
 export interface StoredState<T> {
   stateId: string;

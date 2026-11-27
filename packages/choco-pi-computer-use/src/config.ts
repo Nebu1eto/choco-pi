@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isJsonObject, isNumber, isString, type JsonField, type JsonValue } from "./json.ts";
+import { currentSessionScope, type SessionScope } from "./runtime.ts";
 
 export interface ComputerUseConfig {
   browser_use: boolean;
@@ -171,21 +172,45 @@ export function isBrowserUseEnabled(): boolean {
   return activeConfig.browser_use;
 }
 
-const sessionGrants = new Set<string>();
-const sessionDenials = new Set<string>();
-let sessionGrantEpoch = 0;
-let sessionPromptMode: ForegroundPromptMode | undefined;
+interface SessionGrantState {
+  readonly grants: Set<string>;
+  readonly denials: Set<string>;
+  readonly generation: number;
+  promptMode?: ForegroundPromptMode;
+}
+
+const grantStates = new WeakMap<SessionScope, SessionGrantState>();
+let grantGenerationCounter = 0;
+
+function freshGrantState(): SessionGrantState {
+  grantGenerationCounter += 1;
+  return { grants: new Set(), denials: new Set(), generation: grantGenerationCounter };
+}
+
+function sessionGrantState(): SessionGrantState {
+  const scope = currentSessionScope();
+  if (scope.retired) {
+    grantStates.delete(scope);
+    return freshGrantState();
+  }
+  let state = grantStates.get(scope);
+  if (!state) {
+    state = freshGrantState();
+    grantStates.set(scope, state);
+  }
+  return state;
+}
 
 export function setSessionForegroundPromptMode(mode: ForegroundPromptMode): void {
-  sessionPromptMode = mode;
+  sessionGrantState().promptMode = mode;
 }
 
 export function getSessionForegroundPromptMode(): ForegroundPromptMode | undefined {
-  return sessionPromptMode;
+  return sessionGrantState().promptMode;
 }
 
 export function foregroundPromptMode(): ForegroundPromptMode {
-  return sessionPromptMode ?? activeConfig.foreground_prompt;
+  return sessionGrantState().promptMode ?? activeConfig.foreground_prompt;
 }
 
 export function normalizeBundleId(bundleId: string | undefined): string | undefined {
@@ -196,40 +221,40 @@ export function normalizeBundleId(bundleId: string | undefined): string | undefi
 export function grantForSession(bundleId: string | undefined): boolean {
   const normalized = normalizeBundleId(bundleId);
   if (!normalized) return false;
-  sessionDenials.delete(normalized);
-  sessionGrants.add(normalized);
+  const state = sessionGrantState();
+  state.denials.delete(normalized);
+  state.grants.add(normalized);
   return true;
 }
 
 export function denyForSession(bundleId: string | undefined): boolean {
   const normalized = normalizeBundleId(bundleId);
   if (!normalized) return false;
-  sessionDenials.add(normalized);
+  sessionGrantState().denials.add(normalized);
   return true;
 }
 
 export function isSessionDenied(bundleId: string | undefined): boolean {
   const normalized = normalizeBundleId(bundleId);
-  return normalized !== undefined && sessionDenials.has(normalized);
+  return normalized !== undefined && sessionGrantState().denials.has(normalized);
 }
 
 export function getSessionGrants(): string[] {
-  return [...sessionGrants];
+  return [...sessionGrantState().grants];
 }
 
 export function getSessionDenials(): string[] {
-  return [...sessionDenials];
+  return [...sessionGrantState().denials];
 }
 
 export function sessionGrantGeneration(): number {
-  return sessionGrantEpoch;
+  return sessionGrantState().generation;
 }
 
 export function clearSessionGrants(): void {
-  sessionGrants.clear();
-  sessionDenials.clear();
-  sessionPromptMode = undefined;
-  sessionGrantEpoch += 1;
+  const scope = currentSessionScope();
+  if (scope.retired) grantStates.delete(scope);
+  else grantStates.set(scope, freshGrantState());
 }
 
 export function foregroundGrantCovers(bundleId: string | undefined): boolean {
@@ -237,5 +262,5 @@ export function foregroundGrantCovers(bundleId: string | undefined): boolean {
   if (grant.includes("*")) return true;
   const normalized = bundleId?.trim();
   if (!normalized) return false;
-  return grant.includes(normalized) || sessionGrants.has(normalized);
+  return grant.includes(normalized) || sessionGrantState().grants.has(normalized);
 }

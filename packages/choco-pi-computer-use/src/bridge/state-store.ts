@@ -1,12 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { disconnectCdp } from "../cdp.ts";
-import {
-  clearSessionGrants,
-  getComputerUseConfig,
-  isHeadlessMode,
-  loadComputerUseConfig,
-} from "../config.ts";
+import { getComputerUseConfig, isHeadlessMode, loadComputerUseConfig } from "../config.ts";
 import type { ImageMode, UiAction } from "../contract.ts";
 import { isString, type JsonField, type JsonObject } from "../json.ts";
 import {
@@ -19,7 +14,15 @@ import {
 import { clearStoredOutputs } from "../output.ts";
 import { currentPlatformBackend } from "../platform/index.ts";
 import type { NativeInputDelivery, PlatformPoint } from "../platform/types.ts";
-import { ResourceScheduler, StaleResourceStateError, type StoredState } from "../runtime.ts";
+import {
+  currentSessionScope,
+  ResourceScheduler,
+  retireAllSessionScopes,
+  retireSessionScope,
+  StaleResourceStateError,
+  type SessionScope,
+  type StoredState,
+} from "../runtime.ts";
 import {
   SavedStates,
   type CurrentCapture,
@@ -38,6 +41,7 @@ import {
   type ObservationRefreshReason,
   type ResolvedTarget,
   type RuntimeState,
+  type WindowRefRecord,
 } from "./types.ts";
 
 export const MISSING_TARGET_ERROR =
@@ -67,14 +71,57 @@ export const BROWSER_TRANSACTION_ACTIONS = new Set<UiAction["action"]>([
 export const AUTO_OBSERVE_TOOLS = new Set(["search_ui", "expand_ui", "inspect_ui"]);
 export const OBSERVATION_REQUIRED_MUTATIONS = new Set(["act_ui"]);
 
+interface SessionRootRefs {
+  readonly windowRefs: Map<string, WindowRefRecord>;
+  readonly windowRefByIdentity: Map<string, string>;
+  readonly browserRootByContext: Map<string, string>;
+  readonly browserContextByRoot: Map<string, string>;
+  nextRootRefIndex: number;
+}
+
+const rootRefsByScope = new WeakMap<SessionScope, SessionRootRefs>();
+
+function sessionRootRefs(): SessionRootRefs {
+  const scope = currentSessionScope();
+  let refs = rootRefsByScope.get(scope);
+  if (!refs) {
+    refs = {
+      windowRefs: new Map(),
+      windowRefByIdentity: new Map(),
+      browserRootByContext: new Map(),
+      browserContextByRoot: new Map(),
+      nextRootRefIndex: 1,
+    };
+    rootRefsByScope.set(scope, refs);
+  }
+  return refs;
+}
+
 export const runtimeState: RuntimeState = {
   lastPermissionCheckAt: 0,
-  windowRefs: new Map(),
-  windowRefByIdentity: new Map(),
-  browserRootByContext: new Map(),
-  browserContextByRoot: new Map(),
-  nextRootRefIndex: 1,
+  get windowRefs() {
+    return sessionRootRefs().windowRefs;
+  },
+  get windowRefByIdentity() {
+    return sessionRootRefs().windowRefByIdentity;
+  },
+  get browserRootByContext() {
+    return sessionRootRefs().browserRootByContext;
+  },
+  get browserContextByRoot() {
+    return sessionRootRefs().browserContextByRoot;
+  },
+  get nextRootRefIndex() {
+    return sessionRootRefs().nextRootRefIndex;
+  },
+  set nextRootRefIndex(value: number) {
+    sessionRootRefs().nextRootRefIndex = value;
+  },
 };
+
+export function clearSessionRootRefs(): void {
+  rootRefsByScope.delete(currentSessionScope());
+}
 
 export const savedStates = new SavedStates();
 export let resourceScheduler = new ResourceScheduler();
@@ -136,15 +183,135 @@ export function staleObservation(
     : new StaleResourceStateError(record.resourceKey, record.epoch, currentEpoch);
 }
 
-export const helperRequestSession = { id: randomUUID(), generation: 0 };
+interface HelperOwner {
+  readonly id: string;
+  generation: number;
+}
+
+interface ProcessSlot {
+  readonly owner: HelperOwner;
+  readonly sessions: Map<string, string>;
+  readonly releasers: Map<string, () => Promise<void>>;
+}
+
+const PROCESS_SLOT_KEY = Symbol.for("choco-pi.computer-use.process-state.v1");
+const INSTANCE_ID = randomUUID();
+
+function isText<T>(value: T): value is T & string {
+  return (
+    value !== null &&
+    value !== undefined &&
+    Object(value) !== value &&
+    Object(value).constructor === String
+  );
+}
+
+function isHelperOwner<T>(value: T): value is T & HelperOwner {
+  if (value === null || value === undefined || Object(value) !== value) return false;
+  const owner = Object(value);
+  return (
+    isText(owner.id) &&
+    owner.id.length > 0 &&
+    Number.isSafeInteger(owner.generation) &&
+    owner.generation >= 0
+  );
+}
+
+function isTextMap<T>(value: T): value is T & Map<string, string> {
+  if (!(value instanceof Map)) return false;
+  for (const [key, entry] of value) if (!isText(key) || !isText(entry)) return false;
+  return true;
+}
+
+function isReleaserMap<T>(value: T): value is T & Map<string, () => Promise<void>> {
+  if (!(value instanceof Map)) return false;
+  for (const [key, entry] of value) if (!isText(key) || !(entry instanceof Function)) return false;
+  return true;
+}
+
+function isProcessSlot<T>(value: T): value is T & ProcessSlot {
+  if (value === null || value === undefined || Object(value) !== value) return false;
+  const slot = Object(value);
+  return isHelperOwner(slot.owner) && isTextMap(slot.sessions) && isReleaserMap(slot.releasers);
+}
+
+function processSlot(): ProcessSlot {
+  const existing = Object.getOwnPropertyDescriptor(globalThis, PROCESS_SLOT_KEY)?.value;
+  if (isProcessSlot(existing)) return existing;
+  const slot: ProcessSlot = {
+    owner: { id: randomUUID(), generation: 0 },
+    sessions: new Map(),
+    releasers: new Map(),
+  };
+  Object.defineProperty(globalThis, PROCESS_SLOT_KEY, {
+    value: slot,
+    configurable: true,
+    enumerable: false,
+    writable: false,
+  });
+  return slot;
+}
+
+export const helperRequestSession: HelperOwner = processSlot().owner;
+
+async function releaseInstanceHelperOwner(): Promise<void> {
+  await currentPlatformBackend.shutdown?.();
+}
+
+export function sessionKeyOf(ctx: Pick<ExtensionContext, "sessionManager">): string {
+  return ctx.sessionManager.getSessionId();
+}
+
+function instanceHasLiveSessions(slot: ProcessSlot): boolean {
+  for (const instance of slot.sessions.values()) if (instance === INSTANCE_ID) return true;
+  return false;
+}
+
+export function registerComputerUseSession(sessionKey: string): void {
+  const slot = processSlot();
+  slot.sessions.set(sessionKey, INSTANCE_ID);
+  slot.releasers.set(INSTANCE_ID, releaseInstanceHelperOwner);
+}
+
+export function hasOtherLiveSession(sessionKey: string): boolean {
+  for (const [key, instance] of processSlot().sessions)
+    if (key !== sessionKey && instance === INSTANCE_ID) return true;
+  return false;
+}
+
+export function liveComputerUseSessions(): string[] {
+  return [...processSlot().sessions.keys()];
+}
+
+export async function endComputerUseSession(sessionKey: string): Promise<void> {
+  retireSessionScope(sessionKey);
+  const slot = processSlot();
+  if (slot.sessions.get(sessionKey) === INSTANCE_ID) slot.sessions.delete(sessionKey);
+  if (instanceHasLiveSessions(slot)) return;
+  await releaseInstanceResources(slot);
+}
 
 export async function shutdownComputerUseSession(): Promise<void> {
-  helperRequestSession.generation += 1;
-  clearSessionGrants();
-  await resourceScheduler.close();
-  resourceScheduler = new ResourceScheduler();
-  disconnectCdp();
+  const slot = processSlot();
+  for (const [key, instance] of slot.sessions)
+    if (instance === INSTANCE_ID) slot.sessions.delete(key);
+  await releaseInstanceResources(slot);
+}
 
+async function releaseInstanceResources(slot: ProcessSlot): Promise<void> {
+  const processEnding = slot.sessions.size === 0;
+  if (processEnding) slot.owner.generation += 1;
+  retireAllSessionScopes();
+  const closing = resourceScheduler;
+  const closed = closing.close();
+  runtimeState.permissionStatus = undefined;
+  runtimeState.helperDiagnostics = undefined;
+  runtimeState.lastPermissionCheckAt = 0;
+
+  await closed;
+  if (resourceScheduler === closing) resourceScheduler = new ResourceScheduler();
+  if (instanceHasLiveSessions(slot)) return;
+  disconnectCdp();
   const managedBrowser = runtimeState.managedBrowser;
   runtimeState.managedBrowser = undefined;
   if (managedBrowser) {
@@ -160,18 +327,13 @@ export async function shutdownComputerUseSession(): Promise<void> {
   }
   runtimeState.managedBrowserCdpPort = undefined;
   runtimeState.previousCdpPort = undefined;
-
-  savedStates.clear();
   clearStoredOutputs();
-  runtimeState.windowRefs.clear();
-  runtimeState.windowRefByIdentity.clear();
-  runtimeState.browserRootByContext.clear();
-  runtimeState.browserContextByRoot.clear();
-  runtimeState.nextRootRefIndex = 1;
-  runtimeState.permissionStatus = undefined;
-  runtimeState.helperDiagnostics = undefined;
-  runtimeState.lastPermissionCheckAt = 0;
-  await currentPlatformBackend.shutdown?.();
+  retireAllSessionScopes();
+
+  if (!processEnding || slot.sessions.size > 0) return;
+  const releasers = [...slot.releasers.values()];
+  slot.releasers.clear();
+  await Promise.allSettled(releasers.map(async (release) => await release()));
 }
 
 export function currentRuntimeMode(): ExecutionVariant {

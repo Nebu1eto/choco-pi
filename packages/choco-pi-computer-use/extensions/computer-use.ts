@@ -1,4 +1,11 @@
-import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { rethrowUnlessStaleContext } from "@choco-pi/shared/lifecycle";
+import {
+  defineTool,
+  type ExtensionAPI,
+  type ExtensionContext,
+  type SessionShutdownEvent,
+  type SessionStartEvent,
+} from "@earendil-works/pi-coding-agent";
 import type { Properties } from "@earendil-works/pi-schema";
 import { arr, int, lit, num, obj, oneOf, opt, str, union } from "@earendil-works/pi-schema";
 import {
@@ -14,11 +21,10 @@ import {
   executeReadText,
   executeSearchUi,
   executeWaitFor,
-  reconstructStateFromBranch,
-  shutdownComputerUseSession,
 } from "../src/bridge.ts";
+import { beginComputerUseSession } from "../src/bridge/session-lifecycle.ts";
+import { endComputerUseSession, sessionKeyOf } from "../src/bridge/state-store.ts";
 import {
-  clearSessionGrants,
   foregroundPromptMode,
   getLoadedComputerUseConfig,
   getSessionDenials,
@@ -34,6 +40,7 @@ import {
   setForegroundPromptMode,
 } from "../src/grant-prompt.ts";
 import { hostParams } from "../src/schema-bridge.ts";
+import { runInSessionScope, sessionScopeFor, type SessionScope } from "../src/runtime.ts";
 import {
   toActParams,
   toEvaluateBrowserParams,
@@ -377,6 +384,48 @@ export async function runComputerUseCommand(
   };
 }
 
+export interface ComputerUseSessionHandlers {
+  sessionStart(event: SessionStartEvent, ctx: ExtensionContext): Promise<void>;
+  sessionShutdown(event: SessionShutdownEvent, ctx: ExtensionContext): Promise<void>;
+}
+
+export function createComputerUseSessionHandlers(): ComputerUseSessionHandlers {
+  let startedSessionKey: string | undefined;
+  let startedScope: SessionScope | undefined;
+
+  return {
+    async sessionStart(_event, ctx) {
+      loadComputerUseConfig(ctx.cwd);
+      const scope = beginComputerUseSession(ctx);
+      startedSessionKey = scope.key;
+      startedScope = scope;
+      if (!ctx.hasUI) return;
+      const ui = ctx.ui;
+      await runInSessionScope(scope, async () => {
+        try {
+          await ensureComputerUseSetup(ctx);
+        } catch (error) {
+          if (scope.retired || startedScope !== scope) return;
+          notifyUnlessStale(ui, error instanceof Error ? error.message : String(error), "warning");
+        }
+      });
+    },
+
+    async sessionShutdown(_event, ctx) {
+      let sessionKey = startedSessionKey;
+      try {
+        sessionKey = sessionKeyOf(ctx);
+      } catch (error) {
+        rethrowUnlessStaleContext(error);
+      }
+      startedSessionKey = undefined;
+      startedScope = undefined;
+      if (sessionKey === undefined) return;
+      await endComputerUseSession(sessionKey);
+    },
+  };
+}
+
 export default function computerUseExtension(pi: ExtensionAPI): void {
   for (const tool of [
     findTool,
@@ -398,26 +447,17 @@ export default function computerUseExtension(pi: ExtensionAPI): void {
     handler: async (args, ctx) => {
       const cwd = ctx.cwd;
       const ui = ctx.ui;
-      const generation = sessionGrantGeneration();
-      const { message, level } = await runComputerUseCommand(args, cwd);
-      if (sessionGrantGeneration() !== generation) return;
-      notifyUnlessStale(ui, message, level);
+      const scope = sessionScopeFor(sessionKeyOf(ctx));
+      await runInSessionScope(scope, async () => {
+        const generation = sessionGrantGeneration();
+        const { message, level } = await runComputerUseCommand(args, cwd);
+        if (scope.retired || sessionGrantGeneration() !== generation) return;
+        notifyUnlessStale(ui, message, level);
+      });
     },
   });
 
-  pi.on("session_start", async (_event, ctx) => {
-    clearSessionGrants();
-    loadComputerUseConfig(ctx.cwd);
-    reconstructStateFromBranch(ctx);
-    if (!ctx.hasUI) return;
-    try {
-      await ensureComputerUseSetup(ctx);
-    } catch (error) {
-      ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
-    }
-  });
-
-  pi.on("session_shutdown", async () => {
-    await shutdownComputerUseSession();
-  });
+  const lifecycle = createComputerUseSessionHandlers();
+  pi.on("session_start", lifecycle.sessionStart);
+  pi.on("session_shutdown", lifecycle.sessionShutdown);
 }

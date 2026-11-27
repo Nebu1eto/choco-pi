@@ -9,7 +9,13 @@ import type { WindowNote } from "../note.ts";
 import type { SerializedOutline } from "../outline.ts";
 import { applyOutputEnvelope, boundToolError, clearStoredOutputs } from "../output.ts";
 import { toFiniteNumber } from "../platform/coerce.ts";
-import { StaleResourceStateError } from "../runtime.ts";
+import {
+  resetSessionScope,
+  runInSessionScope,
+  sessionScopeFor,
+  StaleResourceStateError,
+  type SessionScope,
+} from "../runtime.ts";
 import type { CurrentCapture, CurrentTarget } from "../state.ts";
 import { actionLabel } from "../tool-params.ts";
 import { performBrowserTransaction } from "./browser-actions.ts";
@@ -18,14 +24,18 @@ import { performObserve } from "./observation.ts";
 import {
   AUTO_OBSERVE_TOOLS,
   OBSERVATION_REQUIRED_MUTATIONS,
+  clearSessionRootRefs,
   desktopResourceKey,
   ensureReady,
+  hasOtherLiveSession,
   observationRefreshRequired,
   operationState,
   persistOperation,
+  registerComputerUseSession,
   resourceScheduler,
   runtimeState,
   savedStates,
+  sessionKeyOf,
   staleObservation,
   throwIfAborted,
   toBoolean,
@@ -95,6 +105,21 @@ export async function performAct(
 }
 
 export async function executeTool<P, T>(
+  tool: string,
+  ctx: ExtensionContext,
+  params: P,
+  signal: AbortSignal | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  const sessionKey = sessionKeyOf(ctx);
+  registerComputerUseSession(sessionKey);
+  return await runInSessionScope(
+    sessionScopeFor(sessionKey),
+    async () => await executeToolInScope(tool, ctx, params, signal, run),
+  );
+}
+
+async function executeToolInScope<P, T>(
   tool: string,
   ctx: ExtensionContext,
   params: P,
@@ -171,12 +196,18 @@ export function makeToolExecutor<P, D>(
   };
 }
 
+export function beginComputerUseSession(ctx: ExtensionContext): SessionScope {
+  const sessionKey = sessionKeyOf(ctx);
+  if (!hasOtherLiveSession(sessionKey)) clearStoredOutputs();
+  registerComputerUseSession(sessionKey);
+  const scope = resetSessionScope(sessionKey);
+  runInSessionScope(scope, () => reconstructStateFromBranch(ctx));
+  return scope;
+}
+
 export function reconstructStateFromBranch(ctx: ExtensionContext): void {
   savedStates.clear();
-  clearStoredOutputs();
-  runtimeState.windowRefs.clear();
-  runtimeState.windowRefByIdentity.clear();
-  runtimeState.nextRootRefIndex = 1;
+  clearSessionRootRefs();
 
   // SAFETY: SessionManager.getBranch returns the host's serialized session-entry representation.
   const branch = ctx.sessionManager.getBranch() as PersistedSessionEntry[];
