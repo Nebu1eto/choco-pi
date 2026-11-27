@@ -113,3 +113,40 @@ test("cursor state checks the display, the local target, and the pointer pixels"
   );
   assert.equal(scoreCursorState(undefined, dell, acted)[0].ok, null);
 });
+
+test("per-cursor windows: a small window on the expected display containing the point", () => {
+  const acted = { x: 100, y: -1000 };
+  const small = (x: number, y: number, onscreen = true): OwnerWindow => ({
+    number: 8,
+    bounds: { x, y, w: 96, h: 96 },
+    layer: 0,
+    onscreen,
+    alpha: 1,
+  });
+  assert.equal(scoreOverlayBounds([small(52, -1048)], dell, screens, acted).ok, true);
+  assert.equal(
+    scoreOverlayBounds([small(52, -1048), small(400, 300)], dell, screens, acted).ok,
+    true,
+  );
+  assert.equal(scoreOverlayBounds([small(400, 300)], dell, screens, acted).ok, false);
+  assert.equal(
+    scoreOverlayBounds([small(52, -1048), small(1990, -40)], dell, screens, acted).ok,
+    false,
+  );
+  assert.equal(scoreOverlayBounds([small(52, -1048, false)], dell, screens, acted).ok, false);
+});
+
+test("drawn_tip compares the hot spot located in pixels with the acted point", () => {
+  const acted = { x: 100, y: -1000 };
+  const state = (tip: { x: number; y: number }) =>
+    parseCursorState({
+      overlay: { displayId: 3, windowServerBounds: { x: 52, y: -1048, w: 96, h: 96 } },
+      pointer: { target: acted, local: { x: 585, y: 692 }, animating: false },
+      capture: { bounds: { x: 585, y: 692, w: 20, h: 20 }, opaquePixels: 900, tip },
+    });
+  const near = scoreCursorState(state({ x: 100.3, y: -999.8 }), dell, acted);
+  assert.equal(near.find((check) => check.name === "overlay_self_bounds")?.ok, true);
+  assert.equal(near.find((check) => check.name === "drawn_tip")?.ok, true);
+  const short = scoreCursorState(state({ x: 101.95, y: -998.05 }), dell, acted);
+  assert.equal(short.find((check) => check.name === "drawn_tip")?.ok, false);
+});

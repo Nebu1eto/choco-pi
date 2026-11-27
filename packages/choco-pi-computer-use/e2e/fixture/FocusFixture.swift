@@ -32,6 +32,9 @@ let activateAtLaunch = !isHolder && flag("CU_FIXTURE_ACTIVATE")
 let matrixEnabled = !isHolder && flag("CU_FIXTURE_MATRIX")
 // Parallel mode (safety/parallel.ts): a scroll view and a drag view in the main window and, with
 let parallelEnabled = !isHolder && flag("CU_FIXTURE_PARALLEL")
+// Cursor check (safety/cursors.ts): CU_FIXTURE_INPUT_LOG=1 logs every pointer event the target receives
+let inputLogEnabled = !isHolder && flag("CU_FIXTURE_INPUT_LOG")
+let pointerSamplerEnabled = flag("CU_FIXTURE_POINTER_SAMPLER")
 let unpairedWindowEnabled = !isHolder && flag("CU_FIXTURE_UNPAIRED_WINDOW")
 // A chain of nested shells of this depth under the target (safety ancestry check), or nil.
 let chainDepth: Int? = isHolder ? nil : env["CU_FIXTURE_SPAWN_CHAIN"].flatMap { Int($0) }.map { max(1, min(200, $0)) }
@@ -395,6 +398,10 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 	var signalSources: [DispatchSourceSignal] = []
 	var pollTimer: Timer?
 	var noiseTimer: Timer?
+	var pointerTimer: Timer?
+	var lastPointer: CGPoint?
+	var warpOnUp: CGPoint?
+	var incrementButton: NSButton?
 	var noiseTicks = 0
 	var stickyStreak = false
 	let scrollView = NSScrollView(frame: NSRect(x: 20, y: 140, width: 220, height: 180))
@@ -499,6 +506,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 			let button = NSButton(title: "Increment", target: self, action: #selector(increment))
 			button.frame = NSRect(x: 20, y: size.height - 110, width: 120, height: 30)
 			button.setAccessibilityIdentifier("cu-increment")
+			incrementButton = button
 			content.addSubview(button)
 			counterLabel.frame = NSRect(x: 160, y: size.height - 105, width: 200, height: 20)
 			counterLabel.setAccessibilityIdentifier("cu-count")
@@ -724,7 +732,17 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 				return event
 			}
 		}
-		if matrixEnabled {
+		if inputLogEnabled {
+			for each in windows { each.acceptsMouseMovedEvents = true }
+			NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+				var fields = self?.windowFields(event.window) ?? [:]
+				fields["type"] = event.type == .mouseMoved ? "moved" : event.type == .leftMouseDragged ? "dragged" : "up"
+				if let at = globalPoint(event) { fields["at"] = at }
+				log.write("targetPointer", fields)
+				return event
+			}
+		}
+		if matrixEnabled || inputLogEnabled {
 			NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
 				var fields = self?.windowFields(event.window) ?? [:]
 				fields["keyCode"] = Int(event.keyCode)
@@ -761,6 +779,18 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 
 	func finishLaunch() {
 		pollTimer = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { [weak self] _ in self?.poll() }
+		if pointerSamplerEnabled {
+			pointerTimer = Timer.scheduledTimer(withTimeInterval: 0.005, repeats: true) { [weak self] _ in self?.samplePointer() }
+			NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
+				if let point = self?.warpOnUp {
+					self?.warpOnUp = nil
+					CGWarpMouseCursorPosition(point)
+					CGAssociateMouseAndMouseCursorPosition(1)
+					log.write("warped", ["x": point.x, "y": point.y])
+				}
+				return event
+			}
+		}
 		if noise {
 			noiseTimer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in self?.tickNoise() }
 			log.write("noiseStarted", ["intervalMs": 30, "periodMs": 1000])
@@ -976,12 +1006,24 @@ extension Fixture {
 		Int((screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0)
 	}
 
+	func samplePointer() {
+		if let body = trigger(".cu-warp-on-up-\(triggerName)") {
+			let parts = body.split(separator: " ").compactMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+			if parts.count == 2 { warpOnUp = CGPoint(x: parts[0], y: parts[1]) }
+			log.write("warpArmed", ["body": body])
+		}
+		guard let location = CGEvent(source: nil)?.location, location != lastPointer else { return }
+		lastPointer = location
+		log.write("pointer", ["x": location.x, "y": location.y])
+	}
+
 	func logLayout() {
 		var views: [String: Any] = ["customView": globalFrame(customView), "field": globalFrame(field)]
-		if matrixEnabled {
+		if matrixEnabled || (parallelEnabled && inputLogEnabled) {
 			views["scrollView"] = globalFrame(scrollView)
 			views["dragView"] = globalFrame(dragView)
 		}
+		if let increment = incrementButton { views["increment"] = globalFrame(increment) }
 		let rows = windows.map { each -> [String: Any] in
 			[
 				"window": label(each),

@@ -64,7 +64,24 @@ import {
 import type { FixtureEvidence } from "./tier-b.ts";
 
 const SCENARIO_MS = 4 * 60_000;
-const S4_HARNESS_CANCEL_MS = 3000;
+const S4_HARNESS_CANCEL_MS = 2000;
+const S4_DEADLINE_OVERRUN_MS = 250;
+function tierADaemonArgs(p: Plan, scenario: ScenarioId, script: string): string[] {
+  return [
+    "--experimental-strip-types",
+    script,
+    "--socket",
+    p.socket,
+    "--script",
+    scenario,
+    "--log",
+    p.requests,
+    "--executable-path",
+    join(p.helperApp, "Contents/MacOS/bridge"),
+    ...(scenario === "S4" ? ["--deadline-overrun-ms", String(S4_DEADLINE_OVERRUN_MS)] : []),
+  ];
+}
+const S4_TARGET_ENV = { CU_FIXTURE_WEB: "1" } as const;
 class BlockedError extends Error {}
 function scenarioMs(scenario: ScenarioId): number {
   return scenario === "S4" ? SCENARIO_MS + 60_000 : SCENARIO_MS;
@@ -104,18 +121,7 @@ class TierADaemon implements DaemonLauncher {
     } catch {
       throw new GateError("FAKE_DAEMON_MISSING", script);
     }
-    return daemon(p, process.execPath, [
-      "--experimental-strip-types",
-      script,
-      "--socket",
-      p.socket,
-      "--script",
-      scenario,
-      "--log",
-      p.requests,
-      "--executable-path",
-      join(p.helperApp, "Contents/MacOS/bridge"),
-    ]);
+    return daemon(p, process.execPath, tierADaemonArgs(p, scenario, script));
   }
 }
 function proxyArgs(p: Plan, scenario: ScenarioId): string[] {
@@ -383,19 +389,7 @@ async function run(): Promise<void> {
         console.log(
           `daemon=${JSON.stringify(
             args.tier === "a"
-              ? [
-                  process.execPath,
-                  "--experimental-strip-types",
-                  fake,
-                  "--socket",
-                  p.socket,
-                  "--script",
-                  scenario.id,
-                  "--log",
-                  p.requests,
-                  "--executable-path",
-                  join(p.helperApp, "Contents/MacOS/bridge"),
-                ]
+              ? [process.execPath, ...tierADaemonArgs(p, scenario.id, fake)]
               : [process.execPath, ...proxyArgs(p, scenario.id)],
           )}`,
         );
@@ -507,7 +501,12 @@ async function run(): Promise<void> {
               const launching = newFixtureRun(p.fixtureDir);
               fixtureRun = launching;
               try {
-                await launchFixture(build, launching);
+                await launchFixture(
+                  build,
+                  launching,
+                  undefined,
+                  scenario.id === "S4" ? S4_TARGET_ENV : {},
+                );
               } catch (error) {
                 if (error instanceof FixtureLaunchError) defects.push(...error.defects);
                 throw new BlockedError(

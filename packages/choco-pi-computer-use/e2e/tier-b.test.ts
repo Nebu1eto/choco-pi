@@ -189,6 +189,56 @@ test("S4 passes on a stopped harness cancel with no change after the ack", () =>
   assert.equal(nothingTyped.inconclusive, "no_effect_observed");
 });
 
+test("S4 counts web input per character and fails a target left active after the cancel", () => {
+  const typed = act(1, "typeText", {
+    ok: false,
+    error: { code: "cancelled", effectPossible: true, extendedDelivery: "used" },
+    result: { outcome: "partial", stoppedAt: 0 },
+  });
+  const cancel: RecordValue = {
+    cmd: "cancel",
+    origin: "harness",
+    seq: 2,
+    target: "r1",
+    respondedAt: 4000,
+    ack: { acknowledged: true, state: "stopped" },
+  };
+  const web = [
+    { event: "appActive", ts: 1900 },
+    { event: "webValue", ts: 2000, length: 1 },
+    { event: "webValue", ts: 3990, length: 150 },
+  ];
+  const pass = scoreTierB(
+    "S4",
+    input({
+      requests: [typed, cancel],
+      fixture: fixture([...web, { event: "appInactive", ts: 4010 }, quit("")]),
+    }),
+  );
+  assert.deepEqual(pass.errors, []);
+  assert.equal(pass.notes.cancel?.typedBeforeAck, 2);
+  assert.equal(pass.notes.cancel?.typedAfterAck, 0);
+  assert.equal(pass.notes.cancel?.extendedDelivery, "used");
+  const late = scoreTierB(
+    "S4",
+    input({
+      requests: [typed, cancel],
+      fixture: fixture([
+        ...web,
+        { event: "webValue", ts: 4060, length: 151 },
+        { event: "appInactive", ts: 4100 },
+        quit(""),
+      ]),
+    }),
+  );
+  assert.match(late.errors.join(";"), /changed 1 time\(s\) after the cancel ack/);
+  const stuck = scoreTierB(
+    "S4",
+    input({ requests: [typed, cancel], fixture: fixture([...web, quit("")]) }),
+  );
+  assert.match(stuck.errors.join(";"), /still believes it is active/);
+});
+
 test("S5 fails when the stale act is delivered and the fixture changes", () => {
   const scored = scoreTierB(
     "S5",

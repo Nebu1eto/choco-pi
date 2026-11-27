@@ -101,6 +101,7 @@ export async function launchFixture(
   build: FixtureBuild,
   run: FixtureRun,
   deps: LaunchDeps = defaultLaunchDeps,
+  targetEnv: Readonly<Record<string, string>> = {},
 ): Promise<void> {
   await mkdir(dirname(run.dir), { recursive: true });
   try {
@@ -134,6 +135,7 @@ export async function launchFixture(
       "-g",
       "--env",
       `CU_FIXTURE_LOG=${run.logs.target}`,
+      ...Object.entries(targetEnv).flatMap(([name, value]) => ["--env", `${name}=${value}`]),
       build.target,
     ]);
     if (target.code !== 0) throw new Error(`FIXTURE_LAUNCH target: ${target.stderr.trim()}`);

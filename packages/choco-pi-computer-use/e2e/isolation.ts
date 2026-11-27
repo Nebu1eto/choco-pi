@@ -80,6 +80,7 @@ export function plan(
   ] as const)
     delete env[key];
   if (scenario === "S6") env.PI_COMPUTER_USE_FOREGROUND_GRANT = "com.choco-pi.FocusFixture";
+  if (tier === "b" && scenario === "S4") env.PI_COMPUTER_USE_BACKGROUND_DELIVERY = "extended";
   return {
     executable,
     cwd: project,

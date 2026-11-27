@@ -1,118 +1,128 @@
 import CoreGraphics
 import Foundation
-import Observation
 
-@Observable
 @MainActor
 final class AgentCursorRenderer {
-    static let shared = AgentCursorRenderer()
+	static let restHeading = AgentCursorArt.restHeading
+	static let approachMinimum = 0.12
+	static let approachMaximum = 0.30
+	static let approachSpeed = 1500.0
+	static let pathMinimum = 0.15
+	static let pathMaximum = 0.60
+	static let pathSpeed = 900.0
 
-    private(set) var position = CGPoint.zero
-    private(set) var isPlaced = false
-    private(set) var heading: Double = .pi / 4
-    private(set) var isAnimating = false
+	private(set) var position = CGPoint.zero
+	private(set) var isPlaced = false
+	private(set) var heading: Double = AgentCursorArt.restHeading
+	private(set) var isAnimating = false
+	private(set) var target: CGPoint?
 
-    private var path: PlannedPath?
-    private var spring: Spring?
-    private var distanceSoFar: Double = 0
-    private var lastFrameTime: CFTimeInterval?
-    private var springTarget: (point: CGPoint, heading: Double)?
+	private struct Segment {
+		let path: PlannedPath
+		let duration: Double
+		let approach: Bool
+	}
 
-    func moveTo(point clickPoint: CGPoint) {
-        let endAngle = Double.pi / 4
-        let targetPoint = CGPoint(
-            x: clickPoint.x + CGFloat(cos(endAngle) * 16),
-            y: clickPoint.y + CGFloat(sin(endAngle) * 16)
-        )
-        path = planPath(
-            x0: Double(position.x), y0: Double(position.y), th0: heading + .pi,
-            x1: Double(targetPoint.x), y1: Double(targetPoint.y), th1: endAngle + .pi,
-            R: 80, endVisualHeading: endAngle, targetPoint: targetPoint)
-        spring = nil
-        springTarget = nil
-        distanceSoFar = 0
-        lastFrameTime = nil
-        isAnimating = true
-        isPlaced = true
-    }
+	private var segments: [Segment] = []
+	private var segmentStart: Double = 0
+	private var lastFrameTime: Double?
 
-    func setInitialPosition(_ point: CGPoint) {
-        position = point
-        isPlaced = true
-        cancelAnimation()
-    }
+	func moveTo(point: CGPoint, now: Double) {
+		move(along: [point], now: now)
+	}
 
-    func cancelAnimation() {
-        path = nil
-        spring = nil
-        springTarget = nil
-        distanceSoFar = 0
-        lastFrameTime = nil
-        isAnimating = false
-    }
+	func move(along points: [CGPoint], now: Double) {
+		guard let first = points.first else { return }
+		let endHeading = AgentCursorArt.restHeading
+		let curved = planPath(PathRequest(
+			x0: Double(position.x), y0: Double(position.y), th0: heading + .pi,
+			x1: Double(first.x), y1: Double(first.y), th1: endHeading + .pi,
+			radius: 80, endVisualHeading: endHeading, targetPoint: first))
+		let straight = hypot(Double(first.x - position.x), Double(first.y - position.y))
+		let approachPath = curved.length <= 1.6 * straight + 30 ? curved : PlannedPath(
+			kind: .linear, length: max(1, straight), endVisualHeading: endHeading, targetPoint: first,
+			x0: Double(position.x), y0: Double(position.y), th0: heading + .pi, radius: 80,
+			seg1: 0, seg2: 0, seg3: 0, types: [], x1: Double(first.x), y1: Double(first.y), th1: endHeading + .pi)
+		var planned = [Segment(
+			path: approachPath,
+			duration: min(Self.approachMaximum, max(Self.approachMinimum, approachPath.length / Self.approachSpeed)),
+			approach: true
+		)]
+		var previous = first
+		var drag: [PlannedPath] = []
+		for point in points.dropFirst() {
+			let length = max(0.001, hypot(Double(point.x - previous.x), Double(point.y - previous.y)))
+			let direction = atan2(Double(point.y - previous.y), Double(point.x - previous.x))
+			drag.append(PlannedPath(kind: .linear, length: length, endVisualHeading: endHeading, targetPoint: point,
+				x0: Double(previous.x), y0: Double(previous.y), th0: direction, radius: 80,
+				seg1: 0, seg2: 0, seg3: 0, types: [], x1: Double(point.x), y1: Double(point.y), th1: direction))
+			previous = point
+		}
+		let dragLength = drag.reduce(0) { $0 + $1.length }
+		if dragLength > 0 {
+			let total = min(Self.pathMaximum, max(Self.pathMinimum, dragLength / Self.pathSpeed))
+			for path in drag { planned.append(Segment(path: path, duration: total * path.length / dragLength, approach: false)) }
+		}
+		segments = planned
+		segmentStart = now
+		lastFrameTime = now
+		target = points.last
+		isAnimating = true
+		isPlaced = true
+	}
 
-    func tick(now: CFTimeInterval) {
-        guard isAnimating else { return }
-        let previous = lastFrameTime ?? now
-        let dt = min(0.05, now - previous)
-        lastFrameTime = now
+	func setInitialPosition(_ point: CGPoint, heading initialHeading: Double = AgentCursorArt.restHeading) {
+		position = point
+		heading = initialHeading
+		isPlaced = true
+		cancelAnimation()
+	}
 
-        if let path {
-            let progress = min(1.0, distanceSoFar / max(path.length, 1))
-            let profile = 16 * progress * progress * (1 - progress) * (1 - progress)
-            let minimumSpeed = progress < 0.5 ? 300.0 : 200.0
-            let speed = minimumSpeed + (900 - minimumSpeed) * profile
-            distanceSoFar += speed * dt
+	func cancelAnimation() {
+		segments = []
+		lastFrameTime = nil
+		isAnimating = false
+	}
 
-            if distanceSoFar >= path.length {
-                let endState = path.sample(at: path.length)
-                spring = Spring(
-                    ox: 0,
-                    oy: 0,
-                    vx: cos(endState.heading) * speed * 0.8,
-                    vy: sin(endState.heading) * speed * 0.8
-                )
-                springTarget = (path.targetPoint, path.endVisualHeading)
-                position = path.targetPoint
-                heading = path.endVisualHeading
-                self.path = nil
-                distanceSoFar = 0
-            } else {
-                let state = path.sample(at: distanceSoFar)
-                position = CGPoint(x: state.x, y: state.y)
-                heading = rotateToward(current: heading, desired: state.heading + .pi, maxStep: 14 * dt)
-            }
-        } else if var spring, let target = springTarget {
-            let substep = dt / 4
-            for _ in 0..<4 {
-                spring.vx += (-400 * spring.ox - 17 * spring.vx) * substep
-                spring.vy += (-400 * spring.oy - 17 * spring.vy) * substep
-                spring.ox += spring.vx * substep
-                spring.oy += spring.vy * substep
-            }
-            position = CGPoint(x: target.point.x + CGFloat(spring.ox), y: target.point.y + CGFloat(spring.oy))
-            heading = target.heading
-            if hypot(spring.ox, spring.oy) < 0.3 && hypot(spring.vx, spring.vy) < 2 {
-                position = target.point
-                self.spring = nil
-                springTarget = nil
-                lastFrameTime = nil
-                isAnimating = false
-            } else {
-                self.spring = spring
-            }
-        }
-    }
+	@discardableResult
+	func tick(now: Double) -> Bool {
+		guard isAnimating else { return false }
+		let dt = max(0, min(0.05, now - (lastFrameTime ?? now)))
+		lastFrameTime = now
+		while let segment = segments.first, now - segmentStart >= segment.duration {
+			segmentStart += segment.duration
+			segments.removeFirst()
+			position = segment.path.targetPoint
+		}
+		guard let segment = segments.first else {
+			if let target { position = target }
+			heading = Self.restHeading
+			segments = []
+			lastFrameTime = nil
+			isAnimating = false
+			return true
+		}
+		let fraction = max(0, min(1, (now - segmentStart) / max(segment.duration, 0.001)))
+		if segment.approach {
+			let eased = 1 - pow(1 - fraction, 3)
+			let state = segment.path.sample(at: eased * segment.path.length)
+			position = CGPoint(x: state.pointX, y: state.pointY)
+			heading = rotateToward(current: heading, desired: state.heading + .pi, maxStep: 14 * dt)
+		} else {
+			let state = segment.path.sample(at: fraction * segment.path.length)
+			position = CGPoint(x: state.pointX, y: state.pointY)
+			heading = rotateToward(current: heading, desired: Self.restHeading, maxStep: 14 * dt)
+		}
+		return false
+	}
 
-    private func rotateToward(current: Double, desired: Double, maxStep: Double) -> Double {
-        var difference = desired - current
-        while difference > .pi { difference -= 2 * .pi }
-        while difference < -.pi { difference += 2 * .pi }
-        return current + max(-maxStep, min(maxStep, difference))
-    }
+	private func rotateToward(current: Double, desired: Double, maxStep: Double) -> Double {
+		var difference = desired - current
+		while difference > .pi { difference -= 2 * .pi }
+		while difference < -.pi { difference += 2 * .pi }
+		return current + max(-maxStep, min(maxStep, difference))
+	}
 }
-
-private struct Spring { var ox, oy, vx, vy: Double }
 
 struct DubinsPlannedPath {
     enum Kind { case dubins, linear }
@@ -120,135 +130,139 @@ struct DubinsPlannedPath {
     let length: Double
     let endVisualHeading: Double
     let targetPoint: CGPoint
-    let x0, y0, th0, R, seg1, seg2, seg3: Double
+    let x0, y0, th0, radius, seg1, seg2, seg3: Double
     let types: [Character]
     let x1, y1, th1: Double
 
-    struct State { let x, y, heading: Double }
+    struct State { let pointX, pointY, heading: Double }
 
-    func sample(at s: Double) -> State {
-        switch kind { case .linear: return sampleLinear(s); case .dubins: return sampleDubins(s) }
+    func sample(at arcLength: Double) -> State {
+        switch kind { case .linear: return sampleLinear(arcLength); case .dubins: return sampleDubins(arcLength) }
     }
 
-    private func sampleLinear(_ s: Double) -> State {
-        let u = max(0, min(1, s / length))
+    private func sampleLinear(_ arcLength: Double) -> State {
+        let progress = max(0, min(1, arcLength / length))
         var diff = th1 - th0
         while diff > .pi  { diff -= 2 * .pi }
         while diff < -.pi { diff += 2 * .pi }
-        return State(x: x0 + (x1 - x0) * u, y: y0 + (y1 - y0) * u, heading: th0 + diff * u)
+        return State(pointX: x0 + (x1 - x0) * progress, pointY: y0 + (y1 - y0) * progress, heading: th0 + diff * progress)
     }
 
     private func sampleDubins(_ sIn: Double) -> State {
-        guard sIn > 0 else { return State(x: x0, y: y0, heading: th0) }
-        let L1 = seg1 * R, L2 = seg2 * R, L3 = seg3 * R
-        let s = min(sIn, L1 + L2 + L3)
-        var x = x0, y = y0, th = th0
+        guard sIn > 0 else { return State(pointX: x0, pointY: y0, heading: th0) }
+        let L1 = seg1 * radius, L2 = seg2 * radius, L3 = seg3 * radius
+        let arcLength = min(sIn, L1 + L2 + L3)
+        var pointX = x0, pointY = y0, th = th0
 
-        func advance(length L: Double, type: Character) {
-            if type == "S" { x += cos(th) * L; y += sin(th) * L }
+        func advance(length segmentLength: Double, type: Character) {
+            if type == "S" { pointX += cos(th) * segmentLength; pointY += sin(th) * segmentLength }
             else {
-                let dth = L / R * (type == "L" ? 1.0 : -1.0)
+                let dth = segmentLength / radius * (type == "L" ? 1.0 : -1.0)
                 let perp: Double = (type == "L") ? .pi / 2 : -.pi / 2
-                let cx = x + cos(th + perp) * R, cy = y + sin(th + perp) * R
-                let ang = atan2(y - cy, x - cx)
-                x = cx + cos(ang + dth) * R; y = cy + sin(ang + dth) * R; th += dth
+                let cx = pointX + cos(th + perp) * radius, cy = pointY + sin(th + perp) * radius
+                let ang = atan2(pointY - cy, pointX - cx)
+                pointX = cx + cos(ang + dth) * radius; pointY = cy + sin(ang + dth) * radius; th += dth
             }
         }
-        if s <= L1 { advance(length: s, type: types[0]); return State(x: x, y: y, heading: th) }
+        if arcLength <= L1 { advance(length: arcLength, type: types[0]); return State(pointX: pointX, pointY: pointY, heading: th) }
         advance(length: L1, type: types[0])
-        if s <= L1 + L2 { advance(length: s - L1, type: types[1]); return State(x: x, y: y, heading: th) }
+        if arcLength <= L1 + L2 { advance(length: arcLength - L1, type: types[1]); return State(pointX: pointX, pointY: pointY, heading: th) }
         advance(length: L2, type: types[1])
-        advance(length: s - L1 - L2, type: types[2])
-        return State(x: x, y: y, heading: th)
+        advance(length: arcLength - L1 - L2, type: types[2])
+        return State(pointX: pointX, pointY: pointY, heading: th)
     }
 }
 
 private typealias PlannedPath = DubinsPlannedPath
 
-private func mod2pi(_ x: Double) -> Double {
-    let tau = 2 * Double.pi; let r = x - tau * floor(x / tau); return r < 0 ? r + tau : r
+private func mod2pi(_ angle: Double) -> Double {
+    let tau = 2 * Double.pi; let wrapped = angle - tau * floor(angle / tau); return wrapped < 0 ? wrapped + tau : wrapped
 }
 
-private struct DubinsSolution { let t, p, q: Double; let types: [Character]; var length: Double { t + p + q } }
+private struct DubinsSolution {
+    let first, middle, last: Double; let types: [Character]; var length: Double { first + middle + last }
+}
 
-private func dubinsLSL(_ d: Double, _ a: Double, _ b: Double) -> DubinsSolution? {
-    let tmp0 = d + sin(a) - sin(b)
-    let p2 = 2 + d * d - 2 * cos(a - b) + 2 * d * (sin(a) - sin(b))
+private func dubinsLSL(_ dist: Double, _ alpha: Double, _ beta: Double) -> DubinsSolution? {
+    let tmp0 = dist + sin(alpha) - sin(beta)
+    let p2 = 2 + dist * dist - 2 * cos(alpha - beta) + 2 * dist * (sin(alpha) - sin(beta))
     guard p2 >= 0 else { return nil }
-    let tmp1 = atan2(cos(b) - cos(a), tmp0)
-    return DubinsSolution(t: mod2pi(-a + tmp1), p: sqrt(p2), q: mod2pi(b - tmp1), types: ["L","S","L"])
+    let tmp1 = atan2(cos(beta) - cos(alpha), tmp0)
+    return DubinsSolution(first: mod2pi(-alpha + tmp1), middle: sqrt(p2), last: mod2pi(beta - tmp1), types: ["L","S","L"])
 }
-private func dubinsRSR(_ d: Double, _ a: Double, _ b: Double) -> DubinsSolution? {
-    let tmp0 = d - sin(a) + sin(b)
-    let p2 = 2 + d * d - 2 * cos(a - b) + 2 * d * (sin(b) - sin(a))
+private func dubinsRSR(_ dist: Double, _ alpha: Double, _ beta: Double) -> DubinsSolution? {
+    let tmp0 = dist - sin(alpha) + sin(beta)
+    let p2 = 2 + dist * dist - 2 * cos(alpha - beta) + 2 * dist * (sin(beta) - sin(alpha))
     guard p2 >= 0 else { return nil }
-    let tmp1 = atan2(cos(a) - cos(b), tmp0)
-    return DubinsSolution(t: mod2pi(a - tmp1), p: sqrt(p2), q: mod2pi(-b + tmp1), types: ["R","S","R"])
+    let tmp1 = atan2(cos(alpha) - cos(beta), tmp0)
+    return DubinsSolution(first: mod2pi(alpha - tmp1), middle: sqrt(p2), last: mod2pi(-beta + tmp1), types: ["R","S","R"])
 }
-private func dubinsLSR(_ d: Double, _ a: Double, _ b: Double) -> DubinsSolution? {
-    let p2 = -2 + d * d + 2 * cos(a - b) + 2 * d * (sin(a) + sin(b))
+private func dubinsLSR(_ dist: Double, _ alpha: Double, _ beta: Double) -> DubinsSolution? {
+    let p2 = -2 + dist * dist + 2 * cos(alpha - beta) + 2 * dist * (sin(alpha) + sin(beta))
     guard p2 >= 0 else { return nil }
-    let p = sqrt(p2)
-    let tmp1 = atan2(-cos(a) - cos(b), d + sin(a) + sin(b)) - atan2(-2, p)
-    return DubinsSolution(t: mod2pi(-a + tmp1), p: p, q: mod2pi(-mod2pi(b) + tmp1), types: ["L","S","R"])
+    let middle = sqrt(p2)
+    let tmp1 = atan2(-cos(alpha) - cos(beta), dist + sin(alpha) + sin(beta)) - atan2(-2, middle)
+    return DubinsSolution(first: mod2pi(-alpha + tmp1), middle: middle, last: mod2pi(-mod2pi(beta) + tmp1), types: ["L","S","R"])
 }
-private func dubinsRSL(_ d: Double, _ a: Double, _ b: Double) -> DubinsSolution? {
-    let p2 = d * d - 2 + 2 * cos(a - b) - 2 * d * (sin(a) + sin(b))
+private func dubinsRSL(_ dist: Double, _ alpha: Double, _ beta: Double) -> DubinsSolution? {
+    let p2 = dist * dist - 2 + 2 * cos(alpha - beta) - 2 * dist * (sin(alpha) + sin(beta))
     guard p2 >= 0 else { return nil }
-    let p = sqrt(p2)
-    let tmp1 = atan2(cos(a) + cos(b), d - sin(a) - sin(b)) - atan2(2, p)
-    return DubinsSolution(t: mod2pi(a - tmp1), p: p, q: mod2pi(b - tmp1), types: ["R","S","L"])
+    let middle = sqrt(p2)
+    let tmp1 = atan2(cos(alpha) + cos(beta), dist - sin(alpha) - sin(beta)) - atan2(2, middle)
+    return DubinsSolution(first: mod2pi(alpha - tmp1), middle: middle, last: mod2pi(beta - tmp1), types: ["R","S","L"])
 }
-private func dubinsRLR(_ d: Double, _ a: Double, _ b: Double) -> DubinsSolution? {
-    let tmp = (6 - d * d + 2 * cos(a - b) + 2 * d * (sin(a) - sin(b))) / 8
+private func dubinsRLR(_ dist: Double, _ alpha: Double, _ beta: Double) -> DubinsSolution? {
+    let tmp = (6 - dist * dist + 2 * cos(alpha - beta) + 2 * dist * (sin(alpha) - sin(beta))) / 8
     guard abs(tmp) <= 1 else { return nil }
-    let p = mod2pi(2 * .pi - acos(tmp))
-    let t = mod2pi(a - atan2(cos(a) - cos(b), d - sin(a) + sin(b)) + p / 2)
-    return DubinsSolution(t: t, p: p, q: mod2pi(a - b - t + p), types: ["R","L","R"])
+    let middle = mod2pi(2 * .pi - acos(tmp))
+    let first = mod2pi(alpha - atan2(cos(alpha) - cos(beta), dist - sin(alpha) + sin(beta)) + middle / 2)
+    return DubinsSolution(first: first, middle: middle, last: mod2pi(alpha - beta - first + middle), types: ["R","L","R"])
 }
-private func dubinsLRL(_ d: Double, _ a: Double, _ b: Double) -> DubinsSolution? {
-    let tmp = (6 - d * d + 2 * cos(a - b) + 2 * d * (sin(b) - sin(a))) / 8
+private func dubinsLRL(_ dist: Double, _ alpha: Double, _ beta: Double) -> DubinsSolution? {
+    let tmp = (6 - dist * dist + 2 * cos(alpha - beta) + 2 * dist * (sin(beta) - sin(alpha))) / 8
     guard abs(tmp) <= 1 else { return nil }
-    let p = mod2pi(2 * .pi - acos(tmp))
-    let t = mod2pi(-a + atan2(-cos(a) + cos(b), d + sin(a) - sin(b)) + p / 2)
-    return DubinsSolution(t: t, p: p, q: mod2pi(mod2pi(b) - a - t + p), types: ["L","R","L"])
+    let middle = mod2pi(2 * .pi - acos(tmp))
+    let first = mod2pi(-alpha + atan2(-cos(alpha) + cos(beta), dist + sin(alpha) - sin(beta)) + middle / 2)
+    return DubinsSolution(first: first, middle: middle, last: mod2pi(mod2pi(beta) - alpha - first + middle), types: ["L","R","L"])
 }
 
-private func planPath(x0: Double, y0: Double, th0: Double,
-                      x1: Double, y1: Double, th1: Double,
-                      R: Double, endVisualHeading: Double,
-                      targetPoint: CGPoint) -> PlannedPath {
-    if let p = planDubins(x0: x0, y0: y0, th0: th0, x1: x1, y1: y1, th1: th1,
-                          R: R, endVisualHeading: endVisualHeading, targetPoint: targetPoint) {
-        return p
+private struct PathRequest {
+    let x0, y0, th0: Double
+    let x1, y1, th1: Double
+    let radius: Double
+    let endVisualHeading: Double
+    let targetPoint: CGPoint
+}
+
+private func planPath(_ request: PathRequest) -> PlannedPath {
+    if let planned = planDubins(request) {
+        return planned
     }
-    let D = max(1, hypot(x1 - x0, y1 - y0))
-    return PlannedPath(kind: .linear, length: D, endVisualHeading: endVisualHeading,
-                       targetPoint: targetPoint, x0: x0, y0: y0, th0: th0, R: R,
-                       seg1: 0, seg2: 0, seg3: 0, types: [], x1: x1, y1: y1, th1: th1)
+    let distance = max(1, hypot(request.x1 - request.x0, request.y1 - request.y0))
+    return PlannedPath(kind: .linear, length: distance, endVisualHeading: request.endVisualHeading,
+                       targetPoint: request.targetPoint, x0: request.x0, y0: request.y0, th0: request.th0,
+                       radius: request.radius, seg1: 0, seg2: 0, seg3: 0, types: [],
+                       x1: request.x1, y1: request.y1, th1: request.th1)
 }
 
-private func planDubins(x0: Double, y0: Double, th0: Double,
-                        x1: Double, y1: Double, th1: Double,
-                        R: Double, endVisualHeading: Double,
-                        targetPoint: CGPoint) -> PlannedPath? {
-    let dx = x1 - x0, dy = y1 - y0, D = hypot(dx, dy)
-    guard D > 0.5 else { return nil }
-    let d = D / R, theta = mod2pi(atan2(dy, dx))
-    let a = mod2pi(th0 - theta), b = mod2pi(th1 - theta)
+private func planDubins(_ request: PathRequest) -> PlannedPath? {
+    let dx = request.x1 - request.x0, dy = request.y1 - request.y0, distance = hypot(dx, dy)
+    guard distance > 0.5 else { return nil }
+    let dist = distance / request.radius, theta = mod2pi(atan2(dy, dx))
+    let alpha = mod2pi(request.th0 - theta), beta = mod2pi(request.th1 - theta)
     let solvers: [(Double, Double, Double) -> DubinsSolution?] = [
         dubinsLSL, dubinsRSR, dubinsLSR, dubinsRSL, dubinsRLR, dubinsLRL,
     ]
     var best: DubinsSolution?; var bestLen = Double.infinity
-    for s in solvers {
-        if let sol = s(d, a, b), sol.length.isFinite, sol.length >= 0, sol.length < bestLen {
+    for solver in solvers {
+        if let sol = solver(dist, alpha, beta), sol.length.isFinite, sol.length >= 0, sol.length < bestLen {
             bestLen = sol.length; best = sol
         }
     }
-    guard let b = best else { return nil }
-    return PlannedPath(kind: .dubins, length: (b.t + b.p + b.q) * R,
-                       endVisualHeading: endVisualHeading, targetPoint: targetPoint,
-                       x0: x0, y0: y0, th0: th0, R: R,
-                       seg1: b.t, seg2: b.p, seg3: b.q, types: b.types,
-                       x1: x1, y1: y1, th1: th1)
+    guard let solution = best else { return nil }
+    return PlannedPath(kind: .dubins, length: (solution.first + solution.middle + solution.last) * request.radius,
+                       endVisualHeading: request.endVisualHeading, targetPoint: request.targetPoint,
+                       x0: request.x0, y0: request.y0, th0: request.th0, radius: request.radius,
+                       seg1: solution.first, seg2: solution.middle, seg3: solution.last, types: solution.types,
+                       x1: request.x1, y1: request.y1, th1: request.th1)
 }

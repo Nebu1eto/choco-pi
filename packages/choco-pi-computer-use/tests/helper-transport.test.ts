@@ -323,6 +323,45 @@ test("s4 holds typeText past the client timeout and honors cancel at once", asyn
   assert.deepEqual(cancel.ack, error.cancel);
 });
 
+test("s4 with a deadline overrun: a timeout equal to budgetMs cancels the act still in flight", async () => {
+  const logPath = path.join(scratch, "s4-overrun.requests.jsonl");
+  const fake = await startDaemon({ script: "s4-slow-type", logPath, deadlineOverrunMs: 250 });
+  const client = new helper.MacosHelperClient();
+  const look = await lookId(client);
+  const args = {
+    ...actArgs(session(), look, {
+      action: "typeText",
+      target: { ref: "field-1" },
+      params: { text: "abcdefgh" },
+    }),
+    budgetMs: 400,
+  };
+  const error = await rejection(client.daemonCommand("act", args, 400));
+
+  assert.ok(error instanceof helper.HelperTransportError, "the client timeout fires first");
+  assert.match(error.message, /timed out after 400ms/);
+  assert.deepEqual(error.cancel, {
+    acknowledged: true,
+    state: "stopped",
+    stoppedAt: 1,
+    effectPossible: true,
+  });
+  assert.equal(error.interruption?.clientTimeout, true);
+  assert.equal(error.interruption?.state, "stopped");
+
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  await fake.close();
+  daemon = undefined;
+  const lines = await logLines(logPath);
+  const act = lines.find((line) => line.cmd === "act");
+  assert.deepEqual(act?.response, {
+    ok: false,
+    error: { code: "cancelled", message: "Request was cancelled", effectPossible: true },
+    result: { outcome: "partial", stoppedAt: 1, reason: "cancelled" },
+  });
+  assert.equal(lines.filter((line) => line.cmd === "cancel")[0]?.target, args.requestId);
+});
+
 test("act log rows carry the response, including a stale_look refusal", async () => {
   const logPath = path.join(scratch, "s5.requests.jsonl");
   const fake = await startDaemon({ script: "s5-stale", logPath });

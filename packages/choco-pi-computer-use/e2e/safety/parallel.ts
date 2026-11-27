@@ -57,6 +57,7 @@ interface ClientProcessSpec {
   delivery: Delivery;
   grant: boolean;
   sequential: boolean;
+  cursorOverlay?: boolean;
 }
 
 export interface Attempt {
@@ -366,7 +367,7 @@ async function clientMain(specPath: string): Promise<void> {
   process.env.PI_COMPUTER_USE_HELPER_APP_PATH = spec.helperApp;
   process.env.PI_CODING_AGENT_DIR = spec.agentDir;
   process.env.PI_COMPUTER_USE_HEADLESS = "0";
-  process.env.PI_COMPUTER_USE_CURSOR_OVERLAY = "0";
+  process.env.PI_COMPUTER_USE_CURSOR_OVERLAY = spec.cursorOverlay === true ? "1" : "0";
   process.env.PI_COMPUTER_USE_BROWSER_USE = "0";
   process.env.PI_COMPUTER_USE_BACKGROUND_DELIVERY = spec.delivery;
   for (const key of [
@@ -425,6 +426,7 @@ interface Options {
   sequential: boolean;
   foreground: boolean;
   holder: boolean;
+  cursorOverlay: boolean;
   fixtureRoot: string;
 }
 
@@ -438,7 +440,7 @@ function parse(argv: string[]): Options {
   const out = value("--out");
   if (!helperApp || !helperSocket || !out)
     throw new Error(
-      "usage: parallel.ts --helper-app <app> --helper-socket <socket> --out <dir> [--clients 2] [--delivery standard|extended] [--layout apps|windows] [--process separate|shared] [--reps 3] [--sequential] [--foreground] [--fixture-root <dir>]",
+      "usage: parallel.ts --helper-app <app> --helper-socket <socket> --out <dir> [--clients 2] [--delivery standard|extended] [--layout apps|windows] [--process separate|shared] [--reps 3] [--sequential] [--foreground] [--cursor-overlay] [--fixture-root <dir>]",
     );
   const clients = Number(value("--clients") ?? "2");
   const delivery = value("--delivery") ?? "standard";
@@ -466,6 +468,7 @@ function parse(argv: string[]): Options {
     sequential: argv.includes("--sequential"),
     foreground: argv.includes("--foreground"),
     holder: argv.includes("--holder") || argv.includes("--foreground"),
+    cursorOverlay: argv.includes("--cursor-overlay"),
     fixtureRoot: resolve(value("--fixture-root") ?? join(out, "fixture-build")),
   };
 }
@@ -651,6 +654,7 @@ async function runPhase(
         agentDir: join(dir, `${name}-agent`),
         cwd: join(dir, `${name}-cwd`),
         delivery: options.delivery,
+        cursorOverlay: options.cursorOverlay,
         grant: options.foreground,
         sequential: phase === "sequential",
       };

@@ -285,7 +285,7 @@ class Run {
     const row = await this.ownerWindows(label);
     checks.unshift(
       row
-        ? scoreOverlayBounds(parseOwnerWindows(row.windows), expected, this.screens)
+        ? scoreOverlayBounds(parseOwnerWindows(row.windows), expected, this.screens, acted)
         : { name: "overlay_window_bounds", ok: null, detail: { reason: "fixture did not report" } },
     );
     return checks;
@@ -520,7 +520,7 @@ async function checkDisplay(
     checks.push(pointCheck("drag_start_location", down, from));
     checks.push(pointCheck("drag_end_location", up, to));
     await run.guardFront("after drag");
-    for (const check of await run.cursorChecks(label, screen, from))
+    for (const check of await run.cursorChecks(label, screen, to))
       checks.push({ ...check, name: `drag_${check.name}` });
   }
   return checks;
@@ -556,6 +556,44 @@ async function checkFollow(
       checks.push({ ...check, name: `follow_${index}_d${screen.id}_${check.name}` });
   }
   return checks;
+}
+
+async function replaceWindows(
+  log: RequestLog,
+  fixtures: FixtureSet,
+  label: string,
+  screen: Screen,
+  reference: Map<string, Rect>,
+  socket: string,
+): Promise<void> {
+  const rows = await fixtures.rows(label);
+  const last = rows.filter((row) => row.event === "layout").at(-1);
+  const fixer = new Wire(socket, log);
+  await fixer.send("claim", { session: { ...fixer.session } });
+  for (const entry of Array.isArray(last?.windows) ? last.windows : []) {
+    if (!isJsonObject(entry) || !isString(entry.window) || !isNumber(entry.windowNumber)) continue;
+    const offset = reference.get(entry.window);
+    if (!offset) continue;
+    await fixer.send("setWindowFrame", {
+      session: { ...fixer.session },
+      pid: fixtures.pid(label),
+      windowId: entry.windowNumber,
+      x: screen.bounds.x + offset.x,
+      y: screen.bounds.y + offset.y,
+      width: offset.w,
+      height: offset.h,
+    });
+  }
+  await fixer.send("release", { session: { ...fixer.session } });
+  await pause(300);
+  const before = rows.filter((row) => row.event === "layout").length;
+  await fixtures.trigger(`.cu-layout-${label}`);
+  const until = Date.now() + 2_000;
+  while (
+    (await fixtures.rows(label)).filter((row) => row.event === "layout").length <= before &&
+    Date.now() < until
+  )
+    await pause(40);
 }
 
 function verdictOf(checks: Check[]): "PASS" | "FAIL" {
@@ -653,10 +691,29 @@ async function main(): Promise<number> {
     await pause(700);
     await run.guardFront("after launching the fixtures");
     const usable: { screen: Screen; label: string }[] = [];
+    let reference: Map<string, Rect> | undefined;
     for (const { screen, label } of placed) {
-      const layout = await fixtures
+      let layout = await fixtures
         .waitFor(label, (row) => row.event === "layout", 5_000)
         .then(() => run.layout(label));
+      const outside = (layout?.windows ?? []).some(
+        (window) => !inside(window.frame, screen.bounds),
+      );
+      if (!outside && layout && layout.windows.length > 0 && !reference)
+        reference = new Map(
+          layout.windows.map((window) => [
+            window.window,
+            {
+              ...window.frame,
+              x: window.frame.x - screen.bounds.x,
+              y: window.frame.y - screen.bounds.y,
+            },
+          ]),
+        );
+      if (outside && reference) {
+        await replaceWindows(log, fixtures, label, screen, reference, options.helperSocket);
+        layout = await run.layout(label);
+      }
       const windows = layout?.windows ?? [];
       const reasons: string[] = [];
       if (windows.length === 0) reasons.push("no layout reported");

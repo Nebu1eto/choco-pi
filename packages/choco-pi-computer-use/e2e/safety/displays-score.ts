@@ -140,14 +140,29 @@ export function scoreOverlayBounds(
   windows: OwnerWindow[],
   expected: Screen,
   screens: Screen[],
+  acted?: Point,
 ): Check {
   const onscreen = windows.filter((window) => window.onscreen);
-  const onExpected = onscreen.filter((window) => sameRect(window.bounds, expected.bounds));
-  const elsewhere = onscreen.filter((window) =>
-    screens.some((screen) => screen.id !== expected.id && sameRect(window.bounds, screen.bounds)),
+  const contains = (window: OwnerWindow): boolean =>
+    acted === undefined ||
+    (acted.x >= window.bounds.x &&
+      acted.x <= window.bounds.x + window.bounds.w &&
+      acted.y >= window.bounds.y &&
+      acted.y <= window.bounds.y + window.bounds.h);
+  const onExpected = onscreen.filter(
+    (window) =>
+      contains(window) &&
+      (acted === undefined
+        ? sameRect(window.bounds, expected.bounds)
+        : inside(window.bounds, expected.bounds)),
+  );
+  const elsewhere = onscreen.filter(
+    (window) =>
+      !screens.some((screen) => inside(window.bounds, screen.bounds)) ||
+      screens.some((screen) => screen.id !== expected.id && sameRect(window.bounds, screen.bounds)),
   );
   const displayOf = (window: OwnerWindow): number | null =>
-    screens.find((screen) => sameRect(window.bounds, screen.bounds))?.id ?? null;
+    screens.find((screen) => inside(window.bounds, screen.bounds))?.id ?? null;
   return {
     name: "overlay_window_bounds",
     ok: onExpected.length > 0 && elsewhere.length === 0,
@@ -171,7 +186,7 @@ export interface CursorState {
   target?: Point;
   local?: Point;
   animating?: boolean;
-  capture?: { bounds?: Rect; opaquePixels: number; error?: string };
+  capture?: { bounds?: Rect; opaquePixels: number; error?: string; tip?: Point };
 }
 
 export function parseCursorState(result: JsonValue | undefined): CursorState | undefined {
@@ -191,6 +206,7 @@ export function parseCursorState(result: JsonValue | undefined): CursorState | u
           bounds: rectOf(capture.bounds),
           opaquePixels: isNumber(capture.opaquePixels) ? capture.opaquePixels : 0,
           error: isString(capture.error) ? capture.error : undefined,
+          tip: pointOf(capture.tip),
         }
       : undefined,
   };
@@ -198,6 +214,7 @@ export function parseCursorState(result: JsonValue | undefined): CursorState | u
 
 export const POINTER_MAX_EXTENT = 40;
 export const POINTER_SLACK = 4;
+export const TIP_SLACK = 1.5;
 
 export function scoreCursorState(
   state: CursorState | undefined,
@@ -217,7 +234,7 @@ export function scoreCursorState(
     },
     {
       name: "overlay_self_bounds",
-      ok: state.windowServerBounds ? sameRect(state.windowServerBounds, expected.bounds) : false,
+      ok: state.windowServerBounds ? inside(state.windowServerBounds, expected.bounds) : false,
       detail: {
         reported: state.windowServerBounds ? rectJson(state.windowServerBounds) : null,
         expected: rectJson(expected.bounds),
@@ -257,5 +274,11 @@ export function scoreCursorState(
       error: capture?.error ?? (capture === undefined ? "not captured" : null),
     },
   });
+  if (capture?.tip)
+    checks.push({
+      name: "drawn_tip",
+      ok: distance(capture.tip, acted) <= TIP_SLACK,
+      detail: { tip: { ...capture.tip }, acted: { ...acted }, error: distance(capture.tip, acted) },
+    });
   return checks;
 }

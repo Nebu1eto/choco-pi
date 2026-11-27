@@ -296,6 +296,7 @@ final class RequestContext {
 	var foregroundGrant = false
 	var hidDestination: HIDDestination?
 	var hidGestureActive = false
+	var hidPointerLastPosted: CGPoint?
 	var activationAttempted = false
 	var destinationWindowStatus: String?
 	var destinationWindowElement: AXUIElement?
@@ -1154,6 +1155,7 @@ final class Bridge {
 	private func finishExpiredSessions(_ ids: [String]) {
 		for id in ids {
 			releaseForegroundSection(holder: id, restore: true)
+			if supportsAgentCursor { AgentCursorQueue.release(session: id) }
 		}
 		sweepLookRetention()
 	}
@@ -1202,6 +1204,7 @@ final class Bridge {
 		ownerLock.unlock()
 		dropLookRecords(sessionId: session.id)
 		releaseForegroundSection(holder: session.id, restore: false)
+		if supportsAgentCursor { AgentCursorQueue.release(session: session.id) }
 		return true
 	}
 
@@ -1576,7 +1579,8 @@ final class Bridge {
 		func conflict(_ window: AXUIElement) -> BridgeFailure {
 			let title = stringAttribute(window, attribute: kAXTitleAttribute as CFString) ?? ""
 			return BridgeFailure(
-				message: "key_window_conflict: keyboard input of \(appLabel(pid)) goes to another of its windows (\"\(title)\"), not the observed one; no key was sent. Another session or the user may be using that window: retry later, or observe and act on the window that has the keyboard focus",
+				message: "key_window_conflict: keyboard input of \(appLabel(pid)) goes to another of its windows (\"\(title)\"), not the observed one; no key was sent. "
+					+ "Another session or the user may be using that window: retry later, or observe and act on the window that has the keyboard focus",
 				code: "key_window_conflict",
 				effectPossible: effect,
 				details: ["inputSent": false, "focusedWindowTitle": title, "retry": "later_or_other_window"]
@@ -1593,7 +1597,8 @@ final class Bridge {
 				?? (Bridge.windowLevelFocusRoles.contains(focusedRole) ? focused : nil)
 			if let focusedWindow, let observed, !windowsRelated(focusedWindow, observed) { throw conflict(focusedWindow) }
 			if let element, !(sameElement(focused, element) || isElement(focused, descendantOf: element) || isElement(element, descendantOf: focused)) {
-				throw BridgeFailure(message: "The app's keyboard focus is not on the target element; no key was sent. Pointer input or a foreground grant is needed to focus it", code: "foreground_required", effectPossible: effect, details: ["inputSent": false])
+				throw BridgeFailure(message: "The app's keyboard focus is not on the target element; no key was sent. "
+					+ "Pointer input or a foreground grant is needed to focus it", code: "foreground_required", effectPossible: effect, details: ["inputSent": false])
 			}
 			if focusedWindow != nil && observed != nil { return "verified" }
 		}
@@ -1607,7 +1612,8 @@ final class Bridge {
 		let source = InputSourceInfo.current()
 		guard source.composes else { return }
 		throw BridgeFailure(
-			message: "input_source_composes: the current input source (\(source.id)) composes typed keys, so this text would not arrive as requested; no key was sent. Use set_text on a native field, or switch to a keyboard layout input source",
+			message: "input_source_composes: the current input source (\(source.id)) composes typed keys, so this text would not arrive as requested; no key was sent. "
+				+ "Use set_text on a native field, or switch to a keyboard layout input source",
 			code: "input_source_composes",
 			effectPossible: activeRequestContext()?.effectPossible ?? false,
 			details: ["inputSent": false, "inputSource": source.diagnostics()]
@@ -1730,6 +1736,75 @@ final class Bridge {
 		return receivedAt + budget / 1000
 	}
 
+	private func restoringPointer(_ request: [String: Any], context: RequestContext?, _ body: () throws -> [String: Any]) throws -> [String: Any] {
+		guard isGrantedHIDRequest(request), let context else { return try body() }
+		let start = CGEvent(source: nil)?.location
+		context.hidPointerLastPosted = nil
+		do {
+			var result = try body()
+			if let report = restorePointer(start: start, context: context) {
+				var performed = result["performed"] as? [String: Any] ?? [:]
+				performed["pointerRestore"] = report
+				result["performed"] = performed
+			}
+			return result
+		} catch var failure as BridgeFailure {
+			if let report = restorePointer(start: start, context: context) {
+				var details = failure.details ?? [:]
+				details["pointerRestore"] = report
+				failure.details = details
+			}
+			throw failure
+		} catch {
+			_ = restorePointer(start: start, context: context)
+			throw error
+		}
+	}
+
+	private func restorePointer(start: CGPoint?, context: RequestContext) -> [String: Any]? {
+		guard let last = context.hidPointerLastPosted else { return nil }
+		context.hidPointerLastPosted = nil
+		func point(_ value: CGPoint) -> [String: Any] { ["x": value.x, "y": value.y] }
+		func near(_ first: CGPoint, _ second: CGPoint, _ tolerance: CGFloat) -> Bool { hypot(first.x - second.x, first.y - second.y) <= tolerance }
+		var report: [String: Any] = ["lastPosted": point(last)]
+		guard let start else {
+			report["restored"] = false
+			report["reason"] = "start_unknown"
+			return report
+		}
+		report["start"] = point(start)
+		var current = CGEvent(source: nil)?.location
+		let settleUntil = monotonicSeconds() + 0.05
+		while let now = current, !near(now, last, 1), monotonicSeconds() < settleUntil {
+			usleep(5_000)
+			current = CGEvent(source: nil)?.location
+		}
+		guard let now = current else {
+			report["restored"] = false
+			report["reason"] = "pointer_unreadable"
+			return report
+		}
+		report["found"] = point(now)
+		if !near(now, last, 1) {
+			report["restored"] = false
+			report["reason"] = "user_moved"
+			return report
+		}
+		if near(now, start, 0.5) {
+			report["restored"] = false
+			report["reason"] = "not_moved"
+			return report
+		}
+		CGWarpMouseCursorPosition(CGPoint(x: start.x.rounded(), y: start.y.rounded()))
+		CGAssociateMouseAndMouseCursorPosition(1)
+		let after = CGEvent(source: nil)?.location
+		if let after { report["after"] = point(after) }
+		let restored = after.map { near($0, start, 1) } ?? false
+		report["restored"] = restored
+		if !restored { report["reason"] = "warp_failed" }
+		return report
+	}
+
 	private func isGrantedHIDRequest(_ request: [String: Any]) -> Bool {
 		switch request["cmd"] as? String {
 		case "act":
@@ -1839,7 +1914,9 @@ final class Bridge {
 				let context = activeRequestContext()
 				let pid = Int32(try intArg(request, "pid"))
 				return try inForeground(request, keys: keys, pid: pid, context: context) {
-					try onTarget(pid, keys: keys, context: context) { try act(request) }
+					try restoringPointer(request, context: context) {
+						try onTarget(pid, keys: keys, context: context) { try act(request) }
+					}
 				}
 			}
 		case "actBatch":
@@ -1854,7 +1931,9 @@ final class Bridge {
 				guard let first = actions.first else { return try actBatch(request) }
 				let pid = Int32(try intArg(first, "pid"))
 				return try inForeground(request, keys: keys, pid: pid, context: context) {
-					try onTarget(pid, keys: keys, context: context) { try actBatch(request) }
+					try restoringPointer(request, context: context) {
+						try onTarget(pid, keys: keys, context: context) { try actBatch(request) }
+					}
 				}
 			}
 		case "hitTest":
@@ -3400,6 +3479,8 @@ final class Bridge {
 	}
 
 	private func deliverAct(_ request: [String: Any]) throws -> [String: Any] {
+		let cursorClock = AgentCursorActClock()
+		defer { cursorClock.finish() }
 		activeRequestContext()?.extendedDeliveryStatus = nil
 		activeRequestContext()?.extendedDeliveryReason = nil
 		activeRequestContext()?.extendedDeliveryActivated = false
@@ -3422,7 +3503,8 @@ final class Bridge {
 		let offSpaceTarget = OffSpaceSupport.shared.isOffSpace(record.windowId)
 		if offSpaceTarget && policy == "foreground" {
 			throw BridgeFailure(
-				message: "off_space_foreground: the target window is on a Space no display shows; foreground delivery would bring it to the front and switch the user's Space, so nothing was activated or sent. Act on it in the background (accessibility actions, or background_delivery: \"extended\" for pointer and key input), or ask the user to show the window first",
+				message: "off_space_foreground: the target window is on a Space no display shows; foreground delivery would bring it to the front and switch the user's Space, so nothing was activated or sent. "
+					+ "Act on it in the background (accessibility actions, or background_delivery: \"extended\" for pointer and key input), or ask the user to show the window first",
 				code: "off_space_foreground",
 				effectPossible: false,
 				details: ["inputSent": false, "activationAttempted": false, "offSpace": true]
@@ -3572,13 +3654,30 @@ final class Bridge {
 		}
 
 		func animateCursor(at point: CGPoint) {
+			animateCursor(along: [point])
+		}
+		func animateCursor(along points: [CGPoint]) {
 			guard supportsAgentCursor,
 				(request["cursorOverlay"] as? Bool ?? true),
-				delivery == "pid",
 				policy != "ax_only",
+				!offSpaceTarget,
+				!points.isEmpty,
 				["press", "click", "moveMouse", "scroll", "drag"].contains(action)
 			else { return }
-			Task { @MainActor in AgentCursor.shared.animate(to: point, above: record.windowId) }
+			AgentCursorQueue.post(AgentCursorRequest(
+				key: AgentCursorKey(session: currentRequestSessionId() ?? "", windowId: record.windowId),
+				pid: pid,
+				points: points,
+				issuedAt: monotonicSeconds(),
+				act: cursorClock,
+				delivery: delivery
+			))
+		}
+		func animateBeforeGesture(_ points: [CGPoint]) {
+			if delivery == "pid" { animateCursor(along: points) }
+		}
+		func animateAfterGesture(_ points: [CGPoint]) {
+			if delivery == "hid" { animateCursor(along: points) }
 		}
 
 		func focusTargetForPhysicalInput() throws {
@@ -3752,23 +3851,27 @@ final class Bridge {
 			if delivery == "hid" { try preflight(point) }
 			switch action {
 			case "press", "click":
-				animateCursor(at: point)
+				animateBeforeGesture([point])
 				try postMouseClick(at: point, pid: pid, button: mouseButton(params["button"] as? String ?? "left"), clickCount: max(1, min(3, (params["clickCount"] as? NSNumber)?.intValue ?? 1)), delivery: delivery)
+				animateAfterGesture([point])
 				if delivery == "pid" { pidPointerPosted = true }
 			case "moveMouse":
-				animateCursor(at: point)
+				animateBeforeGesture([point])
 				try postMouseMove(to: point, pid: pid, delivery: delivery)
+				animateAfterGesture([point])
 			case "scroll":
-				animateCursor(at: point)
+				animateBeforeGesture([point])
 				if delivery == "pid", context?.extendedDelivery == nil, record.windowId != 0 {
 					context?.pidScrollWindow = ExtendedDeliveryTarget(pid: pid, windowId: record.windowId, windowFrame: record.windowFrame)
 				}
 				defer { context?.pidScrollWindow = nil }
 				try postScrollWheel(at: point, deltaX: (params["scrollX"] as? NSNumber)?.intValue ?? 0, deltaY: (params["scrollY"] as? NSNumber)?.intValue ?? 0, pid: pid, delivery: delivery)
+				animateAfterGesture([point])
 			case "drag":
 				let points = try dragPoints()
-				animateCursor(at: point)
+				animateBeforeGesture(points)
 				try postMouseDrag(points: points, pid: pid, delivery: delivery)
+				animateAfterGesture(points)
 			default:
 				throw BridgeFailure(message: "Action \(action) cannot use coordinate grounding", code: "invalid_args")
 			}
@@ -5376,52 +5479,147 @@ final class Bridge {
 			throw BridgeFailure(message: "agentCursorState must not run on the main thread", code: "invalid_state")
 		}
 		let semaphore = DispatchSemaphore(value: 0)
-		let state = Box<(snapshot: AgentCursorSnapshot, displays: [[String: Any]])?>(nil)
-		Task { @MainActor in
-			defer { semaphore.signal() }
-			let displays = NSScreen.screens.compactMap { screen -> [String: Any]? in
-				guard let id = DisplayGeometry.displayID(of: screen) else { return nil }
-				return [
-					"id": Int(id),
-					"bounds": rectPayload(CGDisplayBounds(id)),
-					"frame": rectPayload(screen.frame),
-					"scale": Double(screen.backingScaleFactor),
-					"keyScreen": screen == NSScreen.main,
-				]
+		let state = Box<(snapshot: AgentCursorRegistrySnapshot, displays: [[String: Any]], scales: [CGDirectDisplayID: Double])?>(nil)
+		DispatchQueue.main.async {
+			MainActor.assumeIsolated {
+				defer { semaphore.signal() }
+				var scales: [CGDirectDisplayID: Double] = [:]
+				let displays = NSScreen.screens.compactMap { screen -> [String: Any]? in
+					guard let id = DisplayGeometry.displayID(of: screen) else { return nil }
+					scales[id] = Double(screen.backingScaleFactor)
+					return [
+						"id": Int(id),
+						"bounds": rectPayload(CGDisplayBounds(id)),
+						"frame": rectPayload(screen.frame),
+						"scale": Double(screen.backingScaleFactor),
+						"keyScreen": screen == NSScreen.main,
+					]
+				}
+				state.value = (AgentCursor.shared.snapshot(), displays, scales)
 			}
-			state.value = (AgentCursor.shared.snapshot(), displays)
 		}
 		guard semaphore.wait(timeout: .now() + .seconds(3)) == .success, let current = state.value else {
 			throw BridgeFailure(message: "The agent cursor state did not arrive from the main thread", code: "timeout")
 		}
 		let snapshot = current.snapshot
-		var output: [String: Any] = ["supported": true, "displays": current.displays]
-		if let number = snapshot.windowNumber, let display = snapshot.display {
-			var overlay: [String: Any] = [
-				"windowNumber": number,
-				"visible": snapshot.visible,
-				"displayId": Int(display.id),
-				"displayBounds": rectPayload(display.bounds),
+		let onscreen = onscreenWindowOrder()
+		let own = Set(snapshot.cursors.map { $0.windowNumber })
+		let captures = request["capture"] as? Bool == true ? captureCursorWindows(snapshot.cursors, scales: current.scales) : [:]
+		func point(_ value: CGPoint) -> [String: Any] { ["x": value.x, "y": value.y] }
+		var cursors: [[String: Any]] = []
+		for cursor in snapshot.cursors {
+			var entry: [String: Any] = [
+				"session": cursor.key.session,
+				"windowId": Int(cursor.key.windowId),
+				"pid": Int(cursor.pid),
+				"serial": cursor.serial,
+				"paletteIndex": cursor.palette.index,
+				"hueShift": cursor.palette.hueShift,
+				"windowNumber": cursor.windowNumber,
+				"visible": cursor.visible,
+				"alpha": cursor.alpha,
+				"fading": cursor.fading,
+				"displayId": Int(cursor.display.id),
+				"displayBounds": rectPayload(cursor.display.bounds),
+				"frame": rectPayload(cursor.windowFrame),
+				"windowOrigin": point(cursor.windowOrigin),
+				"points": cursor.points.map(point),
+				"target": point(cursor.target),
+				"local": point(cursor.localTarget),
+				"tip": point(cursor.tip),
+				"tipLocal": point(cursor.tipLocal),
+				"heading": cursor.heading,
+				"animating": cursor.animating,
+				"delivery": cursor.delivery,
+				"createdAt": cursor.createdAt,
+				"issuedAt": cursor.issuedAt,
+				"drawnAt": cursor.drawnAt,
 			]
-			if let frame = snapshot.windowFrame { overlay["frame"] = rectPayload(frame) }
-			if let entry = windowServerEntry(windowNumber: number) {
-				overlay["windowServerBounds"] = rectPayload(entry.bounds)
-				overlay["windowServerOnscreen"] = entry.onscreen
+			if let arrived = cursor.arrivedAt { entry["arrivedAt"] = arrived }
+			if let index = onscreen.firstIndex(where: { $0.number == cursor.windowNumber }) {
+				let mine = onscreen[index]
+				entry["windowServerBounds"] = rectPayload(mine.bounds)
+				entry["windowServerOnscreen"] = true
+				entry["windowServerLayer"] = mine.layer
+				if let below = onscreen[(index + 1)...].first(where: { !own.contains($0.number) }) {
+					entry["windowBelow"] = below.number
+					entry["windowBelowPid"] = Int(below.pid)
+				}
+			} else if let entryInfo = windowServerEntry(windowNumber: cursor.windowNumber) {
+				entry["windowServerBounds"] = rectPayload(entryInfo.bounds)
+				entry["windowServerOnscreen"] = entryInfo.onscreen
 			}
+			entry["targetOnscreen"] = cursor.key.windowId == 0 ? NSNull() : onscreen.contains { $0.number == Int(cursor.key.windowId) }
+			if let capture = captures[cursor.windowNumber] { entry["capture"] = capture }
+			cursors.append(entry)
+		}
+		var output: [String: Any] = [
+			"supported": true,
+			"displays": current.displays,
+			"now": snapshot.now,
+			"cursors": cursors,
+			"maxCursors": AgentCursor.maxCursors,
+			"windowSize": Double(AgentCursor.windowSize),
+			"idleMs": Int(AgentCursor.idleSeconds * 1000),
+			"fadeMs": Int(AgentCursor.fadeDuration * 1000),
+			"staleAfterIssueMs": Int(AgentCursor.staleAfterIssue * 1000),
+			"staleAfterActEndMs": Int(AgentCursor.staleAfterActEnd * 1000),
+			"livenessMs": Int(AgentCursor.livenessInterval * 1000),
+			"created": snapshot.created,
+			"coalesced": snapshot.coalesced,
+			"evicted": snapshot.evicted,
+			"reorders": snapshot.reorders,
+			"dropped": snapshot.dropped,
+			"history": snapshot.history.map { event -> [String: Any] in
+				var row: [String: Any] = ["kind": event.kind, "session": event.key.session, "windowId": Int(event.key.windowId), "at": event.at]
+				if let reason = event.reason { row["reason"] = reason }
+				if let serial = event.serial { row["serial"] = serial }
+				if let issued = event.issuedAt { row["issuedAt"] = issued }
+				return row
+			},
+		]
+		let latest = snapshot.lastKey.flatMap { key in snapshot.cursors.first { $0.key == key } } ?? snapshot.cursors.last
+		if let latest, let entry = cursors.first(where: { ($0["windowNumber"] as? Int) == latest.windowNumber }) {
+			var overlay: [String: Any] = [
+				"windowNumber": latest.windowNumber,
+				"visible": latest.visible,
+				"displayId": Int(latest.display.id),
+				"displayBounds": rectPayload(latest.display.bounds),
+				"frame": rectPayload(latest.windowFrame),
+			]
+			if let bounds = entry["windowServerBounds"] { overlay["windowServerBounds"] = bounds }
+			if let onscreenFlag = entry["windowServerOnscreen"] { overlay["windowServerOnscreen"] = onscreenFlag }
 			output["overlay"] = overlay
-			if request["capture"] as? Bool == true {
-				output["capture"] = captureOverlayPointer(windowNumber: number, pointsWide: display.bounds.width)
-			}
+			output["pointer"] = ["animating": latest.animating, "target": point(latest.target), "local": point(latest.localTarget), "position": point(latest.tipLocal)]
+			if let capture = captures[latest.windowNumber] { output["capture"] = capture }
 		} else {
 			output["overlay"] = NSNull()
+			output["pointer"] = ["animating": false]
 		}
-		var pointer: [String: Any] = ["animating": snapshot.animating]
-		if let target = snapshot.target { pointer["target"] = ["x": target.x, "y": target.y] }
-		if let local = snapshot.localTarget { pointer["local"] = ["x": local.x, "y": local.y] }
-		if let position = snapshot.position { pointer["position"] = ["x": position.x, "y": position.y] }
-		output["pointer"] = pointer
 		if let unplaced = snapshot.unplacedPoint { output["unplacedPoint"] = ["x": unplaced.x, "y": unplaced.y] }
 		return output
+	}
+
+	private struct OnscreenWindow {
+		let number: Int
+		let pid: Int32
+		let bounds: CGRect
+		let layer: Int
+	}
+
+	private func onscreenWindowOrder() -> [OnscreenWindow] {
+		guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else { return [] }
+		return list.compactMap { info in
+			guard let number = (info[kCGWindowNumber as String] as? NSNumber)?.intValue else { return nil }
+			var bounds = CGRect.null
+			if let raw = info[kCGWindowBounds as String] as? NSDictionary, let parsed = CGRect(dictionaryRepresentation: raw as CFDictionary) { bounds = parsed }
+			return OnscreenWindow(
+				number: number,
+				pid: (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0,
+				bounds: bounds,
+				layer: (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
+			)
+		}
 	}
 
 	private func windowServerEntry(windowNumber: Int) -> (bounds: CGRect, onscreen: Bool)? {
@@ -5433,75 +5631,77 @@ final class Bridge {
 		return (bounds, (info[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false)
 	}
 
-	private func captureOverlayPointer(windowNumber: Int, pointsWide: CGFloat) -> [String: Any] {
+	private func captureCursorWindows(_ cursors: [AgentCursorSnapshot], scales: [CGDirectDisplayID: Double]) -> [Int: [String: Any]] {
+		guard !cursors.isEmpty else { return [:] }
 		let semaphore = DispatchSemaphore(value: 0)
-		let captured = Box<CGImage?>(nil)
+		let images = Box<[Int: (image: CGImage, frame: CGRect)]>([:])
 		let failure = Box<String?>(nil)
 		let task = Task {
 			defer { semaphore.signal() }
 			do {
 				let shareable = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-				guard let window = shareable.windows.first(where: { Int($0.windowID) == windowNumber }) else {
-					failure.value = "the overlay window is not capturable"
-					return
+				var captured: [Int: (image: CGImage, frame: CGRect)] = [:]
+				for cursor in cursors {
+					guard let window = shareable.windows.first(where: { Int($0.windowID) == cursor.windowNumber }) else { continue }
+					let scale = scales[cursor.display.id] ?? 2
+					let config = SCStreamConfiguration()
+					config.width = max(1, Int((window.frame.width * scale).rounded()))
+					config.height = max(1, Int((window.frame.height * scale).rounded()))
+					config.showsCursor = false
+					config.ignoreShadowsSingleWindow = true
+					let image = try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: window), configuration: config)
+					captured[cursor.windowNumber] = (image, window.frame)
 				}
-				let config = SCStreamConfiguration()
-				config.width = max(1, Int(window.frame.width.rounded()))
-				config.height = max(1, Int(window.frame.height.rounded()))
-				config.showsCursor = false
-				config.ignoreShadowsSingleWindow = true
-				captured.value = try await SCScreenshotManager.captureImage(
-					contentFilter: SCContentFilter(desktopIndependentWindow: window),
-					configuration: config
-				)
+				images.value = captured
 			} catch {
 				failure.value = error.localizedDescription
 			}
 		}
 		if semaphore.wait(timeout: .now() + .seconds(5)) == .timedOut {
 			task.cancel()
-			return ["error": "capture timed out"]
+			return Dictionary(uniqueKeysWithValues: cursors.map { ($0.windowNumber, ["error": "capture timed out"]) })
 		}
-		if let message = failure.value { return ["error": message] }
-		guard let image = captured.value else { return ["error": "capture returned no image"] }
-		return pointerPixels(in: image, pointsWide: pointsWide)
+		var output: [Int: [String: Any]] = [:]
+		for cursor in cursors {
+			if let message = failure.value { output[cursor.windowNumber] = ["error": message]; continue }
+			guard let captured = images.value[cursor.windowNumber] else {
+				output[cursor.windowNumber] = ["error": "the cursor window is not capturable"]
+				continue
+			}
+			output[cursor.windowNumber] = cursorPixels(captured.image, windowBounds: windowServerEntry(windowNumber: cursor.windowNumber)?.bounds ?? captured.frame, cursor: cursor)
+		}
+		return output
 	}
 
-	private func pointerPixels(in image: CGImage, pointsWide: CGFloat) -> [String: Any] {
+	private func cursorPixels(_ image: CGImage, windowBounds: CGRect, cursor: AgentCursorSnapshot) -> [String: Any] {
 		let width = image.width
 		let height = image.height
 		var bytes = [UInt8](repeating: 0, count: width * height * 4)
 		let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
 			guard let context = CGContext(
 				data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
-				space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+				space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
 			) else { return false }
 			context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
 			return true
 		}
-		guard drawn, pointsWide > 0 else { return ["error": "could not read the captured pixels"] }
-		var count = 0
-		var minX = width, minY = height, maxX = -1, maxY = -1
-		for row in 0..<height {
-			for column in 0..<width {
-				let offset = (row * width + column) * 4
-				guard bytes[offset + 3] >= 153, bytes[offset] >= 180 else { continue }
-				count += 1
-				minX = min(minX, column)
-				maxX = max(maxX, column)
-				minY = min(minY, row)
-				maxY = max(maxY, row)
-			}
+		guard drawn, windowBounds.width > 0 else { return ["error": "could not read the captured pixels"] }
+		let pixelsPerPoint = Double(width) / Double(windowBounds.width)
+		var output: [String: Any] = ["width": width, "height": height, "pixelsPerPoint": pixelsPerPoint, "windowBounds": rectPayload(windowBounds)]
+		guard let located = AgentCursorPixels.locateTip(rgba: bytes, width: width, height: height, pixelsPerPoint: pixelsPerPoint, heading: cursor.heading) else {
+			output["opaquePixels"] = 0
+			output["bounds"] = NSNull()
+			return output
 		}
-		let pixelsPerPoint = Double(width) / Double(pointsWide)
-		var output: [String: Any] = ["width": width, "height": height, "pixelsPerPoint": pixelsPerPoint, "opaquePixels": count]
-		if count > 0 {
-			output["bounds"] = [
-				"x": Double(minX) / pixelsPerPoint,
-				"y": Double(minY) / pixelsPerPoint,
-				"w": Double(maxX - minX + 1) / pixelsPerPoint,
-				"h": Double(maxY - minY + 1) / pixelsPerPoint,
-			]
+		let display = cursor.display.bounds
+		let tip = CGPoint(x: windowBounds.minX + located.tip.x, y: windowBounds.minY + located.tip.y)
+		output["opaquePixels"] = located.opaquePixels
+		output["strokePixels"] = located.strokePixels
+		output["tipWindow"] = ["x": located.tip.x, "y": located.tip.y]
+		output["tip"] = ["x": tip.x, "y": tip.y]
+		output["tipLocal"] = ["x": tip.x - display.minX, "y": tip.y - display.minY]
+		if let body = located.bounds {
+			output["bounds"] = rectPayload(CGRect(x: windowBounds.minX + body.minX - display.minX, y: windowBounds.minY + body.minY - display.minY, width: body.width, height: body.height))
 		} else {
 			output["bounds"] = NSNull()
 		}
@@ -5993,14 +6193,16 @@ final class Bridge {
 		if let found = resolveOffSpaceWindows(pid: pid, windowIds: [windowId], scan: true)[windowId] {
 			return (found.element, ["discoveryActivation": false, "resolvedBy": found.source])
 		}
-		let lead = "off_space_window_unresolved: window \(windowId) of \(appLabel(pid)) is on a Space no display shows, and the app has not exposed it to Accessibility (it has not been shown on a visible Space since it opened, or its element lies beyond the helper's scan)"
+		let lead = "off_space_window_unresolved: window \(windowId) of \(appLabel(pid)) is on a Space no display shows, "
+			+ "and the app has not exposed it to Accessibility (it has not been shown on a visible Space since it opened, or its element lies beyond the helper's scan)"
 		let showOnce = "The user can show the window once (switch to its Space and back)"
 		var details: [String: Any] = ["offSpace": true, "windowId": Int(windowId), "discoveryActivation": false]
 		func refusal(_ message: String) -> BridgeFailure {
 			BridgeFailure(message: message, code: "off_space_window_unresolved", effectPossible: false, details: details)
 		}
 		guard optionalStringArg(request, "backgroundDelivery") == "extended" else {
-			throw refusal("\(lead), so it cannot be read without switching Spaces; nothing was activated or captured. \(showOnce), or enable background_delivery: \"extended\", which lets the helper tell the app it is active for a moment so that it exposes the window")
+			throw refusal("\(lead), so it cannot be read without switching Spaces; nothing was activated or captured. "
+				+ "\(showOnce), or enable background_delivery: \"extended\", which lets the helper tell the app it is active for a moment so that it exposes the window")
 		}
 		if let reason = OffSpaceSupport.shared.discoveryUnavailableReason {
 			details["discoveryUnavailableReason"] = reason
@@ -6139,6 +6341,7 @@ final class Bridge {
 		context.markEffect()
 		context.markInputEvent()
 		event.post(tap: .cghidEventTap)
+		if Self.extendedPointerTypes.contains(event.type) { context.hidPointerLastPosted = event.location }
 	}
 
 	private func postReleaseEvent(_ event: CGEvent, pid: Int32, delivery: String) throws {
@@ -6156,6 +6359,7 @@ final class Bridge {
 		context.markEffect()
 		context.markInputEvent()
 		event.post(tap: .cghidEventTap)
+		if Self.extendedPointerTypes.contains(event.type) { context.hidPointerLastPosted = event.location }
 		guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else {
 			throw destinationFailure(pid: pid, context: context, reason: "process_not_found", frontmostPid: currentFrontmostPid())
 		}

@@ -33,6 +33,7 @@ export interface FakeHelperDaemonOptions {
   initialStartedAt?: number | null;
   slowChunkMs?: number;
   slowHoldMs?: number;
+  deadlineOverrunMs?: number;
   cancelBlockMs?: number;
   pidSettleHoldMs?: number;
   ownerTtlMs?: number;
@@ -237,6 +238,7 @@ class FakeHelperState {
   private readonly executablePath?: string;
   private readonly slowChunkMs: number;
   private readonly slowHoldMs?: number;
+  private readonly deadlineOverrunMs: number;
   private readonly cancelBlockMs: number;
   private readonly pidSettleHoldMs: number;
   private readonly ownerTtlMs: number;
@@ -301,6 +303,7 @@ class FakeHelperState {
     this.executablePath = options.executablePath;
     this.slowChunkMs = options.slowChunkMs ?? 5_000;
     this.slowHoldMs = options.slowHoldMs;
+    this.deadlineOverrunMs = options.deadlineOverrunMs ?? 0;
     this.cancelBlockMs = options.cancelBlockMs ?? 0;
     this.pidSettleHoldMs = options.pidSettleHoldMs ?? 0;
     this.ownerTtlMs = options.ownerTtlMs ?? OWNER_TTL_MS;
@@ -1595,6 +1598,7 @@ class FakeHelperState {
         if (this.script === "s4-slow-type" && chunk === 0) {
           if (!deferred) tracked.step = 1;
           await this.sleep(tracked, this.slowHoldMs ?? defaultSlowHoldMs(text));
+          await this.overrunDeadline(tracked);
           this.checkpoint(tracked);
         }
       }
@@ -1655,6 +1659,14 @@ class FakeHelperState {
       };
     });
     tracked.wake = undefined;
+  }
+
+  private async overrunDeadline(tracked: Tracked): Promise<void> {
+    if (this.deadlineOverrunMs <= 0 || tracked.cancelled || tracked.deadlineMs === undefined)
+      return;
+    if (Date.now() < tracked.deadlineMs) return;
+    const until = tracked.deadlineMs + this.deadlineOverrunMs;
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, until - Date.now())));
   }
 
   private async actBatch(request: JsonObject, tracked: Tracked): Promise<JsonObject> {
@@ -1886,13 +1898,20 @@ async function main(args: readonly string[]): Promise<void> {
   const script = argValue(args, "--script");
   if (!socketPath || !script)
     throw new Error(
-      "Usage: fake-helper-daemon.ts --socket <path> --script <name> [--log <jsonl>] [--executable-path <path>] [--protocol-version <n>] [--started-at <s|none>] [--user-app terminal|neutral]",
+      "Usage: fake-helper-daemon.ts --socket <path> --script <name> [--log <jsonl>] [--executable-path <path>] [--protocol-version <n>] [--started-at <s|none>] [--user-app terminal|neutral] [--deadline-overrun-ms <ms>]",
     );
   const protocolArg = argValue(args, "--protocol-version");
   const startedAtArg = argValue(args, "--started-at");
   const userAppArg = argValue(args, "--user-app");
   if (userAppArg !== undefined && userAppArg !== "terminal" && userAppArg !== "neutral")
     throw new Error("--user-app must be terminal or neutral");
+  const overrunArg = argValue(args, "--deadline-overrun-ms");
+  const deadlineOverrunMs = overrunArg === undefined ? undefined : Number(overrunArg);
+  if (
+    deadlineOverrunMs !== undefined &&
+    !(Number.isSafeInteger(deadlineOverrunMs) && deadlineOverrunMs >= 0)
+  )
+    throw new Error("--deadline-overrun-ms must be a non-negative integer");
   let daemon: FakeHelperDaemon | undefined;
   let stopping = false;
   const stop = () => {
@@ -1923,6 +1942,7 @@ async function main(args: readonly string[]): Promise<void> {
           ? null
           : Number(startedAtArg),
     userApp: userAppArg,
+    deadlineOverrunMs,
   });
   if (stopping) {
     await daemon.close();

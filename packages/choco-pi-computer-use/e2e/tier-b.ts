@@ -18,7 +18,15 @@ export interface TierBNotes {
   holderDisturbances: string[];
   typingPath?: "worked" | "didnt";
   priorActs?: number;
-  cancel?: { origin: string; state: string; ackAt?: number; typedBeforeAck: number };
+  cancel?: {
+    origin: string;
+    state: string;
+    ackAt?: number;
+    typedBeforeAck: number;
+    typedAfterAck: number;
+    extendedDelivery?: string;
+    targetLeftActive: boolean;
+  };
   staleRefusal?: "stale_look";
   unverifiedEffects?: { index: number; action: string; outcome: string }[];
   grantedOutcome?: string;
@@ -118,7 +126,10 @@ export function finalState(
 function fieldChangesAfter(fixture: FixtureEvidence, ts: number): RecordValue[] {
   return fixture.target.filter(
     (row) =>
-      (row.event === "fieldValue" || row.event === "increment" || row.event === "customHit") &&
+      (row.event === "fieldValue" ||
+        row.event === "webValue" ||
+        row.event === "increment" ||
+        row.event === "customHit") &&
       (num(row.ts) ?? 0) > ts,
   );
 }
@@ -198,13 +209,26 @@ function scoreS4(input: TierBInput, notes: TierBNotes, errors: string[]): Inconc
     return undefined;
   }
   const typedBeforeAck = fixture.target.filter(
-    (row) => row.event === "fieldValue" && (num(row.ts) ?? 0) <= ackAt,
+    (row) =>
+      (row.event === "fieldValue" || row.event === "webValue") && (num(row.ts) ?? 0) <= ackAt,
   ).length;
+  const typedAfterAck = fixture.target.filter(
+    (row) => (row.event === "fieldValue" || row.event === "webValue") && (num(row.ts) ?? 0) > ackAt,
+  ).length;
+  const extendedDelivery = get(get(typed.response, "error"), "extendedDelivery");
+  const lastFocus = fixture.target.findLast(
+    (row) => row.event === "appActive" || row.event === "appInactive",
+  );
+  const targetLeftActive = lastFocus?.event === "appActive";
+  if (targetLeftActive) errors.push("target still believes it is active after the cancelled act");
   notes.cancel = {
     origin: isString(cancel.origin) ? cancel.origin : "unknown",
     state: String(state),
     ackAt,
     typedBeforeAck,
+    typedAfterAck,
+    ...(isString(extendedDelivery) && { extendedDelivery }),
+    targetLeftActive,
   };
   const late = fieldChangesAfter(fixture, ackAt + ACK_SLACK_MS);
   if (late.length)
