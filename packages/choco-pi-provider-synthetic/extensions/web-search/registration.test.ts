@@ -1,9 +1,8 @@
 import { createEventBus, createExtensionRuntime } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import { loadExtensionFromFactory } from "../../../../node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js";
-import unifiedSearchCore from "../../../choco-pi-web-search/extension.ts";
 import { registeredCanonicalSearchFrontend } from "../../../choco-pi-web-search/tests/fixtures/registered-canonical-tool.ts";
-import { getSearchScope } from "../../../choco-pi-web-search/index.ts";
+import { getSearchScope, unifiedSearchCore } from "../../../choco-pi-web-search/index.ts";
 import syntheticWebSearchExtension from "./index.ts";
 
 describe("Synthetic web-search registration mode", () => {

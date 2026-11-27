@@ -335,6 +335,14 @@ export function createCodexWebRunSearchAdapter(
       const modelRegistry = hostContext?.modelRegistry;
       const customRustBinariesDir = config.tools.customRustBinariesDir;
       assertCurrent(context);
+      if (context.targetModel !== undefined || context.targetAuthProvider === "openai") {
+        return {
+          status: "disabled",
+          reason: "Native Codex web_run does not accept an explicit model or OpenAI API target",
+          transport: CODEX_WEB_RUN_SEARCH_TRANSPORT,
+          billing: "subscription",
+        };
+      }
       if (!nativeWebRunEnabled(config))
         return {
           status: "disabled",

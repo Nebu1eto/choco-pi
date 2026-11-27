@@ -21,7 +21,7 @@ Pi has built-in logins for Anthropic, OpenAI, and xAI. choco-pi adds a Synthetic
 - Fast mode is accepted but has no effect; it is never sent.
 - Daybreak is unavailable.
 - Server-side compaction is never attempted; local compaction runs instead.
-- Native `web_run` search is unavailable; web search goes through `choco-pi-web-access`.
+- Native `web_run` search is unavailable; web search goes through `choco-pi-web-search`.
 - `imagegen` and `view_image` resolve `openai` credentials, but neither has been verified against the live service.
 
 Pi's built-in `xai` provider (Grok) signs in with `/login xai`, using a SuperGrok or X Premium subscription, or reads the `XAI_API_KEY` environment variable. Fast mode applies only to `xai/grok-4.7` on api.x.ai.

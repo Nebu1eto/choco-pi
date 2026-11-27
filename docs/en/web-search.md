@@ -19,7 +19,7 @@ flowchart LR
   R --> S[Synthetic search]
   R --> B[Brave API]
   R --> X[xAI Responses API]
-  M --> C[source_check and curator workflow]
+  M --> C[source_check and get_search_content]
   C --> R
 ```
 
@@ -83,12 +83,12 @@ Error messages list the backends that were tried and never include credentials. 
 
 Queries and the filters you enable are sent to the selected backend. Page extraction may then contact the result URLs. A direct page fetch connects only to DNS addresses that passed the private-network check, and each redirect is checked again. Review each provider's privacy and billing terms before you enable it, and keep secrets out of queries.
 
-Search results can be stored in the current Pi session, so that `get_search_content`, source checking, and curator workflows can retrieve them. Provider results stored in the legacy format remain readable. Search references belong to their session and are not accepted in another one.
+Search results are stored in the current Pi session with both the generated summary and full raw query results, so `get_search_content` and `source_check` can retrieve full answers, snippets, or diagnostics on demand. Provider results stored in the legacy format remain readable. Search references belong to their session and are not accepted in another one. Provider and model priority (`priority`, e.g. `["google/gemini-3.5-flash-lite", "openai-codex/gpt-6.1-terra", "exa"]`) is configured in `web-search.json` or under `/preferences` → Tools → Web search, with automatic fallback across timeout, transient, network, quota, auth, entitlement, and billing boundaries within the configured priority list.
 
 ## Standalone compatibility
 
 Here "standalone" means a search package loaded on its own, not the standalone `choco-pi` command. Loaded without the canonical core package, each search package keeps its legacy tool behavior.
 
-In the integrated profile, `choco-pi-web-access` must come immediately after `choco-pi-web-search` in `settings.json`, before the other backend packages. The canonical `web_search` tool activates only after the core requests integration and web-access actually registers `web_search`; if that frontend is missing or disabled, the legacy search tools stay available. Once activation succeeds, legacy names such as `web_run`, `web__run`, `synthetic_web_search`, and `agent_browser_web_search` are left out of discovery and Code Mode in favor of `web_search`.
+In the integrated profile, `choco-pi-web-search` comes before the other backend packages in `settings.json` and owns both the session-scoped router and the canonical `web_search`, `source_check`, `fetch_content`, and `get_search_content` tools. If `web_search` is disabled in config, legacy search tools stay available. Once activation succeeds, legacy names such as `web_run`, `web__run`, `synthetic_web_search`, and `agent_browser_web_search` are left out of discovery and Code Mode in favor of `web_search`.
 
 The profile's automated tests mock the transport boundaries. They verify routing and credential isolation, not live provider entitlement, remote availability, result quality, or current pricing.

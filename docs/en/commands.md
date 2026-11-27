@@ -31,7 +31,7 @@ These are the slash commands you will use most often. Aliases are in parentheses
 | `/goal [objective]`                               | Create, inspect, or manage a persistent goal                          |
 | `/hooks`, `/add-dir`                              | Browse hooks, or add a working directory                              |
 | `/mcp`                                            | Inspect MCP servers, sign in or out, reconnect, or change exposure    |
-| `/search`, `/websearch`, `/curator`               | Browse stored search results, or run the search curator               |
+| `/search`                                         | Browse stored search results (configure search priority in `/pref`)   |
 | `/lsp`                                            | Turn LSP use on or off, or show its state                             |
 | `/codex`, `/computer-use`                         | Configure the Codex adapter, or show the computer-use configuration   |
 | `/apex-refresh`                                   | Refresh the Callstack Apex models                                     |

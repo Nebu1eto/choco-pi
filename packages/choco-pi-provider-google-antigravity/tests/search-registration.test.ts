@@ -6,8 +6,11 @@ import {
   type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 import { loadExtensionFromFactory } from "../../../node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js";
-import unifiedSearchCore from "../../choco-pi-web-search/extension.ts";
-import { getSearchScope, type SearchScope } from "../../choco-pi-web-search/index.ts";
+import {
+  getSearchScope,
+  unifiedSearchCore,
+  type SearchScope,
+} from "../../choco-pi-web-search/index.ts";
 import { registeredCanonicalSearchFrontend } from "../../choco-pi-web-search/tests/fixtures/registered-canonical-tool.ts";
 import googleAntigravityWebSearch from "../extensions/web-search/index.ts";
 import {

@@ -91,7 +91,7 @@
 ## 조사와 연동
 
 - 웹 조사에는 대화 모델과 관계없이 지연 로딩되는 `web_search` 도구 하나를 씁니다. 검색 인증 정보와 요금은 대화 공급자가 아니라 선택한 검색 백엔드(OpenAI, Exa, Kagi, Synthetic, Brave, xAI)를 따릅니다. xAI(Grok) 백엔드는 요청이나 라우팅 설정에 `xai`가 지정되어 있고 xAI에 로그인한 상태일 때만 실행되며, 호출할 때마다 요금이 부과됩니다. 공급자, 라우팅, 개인정보 보호, fallback 동작은 [웹 검색](web-search.md)에서 설명합니다.
-- `fetch_content`는 페이지 내용을 추출하고, `source_check`는 인용된 구절과 대조해 주장을 검증합니다. `/search`로 저장된 검색 결과를 살펴보고, `/websearch`와 `/curator`로 검색 curator 작업 절차를 실행합니다.
+- `fetch_content`는 페이지 내용을 추출하고, `source_check`는 인용된 구절과 대조해 주장을 검증합니다. `web_search`는 요약을 기본 반환하면서 전체 원본을 함께 저장해 `get_search_content`로 조회할 수 있게 하며, `/search`로 저장된 결과를 살펴보고 `/preferences`(Tools → Web search)에서 공급자·모델 우선순위와 요약 옵션을 설정합니다.
 - MCP 서버 설정, 인증, 실행은 Pi 내장 MCP가 맡습니다. 에이전트는 `tool_search`로 MCP 도구를 찾아 `mcp__<server>__<tool>` 이름으로 호출하며, Code Mode에서는 `exec` 안에서 `tools.<name>`으로 호출합니다. 네이티브 Figma 도구는 이와 별개이며, Figma 파일, 컴포넌트, 변수, 렌더링 결과를 읽습니다.
 - `agent_browser`는 선택 사항인 `agent-browser` CLI로 웹 페이지를 자동화합니다.
 - macOS에서는 computer-use 도구가 네이티브 helper를 거쳐 데스크톱 앱을 확인하고 조작합니다. helper에는 손쉬운 사용(Accessibility)과 화면 기록(Screen Recording) 권한이 필요합니다. 설치, 권한, 설정 방법은 [computer use 설정하기](computer-use.md)를 참고하세요.

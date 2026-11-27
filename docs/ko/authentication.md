@@ -21,7 +21,7 @@ Pi에는 Anthropic, OpenAI, xAI 로그인이 내장되어 있습니다. choco-pi
 - Fast 모드를 켜도 오류는 나지 않지만 아무 효과가 없으며, 요청에도 포함되지 않습니다.
 - Daybreak은 쓸 수 없습니다.
 - 서버 측 compaction은 시도하지 않고, 대신 로컬 compaction을 실행합니다.
-- 네이티브 `web_run` 검색은 쓸 수 없으므로 웹 검색은 `choco-pi-web-access`를 거칩니다.
+- 네이티브 `web_run` 검색은 쓸 수 없으므로 웹 검색은 `choco-pi-web-search`를 거칩니다.
 - `imagegen`과 `view_image`는 `openai` 인증 정보를 찾아 쓰지만, 둘 다 실제 서비스에서는 아직 검증하지 않았습니다.
 
 Pi에 내장된 `xai` 공급자(Grok)는 `/login xai`로 SuperGrok 또는 X Premium 구독 계정에 로그인하거나, `XAI_API_KEY` 환경 변수에서 키를 읽습니다. Fast 모드는 api.x.ai의 `xai/grok-4.7`에만 적용됩니다.

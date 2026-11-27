@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -94,6 +94,33 @@ export async function assertPackageManagerPin(app: string, pins: RuntimePins): P
   }
 }
 
+export async function pruneOrphanedPackageDirs(app: string): Promise<string[]> {
+  const packagesDir = path.join(app, "packages");
+  let entries;
+  try {
+    entries = await readdir(packagesDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const removed: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const dirPath = path.join(packagesDir, entry.name);
+    if (await exists(path.join(dirPath, "package.json"))) continue;
+    let children: string[];
+    try {
+      children = await readdir(dirPath);
+    } catch {
+      continue;
+    }
+    if (children.every((name) => name === "node_modules")) {
+      await rm(dirPath, { recursive: true, force: true });
+      removed.push(dirPath);
+    }
+  }
+  return removed;
+}
+
 export async function installDependencies(
   app: string,
   runtime: string,
@@ -101,6 +128,7 @@ export async function installDependencies(
 ): Promise<void> {
   const pins = await readRuntimePins(path.join(app, path.relative(APP_ROOT, PINS_FILE)));
   await assertPackageManagerPin(app, pins);
+  await pruneOrphanedPackageDirs(app);
   await mkdir(runtime, { recursive: true });
   for (const entry of PNPM_DIRECTORIES) {
     const directory = path.join(runtime, entry);

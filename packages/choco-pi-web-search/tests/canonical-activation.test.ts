@@ -10,8 +10,7 @@ import {
   SettingsManager,
   type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
-import unifiedSearchCore from "../extension.ts";
-import { getSearchScope, hasCanonicalSearch } from "../index.ts";
+import { getSearchScope, hasCanonicalSearch, unifiedSearchCore } from "../index.ts";
 import { registeredCanonicalSearchFrontend } from "./fixtures/registered-canonical-tool.ts";
 import { hostParams } from "./fixtures/schema-bridge.ts";
 

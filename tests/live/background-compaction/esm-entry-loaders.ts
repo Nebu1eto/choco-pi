@@ -63,7 +63,6 @@ const NATIVE_ENTRIES: ReadonlySet<string> = new Set<string>([
   "profile/extensions/verdict-block-render.ts",
   "profile/extensions/xai-search.ts",
   "packages/choco-pi-web-search/extension.ts",
-  "packages/choco-pi-web-access/index.ts",
   "packages/choco-pi-shells/src/index.ts",
   "packages/choco-pi-hooks/src/extension.ts",
   "packages/choco-pi-subagents/src/index.ts",

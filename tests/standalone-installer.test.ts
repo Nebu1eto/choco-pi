@@ -23,6 +23,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { PI_CLI_RELATIVE } from "../scripts/standalone/contract.ts";
+import { pruneOrphanedPackageDirs } from "../scripts/standalone/bootstrap.ts";
 import {
   manifestProblems,
   parseInstallManifest,
@@ -1918,4 +1919,31 @@ test("the management CLI answers usage errors with exit 2 and --help with exit 0
   const help = await run(["self", "update", "--help"]);
   assert.equal(help.code, 0, help.stderr);
   assert.match(help.stdout, /--ref/);
+});
+
+test("pruneOrphanedPackageDirs removes leftover removed-package node_modules without touching live or custom dirs", async (context) => {
+  const app = await mkdtemp(path.join(tmpdir(), "choco-pi-prune-orphans-"));
+  context.after(() => rm(app, { recursive: true, force: true }));
+  const orphan = path.join(app, "packages", "choco-pi-web-access");
+  const emptyOrphan = path.join(app, "packages", "removed-empty");
+  const active = path.join(app, "packages", "choco-pi-web-search");
+  const custom = path.join(app, "packages", "user-notes");
+  await mkdir(path.join(orphan, "node_modules", "pkg"), { recursive: true });
+  await mkdir(emptyOrphan, { recursive: true });
+  await mkdir(path.join(active, "node_modules"), { recursive: true });
+  await writeFile(path.join(active, "package.json"), "{}", "utf8");
+  await mkdir(custom, { recursive: true });
+  await writeFile(path.join(custom, "notes.txt"), "keep", "utf8");
+
+  const removed = await pruneOrphanedPackageDirs(app);
+  const pathExists = (target: string) =>
+    lstat(target).then(
+      () => true,
+      () => false,
+    );
+  assert.deepEqual(removed.sort(), [orphan, emptyOrphan].sort());
+  assert.equal(await pathExists(orphan), false);
+  assert.equal(await pathExists(emptyOrphan), false);
+  assert.equal(await pathExists(active), true);
+  assert.equal(await pathExists(custom), true);
 });

@@ -71,6 +71,54 @@ export function isValidSearchProviderFamily<Value>(
   );
 }
 
+export interface SearchRouteTarget {
+  family: SearchProviderFamily;
+  model?: string;
+  authProvider?: string;
+}
+
+const SEARCH_ROUTE_FAMILY_ALIASES = {
+  "openai-codex": { family: "openai", authProvider: "openai-codex" },
+  "google-antigravity": { family: "google" },
+} as const satisfies Readonly<
+  Record<string, { readonly family: SearchProviderFamily; readonly authProvider?: string }>
+>;
+
+function lookupSearchRouteAlias(
+  prefix: string,
+): { readonly family: SearchProviderFamily; readonly authProvider?: string } | undefined {
+  if (prefix === "openai-codex") return SEARCH_ROUTE_FAMILY_ALIASES["openai-codex"];
+  if (prefix === "google-antigravity") return SEARCH_ROUTE_FAMILY_ALIASES["google-antigravity"];
+  return undefined;
+}
+
+export function parseSearchRouteTarget(raw: string): SearchRouteTarget | undefined {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return undefined;
+  const slashIndex = trimmed.indexOf("/");
+  const rawPrefix = (slashIndex === -1 ? trimmed : trimmed.slice(0, slashIndex))
+    .trim()
+    .toLowerCase();
+  const rawModel = slashIndex === -1 ? undefined : trimmed.slice(slashIndex + 1).trim();
+  if (slashIndex !== -1 && (!rawModel || rawModel.length === 0)) return undefined;
+  const alias = lookupSearchRouteAlias(rawPrefix);
+  const family = alias ? alias.family : rawPrefix;
+  if (!isValidSearchProviderFamily(family)) return undefined;
+  const target: SearchRouteTarget = { family };
+  if (rawModel) target.model = rawModel;
+  if (alias?.authProvider) {
+    target.authProvider = alias.authProvider;
+  } else if (family === "openai" && rawModel) {
+    target.authProvider = "openai";
+  }
+  return target;
+}
+
+export function formatSearchRouteTarget(target: SearchRouteTarget): string {
+  const prefix = target.authProvider ?? target.family;
+  return target.model ? `${prefix}/${target.model}` : prefix;
+}
+
 export type JsonValue =
   | null
   | boolean
@@ -193,7 +241,9 @@ export interface StoredReference {
 
 export interface SearchRouting {
   providers: SearchProviderFamily[];
+  targets?: readonly SearchRouteTarget[];
   fallbackOn?: SearchErrorKind[];
+  configuredPriority?: boolean;
 }
 
 export interface SearchErrorOptions {

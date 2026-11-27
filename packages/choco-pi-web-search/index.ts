@@ -1,7 +1,9 @@
 export {
   BUILTIN_SEARCH_PROVIDER_FAMILIES,
   defaultSearchFamilyOrder,
+  formatSearchRouteTarget,
   isValidSearchProviderFamily,
+  parseSearchRouteTarget,
   searchProviderFamilies,
   searchProviderSelections,
   type BuiltinSearchProviderFamily,
@@ -27,9 +29,11 @@ export {
   type SearchRequest,
   type SearchResponse,
   type SearchResult,
+  type SearchRouteTarget,
   type SearchRouting,
 } from "./src/contract.ts";
 export { canonicalSearchParams, searchProviderSchema } from "./src/schema.ts";
+export { default as unifiedSearchCore } from "./src/core-extension.ts";
 export {
   bindSearchSession,
   confirmCanonicalSearchRegistration,
@@ -49,4 +53,9 @@ export {
   type SearchAdapter,
   type SearchAdapterContext,
 } from "./src/scope.ts";
-export { search, type SearchOptions } from "./src/router.ts";
+export {
+  DEFAULT_ATTEMPT_DEADLINE_MS,
+  DEFAULT_TOTAL_DEADLINE_MS,
+  search,
+  type SearchOptions,
+} from "./src/router.ts";

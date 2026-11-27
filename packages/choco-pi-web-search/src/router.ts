@@ -11,6 +11,7 @@ import {
   type SearchReference,
   type SearchRequest,
   type SearchResponse,
+  type SearchRouteTarget,
   type SearchRouting,
   type StoredReference,
 } from "./contract.ts";
@@ -35,6 +36,9 @@ import {
   type SearchScope,
   type SearchSession,
 } from "./scope.ts";
+
+export const DEFAULT_ATTEMPT_DEADLINE_MS = 25_000;
+export const DEFAULT_TOTAL_DEADLINE_MS = 90_000;
 
 export interface SearchOptions {
   scope?: SearchScope;
@@ -170,9 +174,11 @@ function errorWithAttempts(
 
 interface SearchPlan {
   families: SearchProviderFamily[];
+  targets?: readonly SearchRouteTarget[];
   fanout: boolean;
   explicit: boolean;
   implicit: boolean;
+  configuredPriority: boolean;
 }
 
 function defaultFamiliesForScope(scope: SearchScope): SearchProviderFamily[] {
@@ -199,6 +205,29 @@ function createSearchPlan(
         fanout: false,
         explicit: false,
         implicit: true,
+        configuredPriority: false,
+      };
+    }
+    const configuredPriority = options.routing.configuredPriority === true;
+    if (options.routing.targets !== undefined) {
+      if (options.routing.targets.length === 0) {
+        throw new SearchError("config", "search routing providers must be non-empty");
+      }
+      for (const target of options.routing.targets) {
+        if (!isValidSearchProviderFamily(target.family)) {
+          throw new SearchError(
+            "config",
+            `Invalid search routing provider family: ${String(target.family)}`,
+          );
+        }
+      }
+      return {
+        families: options.routing.targets.map((target) => target.family),
+        targets: [...options.routing.targets],
+        fanout: false,
+        explicit: false,
+        implicit: false,
+        configuredPriority,
       };
     }
     if (options.routing.providers.length === 0) {
@@ -217,6 +246,7 @@ function createSearchPlan(
       fanout: false,
       explicit: false,
       implicit: false,
+      configuredPriority,
     };
   }
   if (request.provider === "all") {
@@ -225,14 +255,27 @@ function createSearchPlan(
       fanout: true,
       explicit: true,
       implicit: true,
+      configuredPriority: false,
     };
   }
   if (Array.isArray(request.provider)) {
     if (request.provider.length === 0)
       throw new SearchError("config", "provider list must be non-empty");
-    return { families: [...request.provider], fanout: true, explicit: true, implicit: false };
+    return {
+      families: [...request.provider],
+      fanout: true,
+      explicit: true,
+      implicit: false,
+      configuredPriority: false,
+    };
   }
-  return { families: [request.provider], fanout: false, explicit: true, implicit: false };
+  return {
+    families: [request.provider],
+    fanout: false,
+    explicit: true,
+    implicit: false,
+    configuredPriority: false,
+  };
 }
 
 function candidates(
@@ -336,7 +379,7 @@ function createAttemptSignal(
   const timeout = setTimeout(() => {
     deadline = "attempt";
     controller.abort(new Error("Search attempt deadline exceeded"));
-  }, options.attemptDeadlineMs ?? 120_000);
+  }, options.attemptDeadlineMs ?? DEFAULT_ATTEMPT_DEADLINE_MS);
   return {
     signal: controller.signal,
     cleanup() {
@@ -357,7 +400,7 @@ function makeTotalSignal(options: SearchOptions): TotalSignal {
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(new Error("Search total deadline exceeded")),
-    options.totalDeadlineMs ?? 360_000,
+    options.totalDeadlineMs ?? DEFAULT_TOTAL_DEADLINE_MS,
   );
   return { signal: controller.signal, cleanup: () => clearTimeout(timeout) };
 }
@@ -394,37 +437,63 @@ function constrainPlanToReferenceOwner(
       { family: owner.family, adapterId: owner.id },
     );
   }
-  return { families: [owner.family], fanout: false, explicit: plan.explicit, implicit: false };
+  return {
+    families: [owner.family],
+    fanout: false,
+    explicit: plan.explicit,
+    implicit: false,
+    configuredPriority: plan.configuredPriority,
+  };
 }
 
-function retryKinds(options: SearchOptions): ReadonlySet<SearchErrorKind> {
-  return new Set(
-    options.fallbackOn ??
-      options.routing?.fallbackOn ?? [
-        "transient",
-        "network",
-        "invalid-response",
-        "capability",
-        "deadline",
-      ],
-  );
+const DEFAULT_FALLBACK_KINDS: readonly SearchErrorKind[] = [
+  "transient",
+  "network",
+  "invalid-response",
+  "capability",
+  "deadline",
+];
+
+const CONFIGURED_PRIORITY_FALLBACK_KINDS: readonly SearchErrorKind[] = [
+  "transient",
+  "network",
+  "invalid-response",
+  "capability",
+  "deadline",
+  "quota",
+  "auth",
+  "entitlement",
+];
+
+function retryKinds(
+  options: SearchOptions,
+  configuredPriority = false,
+): ReadonlySet<SearchErrorKind> {
+  const explicit = options.fallbackOn ?? options.routing?.fallbackOn;
+  if (explicit !== undefined) return new Set(explicit);
+  return new Set(configuredPriority ? CONFIGURED_PRIORITY_FALLBACK_KINDS : DEFAULT_FALLBACK_KINDS);
 }
 
-function shouldFallback(error: SearchError, allowed: ReadonlySet<SearchErrorKind>): boolean {
+function shouldFallback(
+  error: SearchError,
+  allowed: ReadonlySet<SearchErrorKind>,
+  configuredPriority = false,
+): boolean {
   if (
-    [
-      "auth",
-      "config",
-      "invalid-request",
-      "cancelled",
-      "stale-context",
-      "entitlement",
-      "conflict",
-    ].includes(error.kind)
+    ["config", "invalid-request", "cancelled", "stale-context", "conflict"].includes(error.kind)
   ) {
     return false;
   }
+  if (!configuredPriority && (error.kind === "auth" || error.kind === "entitlement")) {
+    return false;
+  }
   if (error.kind === "deadline" && error.deadlineKind !== "attempt") return false;
+  if (
+    configuredPriority &&
+    (error.kind === "quota" || error.kind === "auth" || error.kind === "entitlement")
+  ) {
+    return allowed.has(error.kind);
+  }
   return error.retryable !== false && allowed.has(error.kind);
 }
 
@@ -506,6 +575,8 @@ async function attemptAdapter(
   totalSignal: AbortSignal,
   attempts: SearchAttemptDiagnostic[],
   billingState: { attemptedSubscription: boolean },
+  configuredPriority: boolean,
+  target?: SearchRouteTarget,
 ): Promise<SearchResponse | undefined> {
   const { scope, session, context } = invocation;
   const generation = session.generation;
@@ -536,6 +607,8 @@ async function attemptAdapter(
   };
   if (context !== undefined) adapterContext.context = context;
   if (storedReference) adapterContext.reference = storedReference.nativeReference;
+  if (target?.model !== undefined) adapterContext.targetModel = target.model;
+  if (target?.authProvider !== undefined) adapterContext.targetAuthProvider = target.authProvider;
   let resolvedAvailability: SearchAvailability | undefined;
   try {
     ensureNotInterrupted(attemptSignal, adapter);
@@ -578,6 +651,7 @@ async function attemptAdapter(
     if (
       billingState.attemptedSubscription &&
       !options.allowBilledApiFallback &&
+      !configuredPriority &&
       resolvedBilling === "api"
     ) {
       attempts.push({
@@ -664,11 +738,13 @@ async function searchFamily(
   attempts: SearchAttemptDiagnostic[],
   billingState: { attemptedSubscription: boolean },
   implicit: boolean,
+  configuredPriority: boolean,
+  target?: SearchRouteTarget,
 ): Promise<SearchResponse> {
   const familyCandidates = candidates(invocation.scope, [family], implicit);
   if (familyCandidates.length === 0)
     throw new SearchRouteMiss(family, `No ${family} search adapter is registered`);
-  const allowed = retryKinds(options);
+  const allowed = retryKinds(options, configuredPriority);
   let lastError: SearchError | undefined;
   for (const adapter of familyCandidates) {
     try {
@@ -680,6 +756,8 @@ async function searchFamily(
         totalSignal,
         attempts,
         billingState,
+        configuredPriority,
+        target,
       );
       assertCurrent(invocation.scope, invocation.session, invocation.session.generation);
       if (response) return response;
@@ -694,7 +772,7 @@ async function searchFamily(
         reason: error.message,
       });
       lastError = error;
-      if (!shouldFallback(error, allowed)) throw error;
+      if (!shouldFallback(error, allowed, configuredPriority)) throw error;
     }
   }
   if (lastError) throw lastError;
@@ -717,6 +795,7 @@ export async function search(
       invocation,
     );
     const { fanout, implicit } = plan;
+    const { configuredPriority } = plan;
     const families = implicit
       ? implicitFamilies(invocation.scope, plan.families, attempts)
       : plan.families;
@@ -739,6 +818,7 @@ export async function search(
               attempts,
               { attemptedSubscription: false },
               implicit,
+              false,
             ),
           );
           assertCurrent(invocation.scope, invocation.session, generation);
@@ -773,15 +853,19 @@ export async function search(
         attempts,
         { attemptedSubscription: false },
         implicit,
+        false,
       );
     }
     const billingState = { attemptedSubscription: false };
     let substantiveError: SearchError | undefined;
     let routeMiss: SearchError | undefined;
-    for (const family of families) {
+    const routeTargets: readonly SearchRouteTarget[] =
+      plan.targets ?? families.map((family) => ({ family }));
+    const allowed = retryKinds(options, configuredPriority);
+    for (const target of routeTargets) {
       try {
         return await searchFamily(
-          family,
+          target.family,
           request,
           invocation,
           options,
@@ -789,6 +873,8 @@ export async function search(
           attempts,
           billingState,
           implicit,
+          configuredPriority,
+          target,
         );
       } catch (cause) {
         const error = normalizeError(cause);
@@ -797,7 +883,7 @@ export async function search(
           continue;
         }
         substantiveError ??= error;
-        if (!shouldFallback(error, retryKinds(options))) throw error;
+        if (!shouldFallback(error, allowed, configuredPriority)) throw error;
       }
     }
     throw (

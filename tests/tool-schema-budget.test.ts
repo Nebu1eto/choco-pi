@@ -193,7 +193,7 @@ const FIRST_PARTY_TOOL_INVENTORY = new Map<string, readonly string[]>([
       "stop_subagent",
     ],
   ],
-  ["web-access", ["web_search", "source_check", "fetch_content", "get_search_content"]],
+  ["web-search", ["web_search", "source_check", "fetch_content", "get_search_content"]],
 ]);
 
 async function loadFirstPartyTools(): Promise<Map<string, ToolMetadata[]>> {
@@ -207,7 +207,6 @@ async function loadFirstPartyTools(): Promise<Map<string, ToolMetadata[]>> {
     ["sessions", "../profile/extensions/session-bridge.ts"],
     ["shells", "../packages/choco-pi-shells/src/index.ts"],
     ["subagents", "../packages/choco-pi-subagents/src/index.ts"],
-    ["web-access", "../packages/choco-pi-web-access/index.ts"],
   ]);
   const factories = new Map<string, ExtensionFactory>();
   for (const [packageName, path] of extensionPaths) {

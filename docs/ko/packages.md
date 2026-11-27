@@ -6,8 +6,7 @@
 
 | 패키지                                                                                         |          버전 | 용도                                                      |
 | ---------------------------------------------------------------------------------------------- | ------------: | --------------------------------------------------------- |
-| [`@choco-pi/web-search`](../../packages/choco-pi-web-search)                                   | 1.0.0-alpha.1 | 정식 웹 검색 도구의 세션별 라우팅                         |
-| [`@choco-pi/web-access`](../../packages/choco-pi-web-access)                                   | 1.0.0-alpha.1 | 웹 검색, 출처 검증, 콘텐츠 추출                           |
+| [`@choco-pi/web-search`](../../packages/choco-pi-web-search)                                   | 1.0.0-alpha.1 | 통합 웹 검색, 라우팅, 출처 검증, 콘텐츠 추출              |
 | [`@choco-pi/provider-synthetic`](../../packages/choco-pi-provider-synthetic)                   | 1.0.0-alpha.1 | Synthetic 공급자, 인증, 사용량, 검색                      |
 | [`@choco-pi/provider-google-antigravity`](../../packages/choco-pi-provider-google-antigravity) | 1.0.0-alpha.1 | Google Antigravity 공급자, OAuth 로그인, 할당량, 검색     |
 | [`@choco-pi/ui`](../../packages/choco-pi-ui)                                                   | 1.0.0-alpha.1 | TUI, 상태 표시줄, 환경설정, Nord 테마                     |

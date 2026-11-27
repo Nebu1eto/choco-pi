@@ -146,8 +146,10 @@ function defaultRegistry(context: SearchAdapterContext): XaiModelRegistry | unde
   return context.context?.modelRegistry;
 }
 
-function findSearchModel(registry: XaiModelRegistry): Model<Api> | undefined {
+function findSearchModel(registry: XaiModelRegistry, modelId?: string): Model<Api> | undefined {
+  const preferredId = modelId?.trim() || XAI_SEARCH_MODEL;
   return (
+    registry.find(XAI_PROVIDER_ID, preferredId) ??
     registry.find(XAI_PROVIDER_ID, XAI_SEARCH_MODEL) ??
     registry.getAll().find((model) => model.provider === XAI_PROVIDER_ID)
   );
@@ -212,11 +214,11 @@ function instructionsFor(request: SearchRequest): string {
   return lines.join(" ");
 }
 
-export function buildXaiRequestBody(query: string, request: SearchRequest) {
+export function buildXaiRequestBody(query: string, request: SearchRequest, modelId?: string) {
   const filters = buildXaiDomainFilters(request.domainFilter);
   const tool = filters ? { type: "web_search", filters } : { type: "web_search" };
   return {
-    model: XAI_SEARCH_MODEL,
+    model: modelId?.trim() || XAI_SEARCH_MODEL,
     input: [
       { role: "system", content: instructionsFor(request) },
       { role: "user", content: query },
@@ -397,7 +399,7 @@ async function callXai(
   timeoutMs: number,
 ): Promise<ParsedXaiResponse> {
   const timeout = AbortSignal.timeout(timeoutMs);
-  const body = JSON.stringify(buildXaiRequestBody(query, request));
+  const body = JSON.stringify(buildXaiRequestBody(query, request, context.targetModel));
   let response: Response;
   try {
     response = await fetchImpl(auth.url, {
@@ -516,7 +518,7 @@ export function createXaiSearchAdapter(options: XaiSearchAdapterOptions = {}): S
       let billing: SearchBilling;
       try {
         configured = registry.getProviderAuthStatus(XAI_PROVIDER_ID).configured;
-        model = configured ? findSearchModel(registry) : undefined;
+        model = configured ? findSearchModel(registry, context.targetModel) : undefined;
         billing = configured ? billingFor(registry, model) : "api";
       } catch (cause) {
         assertCurrent(context, generation);
@@ -547,7 +549,7 @@ export function createXaiSearchAdapter(options: XaiSearchAdapterOptions = {}): S
         throw xaiError("config", "xAI search requires a Pi host context with a model registry");
       }
       const snapshot = snapshots.get(context) ?? {
-        model: findSearchModel(registry),
+        model: findSearchModel(registry, context.targetModel),
         billing: "unknown",
       };
       const auth = await resolveCallAuth(registry, snapshot.model, context, generation);

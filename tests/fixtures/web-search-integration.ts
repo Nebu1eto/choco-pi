@@ -34,9 +34,8 @@ import {
   SYNTHETIC_CONFIG_UPDATED_EVENT,
   SyntheticConfigUpdatedPayloadSchema,
 } from "../../packages/choco-pi-provider-synthetic/src/config-events.ts";
-import unifiedSearchCore from "../../packages/choco-pi-web-search/extension.ts";
+import unifiedWebSearch from "../../packages/choco-pi-web-search/extension.ts";
 import { getSearchScope, hasCanonicalSearch } from "../../packages/choco-pi-web-search/index.ts";
-import webAccess from "../../packages/choco-pi-web-access/index.ts";
 
 const LEGACY_SEARCH_NAMES = [
   "web_run",
@@ -129,7 +128,7 @@ interface ToolParameters {
   query?: string;
   query_index?: number;
   response_id?: string;
-  workflow?: string;
+  summary?: boolean;
 }
 
 function createJwt(payload: JwtPayload): string {
@@ -231,15 +230,14 @@ async function createHarness(
   const eventBus = createEventBus();
   const extensionFactories = coreFirst
     ? [
-        { factory: unifiedSearchCore, name: "canonical-search" },
+        { factory: unifiedWebSearch, name: "web-search" },
         { factory: toolSearch, name: "tool-search" },
       ]
     : [
         { factory: toolSearch, name: "tool-search" },
-        { factory: unifiedSearchCore, name: "canonical-search" },
+        { factory: unifiedWebSearch, name: "web-search" },
       ];
   extensionFactories.push(
-    { factory: webAccess, name: "web-access" },
     { factory: codexSearchFactory(), name: "codex-search-registration" },
     { factory: browserSearchFactory(), name: "browser-search-registration" },
     { factory: legacySearchFactory, name: "late-legacy-discovery-fixture" },
@@ -579,7 +577,7 @@ for (const harness of [anthropic, synthetic]) {
   const beforeFetch = fetchCalls.length;
   const result = await executeTool(harness, "web_search", {
     query: `${harness.runner.createContext().model?.provider} default preference`,
-    workflow: "none",
+    summary: false,
   });
   assert.match(JSON.stringify(result), /Native result/);
   assert.equal((await nativeQueries(nativeLog)).length, beforeNative + 1);
@@ -607,7 +605,7 @@ assert.equal(synthetic.credentials.reads.includes("synthetic"), false);
   const result = await executeTool(anthropic, "web_search", {
     query: "explicit Exa override",
     provider: "exa",
-    workflow: "none",
+    summary: false,
   });
   assert.match(JSON.stringify(result), /Exa/);
   assert.equal((await nativeQueries(nativeLog)).length, beforeNative);
@@ -618,7 +616,7 @@ assert.equal(synthetic.credentials.reads.includes("synthetic"), false);
   const beforeFetch = fetchCalls.length;
   const result = await executeTool(anthropic, "web_search", {
     query: "fallback",
-    workflow: "none",
+    summary: false,
   });
   const fallbackCalls = fetchCalls.slice(beforeFetch);
   if (expectBilledApiFallback) {
@@ -637,7 +635,7 @@ assert.equal(synthetic.credentials.reads.includes("synthetic"), false);
   const beforeFetch = fetchCalls.length;
   const result = await executeTool(anthropic, "web_search", {
     query: "quota",
-    workflow: "none",
+    summary: false,
   });
   assert.match(JSON.stringify(result), /quota|429/i);
   assert.equal(fetchCalls.length, beforeFetch);
@@ -649,7 +647,7 @@ assert.equal(synthetic.credentials.reads.includes("synthetic"), false);
   const result = await executeTool(syntheticEnabled, "web_search", {
     query: "explicit synthetic subscription",
     provider: "synthetic",
-    workflow: "none",
+    summary: false,
   });
   assert.match(JSON.stringify(result), /Synthetic source/);
   assert.match(JSON.stringify(result), /example\.test\/synthetic/);
@@ -674,7 +672,7 @@ assert.equal(synthetic.credentials.reads.includes("synthetic"), false);
   const result = await executeTool(anthropic, "web_search", {
     query: "fallback",
     provider: "openai",
-    workflow: "none",
+    summary: false,
   });
   const explicitOpenAiCalls = fetchCalls.slice(beforeFetch);
   if (expectBilledApiFallback) {
@@ -697,7 +695,7 @@ assert.equal(synthetic.credentials.reads.includes("synthetic"), false);
   const pending = executeTool(
     anthropic,
     "web_search",
-    { query: "cancel", workflow: "none" },
+    { query: "cancel", summary: false },
     controller.signal,
   );
   setTimeout(() => controller.abort(), 50);
@@ -731,7 +729,7 @@ assert.equal(synthetic.credentials.reads.includes("synthetic"), false);
   const result = await executeTool(anthropic, "web_search", {
     query: "disabled synthetic",
     provider: "synthetic",
-    workflow: "none",
+    summary: false,
   });
   assert.match(JSON.stringify(result), /disabled|not configured|unavailable/i);
   assert.equal((await nativeQueries(nativeLog)).length, beforeNative);

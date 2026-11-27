@@ -31,7 +31,7 @@
 | `/goal [objective]`                               | 지속형 goal 생성, 확인, 관리                                             |
 | `/hooks`, `/add-dir`                              | 훅 살펴보기 또는 작업 디렉터리 추가                                      |
 | `/mcp`                                            | MCP 서버 확인, 로그인·로그아웃, 재연결, 노출 방식 변경                   |
-| `/search`, `/websearch`, `/curator`               | 저장된 검색 결과 보기 또는 검색 curator 실행                             |
+| `/search`                                         | 저장된 검색 결과 보기 (검색 우선순위 설정은 `/pref` → Tools)             |
 | `/lsp`                                            | LSP 사용 켜기·끄기 또는 상태 표시                                        |
 | `/codex`, `/computer-use`                         | Codex 어댑터 설정 또는 computer-use 설정 확인                            |
 | `/apex-refresh`                                   | Callstack Apex 모델 목록 새로 고침                                       |

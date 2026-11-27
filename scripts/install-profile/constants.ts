@@ -30,7 +30,6 @@ export const RETIRED_PROFILE_FILES: readonly string[] = ["extensions/context-cap
 
 export const DEFAULT_PROFILE_PACKAGES: readonly string[] = [
   "./packages/choco-pi-web-search",
-  "./packages/choco-pi-web-access",
   "./packages/choco-pi-provider-synthetic",
   "./packages/choco-pi-provider-google-antigravity",
   "./packages/choco-pi-ui",

@@ -258,9 +258,15 @@ export function buildGlobalSettings(
   );
   const rooted = (name: string) => path.resolve(root, "profile", name);
   const superseded = new Set(supersededNames);
-  const retainedPackages = (existingSettings.packages ?? []).filter(
-    (spec) => !superseded.has(identityName(packageIdentity(spec, root))),
-  );
+  const isSuperseded = (spec: string): boolean => {
+    if (superseded.has(identityName(packageIdentity(spec, root)))) return true;
+    if (path.isAbsolute(spec) && path.basename(path.dirname(path.resolve(spec))) === "packages") {
+      return superseded.has(path.basename(path.resolve(spec)));
+    }
+    return false;
+  };
+  const activeCanonicalPackages = canonicalPackages.filter((spec) => !isSuperseded(spec));
+  const retainedPackages = (existingSettings.packages ?? []).filter((spec) => !isSuperseded(spec));
   const profileDirectories = (name: "extensions" | "skills" | "prompts") => [
     rooted(name),
     ...(existingSettings[name] ?? []).filter(
@@ -287,7 +293,7 @@ export function buildGlobalSettings(
     ...(Object.keys(thinkingLevels).length > 0 && {
       modelThinkingLevels: thinkingLevels,
     }),
-    packages: mergePackages(canonicalPackages, retainedPackages, root),
+    packages: mergePackages(activeCanonicalPackages, retainedPackages, root),
     extensions: unique([...extensions, ...builtinPolicy]),
     skills: unique(profileDirectories("skills")),
     prompts: unique(profileDirectories("prompts")),
@@ -334,7 +340,7 @@ export async function readProfileSettings(
   for (const spec of existingSettings.packages ?? []) {
     if (!path.isAbsolute(spec)) continue;
     if (path.dirname(spec) === bundled) {
-      packages.push(spec);
+      if (await exists(path.join(spec, "package.json"))) packages.push(spec);
     } else if (path.dirname(path.resolve(spec)) === legacyBundled) {
       const moved = path.join(bundled, path.basename(path.resolve(spec)));
       if (await exists(path.join(moved, "package.json"))) packages.push(moved);

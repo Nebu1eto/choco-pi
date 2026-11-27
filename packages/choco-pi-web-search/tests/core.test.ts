@@ -19,12 +19,16 @@ import {
   canonicalSearchParams,
   confirmCanonicalSearchRegistration,
   createSearchScope,
+  DEFAULT_ATTEMPT_DEADLINE_MS,
+  DEFAULT_TOTAL_DEADLINE_MS,
   defaultSearchFamilyOrder,
+  formatSearchRouteTarget,
   getSearchScope,
   hasCanonicalSearch,
   invalidateSearchSession,
   isSearchError,
   markCanonicalSearch,
+  parseSearchRouteTarget,
   registerSearchAdapter,
   requestCanonicalSearchIntegration,
   resolveSearchScope,
@@ -590,7 +594,7 @@ test("pre-cancelled requests skip availability and total deadlines abort transpo
   assert.equal(fallbackCalls, 0);
 });
 
-test("default deadlines preserve 45-second transports, retry slow attempts, and stop totals", async (t) => {
+test("default deadlines preserve 20-second transports, retry slow attempts at 25s, and stop totals at 90s", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
 
   const normal = setup().scope;
@@ -599,7 +603,7 @@ test("default deadlines preserve 45-second transports, retry slow attempts, and 
     adapter("normal", "openai", {
       execute: async () =>
         new Promise<SearchAdapterResponse>((resolve) => {
-          setTimeout(() => resolve(result("normal")), 45_000);
+          setTimeout(() => resolve(result("normal")), 20_000);
         }),
     }),
   );
@@ -609,10 +613,10 @@ test("default deadlines preserve 45-second transports, retry slow attempts, and 
     return response;
   });
   await flushMicrotasks();
-  t.mock.timers.tick(30_001);
+  t.mock.timers.tick(15_000);
   await flushMicrotasks();
   assert.equal(normalSettled, false);
-  t.mock.timers.tick(14_999);
+  t.mock.timers.tick(5_000);
   await flushMicrotasks();
   assert.equal((await normalSearch).adapterId, "normal");
 
@@ -644,7 +648,7 @@ test("default deadlines preserve 45-second transports, retry slow attempts, and 
   );
   const retriedSearch = search({ query: "q", provider: "openai" }, { scope: retry });
   await flushMicrotasks();
-  t.mock.timers.tick(120_000);
+  t.mock.timers.tick(DEFAULT_ATTEMPT_DEADLINE_MS);
   await flushMicrotasks();
   assert.equal((await retriedSearch).adapterId, "fallback");
   assert.equal(fallbackCalls, 1);
@@ -661,7 +665,7 @@ test("default deadlines preserve 45-second transports, retry slow attempts, and 
     { scope: total, attemptDeadlineMs: 500_000 },
   );
   await flushMicrotasks();
-  t.mock.timers.tick(360_000);
+  t.mock.timers.tick(DEFAULT_TOTAL_DEADLINE_MS);
   await flushMicrotasks();
   await expectKind(totalSearch, "deadline");
 });
@@ -1675,4 +1679,104 @@ test("google sits before xai and both explicit-only families stay out of auto an
   );
   assert.equal(routed.provider, "google");
   assert.deepEqual(calls, ["google"]);
+});
+
+test("parseSearchRouteTarget parses provider, provider/model, and aliases cleanly", () => {
+  assert.deepEqual(parseSearchRouteTarget("exa"), { family: "exa" });
+  assert.deepEqual(parseSearchRouteTarget("google/gemini-3.5-flash-lite"), {
+    family: "google",
+    model: "gemini-3.5-flash-lite",
+  });
+  assert.deepEqual(parseSearchRouteTarget("google-antigravity/gemini-3.5-pro"), {
+    family: "google",
+    model: "gemini-3.5-pro",
+  });
+  assert.deepEqual(parseSearchRouteTarget("openai-codex/gpt-6.1-terra"), {
+    family: "openai",
+    model: "gpt-6.1-terra",
+    authProvider: "openai-codex",
+  });
+  assert.deepEqual(parseSearchRouteTarget("openai/gpt-6.1-terra"), {
+    family: "openai",
+    model: "gpt-6.1-terra",
+    authProvider: "openai",
+  });
+  assert.equal(
+    formatSearchRouteTarget({
+      family: "openai",
+      model: "gpt-6.1-terra",
+      authProvider: "openai-codex",
+    }),
+    "openai-codex/gpt-6.1-terra",
+  );
+  assert.equal(parseSearchRouteTarget(""), undefined);
+  assert.equal(parseSearchRouteTarget("google/"), undefined);
+  assert.equal(parseSearchRouteTarget("auto"), undefined);
+});
+
+test("configuredPriority passes model targets and falls back across quota, auth, entitlement, and billing boundaries", async () => {
+  const { scope } = setup();
+  const seen: string[] = [];
+  registerSearchAdapter(
+    scope,
+    adapter("google-sub", "google", {
+      explicitOnly: true,
+      billing: "subscription",
+      execute: async (_request, context) => {
+        seen.push(`google:${context.targetModel ?? "default"}`);
+        if (context.targetModel === "gemini-3.5-pro") {
+          throw new SearchError("quota", "quota exhausted", {
+            family: "google",
+            retryable: false,
+          });
+        }
+        throw new SearchError("entitlement", "model unavailable", {
+          family: "google",
+          retryable: false,
+        });
+      },
+    }),
+  );
+  registerSearchAdapter(
+    scope,
+    adapter("xai-auth", "xai", {
+      explicitOnly: true,
+      billing: "api",
+      execute: async (_request, context) => {
+        seen.push(`xai:${context.targetModel ?? "default"}`);
+        throw new SearchError("auth", "expired key", { family: "xai", retryable: false });
+      },
+    }),
+  );
+  registerSearchAdapter(
+    scope,
+    adapter("exa-api", "exa", {
+      billing: "api",
+      execute: async () => {
+        seen.push("exa");
+        return result("exa-ok");
+      },
+    }),
+  );
+  const targets = ["google/gemini-3.5-pro", "google/gemini-3.5-flash-lite", "xai/grok-4.3", "exa"]
+    .map((entry) => parseSearchRouteTarget(entry))
+    .filter((entry) => entry !== undefined);
+  const response = await search(
+    { query: "priority test" },
+    {
+      scope,
+      routing: {
+        providers: targets.map((target) => target.family),
+        targets,
+        configuredPriority: true,
+      },
+    },
+  );
+  assert.equal(response.provider, "exa");
+  assert.deepEqual(seen, [
+    "google:gemini-3.5-pro",
+    "google:gemini-3.5-flash-lite",
+    "xai:grok-4.3",
+    "exa",
+  ]);
 });

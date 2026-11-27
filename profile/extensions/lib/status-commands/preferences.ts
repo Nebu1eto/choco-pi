@@ -10,6 +10,7 @@ import { buildBackgroundCompactionPreferencesSections } from "../background-comp
 import { buildCodexPreferencesSections } from "../codex-preferences.ts";
 import { buildNativeSettingsSections } from "../native-settings.ts";
 import { buildSubagentPreferencesSections } from "../subagent-preferences.ts";
+import { buildWebSearchPreferencesSections } from "../web-search-preferences.ts";
 
 export type PreferencesFocus = {
   section?: string;
@@ -29,6 +30,7 @@ export function buildPreferencesExtraSections(
     ...buildSubagentPreferencesSections(ctx),
     ...buildAdvisorPreferencesSections(ctx),
     ...buildBackgroundCompactionPreferencesSections(ctx),
+    ...buildWebSearchPreferencesSections(ctx),
     buildAgentPreferencesSection(ctx),
   ];
 }

@@ -7,11 +7,11 @@ import {
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { loadExtensionFromFactory } from "../../../node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js";
-import unifiedSearchCore from "../../choco-pi-web-search/extension.ts";
 import { registeredCanonicalSearchFrontend } from "../../choco-pi-web-search/tests/fixtures/registered-canonical-tool.ts";
 import {
   bindSearchSession,
   getSearchScope,
+  unifiedSearchCore,
   type SearchScope,
   search,
 } from "../../choco-pi-web-search/index.ts";

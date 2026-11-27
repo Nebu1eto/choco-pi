@@ -19,7 +19,7 @@ flowchart LR
   R --> S[Synthetic search]
   R --> B[Brave API]
   R --> X[xAI Responses API]
-  M --> C[source_check and curator workflow]
+  M --> C[source_check and get_search_content]
   C --> R
 ```
 
@@ -83,12 +83,12 @@ fallback은 설정된 공급자와 기한 안에서만 일어납니다. 코어�
 
 검색어와 켜 둔 필터는 선택된 백엔드로 전송됩니다. 그 뒤 페이지를 추출하는 과정에서 결과 URL에 접속할 수 있습니다. 페이지를 직접 가져올 때는 사설 네트워크 검사를 통과한 DNS 주소로만 연결하며, 리디렉션될 때마다 다시 검사합니다. 공급자를 켜기 전에 각 공급자의 개인정보 처리 방침과 요금 조건을 확인하고, 검색어에 비밀 정보를 넣지 마세요.
 
-검색 결과는 현재 Pi 세션에 저장될 수 있으며, `get_search_content`, 출처 검증, curator 작업 절차가 저장된 결과를 다시 불러와 씁니다. 예전 형식으로 저장한 공급자 결과도 계속 읽을 수 있습니다. 검색 참조는 그것을 만든 세션에 속하므로 다른 세션에서는 받아들이지 않습니다.
+검색 결과는 생성된 요약과 전체 원본을 함께 현재 Pi 세션에 저장하므로, 요약만으로 부족할 때 `get_search_content`와 `source_check`로 전체 답변·스니펫·진단 정보를 다시 조회할 수 있습니다. 예전 형식으로 저장한 공급자 결과도 계속 읽을 수 있습니다. 검색 참조는 그것을 만든 세션에 속하므로 다른 세션에서는 받아들이지 않습니다. 공급자·모델 우선순위(`priority`, 예: `["google/gemini-3.5-flash-lite", "openai-codex/gpt-6.1-terra", "exa"]`)는 `web-search.json`이나 `/preferences` → Tools → Web search에서 설정하며, 우선순위 목록 내에서는 타임아웃·일시 오류·네트워크·할당량·인증·권한·과금 경계를 넘어 자동으로 다음 순위로 fallback합니다.
 
 ## 패키지 단독 사용 시 호환성
 
 여기서 단독 사용이란 검색 패키지 하나만 따로 불러온 경우를 말하며, 독립 실행형 `choco-pi` 명령과는 관계가 없습니다. 정식 코어 패키지 없이 불러온 검색 패키지는 예전 도구 동작을 그대로 유지합니다.
 
-통합 프로필에서는 `settings.json`에서 `choco-pi-web-search` 바로 다음에 `choco-pi-web-access`가 와야 하고, 두 패키지가 다른 백엔드 패키지보다 앞에 있어야 합니다. 정식 `web_search` 도구는 코어가 통합을 요청하고 web-access가 실제로 `web_search`를 등록한 뒤에야 활성화됩니다. 따라서 이 프런트엔드 패키지가 없거나 꺼져 있으면 예전 검색 도구를 계속 쓸 수 있습니다. 활성화에 성공하면 `web_run`, `web__run`, `synthetic_web_search`, `agent_browser_web_search` 같은 예전 이름은 도구 검색과 Code Mode에서 빠지고, 그 자리를 `web_search`가 대신합니다.
+통합 프로필에서는 `choco-pi-web-search`가 `settings.json`에서 다른 백엔드 패키지보다 앞에 위치하며, 세션별 라우터와 정식 `web_search`, `source_check`, `fetch_content`, `get_search_content` 도구를 함께 제공합니다. 설정에서 `web_search`가 꺼져 있으면 예전 검색 도구를 계속 쓸 수 있습니다. 활성화에 성공하면 `web_run`, `web__run`, `synthetic_web_search`, `agent_browser_web_search` 같은 예전 이름은 도구 검색과 Code Mode에서 빠지고, 그 자리를 `web_search`가 대신합니다.
 
 프로필의 자동 테스트는 전송 경계를 mock으로 대체합니다. 따라서 라우팅과 인증 정보 격리는 검증하지만, 실제 공급자 사용 권한, 원격 서비스 가용성, 결과 품질, 현재 가격은 검증하지 않습니다.

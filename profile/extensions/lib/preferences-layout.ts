@@ -182,6 +182,16 @@ export const PREFERENCES_LAYOUT: readonly PreferencesLayoutTab[] = [
     id: TOOLS_SECTION_ID,
     label: "Tools",
     groups: [
+      {
+        label: "Web search",
+        rows: [
+          "webSearch.priority",
+          "webSearch.summary",
+          "webSearch.summaryModel",
+          "webSearch.attemptTimeoutSeconds",
+          "webSearch.allowBilledApiFallback",
+        ],
+      },
       { label: "Skills", rows: ["skill-commands"] },
       {
         label: "Codex tools",

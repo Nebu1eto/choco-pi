@@ -14,7 +14,7 @@ import {
   type ExtensionContextActions,
 } from "@earendil-works/pi-coding-agent";
 import { bool, compile, obj, str, type Static } from "@earendil-works/pi-schema";
-import unifiedSearchCore from "../../extension.ts";
+import unifiedSearchCore from "../../src/core-extension.ts";
 import { registeredCanonicalSearchFrontend } from "./registered-canonical-tool.ts";
 import {
   getSearchScope,

@@ -209,7 +209,11 @@ export function createGoogleSearchAdapter(options: GoogleSearchAdapterOptions = 
       }
       const credential = await resolveCredential(registry, context, generation);
       const startedAt = now();
-      const model = selectWebSearchModel(getModelIds());
+      const requestedModel = context.targetModel?.trim();
+      const model =
+        requestedModel && requestedModel.length > 0
+          ? requestedModel
+          : selectWebSearchModel(getModelIds());
       const body = buildGroundingRequest({
         projectId: credential.projectId,
         model,

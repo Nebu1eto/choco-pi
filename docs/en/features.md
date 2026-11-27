@@ -91,7 +91,7 @@ This page describes what choco-pi adds to Pi, grouped by area. [Common commands]
 ## Research and integrations
 
 - Web research uses one deferred `web_search` tool, whatever the conversation model. Search credentials and billing come from the selected search backend (OpenAI, Exa, Kagi, Synthetic, Brave, or xAI), not from the conversation provider. The xAI (Grok) backend runs only when a request or the routing configuration names `xai`, and only while xAI is signed in; each call is billed. [Web search](web-search.md) covers providers, routing, privacy, and fallback behavior.
-- `fetch_content` extracts page content, and `source_check` verifies claims against cited passages. `/search` browses stored results; `/websearch` and `/curator` drive the search curator workflow.
+- `fetch_content` extracts page content, and `source_check` verifies claims against cited passages. `web_search` returns a concise summary while storing full raw results for `get_search_content`; `/search` browses stored results, and `/preferences` (Tools → Web search) configures provider/model priority and summary behavior.
 - Pi's built-in MCP owns server configuration, authentication, and execution. Agents find MCP tools with `tool_search` and call them by their `mcp__<server>__<tool>` names, and in Code Mode as `tools.<name>` inside `exec`. The native Figma tools are separate; they read Figma files, components, variables, and renders.
 - `agent_browser` automates web pages through the optional `agent-browser` CLI.
 - On macOS, the computer-use tools inspect and operate desktop applications through a native helper that needs the Accessibility and Screen Recording permissions. [Set up computer use](computer-use.md) covers installation, permissions, and configuration.

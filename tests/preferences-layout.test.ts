@@ -33,6 +33,10 @@ import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../packages/choco-pi-codex/src/
 import { buildCodexPreferencesSections } from "../packages/choco-pi-codex/src/ui/settings/preferences-sections.ts";
 import { publishBackgroundCompactionPreferences } from "../packages/choco-pi-compaction/src/preferences-section.ts";
 import { SUBAGENT_SETTING_DEFINITIONS } from "../packages/choco-pi-subagents/src/preferences-section.ts";
+import {
+  buildWebSearchPreferencesSection,
+  readWebSearchPreferencesState,
+} from "../packages/choco-pi-web-search/preferences-section.ts";
 import { loadZentuiModule, SKIP_WITHOUT_ZENTUI } from "./zentui-build.ts";
 
 initTheme("dark", false);
@@ -165,6 +169,12 @@ async function withProviders(run: (providers: Providers) => Promise<void>): Prom
       settings: { ...DEFAULT_SETTINGS },
       models: [],
     });
+    const webSearch = buildWebSearchPreferencesSection({
+      state: readWebSearchPreferencesState({}),
+      priorityChoices: [],
+      summaryModelChoices: [],
+      save: async () => {},
+    });
     const subagents: PreferencesExtraSection = {
       id: "subagents",
       label: "Subagents",
@@ -183,6 +193,7 @@ async function withProviders(run: (providers: Providers) => Promise<void>): Prom
       subagents,
       advisor,
       ...buildBackgroundCompactionPreferencesSections(ctx),
+      webSearch,
       buildAgentPreferencesSection(ctx),
     ];
     const rows = new Map(

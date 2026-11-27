@@ -22,9 +22,13 @@ import {
   fetchExaSearchJson,
   getAgentBrowserSearchBackendAvailability,
 } from "../extensions/agent-browser/lib/web-search.ts";
-import unifiedSearchCore from "../../choco-pi-web-search/extension.ts";
 import { registeredCanonicalSearchFrontend } from "../../choco-pi-web-search/tests/fixtures/registered-canonical-tool.ts";
-import { bindSearchSession, getSearchScope, search } from "../../choco-pi-web-search/index.ts";
+import {
+  bindSearchSession,
+  getSearchScope,
+  search,
+  unifiedSearchCore,
+} from "../../choco-pi-web-search/index.ts";
 
 async function configWithEnv(env: NodeJS.ProcessEnv) {
   return loadAgentBrowserConfig({

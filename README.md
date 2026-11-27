@@ -73,7 +73,7 @@ Keep OAuth tokens, API keys, other credentials, machine-local configuration, and
 
 ## License status
 
-Every local package manifest except `choco-pi-web-search` declares the MIT license; `choco-pi-web-search` declares none. The repository has no root license file, so this README does not assign a license to the repository as a whole.
+Every local package manifest declares the MIT license. The repository has no root license file, so this README does not assign a license to the repository as a whole.
 
 ## References
 

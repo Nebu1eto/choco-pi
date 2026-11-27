@@ -51,7 +51,6 @@ const SidecarSchema = map(unknown());
 
 const BUNDLED_PACKAGES = [
   "choco-pi-web-search",
-  "choco-pi-web-access",
   "choco-pi-provider-synthetic",
   "choco-pi-provider-google-antigravity",
   "choco-pi-ui",
@@ -1083,10 +1082,8 @@ test("an old-layout install upgrades in place without --backup and is idempotent
   const settings = JSON.parse(settingsText);
   const expectedPackages = DEFAULT_PROFILE_PACKAGES.map((spec) => path.resolve(root, spec));
   assert.deepEqual(settings.packages, [...expectedPackages, ...userPackages]);
-  assert.ok(
-    settings.packages.indexOf(path.join(root, "packages", "choco-pi-web-search")) <
-      settings.packages.indexOf(path.join(root, "packages", "choco-pi-web-access")),
-  );
+  assert.ok(settings.packages.includes(path.join(root, "packages", "choco-pi-web-search")));
+  assert.ok(!settings.packages.some((spec: string) => spec.includes("choco-pi-web-access")));
   assert.ok(!settings.packages.some((spec: string) => spec.includes("choco-pi-acp")));
   assert.ok(!settings.packages.some((spec: string) => spec.includes(`${path.sep}.pi${path.sep}`)));
   assert.deepEqual(settings.extensions, [
@@ -1167,4 +1164,35 @@ test("the CLI installs when its path runs through a symlinked directory", async 
   assert.ok((await lstat(path.join(agentDir, "settings.json"))).isFile());
   assert.ok((await lstat(path.join(agentDir, "SYSTEM.md"))).isSymbolicLink());
   assert.ok((await lstat(path.join(agentDir, "choco-pi-ui.json"))).isFile());
+});
+
+test("upgrading removes superseded bundled package paths from local and foreign checkouts", async (context) => {
+  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-upgrade-superseded-"));
+  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  const root = process.cwd();
+  const settingsPath = path.join(agentDir, "settings.json");
+  await writeFile(
+    settingsPath,
+    JSON.stringify(
+      {
+        packages: [
+          path.join(root, "packages", "choco-pi-web-search"),
+          path.join(root, "packages", "choco-pi-web-access"),
+          "/other/choco-pi/packages/choco-pi-web-access",
+          "npm:user-custom-pkg@1.0.0",
+        ],
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+  await installProfile({ root, agentDir });
+  const settings = JSON.parse(await readFile(settingsPath, "utf8"));
+  assert.ok(settings.packages.includes(path.join(root, "packages", "choco-pi-web-search")));
+  assert.ok(settings.packages.includes("npm:user-custom-pkg@1.0.0"));
+  assert.ok(
+    !settings.packages.some((spec: string) => spec.includes("choco-pi-web-access")),
+    `superseded choco-pi-web-access remained: ${JSON.stringify(settings.packages)}`,
+  );
 });

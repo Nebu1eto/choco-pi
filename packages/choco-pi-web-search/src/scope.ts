@@ -176,6 +176,8 @@ export interface SearchAdapterContext {
   generation: number;
   signal: AbortSignal;
   reference?: SearchNativeReference;
+  targetModel?: string;
+  targetAuthProvider?: string;
 }
 
 export interface SearchAdapter {

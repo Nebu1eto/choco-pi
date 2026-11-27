@@ -18,6 +18,6 @@
     "tests/**/*.ts",
     "tools/**/*.ts"
   ],
-  "files": ["packages/choco-pi-web-access/promise-try.d.ts"],
+  "files": ["packages/choco-pi-web-search/promise-try.d.ts"],
   "exclude": [".pi/npm", "packages"]
 }
