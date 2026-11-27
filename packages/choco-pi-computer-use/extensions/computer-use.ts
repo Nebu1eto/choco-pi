@@ -34,7 +34,7 @@ import {
   getSessionForegroundPromptMode,
   getSessionGrants,
   loadComputerUseConfig,
-  runWithAppPolicy,
+  runWithComputerUseConfig,
   sessionGrantGeneration,
   UNBLOCKED_APPS_ENV,
   type BackgroundDeliveryMode,
@@ -405,8 +405,8 @@ export async function runComputerUseCommand(
   args: string,
   cwd: string,
 ): Promise<{ message: string; level: "info" | "warning" | "error" }> {
-  const { appPolicy } = await loadComputerUseConfig(cwd);
-  return await runWithAppPolicy(appPolicy, async () => await computerUseCommand(args));
+  const loaded = await loadComputerUseConfig(cwd);
+  return await runWithComputerUseConfig(loaded, async () => await computerUseCommand(args));
 }
 
 async function computerUseCommand(
@@ -444,10 +444,13 @@ export function createComputerUseSessionHandlers(): ComputerUseSessionHandlers {
       startedScope = scope;
       const ui = ctx.hasUI ? ctx.ui : undefined;
       await runInSessionScope(scope, async () => {
-        await loadComputerUseConfig(cwd);
+        const loaded = await loadComputerUseConfig(cwd);
         if (!ui || scope.retired || startedScope !== scope) return;
         try {
-          await ensureComputerUseSetup(ctx, scope.signal);
+          await runWithComputerUseConfig(
+            loaded,
+            async () => await ensureComputerUseSetup(ctx, scope.signal),
+          );
         } catch (error) {
           if (scope.retired || startedScope !== scope) return;
           notifyUnlessStale(ui, error instanceof Error ? error.message : String(error), "warning");

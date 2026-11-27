@@ -51,6 +51,7 @@ import type {
   ForegroundSession,
   HelperAttempt,
   HelperRefusalSignal,
+  KeyWindowRefusalKind,
   NativePreparedAction,
   ResolvedTarget,
   WindowRefRecord,
@@ -145,6 +146,79 @@ export function usedExtendedDelivery(evidence: HelperRefusalEvidence | undefined
   return evidence?.extendedDelivery === "used";
 }
 
+export function keyWindowRefusalOf(
+  code: string | undefined,
+  evidence: HelperRefusalEvidence | undefined,
+): KeyWindowRefusalKind | undefined {
+  if (code !== "foreground_required" || !usedExtendedDelivery(evidence)) return undefined;
+  if (evidence?.keyWindowAcquired !== false) return undefined;
+  if (evidence.observedWindowResolved === false) return "observed_window_unresolved";
+  return evidence.observedWindowResolved === true ? "observed_window_not_key" : "unconfirmed";
+}
+
+export function resultErrorEvidence(
+  error: HelperActResult["error"],
+): HelperRefusalEvidence | undefined {
+  if (!error) return undefined;
+  const evidence: HelperRefusalEvidence = { ...error.evidence };
+  if (error.extendedDelivery !== undefined && evidence.extendedDelivery === undefined)
+    evidence.extendedDelivery = error.extendedDelivery;
+  if (error.keyWindowAcquired !== undefined && evidence.keyWindowAcquired === undefined)
+    evidence.keyWindowAcquired = error.keyWindowAcquired;
+  if (error.observedWindowResolved !== undefined && evidence.observedWindowResolved === undefined)
+    evidence.observedWindowResolved = error.observedWindowResolved;
+  return evidence;
+}
+
+const KEY_WINDOW_CAUSE = {
+  observed_window_unresolved:
+    "the helper could not resolve the observed window, so it could not confirm that window is the app's key window",
+  observed_window_not_key: "the observed window did not become the app's key window",
+  unconfirmed: "the helper could not confirm the observed window as the app's key window",
+} satisfies Record<KeyWindowRefusalKind, string>;
+
+export function keyWindowRefusalText(kind: KeyWindowRefusalKind): string {
+  return `No key was sent: ${KEY_WINDOW_CAUSE[kind]}. Extended background delivery was used for the activation only (the app was told it was active; no input event was sent to it).`;
+}
+
+export function keyWindowRefusal(
+  target: ResolvedTarget,
+  action: NativePreparedAction,
+  kind: KeyWindowRefusalKind,
+  reason: string,
+): ForegroundRefusal {
+  return {
+    code: "foreground_required",
+    target: {
+      app: target.appName,
+      bundleId: target.bundleId,
+      pid: target.pid,
+      windowTitle: target.windowTitle,
+    },
+    action: action.action,
+    capability: foregroundCapability(action),
+    effectPossible: false,
+    key_window: kind,
+    grantHint: `${keyWindowRefusalText(kind)} It was not retried and no foreground grant was requested in this call. Call observe_ui on the target before acting again; set_text on an editable ref needs no key input.`,
+    reason,
+  };
+}
+
+function keyWindowTraceError(
+  message: string,
+  kind: KeyWindowRefusalKind,
+): NonNullable<ExecutionTrace["error"]> {
+  const error: NonNullable<ExecutionTrace["error"]> = {
+    code: "foreground_required",
+    message,
+    effectPossible: false,
+    extendedDelivery: "used",
+    keyWindowAcquired: false,
+  };
+  if (kind !== "unconfirmed") error.observedWindowResolved = kind === "observed_window_not_key";
+  return error;
+}
+
 export function extendedEndingResult(code: string, message: string): HelperActResult {
   return {
     outcome: "unknown",
@@ -161,7 +235,8 @@ function refusedAfterExtendedDelivery(result: HelperActResult): boolean {
   const error = result.error;
   return (
     error?.code === "foreground_required" &&
-    (error.extendedDelivery === "used" || usedExtendedDelivery(error.evidence))
+    (error.extendedDelivery === "used" || usedExtendedDelivery(error.evidence)) &&
+    keyWindowRefusalOf(error.code, resultErrorEvidence(error)) === undefined
   );
 }
 
@@ -555,6 +630,12 @@ export async function helperAct(
       const evidence = error instanceof PlatformCommandError ? error.evidence : undefined;
       if (!(error instanceof Error && "code" in error && error.code === "foreground_required"))
         throw error;
+      const keyWindow = keyWindowRefusalOf("foreground_required", evidence);
+      if (keyWindow)
+        return {
+          request,
+          thrown: { message: error.message, effectPossible: false, evidence, keyWindow },
+        };
       if (usedExtendedDelivery(evidence))
         return { request, result: extendedEndingResult("foreground_required", error.message) };
       return {
@@ -573,6 +654,7 @@ export async function helperAct(
   if (policy === "foreground") await enterForegroundSection(session, signal);
   const first = await attempt(policy);
   const firstRefusal = helperRefusalSignal(first);
+  if (firstRefusal?.keyWindow) return attemptTrace(target, action, headless, policy, first);
   if (policy !== "background" || firstRefusal?.effectPossible !== false)
     return attemptTrace(target, action, headless, policy, first);
   const delivered =
@@ -639,6 +721,14 @@ export function helperRefusalSignal(attempt: HelperAttempt): HelperRefusalSignal
   const error = attempt.result.error;
   if (error?.code !== "foreground_required") return undefined;
   const { evidence } = error;
+  const keyWindow = keyWindowRefusalOf(error.code, resultErrorEvidence(error));
+  if (keyWindow)
+    return {
+      message: error.message ?? "The helper refused before any key was sent.",
+      effectPossible: false,
+      evidence: resultErrorEvidence(error),
+      keyWindow,
+    };
   return {
     message: error.message ?? "The helper requires foreground delivery for this action.",
     effectPossible: !refusalProvesNoEffect(error.effectPossible, evidence),
@@ -655,7 +745,17 @@ export function attemptTrace(
 ): ExecutionTrace {
   const { request } = attempt;
   if (attempt.thrown) {
-    const { message, effectPossible, evidence } = attempt.thrown;
+    const { message, effectPossible, evidence, keyWindow } = attempt.thrown;
+    if (keyWindow)
+      return executionTrace("act", "default", {
+        outcome: "didnt",
+        deliveryPolicy: policy,
+        error: keyWindowTraceError(message, keyWindow),
+        backgroundFirst: true,
+        backgroundAttempt: { outcome: "foreground_required", reason: message },
+        requestId: request.requestId,
+        refusal: keyWindowRefusal(target, action, keyWindow, message),
+      });
     return executionTrace("act", policy === "ax_only" ? "stealth" : "default", {
       outcome: "didnt",
       deliveryPolicy: policy,
@@ -686,6 +786,7 @@ export function attemptTrace(
   if (refusal) {
     trace.outcome = "didnt";
     trace.refusal = refusal;
+    if (refusal.key_window && trace.error) trace.error = { ...trace.error, effectPossible: false };
     if (refusal.pidPointerAttempted) trace.pidPointerAttempted = true;
     trace.backgroundAttempt = {
       outcome: result.error?.code === "foreground_required" ? "foreground_required" : "didnt",
@@ -702,6 +803,14 @@ export function refusalForResult(
   policy: DeliveryPolicy,
   result: HelperActResult,
 ): ForegroundRefusal | undefined {
+  const keyWindow = keyWindowRefusalOf(result.error?.code, resultErrorEvidence(result.error));
+  if (keyWindow)
+    return keyWindowRefusal(
+      target,
+      action,
+      keyWindow,
+      result.error?.message ?? "The helper refused before any key was sent.",
+    );
   if (refusedAfterExtendedDelivery(result)) return undefined;
   if (result.error?.code === "foreground_required") {
     const { evidence } = result.error;

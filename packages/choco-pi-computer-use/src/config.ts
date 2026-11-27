@@ -264,40 +264,34 @@ export async function loadComputerUseConfig(cwd: string): Promise<LoadedComputer
   return loaded;
 }
 
-export function getComputerUseConfig(): ComputerUseConfig {
-  return activeConfig;
-}
+const operationConfig = new AsyncLocalStorage<LoadedComputerUseConfig>();
 
-const operationAppPolicy = new AsyncLocalStorage<AppPolicySettings>();
-
-export function runWithAppPolicy<T>(policy: AppPolicySettings, work: () => T): T {
-  return operationAppPolicy.run(policy, work);
-}
-
-export function getAppPolicySettings(): AppPolicySettings {
-  return operationAppPolicy.getStore() ?? activeLoadedConfig.appPolicy;
-}
-
-const operationBackgroundDelivery = new AsyncLocalStorage<BackgroundDeliveryMode>();
-
-export function runWithBackgroundDelivery<T>(mode: BackgroundDeliveryMode, work: () => T): T {
-  return operationBackgroundDelivery.run(mode, work);
-}
-
-export function getBackgroundDelivery(): BackgroundDeliveryMode {
-  return operationBackgroundDelivery.getStore() ?? activeConfig.background_delivery;
+export function runWithComputerUseConfig<T>(loaded: LoadedComputerUseConfig, work: () => T): T {
+  return operationConfig.run(loaded, work);
 }
 
 export function getLoadedComputerUseConfig(): LoadedComputerUseConfig {
-  return activeLoadedConfig;
+  return operationConfig.getStore() ?? activeLoadedConfig;
+}
+
+export function getComputerUseConfig(): ComputerUseConfig {
+  return operationConfig.getStore()?.config ?? activeConfig;
+}
+
+export function getAppPolicySettings(): AppPolicySettings {
+  return getLoadedComputerUseConfig().appPolicy;
+}
+
+export function getBackgroundDelivery(): BackgroundDeliveryMode {
+  return getComputerUseConfig().background_delivery;
 }
 
 export function isHeadlessMode(): boolean {
-  return activeConfig.headless;
+  return getComputerUseConfig().headless;
 }
 
 export function isBrowserUseEnabled(): boolean {
-  return activeConfig.browser_use;
+  return getComputerUseConfig().browser_use;
 }
 
 interface SessionGrantState {
@@ -338,7 +332,7 @@ export function getSessionForegroundPromptMode(): ForegroundPromptMode | undefin
 }
 
 export function foregroundPromptMode(): ForegroundPromptMode {
-  return sessionGrantState().promptMode ?? activeConfig.foreground_prompt;
+  return sessionGrantState().promptMode ?? getComputerUseConfig().foreground_prompt;
 }
 
 export function normalizeBundleId(bundleId: string | undefined): string | undefined {
@@ -386,7 +380,7 @@ export function clearSessionGrants(): void {
 }
 
 export function foregroundGrantCovers(bundleId: string | undefined): boolean {
-  const grant = activeConfig.foreground_grant;
+  const grant = getComputerUseConfig().foreground_grant;
   if (grant.includes("*")) return true;
   const normalized = bundleId?.trim();
   if (!normalized) return false;

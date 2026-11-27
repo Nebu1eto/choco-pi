@@ -56,7 +56,8 @@ export interface FakeHelperDaemonOptions {
     | "foreground_required_bare"
     | "didnt"
     | "ending"
-    | "key_window_refusal";
+    | "key_window_refusal"
+    | "key_window_unresolved";
   offSpace?: "resolved" | "never_shown";
 }
 
@@ -618,6 +619,7 @@ class FakeHelperState {
           },
         };
       case "key_window_refusal":
+      case "key_window_unresolved":
       case "unknown":
         return {
           outcome: "unknown",
@@ -1555,16 +1557,20 @@ class FakeHelperState {
       const text = isString(params.text) ? params.text : "";
       if (
         this.extendedStatus(request, policy) === "used" &&
-        this.extendedAnswer === "key_window_refusal"
+        (this.extendedAnswer === "key_window_refusal" ||
+          this.extendedAnswer === "key_window_unresolved")
       ) {
         this.checkpoint(tracked);
         effect();
+        const resolved = this.extendedAnswer === "key_window_refusal";
         throw new FakeFailure(
           "foreground_required",
-          "Extended background delivery could not make the observed window the target's key window; no key input was sent",
+          resolved
+            ? "Extended background delivery could not make the observed window the target's key window; no key input was sent"
+            : "Extended background delivery could not resolve the observed window, so it could not confirm that window is the target's key window; no key input was sent, only the activation",
           false,
           undefined,
-          { keyWindowAcquired: false, observedWindowResolved: true, extendedDelivery: "used" },
+          { keyWindowAcquired: false, observedWindowResolved: resolved, extendedDelivery: "used" },
         );
       }
       if (this.extendedStatus(request, policy) === "used" && this.extendedAnswer === "didnt") {

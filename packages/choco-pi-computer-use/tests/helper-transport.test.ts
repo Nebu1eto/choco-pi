@@ -1741,7 +1741,14 @@ test("bridge: the helper's app_blocked on the element an act resolves sends noth
   assert.deepEqual(prompts, []);
 });
 
-function injectFaultAfterForegroundActWrite(fault: "client_reset" | "malformed_reply"): () => void {
+type InjectedFault = "client_reset" | "malformed_reply" | { reply: string };
+
+function injectFaultAfterForegroundActWrite(
+  fault: InjectedFault,
+  matches: (chunk: string) => boolean = (chunk) =>
+    chunk.includes('"cmd":"act"') && chunk.includes('"policy":"foreground"'),
+  delayMs = 30,
+): () => void {
   const original = net.createConnection;
   let injected = false;
   const failing = (socketPath: string): net.Socket => {
@@ -1752,14 +1759,17 @@ function injectFaultAfterForegroundActWrite(fault: "client_reset" | "malformed_r
       writable: true,
       value: (chunk: string): boolean => {
         const accepted = realWrite(chunk);
-        if (!injected && chunk.includes('"cmd":"act"') && chunk.includes('"policy":"foreground"')) {
+        if (!injected && matches(chunk)) {
           injected = true;
-          setTimeout(() => {
-            if (fault === "malformed_reply")
-              socket.emit("data", "<html>not a helper reply</html>\n");
-            else
+          const inject = () => {
+            if (fault === "client_reset")
               socket.destroy(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
-          }, 30);
+            else if (fault === "malformed_reply")
+              socket.emit("data", "<html>not a helper reply</html>\n");
+            else socket.emit("data", fault.reply + "\n");
+          };
+          if (delayMs === 0) inject();
+          else setTimeout(inject, delayMs);
         }
         return accepted;
       },
@@ -1779,9 +1789,7 @@ function injectFaultAfterForegroundActWrite(fault: "client_reset" | "malformed_r
     });
 }
 
-async function lostConnectionHoldsSection(
-  fault: "helper_closed" | "client_reset" | "malformed_reply",
-): Promise<void> {
+async function lostConnectionHoldsSection(fault: "helper_closed" | InjectedFault): Promise<void> {
   const fake = await startDaemon({
     script: "s6-grant",
     secondTarget: true,
@@ -1838,6 +1846,52 @@ test("bridge: the helper closing the connection after a foreground act was sent 
 
 test("bridge: an undecodable reply after a foreground act was sent is no confirmation and holds the section the same way", async () => {
   await lostConnectionHoldsSection("malformed_reply");
+});
+
+for (const reply of [
+  "{}",
+  "null",
+  "[]",
+  '{"ok":"yes"}',
+  '{"ok":false}',
+  '{"ok":false,"error":"x"}',
+]) {
+  test(
+    "bridge: a JSON reply that is not a response envelope (" +
+      reply +
+      ") after a foreground act was sent is no confirmation and holds the section the same way",
+    async () => {
+      await lostConnectionHoldsSection({ reply });
+    },
+  );
+}
+
+test("client: a JSON reply that is not a response envelope to a command without a request id is a transport error", async () => {
+  const fake = await startDaemon({ script: "s1-ok" });
+  for (const reply of ["{}", "null", "[]", '{"ok":"yes"}']) {
+    const client = new helper.MacosHelperClient();
+    const restoreNet = injectFaultAfterForegroundActWrite(
+      { reply },
+      (chunk) => chunk.includes('"cmd":"listApps"'),
+      0,
+    );
+    const cancelsBefore = fake.requests.filter((request) => request.cmd === "cancel").length;
+    let error: Error;
+    try {
+      error = await rejection(client.daemonCommand("listApps", {}, 2_000));
+    } finally {
+      restoreNet();
+    }
+    assert.ok(error instanceof helper.HelperTransportError, reply + ": " + error.name);
+    assert.match(error.message, /could not be decoded \(not a response envelope\)/);
+    assert.equal(error.connectionLost, false);
+    assert.equal(error.interruption, undefined);
+    assert.equal(
+      fake.requests.filter((request) => request.cmd === "cancel").length,
+      cancelsBefore,
+      "no cancel was sent",
+    );
+  }
 });
 
 test("bridge: a granted HID act refused before any input reports inputSent false in the step error", async () => {

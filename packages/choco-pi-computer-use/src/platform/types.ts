@@ -154,6 +154,8 @@ export interface HelperRefusalEvidence {
   frontmostChangedElsewhere?: boolean;
   frontmostChangedTo?: number;
   extendedDelivery?: string;
+  keyWindowAcquired?: boolean;
+  observedWindowResolved?: boolean;
 }
 
 export interface HelperAppBlock {
@@ -217,6 +219,9 @@ export interface HelperActResult {
     charactersSent?: number;
     destinationReason?: string;
     extendedDelivery?: string;
+    extendedDeliveryReason?: string;
+    keyWindowAcquired?: boolean;
+    observedWindowResolved?: boolean;
   };
   rootDelta?: PlatformRootDelta[];
   steps?: HelperActResult[];

@@ -28,6 +28,8 @@ import {
   deliveredActionsText,
   destinationFailureOf,
   endedAfterExtendedDelivery,
+  keyWindowRefusalOf,
+  keyWindowRefusalText,
   endForegroundSection,
   ensurePointIsInLookImage,
   errorEffectPossible,
@@ -35,6 +37,7 @@ import {
   helperAct,
   helperActRequest,
   refusalForResult,
+  resultErrorEvidence,
   restoreFocusAfterDestinationRefusal,
   restoreFocusAfterGrantedInput,
   stoppedSummary,
@@ -244,6 +247,14 @@ export function nativeBatchStepTrace(
 ): ExecutionTrace {
   const trace = executionTraceFromAct(step, "ax_only");
   trace.requestId = requestId;
+  const keyWindow = keyWindowRefusalOf(step.error?.code, resultErrorEvidence(step.error));
+  const keyRefusal = keyWindow && action && refusalForResult(target, action, true, "ax_only", step);
+  if (keyRefusal) {
+    trace.outcome = "didnt";
+    trace.refusal = keyRefusal;
+    if (trace.error) trace.error = { ...trace.error, effectPossible: false };
+    return trace;
+  }
   if (
     step.error?.extendedDelivery === "used" ||
     step.error?.evidence?.extendedDelivery === "used"
@@ -477,6 +488,25 @@ export function foregroundRequiredResult(
   };
   if (refusal.nextStep) details.nextStep = refusal.nextStep;
   const step = execution.stoppedAt === undefined ? "" : ` (action ${execution.stoppedAt + 1})`;
+  if (refusal.key_window) {
+    const earlier =
+      execution.stoppedAt !== undefined && execution.stoppedAt > 0
+        ? " Earlier actions in this call were delivered."
+        : "";
+    return {
+      content: [
+        {
+          type: "text",
+          text: [
+            `foreground_required: ${actionLabel(refusal.action)}${step} in ${target.appName} — ${target.windowTitle} was refused before any key was sent. ${keyWindowRefusalText(refusal.key_window)} It will not be retried automatically.${earlier}`,
+            "No foreground grant was requested for it in this call.",
+            "Call observe_ui for a fresh state before the next act_ui.",
+          ].join("\n"),
+        },
+      ],
+      details,
+    };
+  }
   const noEffect = refusal.nextStep
     ? `The input was sent to ${target.appName} in the background and produced no observable change; it was not repeated in the foreground in this call.`
     : refusal.pidPointerAttempted

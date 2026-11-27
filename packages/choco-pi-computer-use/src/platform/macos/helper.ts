@@ -32,8 +32,8 @@ import {
 import { resolveMacosHelperAppPath } from "./helper-path.ts";
 
 interface HelperResponseEnvelope {
-  ok?: boolean;
-  result: JsonValue;
+  ok: boolean;
+  result?: JsonValue;
   error?: {
     message?: string;
     code?: string;
@@ -52,6 +52,45 @@ interface HelperResponseEnvelope {
     blockedBundleId?: JsonValue;
     blockMatch?: JsonValue;
     extendedDelivery?: JsonValue;
+    extendedDeliveryReason?: JsonValue;
+    keyWindowAcquired?: JsonValue;
+    observedWindowResolved?: JsonValue;
+  };
+}
+
+export function decodeHelperEnvelope(value: JsonValue): HelperResponseEnvelope | undefined {
+  if (!isJsonObject(value)) return undefined;
+  const ok = booleanField(value.ok);
+  if (ok === undefined) return undefined;
+  const result = value.result;
+  if (ok) return { ok, result };
+  const error = value.error;
+  if (!isJsonObject(error)) return undefined;
+  return {
+    ok,
+    result,
+    error: {
+      message: isString(error.message) ? error.message : undefined,
+      code: isString(error.code) ? error.code : undefined,
+      effectPossible: booleanField(error.effectPossible),
+      activeRequests: numberField(error.activeRequests),
+      evidence: error.evidence,
+      inputSent: error.inputSent,
+      activationAttempted: error.activationAttempted,
+      charactersSent: error.charactersSent,
+      destinationReason: error.destinationReason,
+      frontmostPid: error.frontmostPid,
+      frontmostBefore: error.frontmostBefore,
+      frontmostAfter: error.frontmostAfter,
+      blockedPid: error.blockedPid,
+      blockedApp: error.blockedApp,
+      blockedBundleId: error.blockedBundleId,
+      blockMatch: error.blockMatch,
+      extendedDelivery: error.extendedDelivery,
+      extendedDeliveryReason: error.extendedDeliveryReason,
+      keyWindowAcquired: error.keyWindowAcquired,
+      observedWindowResolved: error.observedWindowResolved,
+    },
   };
 }
 
@@ -220,16 +259,28 @@ export function parseRefusalEvidence(value: JsonField): HelperRefusalEvidence | 
   const changedTo = numberField(value.frontmostChangedTo);
   if (changedTo !== undefined) evidence.frontmostChangedTo = changedTo;
   if (isString(value.extendedDelivery)) evidence.extendedDelivery = value.extendedDelivery;
+  const keyWindowAcquired = booleanField(value.keyWindowAcquired);
+  if (keyWindowAcquired !== undefined) evidence.keyWindowAcquired = keyWindowAcquired;
+  const resolved = booleanField(value.observedWindowResolved);
+  if (resolved !== undefined) evidence.observedWindowResolved = resolved;
   return Object.keys(evidence).length > 0 ? evidence : undefined;
 }
 
 export function parseErrorEvidence(
   error: HelperResponseEnvelope["error"],
 ): HelperRefusalEvidence | undefined {
-  const evidence = parseRefusalEvidence(error?.evidence);
+  const parsed = parseRefusalEvidence(error?.evidence);
+  const evidence: HelperRefusalEvidence = { ...parsed };
   const extended = error?.extendedDelivery;
-  if (!isString(extended) || evidence?.extendedDelivery !== undefined) return evidence;
-  return { ...evidence, extendedDelivery: extended };
+  if (isString(extended) && evidence.extendedDelivery === undefined)
+    evidence.extendedDelivery = extended;
+  const keyWindowAcquired = booleanField(error?.keyWindowAcquired);
+  if (keyWindowAcquired !== undefined && evidence.keyWindowAcquired === undefined)
+    evidence.keyWindowAcquired = keyWindowAcquired;
+  const resolved = booleanField(error?.observedWindowResolved);
+  if (resolved !== undefined && evidence.observedWindowResolved === undefined)
+    evidence.observedWindowResolved = resolved;
+  return Object.keys(evidence).length > 0 ? evidence : undefined;
 }
 
 function parseExtendedDeliveryCapability(
@@ -619,12 +670,17 @@ export class MacosHelperClient {
         buffer += chunk;
         const newline = buffer.indexOf("\n");
         if (newline < 0) return;
-        let parsed: HelperResponseEnvelope;
+        let decoded: JsonValue;
         try {
-          parsed = JSON.parse(buffer.slice(0, newline));
+          decoded = JSON.parse(buffer.slice(0, newline));
         } catch (error) {
           if (!interrupted)
             undecodableReply(error instanceof Error ? error.message : String(error));
+          return;
+        }
+        const parsed = decodeHelperEnvelope(decoded);
+        if (!parsed) {
+          if (!interrupted) undecodableReply("not a response envelope");
           return;
         }
         if (interrupted) {
@@ -633,23 +689,23 @@ export class MacosHelperClient {
         }
         settle(() => {
           socket.end();
-          if (parsed.ok === true) {
+          if (parsed.ok) {
             // SAFETY: Each command call selects T from the matching helper protocol response; the daemon envelope carries that command's result unchanged.
             const result = parsed.result as T;
             resolve(result);
           } else
             reject(
               new HelperCommandError(
-                parsed?.error?.message ?? `Daemon command '${cmd}' failed.`,
-                parsed?.error?.code,
+                parsed.error?.message ?? `Daemon command '${cmd}' failed.`,
+                parsed.error?.code,
                 {
-                  effectPossible: booleanField(parsed?.error?.effectPossible),
+                  effectPossible: parsed.error?.effectPossible,
                   result: parsed.result ?? undefined,
-                  activeRequests: numberField(parsed?.error?.activeRequests),
-                  evidence: parseErrorEvidence(parsed?.error),
-                  destination: parseDestinationFailure(parsed?.error),
-                  inputSent: booleanField(parsed?.error?.inputSent),
-                  appBlock: parseAppBlock(parsed?.error),
+                  activeRequests: parsed.error?.activeRequests,
+                  evidence: parseErrorEvidence(parsed.error),
+                  destination: parseDestinationFailure(parsed.error),
+                  inputSent: booleanField(parsed.error?.inputSent),
+                  appBlock: parseAppBlock(parsed.error),
                 },
               ),
             );
@@ -739,9 +795,10 @@ export class MacosHelperClient {
         const newline = buffer.indexOf("\n");
         if (newline < 0) return;
         try {
-          const parsed: HelperResponseEnvelope = JSON.parse(buffer.slice(0, newline));
+          const decoded: JsonValue = JSON.parse(buffer.slice(0, newline));
+          const parsed = decodeHelperEnvelope(decoded);
           finish(
-            parsed.ok === true
+            parsed?.ok === true
               ? parseCancelAck(parsed.result)
               : { acknowledged: false, state: "unacknowledged" },
           );

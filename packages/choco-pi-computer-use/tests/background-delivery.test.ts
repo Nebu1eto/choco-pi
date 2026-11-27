@@ -7,7 +7,7 @@ import { after, afterEach, before, test } from "node:test";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { UiAction } from "../src/contract.ts";
 import { isJsonObject, type JsonObject, type JsonValue } from "../src/json.ts";
-import type { ComputerUsePlatformBackend } from "../src/platform/types.ts";
+import { PlatformCommandError, type ComputerUsePlatformBackend } from "../src/platform/types.ts";
 import { createTestExtensionContext, type TestUiOptions } from "./helpers/extension-context.ts";
 import {
   CUSTOM_VIEW_NAME,
@@ -368,23 +368,98 @@ for (const answer of ["foreground_required", "foreground_required_bare", "ending
   }
 }
 
-test("extended: a key-window refusal of a typeText is unknown, stated, and not repeated", async () => {
-  const prompts: string[] = [];
+function assertKeyWindowRefusal(
+  details: JsonObject,
+  text: string,
+  kind: "observed_window_not_key" | "observed_window_unresolved",
+): JsonObject {
+  assert.equal(details.status, "foreground_required", "reported as a refusal");
+  const execution = field(details, "execution");
+  assert.equal(execution.outcome, "didnt");
+  const refusal = field(execution, "refusal");
+  assert.equal(refusal.code, "foreground_required");
+  assert.equal(refusal.key_window, kind);
+  assert.equal(refusal.effectPossible, false, "refused before input");
+  assert.equal(execution.escalatedToForeground, undefined, "no foreground repeat");
+  assert.equal(execution.grantPrompt, undefined, "no grant prompt");
+  assert.equal(execution.retryDeferred, undefined);
+  const steps = execution.steps;
+  assert.ok(Array.isArray(steps) && isJsonObject(steps[0]));
+  assert.equal(steps[0].outcome, "didnt");
+  const error = field(steps[0], "error");
+  assert.equal(error.code, "foreground_required");
+  assert.equal(error.effectPossible, false, "the trace records it as refused before input");
+  assert.equal(error.keyWindowAcquired, false);
+  assert.equal(error.observedWindowResolved, kind === "observed_window_not_key");
+  assert.equal(error.extendedDelivery, "used");
+  assert.equal(steps[0].evidence, undefined, "no extendedDeliveryEnding: not an unknown ending");
+  assert.match(text, /refused before any key was sent/);
+  assert.match(
+    text,
+    kind === "observed_window_not_key"
+      ? /No key was sent: the observed window did not become the app's key window/
+      : /No key was sent: the helper could not resolve the observed window/,
+  );
+  assert.match(text, /Extended background delivery was used for the activation only/);
+  assert.match(text, /No foreground grant was requested for it in this call/);
+  assert.doesNotMatch(text, /Effect not verified|may have reached|may still have reached/);
+  return execution;
+}
+
+for (const answer of ["key_window_refusal", "key_window_unresolved"] as const) {
+  for (const prompt of ["always", "ask"] as const) {
+    test(
+      "extended: a key-window refusal (" +
+        answer +
+        ") of a typeText is a refusal that sent no key, with no grant prompt or repeat (prompt " +
+        prompt +
+        ")",
+      async () => {
+        const prompts: string[] = [];
+        const { details, text, acts } = await actThroughBridge({
+          project: { background_delivery: "extended" },
+          env: { PI_COMPUTER_USE_FOREGROUND_PROMPT: prompt },
+          fake: { script: "s1-ok", extendedDelivery: "available", extendedAnswer: answer },
+          actions: [{ action: "typeText", ref: FIELD, text: "abc" }],
+          ui: {
+            select: async (title, options) => {
+              prompts.push(title);
+              return options[0];
+            },
+          },
+        });
+        assert.equal(acts.length, 1, "no second delivery");
+        assert.ok(
+          acts.every((act) => act.policy === "background" && act.foregroundGrant === undefined),
+          "nothing went to the foreground",
+        );
+        assert.deepEqual(prompts, [], "no grant dialog");
+        assertKeyWindowRefusal(
+          details,
+          text,
+          answer === "key_window_refusal"
+            ? "observed_window_not_key"
+            : "observed_window_unresolved",
+        );
+      },
+    );
+  }
+}
+
+test("extended: a key-window refusal stops the transaction like other refusals; later actions are not sent", async () => {
   const { details, text, acts } = await actThroughBridge({
     project: { background_delivery: "extended" },
     env: { PI_COMPUTER_USE_FOREGROUND_PROMPT: "always" },
     fake: { script: "s1-ok", extendedDelivery: "available", extendedAnswer: "key_window_refusal" },
-    actions: [{ action: "typeText", ref: FIELD, text: "abc" }],
-    ui: {
-      select: async (title, options) => {
-        prompts.push(title);
-        return options[0];
-      },
-    },
+    actions: [
+      { action: "typeText", ref: FIELD, text: "abc" },
+      { action: "typeText", ref: FIELD, text: "def" },
+    ],
   });
-  assert.equal(acts.length, 1, "no second delivery");
-  assert.deepEqual(prompts, []);
-  assertExtendedEnding(details, text);
+  assert.equal(acts.length, 1, "the second action was not sent");
+  const execution = assertKeyWindowRefusal(details, text, "observed_window_not_key");
+  assert.equal(execution.actionCount, 1);
+  assert.equal(execution.stoppedAt, 0);
 });
 
 test("extended: an action that ended unverified stops the transaction; later actions are not sent", async () => {
@@ -448,6 +523,93 @@ test("unit: a native batch step refused after extended delivery is unknown, neve
     assert.equal(trace.outcome, "unknown");
     assert.equal(trace.refusal, undefined);
   }
+});
+
+test("unit: a native batch step with a key-window refusal after extended delivery is a refusal before input", async () => {
+  const { nativeBatchStepTrace } = await import("../src/bridge/desktop-actions.ts");
+  const target = {
+    appName: FAKE_APP.appName,
+    bundleId: FAKE_APP.bundleId,
+    pid: FAKE_APP.pid,
+    windowTitle: "Fixture",
+    windowId: 1,
+    windowRef: "@r1",
+    framePoints: { x: 0, y: 0, w: 400, h: 300 },
+    scaleFactor: 2,
+    isMinimized: false,
+    isOnscreen: true,
+    isMain: true,
+    isFocused: false,
+  };
+  const action = {
+    action: "typeText" as const,
+    target: { ref: "field-1" },
+    params: { text: "abc" },
+    establishesFocus: false as const,
+    implicitFocus: false,
+    wantsForeground: false,
+  };
+  for (const [resolved, kind] of [
+    [true, "observed_window_not_key"],
+    [false, "observed_window_unresolved"],
+  ] as const) {
+    const step = {
+      outcome: "unknown" as const,
+      error: {
+        code: "foreground_required",
+        message: "no key",
+        effectPossible: false,
+        extendedDelivery: "used",
+        keyWindowAcquired: false,
+        observedWindowResolved: resolved,
+      },
+    };
+    const trace = nativeBatchStepTrace(step, action, target, "req-1");
+    assert.equal(trace.outcome, "didnt");
+    assert.equal(trace.refusal?.key_window, kind);
+    assert.equal(trace.refusal?.effectPossible, false);
+    assert.equal(trace.error?.effectPossible, false);
+    assert.match(trace.refusal?.grantHint ?? "", /No key was sent/);
+  }
+});
+
+test("extended: a key-window refusal answered as an act result error is the same refusal", async () => {
+  const prompts: string[] = [];
+  const { details, text, acts } = await actThroughBridge({
+    project: { background_delivery: "extended" },
+    env: { PI_COMPUTER_USE_FOREGROUND_PROMPT: "always" },
+    fake: { script: "s1-ok", extendedDelivery: "available", extendedAnswer: "key_window_refusal" },
+    actions: [{ action: "typeText", ref: FIELD, text: "abc" }],
+    ui: {
+      select: async (title, options) => {
+        prompts.push(title);
+        return options[0];
+      },
+    },
+    backend: {
+      async act(request, options) {
+        try {
+          return await macosBackend.act(request, options);
+        } catch (error) {
+          if (!(error instanceof PlatformCommandError)) throw error;
+          return {
+            outcome: "didnt",
+            error: {
+              code: error.code,
+              message: error.message,
+              effectPossible: false,
+              extendedDelivery: "used",
+              keyWindowAcquired: false,
+              observedWindowResolved: true,
+            },
+          };
+        }
+      },
+    },
+  });
+  assert.equal(acts.length, 1, "no second delivery");
+  assert.deepEqual(prompts, []);
+  assertKeyWindowRefusal(details, text, "observed_window_not_key");
 });
 
 test("extended: a didnt answer to a typeText is reported as given, never turned into a refusal", async () => {

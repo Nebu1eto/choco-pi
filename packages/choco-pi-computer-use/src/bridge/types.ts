@@ -56,9 +56,15 @@ export interface ForegroundRefusal {
   observableChange?: boolean;
   nextStep?: "observe_then_retry";
   grantedForNextCall?: boolean;
+  key_window?: KeyWindowRefusalKind;
   grantHint: string;
   reason: string;
 }
+
+export type KeyWindowRefusalKind =
+  | "observed_window_unresolved"
+  | "observed_window_not_key"
+  | "unconfirmed";
 
 export interface ObservationRefreshRequirement {
   code: "observation_refresh_required";
@@ -436,6 +442,7 @@ export interface HelperRefusalSignal {
   message: string;
   effectPossible: boolean;
   evidence?: HelperRefusalEvidence;
+  keyWindow?: KeyWindowRefusalKind;
 }
 
 export type HelperAttempt = { request: PlatformActRequest } & (
