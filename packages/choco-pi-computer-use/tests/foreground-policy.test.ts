@@ -23,7 +23,7 @@ import {
   GRANT_OPTION_SESSION,
 } from "../src/grant-prompt.ts";
 import type { UiAction } from "../src/contract.ts";
-import { isJsonObject, isString, type JsonObject, type JsonValue } from "../src/json.ts";
+import { isJsonObject, isNumber, isString, type JsonObject, type JsonValue } from "../src/json.ts";
 import { restoreOutline, type LookResponse, type SerializedOutlineNode } from "../src/outline.ts";
 import { replacePlatformBackendForTest } from "../src/platform/index.ts";
 import { actionLabel } from "../src/tool-params.ts";
@@ -31,6 +31,7 @@ import type {
   ComputerUsePlatformBackend,
   HelperActResult,
   HelperRefusalEvidence,
+  HelperSettlement,
   PlatformActRequest,
   PlatformRestoreUserFocusRequest,
   PlatformRoot,
@@ -39,6 +40,7 @@ import { HelperInterruption, PlatformCommandError } from "../src/platform/types.
 import { createTestExtensionContext, type TestUiOptions } from "./helpers/extension-context.ts";
 
 const BUNDLE_ID = "test.foreground-fixture";
+const USER_WINDOW_ID = 901;
 
 const root: PlatformRoot = {
   kind: "window",
@@ -146,7 +148,7 @@ function fakeBackend(
   outlineOnly = false,
   restores: PlatformRestoreUserFocusRequest[] = [],
   restoreFails = false,
-  frontmost: { pid: number } = { pid: root.pid! },
+  frontmost: { pid: number; windowId?: number } = { pid: root.pid! },
   roots: PlatformRoot[] = [root],
 ): ComputerUsePlatformBackend {
   let observationCount = 0;
@@ -163,14 +165,21 @@ function fakeBackend(
     },
     async getFrontmost() {
       if (frontmost.pid !== root.pid)
-        return { appName: "User App", pid: frontmost.pid, windowTitle: "User Window" };
+        return {
+          appName: "User App",
+          pid: frontmost.pid,
+          windowTitle: "User Window",
+          windowId: USER_WINDOW_ID,
+          windowSource: "focused",
+        };
       return {
         appName: root.appName!,
         bundleId: root.bundleId,
         pid: root.pid!,
         windowTitle: root.title,
-        windowId: root.windowId,
+        windowId: frontmost.windowId ?? root.windowId,
         rootRef: root.rootRef,
+        windowSource: "focused",
       };
     },
     async focusWindow() {
@@ -179,7 +188,13 @@ function fakeBackend(
     async restoreUserFocus(request) {
       restores.push(request);
       if (restoreFails) throw new Error("restore fixture failure");
-      return { restored: true, appRestored: true, windowRestored: false, appName: "User App" };
+      const windowNamed = request.windowId !== undefined || request.windowTitle !== undefined;
+      return {
+        restored: true,
+        appRestored: true,
+        windowRestored: windowNamed,
+        appName: "User App",
+      };
     },
     async observe(): Promise<LookResponse> {
       observationCount += 1;
@@ -276,7 +291,7 @@ interface Scenario {
   userConfig?: JsonObject;
   readOnlyUserConfig?: boolean;
   restoreFails?: boolean;
-  frontmost?: { pid: number };
+  frontmost?: { pid: number; windowId?: number };
   roots?: PlatformRoot[];
   headless?: boolean;
 }
@@ -632,7 +647,10 @@ test("every act request carries a unique request id, session, and future deadlin
         assert.ok(request.requestId.length > 0);
         assert.ok(request.session.id.length > 0);
         assert.ok(Number.isInteger(request.session.generation));
-        assert.ok(request.deadlineMs > before);
+        assert.ok(
+          request.budgetMs > 0 && Date.now() >= before,
+          "a relative budget, not a deadline",
+        );
       }
       const execution = objectField(details, "execution");
       assert.deepEqual(execution.frontmostBefore, { pid: 1 });
@@ -1521,12 +1539,22 @@ function grantedResponder(frontmostBefore: number, frontmostAfter: number): Resp
   return () => ({ outcome: "worked", frontmostBefore, frontmostAfter });
 }
 
+function activatingResponder(frontmost: { pid: number }): Responder {
+  return () => {
+    frontmost.pid = root.pid!;
+    return { outcome: "worked", frontmostBefore: USER_PID, frontmostAfter: root.pid };
+  };
+}
+
 test("after a granted batch that took focus, focus goes back to the user's app once", async () => {
+  const frontmost = { pid: root.pid! };
   await withFixture(
-    { grant: BUNDLE_ID },
-    grantedResponder(USER_PID, root.pid!),
+    { grant: BUNDLE_ID, frontmost },
+    activatingResponder(frontmost),
     async (context) => {
-      const details = await actOnce(context, coordinateClicks);
+      const stateId = await observeStateId(context);
+      frontmost.pid = USER_PID;
+      const { details } = await actOnState(context, stateId, coordinateClicks);
       assert.equal(context.requests.length, 2);
       assert.equal(context.restores.length, 1);
       assert.equal(context.restores[0]!.pid, USER_PID);
@@ -2164,15 +2192,17 @@ test("batch: a helper failure at action 1 still throws, with nothing earlier sen
 });
 
 test("batch: focus is restored after granted input when a later action fails", async () => {
+  const frontmost = { pid: root.pid! };
   await withFixture(
-    { grant: BUNDLE_ID },
+    { grant: BUNDLE_ID, frontmost },
     failingResponder(
       2,
       () => new HelperFailureFixtureError("element vanished", "invalid_args"),
-      grantedResponder(USER_PID, root.pid!),
+      activatingResponder(frontmost),
     ),
     async (context) => {
       const stateId = await observeStateId(context);
+      frontmost.pid = USER_PID;
       const { details } = await actOnState(context, stateId, coordinateClicks);
       assert.equal(details.status, "partial");
       assert.equal(context.restores.length, 1);
@@ -2195,6 +2225,7 @@ test("batch: focus is not restored while an interrupted request may still delive
             code: "cancelled",
             cancel: { acknowledged: true, state: "stopping" },
             clientTimeout: true,
+            settle: async () => ({ settled: true, state: "stopped" }),
           }),
         ),
       grantedResponder(USER_PID, root.pid!),
@@ -2333,4 +2364,131 @@ test("batch: up-front preparation keeps the same-call focus routes", async () =>
       },
     );
   }
+});
+
+test("the restore names the captured window by id and the target as the expected frontmost app", async () => {
+  const frontmost = { pid: root.pid! };
+  await withFixture(
+    { grant: BUNDLE_ID, frontmost },
+    activatingResponder(frontmost),
+    async (context) => {
+      const stateId = await observeStateId(context);
+      frontmost.pid = USER_PID;
+      const { details } = await actOnState(context, stateId, [{ action: "click", x: 100, y: 100 }]);
+      assert.equal(context.restores.length, 1);
+      assert.deepEqual(context.restores[0], {
+        pid: USER_PID,
+        windowId: USER_WINDOW_ID,
+        expectedFrontmostPid: root.pid,
+      });
+      const execution = objectField(details, "execution");
+      assert.equal(execution.focusRestoreReason, "restored");
+      assert.equal(execution.focusWindowRestored, true);
+    },
+  );
+});
+
+test("when the target was frontmost on another of its windows, that window is made key again", async () => {
+  await withFixture(
+    { grant: BUNDLE_ID, frontmost: { pid: root.pid!, windowId: 78 } },
+    grantedResponder(root.pid!, root.pid!),
+    async (context) => {
+      const details = await actOnce(context, [{ action: "click", x: 100, y: 100 }]);
+      assert.deepEqual(context.restores, [
+        { pid: root.pid, windowId: 78, windowRef: root.rootRef, expectedFrontmostPid: root.pid },
+      ]);
+      const execution = objectField(details, "execution");
+      assert.equal(execution.focusRestored, true);
+      assert.equal(execution.focusRestoreReason, "target_window_restored");
+      assert.equal(execution.focusWindowRestored, true);
+    },
+  );
+});
+
+function stoppingInterruption(settle: () => Promise<HelperSettlement>): Error {
+  return new InterruptionFixtureError(
+    new HelperInterruption({
+      code: "cancelled",
+      cancel: { acknowledged: true, state: "stopping" },
+      clientTimeout: true,
+      settle,
+    }),
+  );
+}
+
+test("an unfinished delivery keeps the foreground section closed until the helper reports it stopped", async () => {
+  let confirm: (settlement: HelperSettlement) => void = () => undefined;
+  const settled = new Promise<HelperSettlement>((resolve) => {
+    confirm = resolve;
+  });
+  await withFixture(
+    { grant: BUNDLE_ID },
+    failingResponder(
+      2,
+      () => stoppingInterruption(async () => await settled),
+      grantedResponder(USER_PID, root.pid!),
+    ),
+    async (context) => {
+      const stateId = await observeStateId(context);
+      const first = await actOnState(context, stateId, coordinateClicks);
+      assert.equal(first.details.status, "cancelled");
+      const next = actOnce(context, [{ action: "click", x: 100, y: 100 }]);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      assert.equal(context.requests.length, 2, "no foreground act while delivery may continue");
+      confirm({ settled: true, state: "stopped" });
+      const details = await next;
+      assert.equal(context.requests.length, 3);
+      const section = objectField(objectField(details, "execution"), "foregroundSection");
+      assert.ok(isNumber(section.waitedMs) && section.waitedMs >= 250);
+      assert.equal(section.previousDeliveryUnconfirmed, undefined);
+    },
+  );
+});
+
+test("a section released at its bound without confirmation is named in the next call's trace", async () => {
+  await withFixture(
+    { grant: BUNDLE_ID },
+    failingResponder(
+      2,
+      () => stoppingInterruption(async () => ({ settled: false, state: "stopping" })),
+      grantedResponder(USER_PID, root.pid!),
+    ),
+    async (context) => {
+      const stateId = await observeStateId(context);
+      await actOnState(context, stateId, coordinateClicks);
+      const unfinished = context.requests[1]?.requestId;
+      const details = await actOnce(context, [{ action: "click", x: 100, y: 100 }]);
+      const section = objectField(objectField(details, "execution"), "foregroundSection");
+      assert.equal(section.previousDeliveryUnconfirmed, unfinished);
+    },
+  );
+});
+
+test("waiting for the foreground section honors the abort signal", async () => {
+  let confirm: (settlement: HelperSettlement) => void = () => undefined;
+  const settled = new Promise<HelperSettlement>((resolve) => {
+    confirm = resolve;
+  });
+  await withFixture(
+    { grant: BUNDLE_ID },
+    failingResponder(
+      2,
+      () => stoppingInterruption(async () => await settled),
+      grantedResponder(USER_PID, root.pid!),
+    ),
+    async (context) => {
+      const stateId = await observeStateId(context);
+      await actOnState(context, stateId, coordinateClicks);
+      const controller = new AbortController();
+      const waiting = actOnce({ ctx: context.ctx, signal: controller.signal }, [
+        { action: "click", x: 100, y: 100 },
+      ]);
+      setTimeout(() => controller.abort(), 150);
+      await assert.rejects(waiting, /aborted/i);
+      assert.equal(context.requests.length, 2);
+      confirm({ settled: true, state: "stopped" });
+      await actOnce(context, [{ action: "click", x: 100, y: 100 }]);
+      assert.equal(context.requests.length, 3, "the aborted waiter left the queue");
+    },
+  );
 });

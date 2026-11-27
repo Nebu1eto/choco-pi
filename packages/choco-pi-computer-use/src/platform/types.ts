@@ -80,6 +80,7 @@ export interface PlatformFrontmostResult {
   windowTitle?: string;
   windowId?: number;
   rootRef?: string;
+  windowSource?: "focused" | "main" | "unknown";
 }
 
 export interface PlatformFocusWindowResult {
@@ -90,7 +91,10 @@ export interface PlatformFocusWindowResult {
 
 export interface PlatformRestoreUserFocusRequest {
   pid: number;
+  windowRef?: string;
+  windowId?: number;
   windowTitle?: string;
+  expectedFrontmostPid?: number;
 }
 
 export interface PlatformRestoreUserFocusResult {
@@ -99,6 +103,9 @@ export interface PlatformRestoreUserFocusResult {
   windowRestored?: boolean;
   appName?: string;
   windowTitle?: string;
+  reason?: string;
+  windowMatch?: string;
+  frontmostPid?: number;
 }
 
 export interface HelperActPerformed {
@@ -113,6 +120,7 @@ export interface HelperActPerformed {
   activated?: boolean;
   raised?: boolean;
   focused?: boolean;
+  destinationWindow?: "verified" | "unverified";
 }
 
 export interface PlatformRootDelta {
@@ -133,15 +141,42 @@ export interface HelperRefusalEvidence {
   pixelChange?: boolean;
 }
 
+export const FOREGROUND_NOT_ACQUIRED = "foreground_not_acquired";
+export const FOREGROUND_LOST = "foreground_lost";
+
+export function isForegroundDestinationCode(code: string | undefined): boolean {
+  return code === FOREGROUND_NOT_ACQUIRED || code === FOREGROUND_LOST;
+}
+
+export interface HelperDestinationFailure {
+  inputSent: boolean;
+  activationAttempted?: boolean;
+  charactersSent?: number;
+  reason?: string;
+  frontmostPid?: number;
+  frontmostBefore?: number;
+  frontmostAfter?: number;
+}
+
 export class PlatformCommandError extends Error {
   readonly evidence?: HelperRefusalEvidence;
   readonly code?: string;
+  readonly destination?: HelperDestinationFailure;
+  readonly inputSent?: boolean;
 
-  constructor(message: string, evidence?: HelperRefusalEvidence, code?: string) {
+  constructor(
+    message: string,
+    evidence?: HelperRefusalEvidence,
+    code?: string,
+    destination?: HelperDestinationFailure,
+    inputSent?: boolean,
+  ) {
     super(message);
     this.name = "PlatformCommandError";
     this.evidence = evidence;
     this.code = code;
+    this.destination = destination;
+    this.inputSent = inputSent ?? destination?.inputSent;
   }
 }
 
@@ -155,6 +190,10 @@ export interface HelperActResult {
     whatIsThere?: JsonValue;
     effectPossible?: boolean;
     evidence?: HelperRefusalEvidence;
+    inputSent?: boolean;
+    activationAttempted?: boolean;
+    charactersSent?: number;
+    destinationReason?: string;
   };
   rootDelta?: PlatformRootDelta[];
   steps?: HelperActResult[];
@@ -216,6 +255,11 @@ export type HelperInterruptionState = HelperCancelState | "refused";
 
 export const HELPER_STOPPING_REASON = "delivery may continue until the helper reports stopped";
 
+export interface HelperSettlement {
+  settled: boolean;
+  state: HelperCancelState;
+}
+
 export class HelperInterruption {
   readonly code: "cancelled" | "owned_by_other_session";
   readonly effectPossible?: boolean;
@@ -224,6 +268,7 @@ export class HelperInterruption {
   readonly clientTimeout: boolean;
   readonly state: HelperInterruptionState;
   readonly reason?: string;
+  readonly settle?: () => Promise<HelperSettlement>;
 
   constructor(fields: {
     code: HelperInterruption["code"];
@@ -232,6 +277,7 @@ export class HelperInterruption {
     result?: HelperCancelledResult;
     clientTimeout?: boolean;
     state?: HelperInterruptionState;
+    settle?: () => Promise<HelperSettlement>;
   }) {
     this.code = fields.code;
     this.state =
@@ -247,6 +293,7 @@ export class HelperInterruption {
     this.cancel = fields.cancel;
     this.result = fields.result;
     this.clientTimeout = fields.clientTimeout === true;
+    this.settle = fields.settle;
   }
 }
 
@@ -259,7 +306,7 @@ export interface HelperClaimResult {
 export interface PlatformActRequestBase {
   requestId: string;
   session: PlatformRequestSession;
-  deadlineMs: number;
+  budgetMs: number;
   lookId: string;
   pid?: number;
   target: PlatformActTarget;

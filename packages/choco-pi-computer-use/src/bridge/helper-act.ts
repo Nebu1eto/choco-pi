@@ -15,14 +15,20 @@ import { isNumber } from "../json.ts";
 import type { LookResponse } from "../outline.ts";
 import { currentPlatformBackend } from "../platform/index.ts";
 import {
+  FOREGROUND_NOT_ACQUIRED,
+  HelperInterruption,
   PlatformCommandError,
   type HelperActResult,
+  type HelperDestinationFailure,
   type HelperRefusalEvidence,
   type PlatformActRequest,
   type PlatformActRequestBase,
+  type PlatformRestoreUserFocusRequest,
+  isForegroundDestinationCode,
 } from "../platform/types.ts";
 import { actionLabel } from "../tool-params.ts";
 import {
+  acquireForegroundSection,
   COMMAND_TIMEOUT_MS,
   currentDeliveryPolicy,
   currentLookOrThrow,
@@ -31,6 +37,7 @@ import {
   nativeInputDelivery,
   operationState,
   runtimeState,
+  sleep,
   throwIfAborted,
 } from "./state-store.ts";
 import { windowRecordIdentity } from "./targets.ts";
@@ -218,9 +225,55 @@ export async function captureUserFocus(
   if (!getComputerUseConfig().restore_focus) return;
   try {
     const front = await currentPlatformBackend.getFrontmost(signal);
-    session.focusBefore = { pid: front.pid, windowTitle: front.windowTitle };
+    session.focusBefore = {
+      pid: front.pid,
+      windowId: front.windowId,
+      windowRef: front.rootRef,
+      windowTitle: front.windowTitle,
+      windowSource: front.windowSource,
+    };
   } catch {}
   throwIfAborted(signal);
+}
+
+export async function enterForegroundSection(
+  session: ForegroundSession | undefined,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!session) return;
+  session.section ??= await acquireForegroundSection(signal);
+  await captureUserFocus(session, signal);
+}
+
+export const UNFINISHED_DELIVERY_GRACE_MS = 2_000;
+
+export function endForegroundSection(
+  session: ForegroundSession,
+  unfinished?: HelperInterruption,
+): void {
+  const lease = session.section;
+  session.section = undefined;
+  if (!lease) return;
+  if (!unfinished) return lease.release();
+  const request = session.lastRequest;
+  const requestId = request?.requestId ?? "unknown";
+  const budgetEnd = request ? request.sentAt + request.budgetMs : performance.now();
+  const boundMs = Math.max(1_000, budgetEnd + UNFINISHED_DELIVERY_GRACE_MS - performance.now());
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), boundMs);
+    timer.unref?.();
+  });
+  const confirmed = unfinished.settle
+    ? unfinished.settle().then(
+        (settlement) => settlement.settled,
+        () => false,
+      )
+    : bound;
+  void Promise.race([confirmed, bound]).then((settled) => {
+    clearTimeout(timer);
+    lease.release(settled ? undefined : requestId);
+  });
 }
 
 export async function restoreFocusAfterGrantedInput(
@@ -231,10 +284,7 @@ export async function restoreFocusAfterGrantedInput(
 ): Promise<void> {
   const steps = execution.steps ?? [execution];
   if (!steps.some((step) => step.foregroundGrant === true)) return;
-  const record = (restored: boolean, reason: string): void => {
-    execution.focusRestored = restored;
-    execution.focusRestoreReason = reason;
-  };
+  const record = focusRestoreRecorder(execution);
   if (!getComputerUseConfig().restore_focus) return record(false, "disabled");
   const before = steps.map((step) => step.frontmostBefore).find(isNumber);
   const after = steps
@@ -242,9 +292,69 @@ export async function restoreFocusAfterGrantedInput(
     .filter(isNumber)
     .at(-1);
   if (before === undefined || after === undefined) return record(false, "no_frontmost_evidence");
-  if (before === target.pid) return record(false, "target_was_frontmost");
+  if (before === target.pid) return await restoreTargetWindow(target, session, record, signal);
   if (after !== target.pid)
     return record(false, after === before ? "focus_not_taken" : "user_switched");
+  await restoreWhileTargetFrontmost(before, target, session, record, () => "user_switched", signal);
+}
+
+type FocusRestoreRecorder = (restored: boolean, reason: string, windowRestored?: boolean) => void;
+
+function focusRestoreRecorder(execution: ExecutionTrace): FocusRestoreRecorder {
+  return (restored, reason, windowRestored) => {
+    execution.focusRestored = restored;
+    execution.focusRestoreReason = reason;
+    if (windowRestored === undefined) delete execution.focusWindowRestored;
+    else execution.focusWindowRestored = windowRestored;
+  };
+}
+
+async function restoreTargetWindow(
+  target: ResolvedTarget,
+  session: ForegroundSession | undefined,
+  record: FocusRestoreRecorder,
+  signal?: AbortSignal,
+): Promise<void> {
+  const user = session?.focusBefore;
+  const otherWindow =
+    user?.pid === target.pid &&
+    user.windowId !== undefined &&
+    target.windowId > 0 &&
+    user.windowId !== target.windowId;
+  if (!otherWindow) return record(false, "target_was_frontmost");
+  await restoreWhileTargetFrontmost(
+    target.pid,
+    target,
+    session,
+    record,
+    () => "user_switched",
+    signal,
+  );
+}
+
+function restoreRequest(
+  pid: number,
+  target: ResolvedTarget,
+  session: ForegroundSession | undefined,
+): PlatformRestoreUserFocusRequest {
+  const request: PlatformRestoreUserFocusRequest = { pid, expectedFrontmostPid: target.pid };
+  const user = session?.focusBefore?.pid === pid ? session.focusBefore : undefined;
+  if (!user) return request;
+  if (user.windowId !== undefined) request.windowId = user.windowId;
+  if (user.windowRef) request.windowRef = user.windowRef;
+  if (request.windowId === undefined && !request.windowRef && user.windowTitle)
+    request.windowTitle = user.windowTitle;
+  return request;
+}
+
+async function restoreWhileTargetFrontmost(
+  before: number,
+  target: ResolvedTarget,
+  session: ForegroundSession | undefined,
+  record: FocusRestoreRecorder,
+  notFrontReason: (current: number) => string,
+  signal?: AbortSignal,
+): Promise<void> {
   if (signal?.aborted) return record(false, "aborted");
   let current: number;
   try {
@@ -257,18 +367,68 @@ export async function restoreFocusAfterGrantedInput(
     );
   }
   if (signal?.aborted) return record(false, "aborted");
-  if (current !== target.pid) return record(false, "user_switched");
-  const windowTitle =
-    session?.focusBefore?.pid === before ? session.focusBefore.windowTitle : undefined;
+  if (current !== target.pid) return record(false, notFrontReason(current));
+  const request = restoreRequest(before, target, session);
+  const windowNamed =
+    request.windowId !== undefined || request.windowRef !== undefined || !!request.windowTitle;
   try {
-    const result = await currentPlatformBackend.restoreUserFocus(
-      windowTitle ? { pid: before, windowTitle } : { pid: before },
-      signal,
-    );
-    record(result.restored, result.restored ? "restored" : "helper_did_not_restore");
+    const result = await currentPlatformBackend.restoreUserFocus(request, signal);
+    if (result.reason === "frontmost_changed")
+      return record(false, notFrontReason(result.frontmostPid ?? -1));
+    const windowRestored = windowNamed ? result.windowRestored === true : undefined;
+    if (before === target.pid)
+      return record(
+        windowRestored === true,
+        windowRestored ? "target_window_restored" : "target_window_not_restored",
+        windowRestored,
+      );
+    const appRestored = result.appRestored ?? result.restored;
+    if (!appRestored) return record(false, "helper_did_not_restore", windowRestored);
+    if (!windowNamed) return record(true, "app_restored");
+    record(true, windowRestored ? "restored" : "app_restored_window_not_restored", windowRestored);
   } catch (error) {
     record(false, `restore_failed: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+export const LATE_ACTIVATION_SETTLE_MS = 150;
+
+export async function restoreFocusAfterDestinationRefusal(
+  execution: ExecutionTrace,
+  target: ResolvedTarget,
+  session: ForegroundSession | undefined,
+  refused: HelperDestinationFailure,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!session?.focusCaptured) return;
+  const record = focusRestoreRecorder(execution);
+  if (!getComputerUseConfig().restore_focus) return record(false, "disabled");
+  const before =
+    (execution.steps ?? []).map((step) => step.frontmostBefore).find(isNumber) ??
+    refused.frontmostBefore ??
+    session.focusBefore?.pid;
+  if (before === undefined) return record(false, "no_frontmost_evidence");
+  if (before === target.pid) return await restoreTargetWindow(target, session, record, signal);
+  try {
+    await sleep(LATE_ACTIVATION_SETTLE_MS, signal);
+  } catch (error) {
+    if (signal?.aborted) return record(false, "aborted");
+    throw error;
+  }
+  await restoreWhileTargetFrontmost(
+    before,
+    target,
+    session,
+    record,
+    (current) => (current === before && !refused.inputSent ? "focus_not_taken" : "user_switched"),
+    signal,
+  );
+}
+
+export function destinationFailureOf(error: Error): HelperDestinationFailure | undefined {
+  if (!(error instanceof PlatformCommandError) || !isForegroundDestinationCode(error.code))
+    return undefined;
+  return error.destination ?? { inputSent: error.code !== FOREGROUND_NOT_ACQUIRED };
 }
 
 export async function helperAct(
@@ -296,7 +456,13 @@ export async function helperAct(
       : basePolicy;
   const attempt = async (attemptPolicy: DeliveryPolicy): Promise<HelperAttempt> => {
     const request = helperActRequest(target, action, attemptPolicy, timeoutMs);
-    if (session) session.lastRequest = { requestId: request.requestId, policy: attemptPolicy };
+    if (session)
+      session.lastRequest = {
+        requestId: request.requestId,
+        policy: attemptPolicy,
+        budgetMs: request.budgetMs,
+        sentAt: performance.now(),
+      };
     try {
       const result = checked(await currentPlatformBackend.act(request, { signal, timeoutMs }));
       return { request, result };
@@ -317,7 +483,7 @@ export async function helperAct(
       };
     }
   };
-  if (policy === "foreground") await captureUserFocus(session, signal);
+  if (policy === "foreground") await enterForegroundSection(session, signal);
   const first = await attempt(policy);
   const firstRefusal = helperRefusalSignal(first);
   if (policy !== "background" || firstRefusal?.effectPossible !== false)
@@ -347,7 +513,7 @@ export async function helperAct(
     if (delivered) deferRetryAfterDelivery(refused, target);
     return refused;
   }
-  await captureUserFocus(session, signal);
+  await enterForegroundSection(session, signal);
   const second = await attempt("foreground");
   const trace = attemptTrace(target, action, headless, "foreground", second);
   trace.backgroundFirst = true;
@@ -486,7 +652,7 @@ export function helperActRequest(
   const base: PlatformActRequestBase = {
     requestId: randomUUID(),
     session: { id: helperRequestSession.id, generation: helperRequestSession.generation },
-    deadlineMs: Date.now() + timeoutMs,
+    budgetMs: timeoutMs,
     lookId: look.lookId,
     pid: target.pid,
     target: action.target,
@@ -602,10 +768,18 @@ export function stoppedSummary(
   subject: string,
 ): string {
   const failed = `action ${failure.index + 1} (${actionLabel(actions[failure.index]?.action ?? "unknown")})`;
-  const landed = errorEffectPossible(failure.error)
-    ? `may have reached ${subject}`
-    : "delivered nothing";
-  return `act_ui stopped at ${failed} in ${where}: ${asSentence(failure.error.message)} ${deliveredActionsText(failure.index)}; ${failed} ${landed}; later actions were not sent.`;
+  const destination = destinationFailureOf(failure.error);
+  const landed =
+    destination?.inputSent === false
+      ? "sent no input (the target did not come to the front)"
+      : destination?.charactersSent !== undefined
+        ? `sent ${destination.charactersSent} character(s) to ${subject} before it stopped being the destination`
+        : errorEffectPossible(failure.error)
+          ? `may have reached ${subject}`
+          : "delivered nothing";
+  const earlier =
+    failure.index === 0 ? "No earlier action was sent" : deliveredActionsText(failure.index);
+  return `act_ui stopped at ${failed} in ${where}: ${asSentence(failure.error.message)} ${earlier}; ${failed} ${landed}; later actions were not sent.`;
 }
 
 export function asSentence(message: string): string {

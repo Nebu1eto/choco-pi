@@ -93,6 +93,8 @@ export async function buildFixture(outDir: string): Promise<FixtureBuild> {
     "arm64-apple-macos13.0",
     "-framework",
     "AppKit",
+    "-framework",
+    "WebKit",
     source,
     "-o",
     binary,

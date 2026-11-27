@@ -266,7 +266,7 @@ async function checkTierB(p: Plan): Promise<string> {
   const values = field(diagnostics, "result");
   const executable = field(values, "executablePath");
   if (
-    field(values, "protocolVersion") !== 7 ||
+    field(values, "protocolVersion") !== 8 ||
     !isString(executable) ||
     (await realpath(executable)) !== (await realpath(join(p.helperApp, "Contents/MacOS/bridge")))
   )

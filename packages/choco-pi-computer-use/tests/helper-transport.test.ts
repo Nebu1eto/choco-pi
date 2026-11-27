@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { after, before, test } from "node:test";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { UiAction } from "../src/contract.ts";
-import { isJsonObject, type JsonObject, type JsonValue } from "../src/json.ts";
+import { isJsonObject, isNumber, isString, type JsonObject, type JsonValue } from "../src/json.ts";
 import {
   HELPER_STOPPING_REASON,
   HelperInterruption,
@@ -21,8 +21,12 @@ import {
   CUSTOM_VIEW_NAME,
   CUSTOM_VIEW_REF,
   FAKE_APP,
+  FAKE_APP_B,
   FAKE_WINDOW_TITLE,
+  FAKE_WINDOW_TITLE_B,
   RESIZED_FRAME,
+  USER_WINDOW_ID,
+  NEUTRAL_USER_APP,
   defaultSlowHoldMs,
   startFakeHelperDaemon,
   type FakeHelperDaemon,
@@ -52,7 +56,7 @@ async function startDaemon(
   options: Omit<FakeHelperDaemonOptions, "socketPath">,
 ): Promise<FakeHelperDaemon> {
   await daemon?.close();
-  daemon = await startFakeHelperDaemon({ socketPath, ...options });
+  daemon = await startFakeHelperDaemon({ socketPath, userApp: "neutral", ...options });
   return daemon;
 }
 
@@ -68,7 +72,7 @@ function actArgs(
   return {
     requestId: randomUUID(),
     session: { id: owner.id, generation: owner.generation },
-    deadlineMs: Date.now() + 60_000,
+    budgetMs: 60_000,
     lookId,
     pid: FAKE_APP.pid,
     policy: "background",
@@ -492,7 +496,15 @@ test("a cancel before registration tombstones the id and the act is refused befo
   const owner = session();
   const args = actArgs(owner, look, { action: "click", target: { ref: "button-1" } });
 
-  const ack = await client.command<JsonObject>("cancel", { target: args.requestId });
+  const foreign = await client.command<JsonObject>("cancel", {
+    target: args.requestId,
+    session: session(),
+  });
+  assert.deepEqual(foreign, { acknowledged: true, state: "not_found" });
+  const ack = await client.command<JsonObject>("cancel", {
+    target: args.requestId,
+    session: owner,
+  });
   assert.deepEqual(ack, { acknowledged: true, state: "not_found" });
 
   const refused = await rejection(client.command("act", args));
@@ -562,12 +574,12 @@ test("ownership is pinned while an act is in flight: TTL expiry, claims, and rel
   });
 });
 
-test("ensureProtocol restarts a protocol-6 fake and accepts protocol 7", async () => {
-  const fake = await startDaemon({ script: "s1-ok", initialProtocolVersion: 6 });
+test("ensureProtocol shuts down a protocol-7 daemon once and accepts protocol 8", async () => {
+  const fake = await startDaemon({ script: "s1-ok", initialProtocolVersion: 7 });
   const client = new helper.MacosHelperClient();
   const diagnostics = await client.ensureProtocol();
 
-  assert.equal(diagnostics.protocolVersion, 7);
+  assert.equal(diagnostics.protocolVersion, 8);
   assert.equal(diagnostics.executablePath, undefined);
   const commands = fake.requests.map((request) => request.cmd);
   const shutdownAt = commands.indexOf("shutdown");
@@ -585,7 +597,7 @@ test("ensureProtocol restarts a same-protocol daemon that reports no startedAt",
   const shutdownAt = commands.indexOf("shutdown");
   assert.ok(shutdownAt > 0, "a pre-startedAt daemon is restarted");
   assert.ok(commands.slice(shutdownAt + 1).includes("diagnostics"));
-  assert.equal(diagnostics.protocolVersion, 7);
+  assert.equal(diagnostics.protocolVersion, 8);
   assert.ok(diagnostics.startedAt !== undefined && diagnostics.startedAt > scratchExecutableMtime);
 });
 
@@ -612,7 +624,7 @@ test("ensureProtocol keeps a daemon started after the executable was written", a
   const commands = fake.requests.map((request) => request.cmd);
   assert.ok(commands.includes("diagnostics"));
   assert.ok(!commands.includes("shutdown"), "a fresh daemon is not restarted");
-  assert.equal(diagnostics.protocolVersion, 7);
+  assert.equal(diagnostics.protocolVersion, 8);
   assert.ok(diagnostics.startedAt !== undefined && diagnostics.startedAt > scratchExecutableMtime);
 });
 
@@ -861,7 +873,8 @@ test("bridge: an S6 custom-view ref click under the grant goes to foreground dir
   const restores = fake.requests.filter((request) => request.cmd === "restoreUserFocus");
   assert.equal(restores.length, 1, "focus goes back to the user's app once");
   assert.equal(restores[0]?.pid, 4141);
-  assert.equal(restores[0]?.windowTitle, "Terminal");
+  assert.equal(restores[0]?.windowId, USER_WINDOW_ID, "the restore names the captured window id");
+  assert.equal(restores[0]?.expectedFrontmostPid, FAKE_APP.pid);
   assert.equal(restores[0]?.foregroundGrant, true);
   assert.equal(execution.focusRestored, true);
   assert.equal(execution.focusRestoreReason, "restored");
@@ -1240,6 +1253,120 @@ test("a stale_look at action 2 over the wire returns a partial successor with bo
   );
 });
 
+test("a foreground_not_acquired refusal reaches HelperCommandError with inputSent false", async () => {
+  await startDaemon({ script: "s8-foreground-not-acquired" });
+  const client = new helper.MacosHelperClient();
+  const look = await lookId(client);
+  const refused = await rejection(
+    client.command(
+      "act",
+      actArgs(session(), look, {
+        action: "keypress",
+        target: { ref: "field-1" },
+        policy: "foreground",
+        foregroundGrant: true,
+        params: { keys: ["cmd", "w"] },
+      }),
+    ),
+  );
+  assert.ok(refused instanceof helper.HelperCommandError);
+  assert.equal(refused.code, "foreground_not_acquired");
+  assert.equal(refused.effectPossible, true, "the activation request is a possible effect");
+  assert.deepEqual(refused.destination, {
+    inputSent: false,
+    activationAttempted: true,
+    reason: "app_not_frontmost",
+    frontmostPid: 4141,
+    frontmostBefore: 4141,
+    frontmostAfter: FAKE_APP.pid,
+  });
+  assert.equal(refused.interruption, undefined, "a destination refusal is not an interruption");
+});
+
+for (const activates of [true, false]) {
+  test(`bridge: foreground_not_acquired is terminal, unretried, and ${activates ? "restores focus after a late activation" : "leaves focus alone when activation never lands"}`, async () => {
+    const fake = await startDaemon({
+      script: "s8-foreground-not-acquired",
+      refusalActivates: activates,
+    });
+    const { details, text } = await actThroughBridge(wireBackend(), undefined, {
+      ref: "@e5",
+      findFixture: true,
+      foregroundGrant: FAKE_APP.bundleId,
+    });
+    const acts = fake.requests.filter((request) => request.cmd === "act");
+    assert.equal(acts.length, 1, "the refused action is never sent again in the same call");
+    assert.equal(acts[0]?.policy, "foreground");
+    assert.equal(field(field(acts[0]!, "response"), "error").inputSent, false);
+    assert.equal(details.status, "foreground_not_acquired");
+    assert.equal(field(details, "error").code, "foreground_not_acquired");
+    assert.equal(field(details, "error").inputSent, false);
+    const execution = field(details, "execution");
+    assert.equal(execution.outcome, "didnt");
+    assert.equal(execution.stoppedAt, 0);
+    const error = field(execution, "error");
+    assert.equal(error.code, "foreground_not_acquired");
+    assert.equal(error.inputSent, false);
+    assert.equal(error.effectPossible, true);
+    assert.equal(error.activationAttempted, true);
+    assert.match(text, /no input was sent; the target did not come to the front/);
+    assert.match(text, /will not be retried/);
+    const restores = fake.requests.filter((request) => request.cmd === "restoreUserFocus");
+    if (activates) {
+      assert.equal(restores.length, 1, "the late activation is undone once");
+      assert.equal(restores[0]?.pid, 4141);
+      assert.equal(
+        restores[0]?.windowId,
+        USER_WINDOW_ID,
+        "the restore names the captured window id",
+      );
+      assert.equal(restores[0]?.expectedFrontmostPid, FAKE_APP.pid);
+      assert.equal(execution.focusRestored, true);
+      assert.equal(execution.focusRestoreReason, "restored");
+      assert.match(text, /focus was given back/);
+    } else {
+      assert.equal(restores.length, 0, "nothing to undo when the target never came forward");
+      assert.equal(execution.focusRestored, false);
+      assert.equal(execution.focusRestoreReason, "focus_not_taken");
+    }
+  });
+}
+
+test("bridge: foreground_lost mid-typing is a partial result with stoppedAt and the characters sent", async () => {
+  const fake = await startDaemon({ script: "s9-foreground-lost" });
+  const { details, text } = await actThroughBridge(wireBackend(), undefined, {
+    findFixture: true,
+    foregroundGrant: FAKE_APP.bundleId,
+    actions: [{ action: "typeText", ref: "@e2", text: "abcdefgh" }],
+  });
+  const acts = fake.requests.filter((request) => request.cmd === "act");
+  assert.deepEqual(
+    acts.map((request) => request.policy),
+    ["background", "foreground"],
+    "one granted escalation and no retry after the loss",
+  );
+  assert.equal(field(field(acts[1]!, "response"), "error").code, "foreground_lost");
+  assert.equal(details.status, "partial");
+  const execution = field(details, "execution");
+  assert.equal(execution.stoppedAt, 0);
+  const error = field(execution, "error");
+  assert.equal(error.code, "foreground_lost");
+  assert.equal(error.inputSent, true);
+  assert.equal(error.effectPossible, true);
+  assert.equal(error.charactersSent, 4);
+  assert.match(
+    text,
+    /No earlier action was sent; action 1 \(.*\) sent 4 character\(s\) to the app/,
+  );
+  assert.equal(
+    fake.requests.filter((request) => request.cmd === "restoreUserFocus").length,
+    0,
+    "the user already switched away",
+  );
+  assert.equal(execution.focusRestored, false);
+  assert.equal(execution.focusRestoreReason, "user_switched");
+});
+
 test("linux and windows helpers live under CHOCO_PI_HOME/agent standalone and ~/.pi/agent legacy", async () => {
   const { linuxHelperPath } = await import("../src/platform/linux/helper.ts");
   const { windowsHelperPath } = await import("../src/platform/windows/helper.ts");
@@ -1272,4 +1399,238 @@ test("linux and windows helpers live under CHOCO_PI_HOME/agent standalone and ~/
     ),
     "/override.exe",
   );
+});
+
+interface PreparedTarget {
+  stateId: string;
+  ref: string;
+}
+
+async function prepareCustomView(
+  ctx: Awaited<ReturnType<typeof createTestExtensionContext>>,
+  app: string,
+  title: string,
+): Promise<PreparedTarget> {
+  const signal = new AbortController().signal;
+  const found = await bridge.executeFind("find", { app }, signal, undefined, ctx);
+  const parsed: JsonValue = JSON.parse(JSON.stringify(found.details));
+  assert.ok(isJsonObject(parsed) && Array.isArray(parsed.windows));
+  const window = parsed.windows.find((entry) => isJsonObject(entry) && entry.windowTitle === title);
+  assert.ok(isJsonObject(window) && isString(window.windowRef), `root ${title}`);
+  const observed = await bridge.executeObserve(
+    "observe",
+    { root: window.windowRef },
+    signal,
+    undefined,
+    ctx,
+  );
+  const line = textOf(observed.content)
+    .split("\n")
+    .find((candidate) => candidate.includes(CUSTOM_VIEW_NAME));
+  const ref = /^\s*(@e\d+)\b/.exec(line ?? "")?.[1];
+  assert.ok(ref, `custom view ref in ${title}`);
+  return { stateId: stateIdFromContent(observed.content), ref };
+}
+
+async function withGrantedBridge<T>(
+  body: (ctx: Awaited<ReturnType<typeof createTestExtensionContext>>) => Promise<T>,
+): Promise<T> {
+  const saved = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
+  const cwd = path.join(scratch, "project");
+  await mkdir(path.join(cwd, ".pi"), { recursive: true });
+  await mkdir(path.join(scratch, "agent"), { recursive: true });
+  process.env.PI_CODING_AGENT_DIR = path.join(scratch, "agent");
+  process.env.PI_COMPUTER_USE_HEADLESS = "0";
+  process.env.PI_COMPUTER_USE_BROWSER_USE = "0";
+  delete process.env.PI_COMPUTER_USE_DELIVERY_POLICY;
+  delete process.env.PI_COMPUTER_USE_EVENT_DELIVERY;
+  process.env.PI_COMPUTER_USE_FOREGROUND_GRANT = FAKE_APP.bundleId;
+  const restore = replacePlatformBackendForTest(wireBackend());
+  try {
+    const ctx = await createTestExtensionContext(cwd);
+    await bridge.shutdownComputerUseSession();
+    return await body(ctx);
+  } finally {
+    await bridge.shutdownComputerUseSession();
+    await releaseMacosOwnership(AbortSignal.timeout(1_000));
+    restore();
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function actCustomView(
+  ctx: Awaited<ReturnType<typeof createTestExtensionContext>>,
+  prepared: PreparedTarget,
+  signal: AbortSignal = new AbortController().signal,
+): Promise<JsonObject> {
+  const result = await bridge.executeAct(
+    "act",
+    { stateId: prepared.stateId, actions: [{ action: "click", ref: prepared.ref }] },
+    signal,
+    undefined,
+    ctx,
+  );
+  const parsed: JsonValue = JSON.parse(JSON.stringify(result.details));
+  assert.ok(isJsonObject(parsed));
+  return parsed;
+}
+
+function foregroundFlow(fake: FakeHelperDaemon): JsonObject[] {
+  return fake.requests.filter(
+    (request) =>
+      request.cmd === "getFrontmost" ||
+      request.cmd === "restoreUserFocus" ||
+      (request.cmd === "act" && request.policy === "foreground"),
+  );
+}
+
+test("bridge: two concurrent foreground act_ui calls on different apps are serialized and attributed truthfully", async () => {
+  const fake = await startDaemon({ script: "s6-grant", secondTarget: true, foregroundHoldMs: 300 });
+  await withGrantedBridge(async (ctx) => {
+    const first = await prepareCustomView(ctx, FAKE_APP.appName, FAKE_WINDOW_TITLE);
+    const second = await prepareCustomView(ctx, FAKE_APP_B.appName, FAKE_WINDOW_TITLE_B);
+    const flowStart = fake.requests.length;
+    const [a, b] = await Promise.all([actCustomView(ctx, first), actCustomView(ctx, second)]);
+    const flow = foregroundFlow({ ...fake, requests: fake.requests.slice(flowStart) });
+    assert.deepEqual(
+      flow.map((request) => request.cmd),
+      [
+        "getFrontmost",
+        "act",
+        "getFrontmost",
+        "restoreUserFocus",
+        "getFrontmost",
+        "act",
+        "getFrontmost",
+        "restoreUserFocus",
+      ],
+      "one call's capture, act, and restore complete before the other's capture",
+    );
+    const acts = flow.filter((request) => request.cmd === "act");
+    assert.notEqual(acts[0]?.pid, acts[1]?.pid, "the two calls target different apps");
+    for (const restore of flow.filter((request) => request.cmd === "restoreUserFocus")) {
+      assert.equal(restore.pid, NEUTRAL_USER_APP.pid);
+      assert.equal(restore.windowId, USER_WINDOW_ID);
+    }
+    assert.deepEqual(
+      flow
+        .filter((request) => request.cmd === "restoreUserFocus")
+        .map((r) => r.expectedFrontmostPid),
+      acts.map((request) => request.pid),
+      "each restore expects its own target in front",
+    );
+    for (const details of [a, b]) {
+      const execution = field(details, "execution");
+      assert.equal(
+        execution.frontmostBefore,
+        NEUTRAL_USER_APP.pid,
+        "each call saw the user's app first",
+      );
+      assert.equal(execution.focusRestoreReason, "restored");
+      assert.equal(execution.focusWindowRestored, true);
+    }
+  });
+});
+
+test("bridge: an unfinished foreground delivery keeps the section closed until the helper reports it stopped", async () => {
+  const fake = await startDaemon({
+    script: "s6-grant",
+    secondTarget: true,
+    foregroundHoldMs: 5_000,
+    cancelBlockMs: 1_000,
+  });
+  await withGrantedBridge(async (ctx) => {
+    const first = await prepareCustomView(ctx, FAKE_APP.appName, FAKE_WINDOW_TITLE);
+    const second = await prepareCustomView(ctx, FAKE_APP_B.appName, FAKE_WINDOW_TITLE_B);
+    const controller = new AbortController();
+    const aborted = actCustomView(ctx, first, controller.signal);
+    setTimeout(() => controller.abort(), 200);
+    await assert.rejects(aborted, /aborted/i);
+    const firstAck = fake.requests.find((request) => request.cmd === "cancel");
+    assert.equal(field(firstAck!, "ack").state, "stopping", "the helper had not stopped yet");
+    const followedAt = fake.requests.length;
+    const next = await actCustomView(ctx, second);
+    assert.equal(field(next, "execution").focusRestoreReason, "restored");
+    const unfinished = fake.requests.find(
+      (request) => request.cmd === "act" && request.pid === FAKE_APP.pid,
+    );
+    const answeredAt = unfinished?.answeredAt;
+    assert.ok(isNumber(answeredAt), "the unfinished act was answered");
+    const capture = fake.requests
+      .slice(followedAt)
+      .find((request) => request.cmd === "getFrontmost");
+    const capturedAt = capture?.receivedAt;
+    assert.ok(isNumber(capturedAt));
+    assert.ok(capturedAt >= answeredAt, "no capture before the unfinished act stopped");
+    const polls = fake.requests.filter(
+      (request) => request.cmd === "cancel" && request.target === unfinished?.requestId,
+    );
+    assert.ok(polls.length >= 2, "the stop was confirmed by asking again");
+    assert.deepEqual(polls.at(-1)?.session, unfinished?.session, "cancels carry the owner");
+  });
+});
+
+test("cancel from another session is refused and does not stop the request", async () => {
+  await startDaemon({ script: "s4-slow-type", slowChunkMs: 5_000 });
+  const client = new helper.MacosHelperClient();
+  const look = await lookId(client);
+  const owner = session();
+  const args = actArgs(owner, look, {
+    action: "typeText",
+    target: { ref: "field-1" },
+    params: { text: "abcdefgh" },
+  });
+  const pending = rejection(client.command("act", args, { timeoutMs: 30_000 }));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const refused = await rejection(
+    client.command("cancel", { target: args.requestId, session: session() }),
+  );
+  assert.ok(refused instanceof helper.HelperCommandError);
+  assert.equal(refused.code, "not_request_owner");
+  const ack = await client.command<JsonObject>("cancel", {
+    target: args.requestId,
+    session: owner,
+  });
+  assert.equal(ack.state, "stopped");
+  const stopped = await pending;
+  assert.ok(stopped instanceof helper.HelperCommandError);
+  assert.equal(stopped.code, "cancelled");
+});
+
+test("the helper deadline is the relative budget from receipt, and an absolute deadline is refused", async () => {
+  await startDaemon({ script: "s4-slow-type", slowChunkMs: 200 });
+  const client = new helper.MacosHelperClient();
+  const look = await lookId(client);
+  const owner = session();
+  const started = Date.now();
+  const expired = await rejection(
+    client.command(
+      "act",
+      {
+        ...actArgs(owner, look, {
+          action: "typeText",
+          target: { ref: "field-1" },
+          params: { text: "abcdefghijkl" },
+        }),
+        budgetMs: 300,
+      },
+      { timeoutMs: 10_000 },
+    ),
+  );
+  assert.ok(expired instanceof helper.HelperCommandError);
+  assert.equal(expired.code, "cancelled");
+  assert.equal(expired.interruption?.result?.reason, "deadline");
+  assert.ok(Date.now() - started < 5_000);
+  const { budgetMs: _budget, ...legacy } = actArgs(owner, look, {
+    action: "click",
+    target: { ref: "button-1" },
+  });
+  const refused = await rejection(
+    client.command("act", { ...legacy, deadlineMs: Date.now() + 60_000 }),
+  );
+  assert.ok(refused instanceof helper.HelperCommandError);
+  assert.equal(refused.code, "invalid_args");
 });

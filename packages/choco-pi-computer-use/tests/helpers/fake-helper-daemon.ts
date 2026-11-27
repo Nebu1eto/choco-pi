@@ -18,6 +18,8 @@ export const FAKE_SCRIPTS = [
   "s5-stale",
   "s6-grant",
   "s7-ownership",
+  "s8-foreground-not-acquired",
+  "s9-foreground-lost",
 ] as const;
 export type FakeScript = (typeof FAKE_SCRIPTS)[number];
 
@@ -33,6 +35,11 @@ export interface FakeHelperDaemonOptions {
   cancelBlockMs?: number;
   pidSettleHoldMs?: number;
   ownerTtlMs?: number;
+  refusalActivates?: boolean;
+  secondTarget?: boolean;
+  foregroundHoldMs?: number;
+  targetKeyWindowId?: number;
+  userApp?: FakeUserApp;
 }
 
 export interface FakeHelperDaemon {
@@ -42,13 +49,19 @@ export interface FakeHelperDaemon {
   close(): Promise<void>;
 }
 
-export const FAKE_PROTOCOL_VERSION = 7;
+export const FAKE_PROTOCOL_VERSION = 8;
 export const FAKE_APP = {
   appName: "CU Fixture Target",
   bundleId: "com.choco-pi.FocusFixture",
   pid: 4242,
 };
+export const FAKE_APP_B = {
+  appName: "Second Fixture",
+  bundleId: "com.choco-pi.FocusFixture",
+  pid: 4343,
+};
 export const FAKE_WINDOW_TITLE = "CU Fixture Target";
+export const FAKE_WINDOW_TITLE_B = "Second Fixture Window";
 export const CUSTOM_VIEW_REF = "custom-1";
 export const CUSTOM_VIEW_NAME = "Custom View";
 export const SHUTDOWN_DEADLINE_MS = 250;
@@ -57,8 +70,17 @@ const CLIENT_COMMAND_TIMEOUT_MS = 15_000;
 export function defaultSlowHoldMs(text: string): number {
   return Math.max(CLIENT_COMMAND_TIMEOUT_MS, text.length * 25 + 6_000) + 10_000;
 }
-const USER_APP = { appName: "Terminal", bundleId: "com.apple.Terminal", pid: 4141 };
+export const TERMINAL_USER_APP = { appName: "Terminal", bundleId: "com.apple.Terminal", pid: 4141 };
+export const NEUTRAL_USER_APP = {
+  appName: "Notes Fake",
+  bundleId: "com.example.user-app",
+  pid: 4141,
+};
+const USER_WINDOW_TITLES = { terminal: "Terminal", neutral: "Notes Fake Window" } as const;
+export type FakeUserApp = keyof typeof USER_WINDOW_TITLES;
+export const USER_WINDOW_ID = 7;
 const WINDOW_ID = 41;
+const WINDOW_ID_B = 43;
 interface Frame {
   x: number;
   y: number;
@@ -83,6 +105,7 @@ function framesDiffer(left: Frame, right: Frame): boolean {
   );
 }
 const ROOT_REF = "fake-root-1";
+const ROOT_REF_B = "fake-root-2";
 const OWNER_TTL_MS = 30_000;
 const TOMBSTONE_TTL_MS = 60_000;
 const TOMBSTONE_LIMIT = 256;
@@ -179,11 +202,16 @@ class FakeHelperState {
   private readonly cancelBlockMs: number;
   private readonly pidSettleHoldMs: number;
   private readonly ownerTtlMs: number;
+  private readonly refusalActivates: boolean;
+  private readonly secondTarget: boolean;
+  private readonly foregroundHoldMs: number;
+  private readonly targetKeyWindowId?: number;
   private owner?: Session & { lastSeen: number };
   private ownerActive = 0;
   private readonly active = new Map<string, Tracked>();
-  private readonly completed: string[] = [];
-  private readonly tombstones: { id: string; at: number }[] = [];
+  private readonly completed: { id: string; sessionId?: string }[] = [];
+  private readonly tombstones: { id: string; at: number; sessionId?: string }[] = [];
+  private readonly lookApps = new Map<string, number>();
   private lookCount = 0;
   private lookSequence = 0;
   private generation = 1;
@@ -192,7 +220,9 @@ class FakeHelperState {
   private readonly lookFrames = new Map<string, Frame>();
   private fieldValue = "";
   private pressCount = 0;
-  private frontmost = USER_APP;
+  private readonly userApp: typeof FAKE_APP;
+  private readonly userWindowTitle: string;
+  private frontmost: typeof FAKE_APP;
   private pendingDelta = false;
 
   constructor(options: FakeHelperDaemonOptions) {
@@ -208,6 +238,14 @@ class FakeHelperState {
     this.cancelBlockMs = options.cancelBlockMs ?? 0;
     this.pidSettleHoldMs = options.pidSettleHoldMs ?? 0;
     this.ownerTtlMs = options.ownerTtlMs ?? OWNER_TTL_MS;
+    this.refusalActivates = options.refusalActivates ?? true;
+    this.secondTarget = options.secondTarget === true;
+    this.foregroundHoldMs = options.foregroundHoldMs ?? 0;
+    this.targetKeyWindowId = options.targetKeyWindowId;
+    const user = options.userApp ?? "terminal";
+    this.userApp = user === "neutral" ? NEUTRAL_USER_APP : TERMINAL_USER_APP;
+    this.userWindowTitle = USER_WINDOW_TITLES[user];
+    this.frontmost = this.userApp;
   }
 
   async handle(request: JsonObject): Promise<JsonValue> {
@@ -255,21 +293,22 @@ class FakeHelperState {
       case "release":
         return { released: this.release(session) };
       case "cancel":
-        return await this.cancel(stringField(request, "target") ?? "");
+        return await this.cancel(stringField(request, "target") ?? "", session);
       case "listApps":
         return {
           apps: [
             { ...FAKE_APP, isFrontmost: this.frontmost.pid === FAKE_APP.pid },
-            { ...USER_APP, isFrontmost: this.frontmost.pid === USER_APP.pid },
+            { ...this.userApp, isFrontmost: this.frontmost.pid === this.userApp.pid },
+            ...(this.secondTarget
+              ? [{ ...FAKE_APP_B, isFrontmost: this.frontmost.pid === FAKE_APP_B.pid }]
+              : []),
           ],
         };
       case "listRoots":
       case "listWindows":
-        return { roots: [this.root()] };
+        return { roots: this.roots(numberField(request, "pid")) };
       case "getFrontmost":
-        return this.frontmost.pid === FAKE_APP.pid
-          ? { ...FAKE_APP, windowTitle: FAKE_WINDOW_TITLE, windowId: WINDOW_ID }
-          : { ...USER_APP, windowTitle: "Terminal", windowId: 7 };
+        return this.getFrontmost();
       case "look":
         return this.look(request);
       case "act":
@@ -312,29 +351,91 @@ class FakeHelperState {
             "restoreUserFocus requires a host foreground grant",
             false,
           );
-        const pid = numberField(request, "pid");
-        const app = [FAKE_APP, USER_APP].find((candidate) => candidate.pid === pid);
-        if (!app)
-          throw new FakeFailure("app_not_found", `App with pid ${pid} is no longer running`);
-        this.frontmost = app;
-        const windowTitle = stringField(request, "windowTitle") ?? "";
-        const expectedTitle = app.pid === USER_APP.pid ? "Terminal" : FAKE_WINDOW_TITLE;
-        const windowRestored = windowTitle.toLowerCase() === expectedTitle.toLowerCase();
-        return {
-          restored: true,
-          appRestored: true,
-          windowRestored,
-          appName: app.appName,
-          windowTitle: windowRestored ? expectedTitle : "",
-        };
+        return this.restoreUserFocus(request);
       }
       default:
         throw new FakeFailure("unknown_command", `Unknown command '${cmd}'`);
     }
   }
 
-  cancelAckFor(target: string): Promise<JsonObject> {
-    return this.cancel(target);
+  cancelAckFor(target: string, session: Session | undefined): Promise<JsonObject> {
+    return this.cancel(target, session);
+  }
+
+  private roots(pid: number | undefined): JsonObject[] {
+    if (!this.secondTarget) return [this.root(FAKE_APP.pid)];
+    if (pid === FAKE_APP_B.pid) return [this.root(FAKE_APP_B.pid)];
+    if (pid === FAKE_APP.pid) return [this.root(FAKE_APP.pid)];
+    return [this.root(FAKE_APP.pid), this.root(FAKE_APP_B.pid)];
+  }
+
+  private targetApp(pid: number | undefined): typeof FAKE_APP {
+    return this.secondTarget && pid === FAKE_APP_B.pid ? FAKE_APP_B : FAKE_APP;
+  }
+
+  private getFrontmost(): JsonObject {
+    const front = this.frontmost;
+    if (front.pid === this.userApp.pid)
+      return {
+        ...this.userApp,
+        windowTitle: this.userWindowTitle,
+        windowId: USER_WINDOW_ID,
+        windowSource: "focused",
+      };
+    const second = front.pid === FAKE_APP_B.pid;
+    return {
+      ...front,
+      windowTitle: second ? FAKE_WINDOW_TITLE_B : FAKE_WINDOW_TITLE,
+      windowId: second ? WINDOW_ID_B : (this.targetKeyWindowId ?? WINDOW_ID),
+      windowSource: "focused",
+    };
+  }
+
+  private restoreUserFocus(request: JsonObject): JsonObject {
+    const pid = numberField(request, "pid");
+    const app = [FAKE_APP, FAKE_APP_B, this.userApp].find((candidate) => candidate.pid === pid);
+    if (!app) throw new FakeFailure("app_not_found", `App with pid ${pid} is no longer running`);
+    const frontmostBefore = this.frontmost.pid;
+    const expected = numberField(request, "expectedFrontmostPid");
+    if (expected !== undefined && expected !== frontmostBefore)
+      return {
+        restored: false,
+        appRestored: false,
+        windowRestored: false,
+        appName: app.appName,
+        reason: "frontmost_changed",
+        frontmostBefore,
+      };
+    this.frontmost = app;
+    const windowId = numberField(request, "windowId");
+    const windowTitle = stringField(request, "windowTitle");
+    const known =
+      app.pid === this.userApp.pid
+        ? [{ id: USER_WINDOW_ID, title: this.userWindowTitle }]
+        : app.pid === FAKE_APP_B.pid
+          ? [{ id: WINDOW_ID_B, title: FAKE_WINDOW_TITLE_B }]
+          : [
+              { id: WINDOW_ID, title: FAKE_WINDOW_TITLE },
+              ...(this.targetKeyWindowId === undefined
+                ? []
+                : [{ id: this.targetKeyWindowId, title: "Second Window" }]),
+            ];
+    const match =
+      windowId !== undefined
+        ? known.find((window) => window.id === windowId)
+        : windowTitle
+          ? known.find((window) => window.title.toLowerCase() === windowTitle.toLowerCase())
+          : undefined;
+    const windowNamed = windowId !== undefined || windowTitle !== undefined;
+    return {
+      restored: !windowNamed || match !== undefined,
+      appRestored: true,
+      windowRestored: match !== undefined,
+      appName: app.appName,
+      windowTitle: match?.title ?? "",
+      windowMatch: windowId !== undefined ? "id" : windowTitle ? "title" : "none",
+      frontmostBefore,
+    };
   }
 
   shutdown(): void {
@@ -448,14 +549,28 @@ class FakeHelperState {
     this.tombstones.splice(0, this.tombstones.length, ...fresh.slice(-TOMBSTONE_LIMIT));
   }
 
-  private async cancel(target: string): Promise<JsonObject> {
+  private async cancel(target: string, session: Session | undefined): Promise<JsonObject> {
     const tracked = this.active.get(target);
+    const entry = this.completed.findLast((candidate) => candidate.id === target);
+    const registeredBy = tracked ? tracked.session?.id : entry?.sessionId;
+    if (registeredBy !== undefined && registeredBy !== session?.id)
+      throw new FakeFailure(
+        "not_request_owner",
+        `cancel refused: request '${target}' was registered by another session`,
+        false,
+      );
     if (!tracked) {
-      const completed = this.completed.includes(target);
+      const completed = entry !== undefined;
       if (!completed) {
         const now = Date.now();
-        const kept = this.tombstones.filter((tombstone) => tombstone.id !== target);
-        this.tombstones.splice(0, this.tombstones.length, ...kept, { id: target, at: now });
+        const kept = this.tombstones.filter(
+          (tombstone) => tombstone.id !== target || tombstone.sessionId !== session?.id,
+        );
+        this.tombstones.splice(0, this.tombstones.length, ...kept, {
+          id: target,
+          at: now,
+          sessionId: session?.id,
+        });
         this.pruneTombstones(now);
       }
       return {
@@ -496,12 +611,23 @@ class FakeHelperState {
       const id = stringField(request, "requestId");
       return id ? [id] : [];
     });
+    const receivedAt = Date.now();
+    if (requests.some((request) => "deadlineMs" in request && !("budgetMs" in request)))
+      throw new FakeFailure(
+        "invalid_args",
+        "deadlineMs is not accepted since protocol 8; send budgetMs",
+        false,
+      );
     const deadlines = requests.flatMap((request) => {
-      const deadline = numberField(request, "deadlineMs");
-      return deadline === undefined ? [] : [deadline];
+      const budget = numberField(request, "budgetMs");
+      return budget === undefined ? [] : [receivedAt + budget];
     });
-    this.pruneTombstones(Date.now());
-    const tombstoned = ids.some((id) => this.tombstones.some((tombstone) => tombstone.id === id));
+    this.pruneTombstones(receivedAt);
+    const tombstoned = ids.some((id) =>
+      this.tombstones.some(
+        (tombstone) => tombstone.id === id && (!session || tombstone.sessionId === session.id),
+      ),
+    );
     const tracked: Tracked = {
       cancelled: tombstoned,
       stopped: false,
@@ -516,12 +642,18 @@ class FakeHelperState {
       return await body(tracked);
     } catch (error) {
       if (error instanceof FakeFailure && error.effectPossible === undefined)
-        throw new FakeFailure(error.code, error.message, tracked.effect, error.result);
+        throw new FakeFailure(
+          error.code,
+          error.message,
+          tracked.effect,
+          error.result,
+          error.details,
+        );
       throw error;
     } finally {
       for (const id of ids) {
         this.active.delete(id);
-        this.completed.push(id);
+        this.completed.push({ id, sessionId: session?.id });
       }
       if (this.completed.length > 64) this.completed.splice(0, this.completed.length - 64);
     }
@@ -546,16 +678,18 @@ class FakeHelperState {
     );
   }
 
-  private root(): JsonObject {
+  private root(pid: number): JsonObject {
+    const second = this.secondTarget && pid === FAKE_APP_B.pid;
+    const app = second ? FAKE_APP_B : FAKE_APP;
     return {
       kind: "window",
-      rootRef: ROOT_REF,
-      windowRef: ROOT_REF,
-      windowId: WINDOW_ID,
-      pid: FAKE_APP.pid,
-      appName: FAKE_APP.appName,
-      bundleId: FAKE_APP.bundleId,
-      title: FAKE_WINDOW_TITLE,
+      rootRef: second ? ROOT_REF_B : ROOT_REF,
+      windowRef: second ? ROOT_REF_B : ROOT_REF,
+      windowId: second ? WINDOW_ID_B : WINDOW_ID,
+      pid: app.pid,
+      appName: app.appName,
+      bundleId: app.bundleId,
+      title: second ? FAKE_WINDOW_TITLE_B : FAKE_WINDOW_TITLE,
       role: "AXWindow",
       subrole: "AXStandardWindow",
       zOrder: 0,
@@ -615,6 +749,12 @@ class FakeHelperState {
     const lookId = `look_${++this.lookSequence}`;
     this.validLooks.add(lookId);
     this.lookFrames.set(lookId, this.frame);
+    const second =
+      this.secondTarget &&
+      (request.windowId === WINDOW_ID_B ||
+        request.windowRef === ROOT_REF_B ||
+        request.pid === FAKE_APP_B.pid);
+    this.lookApps.set(lookId, second ? FAKE_APP_B.pid : FAKE_APP.pid);
     const label =
       this.pressCount > 0
         ? `Clicked ${this.pressCount}`
@@ -622,7 +762,9 @@ class FakeHelperState {
           ? `Generation ${this.generation}`
           : "Ready";
     const customView =
-      this.script === "s2-foreground-required" || this.script === "s6-grant"
+      this.script === "s2-foreground-required" ||
+      this.script === "s6-grant" ||
+      this.script === "s8-foreground-not-acquired"
         ? [
             this.node(
               CUSTOM_VIEW_REF,
@@ -663,8 +805,8 @@ class FakeHelperState {
       capturedAt: Date.now() / 1000,
       hasImage: false,
       window: {
-        windowId: WINDOW_ID,
-        rootRef: ROOT_REF,
+        windowId: second ? WINDOW_ID_B : WINDOW_ID,
+        rootRef: second ? ROOT_REF_B : ROOT_REF,
         kind: "window",
         framePoints: { ...this.frame },
         scaleFactor: 1,
@@ -709,9 +851,10 @@ class FakeHelperState {
       (request.focusResolution === "ax_focused_element" ? "field-1" : undefined);
     const delivery = granted && params.delivery !== "pid" ? "hid" : "pid";
     const frontmostBefore = this.frontmost.pid;
+    const app = this.targetApp(this.lookApps.get(lookId) ?? numberField(request, "pid"));
     const effect = (activates = delivery === "hid") => {
       tracked.effect = true;
-      if (activates) this.frontmost = FAKE_APP;
+      if (activates) this.frontmost = app;
     };
     const finish = (response: JsonObject): JsonObject => {
       if (deferred) return response;
@@ -734,6 +877,58 @@ class FakeHelperState {
       }
       return output;
     };
+
+    if (this.script === "s8-foreground-not-acquired" && delivery === "hid") {
+      this.checkpoint(tracked);
+      tracked.effect = true;
+      const frontmostPid = this.frontmost.pid;
+      if (this.refusalActivates) this.frontmost = FAKE_APP;
+      throw new FakeFailure(
+        "foreground_not_acquired",
+        `No input was sent; the target did not come to the front within 400 ms: ${FAKE_APP.appName} (pid ${FAKE_APP.pid}) is not the frontmost app.`,
+        true,
+        undefined,
+        {
+          inputSent: false,
+          activationAttempted: true,
+          destinationReason: "app_not_frontmost",
+          targetPid: FAKE_APP.pid,
+          frontmostPid,
+          frontmostBefore,
+          frontmostAfter: this.frontmost.pid,
+        },
+      );
+    }
+    if (this.script === "s9-foreground-lost" && action === "typeText") {
+      if (delivery !== "hid")
+        throw new FakeFailure(
+          "foreground_required",
+          "Typing into this field needs foreground keyboard input",
+          false,
+        );
+      const text = isString(params.text) ? params.text : "";
+      const sent = text.slice(0, TYPE_CHUNK_CHARS);
+      this.checkpoint(tracked);
+      effect();
+      this.fieldValue += sent;
+      this.frontmost = this.userApp;
+      throw new FakeFailure(
+        "foreground_lost",
+        `Foreground input stopped after some input was sent: ${FAKE_APP.appName} (pid ${FAKE_APP.pid}) is not the frontmost app. Nothing more was sent. ${sent.length} character(s) of the text were sent first.`,
+        true,
+        { outcome: "partial", stoppedAt: tracked.step, charactersSent: sent.length },
+        {
+          inputSent: true,
+          activationAttempted: true,
+          charactersSent: sent.length,
+          destinationReason: "app_not_frontmost",
+          targetPid: FAKE_APP.pid,
+          frontmostPid: this.userApp.pid,
+          frontmostBefore,
+          frontmostAfter: this.userApp.pid,
+        },
+      );
+    }
 
     const clicks = action === "click" || action === "press";
     const clicksField = clicks && ref !== undefined && TEXT_REFS.has(ref);
@@ -817,11 +1012,13 @@ class FakeHelperState {
     if (clicks && noAxAction) {
       this.checkpoint(tracked);
       effect();
-      if (delivery === "hid")
+      if (delivery === "hid") {
+        if (this.foregroundHoldMs > 0) await this.sleep(tracked, this.foregroundHoldMs);
         return finish({
           outcome: "unknown",
           performed: { delivery: "hid", grounding: "coordinates", activated: true },
         });
+      }
       return finish({
         outcome: "didnt",
         performed: { delivery: "pid", grounding: "coordinates", verification: "caller_required" },
@@ -844,8 +1041,10 @@ class FakeHelperState {
 
   private async sleep(tracked: Tracked, ms: number): Promise<void> {
     if (tracked.cancelled) return;
+    const left =
+      tracked.deadlineMs === undefined ? ms : Math.max(0, tracked.deadlineMs - Date.now());
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, ms);
+      const timer = setTimeout(resolve, Math.min(ms, left));
       tracked.wake = () => {
         clearTimeout(timer);
         resolve();
@@ -957,7 +1156,10 @@ export async function startFakeHelperDaemon(
     let response: JsonObject;
     if (request.cmd === "cancel") {
       try {
-        const ack = await state.cancelAckFor(stringField(request, "target") ?? "");
+        const ack = await state.cancelAckFor(
+          stringField(request, "target") ?? "",
+          sessionOf(request),
+        );
         entry.ack = ack;
         response = { id, ok: true, result: ack };
       } catch (error) {
@@ -1060,10 +1262,13 @@ async function main(args: readonly string[]): Promise<void> {
   const script = argValue(args, "--script");
   if (!socketPath || !script)
     throw new Error(
-      "Usage: fake-helper-daemon.ts --socket <path> --script <name> [--log <jsonl>] [--executable-path <path>] [--protocol-version <n>]",
+      "Usage: fake-helper-daemon.ts --socket <path> --script <name> [--log <jsonl>] [--executable-path <path>] [--protocol-version <n>] [--started-at <s|none>] [--user-app terminal|neutral]",
     );
   const protocolArg = argValue(args, "--protocol-version");
   const startedAtArg = argValue(args, "--started-at");
+  const userAppArg = argValue(args, "--user-app");
+  if (userAppArg !== undefined && userAppArg !== "terminal" && userAppArg !== "neutral")
+    throw new Error("--user-app must be terminal or neutral");
   let daemon: FakeHelperDaemon | undefined;
   let stopping = false;
   const stop = () => {
@@ -1093,6 +1298,7 @@ async function main(args: readonly string[]): Promise<void> {
         : startedAtArg === "none"
           ? null
           : Number(startedAtArg),
+    userApp: userAppArg,
   });
   if (stopping) {
     await daemon.close();

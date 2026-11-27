@@ -38,6 +38,8 @@ import {
   type DeliveryPolicy,
   type ExecutionTrace,
   type ExecutionVariant,
+  type ForegroundSectionLease,
+  type ForegroundSectionTrace,
   type ObservationRefreshReason,
   type ResolvedTarget,
   type RuntimeState,
@@ -188,10 +190,17 @@ interface HelperOwner {
   generation: number;
 }
 
+interface ForegroundGate {
+  held: boolean;
+  readonly waiters: Array<() => void>;
+  unconfirmed: string | undefined;
+}
+
 interface ProcessSlot {
   readonly owner: HelperOwner;
   readonly sessions: Map<string, string>;
   readonly releasers: Map<string, () => Promise<void>>;
+  readonly foreground: ForegroundGate;
 }
 
 const PROCESS_SLOT_KEY = Symbol.for("choco-pi.computer-use.process-state.v1");
@@ -229,10 +238,31 @@ function isReleaserMap<T>(value: T): value is T & Map<string, () => Promise<void
   return true;
 }
 
+function isCallbackList<T>(value: T): value is T & Array<() => void> {
+  if (!Array.isArray(value)) return false;
+  for (const entry of value) if (!(entry instanceof Function)) return false;
+  return true;
+}
+
+function isForegroundGate<T>(value: T): value is T & ForegroundGate {
+  if (value === null || value === undefined || Object(value) !== value) return false;
+  const gate = Object(value);
+  return (
+    (gate.held === true || gate.held === false) &&
+    isCallbackList(gate.waiters) &&
+    (gate.unconfirmed === undefined || isText(gate.unconfirmed))
+  );
+}
+
 function isProcessSlot<T>(value: T): value is T & ProcessSlot {
   if (value === null || value === undefined || Object(value) !== value) return false;
   const slot = Object(value);
-  return isHelperOwner(slot.owner) && isTextMap(slot.sessions) && isReleaserMap(slot.releasers);
+  return (
+    isHelperOwner(slot.owner) &&
+    isTextMap(slot.sessions) &&
+    isReleaserMap(slot.releasers) &&
+    isForegroundGate(slot.foreground)
+  );
 }
 
 function processSlot(): ProcessSlot {
@@ -242,6 +272,7 @@ function processSlot(): ProcessSlot {
     owner: { id: randomUUID(), generation: 0 },
     sessions: new Map(),
     releasers: new Map(),
+    foreground: { held: false, waiters: [], unconfirmed: undefined },
   };
   Object.defineProperty(globalThis, PROCESS_SLOT_KEY, {
     value: slot,
@@ -253,6 +284,45 @@ function processSlot(): ProcessSlot {
 }
 
 export const helperRequestSession: HelperOwner = processSlot().owner;
+
+export async function acquireForegroundSection(
+  signal?: AbortSignal,
+): Promise<ForegroundSectionLease> {
+  throwIfAborted(signal);
+  const gate = processSlot().foreground;
+  const started = performance.now();
+  if (gate.held) {
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        const index = gate.waiters.indexOf(grant);
+        if (index >= 0) gate.waiters.splice(index, 1);
+        reject(new Error("Operation aborted."));
+      };
+      const grant = () => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      };
+      gate.waiters.push(grant);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+  gate.held = true;
+  const trace: ForegroundSectionTrace = { waitedMs: Math.round(performance.now() - started) };
+  if (gate.unconfirmed !== undefined) trace.previousDeliveryUnconfirmed = gate.unconfirmed;
+  gate.unconfirmed = undefined;
+  let released = false;
+  return {
+    trace,
+    release(unconfirmedRequestId) {
+      if (released) return;
+      released = true;
+      if (unconfirmedRequestId !== undefined) gate.unconfirmed = unconfirmedRequestId;
+      const next = gate.waiters.shift();
+      if (next) next();
+      else gate.held = false;
+    },
+  };
+}
 
 async function releaseInstanceHelperOwner(): Promise<void> {
   await currentPlatformBackend.shutdown?.();

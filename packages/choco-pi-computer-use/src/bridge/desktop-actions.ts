@@ -24,12 +24,15 @@ import {
   aggregateExecutions,
   batchPreparationError,
   deliveredActionsText,
+  destinationFailureOf,
+  endForegroundSection,
   ensurePointIsInLookImage,
   errorEffectPossible,
   executionTraceFromAct,
   helperAct,
   helperActRequest,
   refusalForResult,
+  restoreFocusAfterDestinationRefusal,
   restoreFocusAfterGrantedInput,
   stoppedSummary,
 } from "./helper-act.ts";
@@ -189,35 +192,52 @@ export async function dispatchUiTransaction(
   const steps: ExecutionTrace[] = [];
   const session: ForegroundSession = { ctx, focusCaptured: false };
   let failure: DesktopDispatchFailure | undefined;
-  for (const [index, action] of prepared.entries()) {
-    session.lastRequest = undefined;
-    let step: ExecutionTrace;
-    try {
-      step = await helperAct(target, action, headless, signal, session);
-    } catch (error) {
-      if (signal?.aborted || !(error instanceof Error)) throw error;
-      failure = {
-        index,
-        error,
-        request: session.lastRequest,
-        interruption: helperInterruption(error),
-      };
-      break;
+  let unfinished: HelperInterruption | undefined;
+  try {
+    for (const [index, action] of prepared.entries()) {
+      session.lastRequest = undefined;
+      let step: ExecutionTrace;
+      try {
+        step = await helperAct(target, action, headless, signal, session);
+      } catch (error) {
+        if (error instanceof Error) unfinished = unfinishedDelivery(error);
+        if (signal?.aborted || !(error instanceof Error)) throw error;
+        failure = {
+          index,
+          error,
+          request: session.lastRequest,
+          interruption: helperInterruption(error),
+        };
+        break;
+      }
+      steps.push(step);
+      if (step.refusal || step.outcome === "didnt") break;
     }
-    steps.push(step);
-    if (step.refusal || step.outcome === "didnt") break;
-  }
-  const execution = aggregateExecutions(steps);
-  const state = failure?.interruption?.execution.state;
-  if (state !== undefined && !TERMINAL_INTERRUPTION_STATES.has(state)) {
-    if (steps.some((step) => step.foregroundGrant === true)) {
-      execution.focusRestored = false;
-      execution.focusRestoreReason = "delivery_may_continue";
+    const execution = aggregateExecutions(steps);
+    if (session.section) execution.foregroundSection = session.section.trace;
+    const refused =
+      failure && !failure.interruption ? destinationFailureOf(failure.error) : undefined;
+    if (unfinished) {
+      if (steps.some((step) => step.foregroundGrant === true)) {
+        execution.focusRestored = false;
+        execution.focusRestoreReason = "delivery_may_continue";
+      }
+    } else if (refused) {
+      await restoreFocusAfterDestinationRefusal(execution, target, session, refused, signal);
+    } else {
+      await restoreFocusAfterGrantedInput(execution, target, session, signal);
     }
-  } else {
-    await restoreFocusAfterGrantedInput(execution, target, session, signal);
+    return { execution, failure };
+  } finally {
+    endForegroundSection(session, unfinished);
   }
-  return { execution, failure };
+}
+
+function unfinishedDelivery(error: Error): HelperInterruption | undefined {
+  if (!("interruption" in error)) return undefined;
+  const interruption = error.interruption;
+  if (!(interruption instanceof HelperInterruption)) return undefined;
+  return TERMINAL_INTERRUPTION_STATES.has(interruption.state) ? undefined : interruption;
 }
 
 export const TERMINAL_INTERRUPTION_STATES: ReadonlySet<HelperInterruptionState> = new Set([
@@ -561,12 +581,81 @@ export function failedStepTrace(failure: DesktopDispatchFailure): ExecutionTrace
   const code =
     (failure.error instanceof PlatformCommandError ? failure.error.code : undefined) ??
     "action_failed";
+  const destination = destinationFailureOf(failure.error);
+  const error: NonNullable<ExecutionTrace["error"]> = {
+    code,
+    message: failure.error.message,
+    effectPossible,
+  };
+  if (destination) {
+    error.inputSent = destination.inputSent;
+    if (destination.activationAttempted !== undefined)
+      error.activationAttempted = destination.activationAttempted;
+    if (destination.charactersSent !== undefined) error.charactersSent = destination.charactersSent;
+    if (destination.reason !== undefined) error.destinationReason = destination.reason;
+  }
   return executionTrace("act", "default", {
-    outcome: effectPossible ? "unknown" : "didnt",
-    error: { code, message: failure.error.message, effectPossible },
+    outcome: effectPossible && destination?.inputSent !== false ? "unknown" : "didnt",
+    error,
     deliveryPolicy: failure.request?.policy,
     requestId: failure.request?.requestId,
   });
+}
+
+export function foregroundNotAcquiredResult(
+  target: ResolvedTarget,
+  baseStateId: string,
+  dispatched: ExecutionTrace,
+  failure: DesktopDispatchFailure,
+  actions: UiAction[],
+): AgentToolResult<TerminalDesktopActionDetails> {
+  const failedStep = failedStepTrace(failure);
+  const execution = aggregateExecutions([...(dispatched.steps ?? []), failedStep]);
+  execution.stoppedAt = failure.index;
+  execution.error = failedStep.error;
+  execution.focusRestored = dispatched.focusRestored;
+  execution.focusRestoreReason = dispatched.focusRestoreReason;
+  const effectPossible = failedStep.error?.effectPossible === true;
+  if (effectPossible) clearDesktopOperationState(operationState());
+  const code = failedStep.error?.code ?? "foreground_not_acquired";
+  const details: TerminalDesktopActionDetails = {
+    tool: "act_ui",
+    status: "foreground_not_acquired",
+    baseStateId,
+    target: {
+      app: target.appName,
+      bundleId: target.bundleId,
+      pid: target.pid,
+      windowTitle: target.windowTitle,
+      windowId: target.windowId,
+      windowRef: target.windowRef,
+      nativeWindowRef: target.nativeWindowRef,
+    },
+    execution,
+    error: { code, message: failure.error.message, inputSent: false, effectPossible },
+    config: detailsConfig(),
+  };
+  const failed = `action ${failure.index + 1} (${actionLabel(actions[failure.index]?.action ?? "unknown")})`;
+  const restored =
+    execution.focusRestored === true
+      ? ` ${target.appName} came to the front late, so focus was given back to the previous app.`
+      : "";
+  const sideEffect = effectPossible
+    ? `The helper asked ${target.appName} to activate or raise its window, a side effect that may still bring it to the front.${restored} Call observe_ui for a fresh state before the next act_ui.`
+    : "Call observe_ui before the next act_ui.";
+  return {
+    content: [
+      {
+        type: "text",
+        text: [
+          `${code}: no input was sent; the target did not come to the front. ${failed} in ${target.appName} — ${target.windowTitle} was not delivered and will not be retried automatically.`,
+          `Helper: ${failure.error.message}`,
+          sideEffect,
+        ].join("\n"),
+      },
+    ],
+    details,
+  };
 }
 
 export async function performDesktopTransaction(
@@ -606,7 +695,12 @@ export async function performDesktopTransaction(
         failure.interruption,
         failure.index > 0 ? { index: failure.index, execution } : undefined,
       );
-    if (failure?.index === 0) throw failure.error;
+    if (failure?.index === 0) {
+      const destination = destinationFailureOf(failure.error);
+      if (!destination) throw failure.error;
+      if (!destination.inputSent)
+        return foregroundNotAcquiredResult(target, baseView.stateId, execution, failure, actions);
+    }
     if (execution.refusal) {
       if (refusalMayHaveChangedUi(execution, execution.refusal)) clearDesktopOperationState(state);
       return foregroundRequiredResult(target, baseView.stateId, execution, execution.refusal);

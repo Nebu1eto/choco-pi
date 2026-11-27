@@ -14,20 +14,48 @@ struct BridgeFailure: Error {
 	var details: [String: Any]? = nil
 }
 
+func monotonicSeconds() -> Double {
+	Double(clock_gettime_nsec_np(CLOCK_MONOTONIC)) / 1_000_000_000
+}
+
+struct CancelTombstone {
+	let id: String
+	let at: Double
+	let sessionId: String?
+}
+
+struct HIDDestination {
+	let pid: Int32
+	let windowId: UInt32
+	let frontmostBefore: pid_t?
+	let inputBaseline: Int
+}
+
 final class RequestContext {
 	let requestIds: [String]
-	let deadlineMs: Double?
+	let deadline: Double?
+	let sessionId: String?
 	var foregroundGrant = false
+	var hidDestination: HIDDestination?
+	var hidGestureActive = false
+	var activationAttempted = false
+	var destinationWindowStatus: String?
+	var destinationWindowElement: AXUIElement?
+	var destinationWindowResolved = false
+	var lastDestinationCheck: Date?
+	var charactersSent: Int?
 	private let heartbeat: (() -> Void)?
 	private let lock = NSLock()
 	private var cancelRequested: Bool
 	private var effect = false
+	private var inputEvents = 0
 	private var stopped = false
 	private var step = 0
 
-	init(requestIds: [String], deadlineMs: Double?, cancelled: Bool = false, heartbeat: (() -> Void)? = nil) {
+	init(requestIds: [String], deadline: Double?, sessionId: String?, cancelled: Bool = false, heartbeat: (() -> Void)? = nil) {
 		self.requestIds = requestIds
-		self.deadlineMs = deadlineMs
+		self.deadline = deadline
+		self.sessionId = sessionId
 		self.cancelRequested = cancelled
 		self.heartbeat = heartbeat
 	}
@@ -35,7 +63,7 @@ final class RequestContext {
 	var stopRequested: Bool {
 		lock.lock()
 		defer { lock.unlock() }
-		return cancelRequested || (deadlineMs.map { Date().timeIntervalSince1970 * 1000 >= $0 } ?? false)
+		return cancelRequested || (deadline.map { monotonicSeconds() >= $0 } ?? false)
 	}
 
 	func requestCancel() {
@@ -54,6 +82,29 @@ final class RequestContext {
 		lock.lock()
 		defer { lock.unlock() }
 		return effect
+	}
+
+	func markInputEvent() {
+		lock.lock()
+		inputEvents += 1
+		lock.unlock()
+	}
+
+	var inputEventCount: Int {
+		lock.lock()
+		defer { lock.unlock() }
+		return inputEvents
+	}
+
+	func beginHIDDestination(_ destination: HIDDestination?) {
+		hidDestination = destination
+		hidGestureActive = false
+		activationAttempted = false
+		destinationWindowStatus = nil
+		destinationWindowElement = nil
+		destinationWindowResolved = false
+		lastDestinationCheck = nil
+		charactersSent = nil
 	}
 
 	var isStopped: Bool {
@@ -78,7 +129,7 @@ final class RequestContext {
 		heartbeat?()
 		lock.lock()
 		let cancelled = cancelRequested
-		let expired = deadlineMs.map { Date().timeIntervalSince1970 * 1000 >= $0 } ?? false
+		let expired = deadline.map { monotonicSeconds() >= $0 } ?? false
 		if cancelled || expired { stopped = true }
 		let effectNow = effect
 		let stepNow = step
@@ -496,7 +547,7 @@ func walkAncestry<Node>(
 }
 
 final class Bridge {
-	private let protocolVersion = 7
+	private let protocolVersion = 8
 	private let startedAt = Date().timeIntervalSince1970
 	private let refStore = AXRefStore()
 	private let inputSuppressionGuard = InputSuppressionGuard()
@@ -522,13 +573,13 @@ final class Bridge {
 	private var recentCompletedRequestIds: [String] = []
 	private let requestRegistryLock = NSLock()
 	private var activeRequests: [String: RequestContext] = [:]
-	private var completedSemanticRequestIds: [String] = []
-	private var cancelTombstones: [(id: String, at: Date)] = []
+	private var completedSemanticRequests: [(id: String, sessionId: String?)] = []
+	private var cancelTombstones: [CancelTombstone] = []
 	private let tombstoneTTL: TimeInterval = 60
 	private let tombstoneLimit = 256
 	private static let requestContextKey = "pi.computer-use.request-context"
 	private let ownerLock = NSLock()
-	private var owner: (id: String, generation: Int, lastSeen: Date)?
+	private var owner: (id: String, generation: Int, lastSeen: Double)?
 	private var ownerActiveRequests = 0
 	private let ownerTTL: TimeInterval = 30
 	private let ownerGatedCommands: Set<String> = ["act", "actBatch", "focusWindow", "setWindowFrame", "beginInputSuppression", "endInputSuppression", "restoreUserFocus"]
@@ -631,6 +682,7 @@ final class Bridge {
 
 		let fallbackId = "invalid"
 		var completionId: String?
+		let receivedAt = monotonicSeconds()
 		defer {
 			if responseSocket != nil, let completionId { recordCompletedRequest(completionId) }
 		}
@@ -645,7 +697,7 @@ final class Bridge {
 			completionId = id
 
 			do {
-				let result = try handleRequest(object)
+				let result = try handleRequest(object, receivedAt: receivedAt)
 				send([
 					"id": id,
 					"ok": true,
@@ -732,7 +784,6 @@ final class Bridge {
 		return recentCompletedRequestIds
 	}
 
-
 	private func requestSession(_ request: [String: Any]) -> (id: String, generation: Int)? {
 		let raw = (request["session"] as? [String: Any])
 			?? ((request["actions"] as? [[String: Any]])?.first?["session"] as? [String: Any])
@@ -743,9 +794,9 @@ final class Bridge {
 	private func authorizeOwner(_ session: (id: String, generation: Int)?, pin: Bool) throws {
 		ownerLock.lock()
 		defer { ownerLock.unlock() }
-		let now = Date()
+		let now = monotonicSeconds()
 		let pinned = ownerActiveRequests > 0
-		let live = owner.flatMap { pinned || now.timeIntervalSince($0.lastSeen) < ownerTTL ? $0 : nil }
+		let live = owner.flatMap { pinned || now - $0.lastSeen < ownerTTL ? $0 : nil }
 		let active = ownerActiveRequests
 		func refuse(_ message: String) -> BridgeFailure {
 			BridgeFailure(message: message, code: "owned_by_other_session", effectPossible: false, details: ["activeRequests": active])
@@ -777,7 +828,7 @@ final class Bridge {
 		ownerLock.lock()
 		ownerActiveRequests = max(0, ownerActiveRequests - 1)
 		if let session, let current = owner, current.id == session.id, current.generation == session.generation {
-			owner = (current.id, current.generation, Date())
+			owner = (current.id, current.generation, monotonicSeconds())
 		}
 		ownerLock.unlock()
 	}
@@ -785,9 +836,9 @@ final class Bridge {
 	private func refreshOwner(_ session: (id: String, generation: Int)) {
 		ownerLock.lock()
 		if let current = owner, current.id == session.id, current.generation == session.generation,
-			ownerActiveRequests > 0 || Date().timeIntervalSince(current.lastSeen) < ownerTTL
+			ownerActiveRequests > 0 || monotonicSeconds() - current.lastSeen < ownerTTL
 		{
-			owner = (current.id, current.generation, Date())
+			owner = (current.id, current.generation, monotonicSeconds())
 		}
 		ownerLock.unlock()
 	}
@@ -802,7 +853,6 @@ final class Bridge {
 		owner = nil
 		return true
 	}
-
 
 	private func activeRequestContext() -> RequestContext? {
 		Thread.current.threadDictionary[Bridge.requestContextKey] as? RequestContext
@@ -843,7 +893,7 @@ final class Bridge {
 		return AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
 	}
 
-	private func tracked(requestIds: [String], deadlineMs: Double?, session: (id: String, generation: Int)?, _ body: () throws -> [String: Any]) throws -> [String: Any] {
+	private func tracked(requestIds: [String], deadline: Double?, session: (id: String, generation: Int)?, _ body: () throws -> [String: Any]) throws -> [String: Any] {
 		var heartbeat: (() -> Void)?
 		if let session { heartbeat = { [weak self] in self?.refreshOwner(session) } }
 		requestRegistryLock.lock()
@@ -851,9 +901,11 @@ final class Bridge {
 			requestRegistryLock.unlock()
 			throw BridgeFailure(message: "Request id '\(duplicate)' is already in flight", code: "invalid_request", effectPossible: false)
 		}
-		pruneTombstones(now: Date())
-		let tombstoned = requestIds.contains { id in cancelTombstones.contains { $0.id == id } }
-		let context = RequestContext(requestIds: requestIds, deadlineMs: deadlineMs, cancelled: tombstoned, heartbeat: heartbeat)
+		pruneTombstones(now: monotonicSeconds())
+		let tombstoned = requestIds.contains { id in
+			cancelTombstones.contains { $0.id == id && (session == nil || $0.sessionId == session?.id) }
+		}
+		let context = RequestContext(requestIds: requestIds, deadline: deadline, sessionId: session?.id, cancelled: tombstoned, heartbeat: heartbeat)
 		for id in requestIds { activeRequests[id] = context }
 		requestRegistryLock.unlock()
 		let threadDictionary = Thread.current.threadDictionary
@@ -863,11 +915,11 @@ final class Bridge {
 			requestRegistryLock.lock()
 			for id in requestIds {
 				activeRequests.removeValue(forKey: id)
-				completedSemanticRequestIds.removeAll { $0 == id }
-				completedSemanticRequestIds.append(id)
+				completedSemanticRequests.removeAll { $0.id == id }
+				completedSemanticRequests.append((id, session?.id))
 			}
-			if completedSemanticRequestIds.count > 64 {
-				completedSemanticRequestIds.removeFirst(completedSemanticRequestIds.count - 64)
+			if completedSemanticRequests.count > 64 {
+				completedSemanticRequests.removeFirst(completedSemanticRequests.count - 64)
 			}
 			requestRegistryLock.unlock()
 		}
@@ -882,22 +934,33 @@ final class Bridge {
 		}
 	}
 
-	private func pruneTombstones(now: Date) {
-		cancelTombstones.removeAll { now.timeIntervalSince($0.at) >= tombstoneTTL }
+	private func pruneTombstones(now: Double) {
+		cancelTombstones.removeAll { now - $0.at >= tombstoneTTL }
 		if cancelTombstones.count > tombstoneLimit {
 			cancelTombstones.removeFirst(cancelTombstones.count - tombstoneLimit)
 		}
 	}
 
-	private func cancelRequest(_ request: [String: Any]) throws -> [String: Any] {
+	private func cancelRequest(_ request: [String: Any], session: (id: String, generation: Int)?) throws -> [String: Any] {
 		let target = try stringArg(request, "target")
+		let caller = session?.id
 		requestRegistryLock.lock()
 		let context = activeRequests[target]
-		let completed = completedSemanticRequestIds.contains(target)
+		let completedEntry = completedSemanticRequests.last { $0.id == target }
+		let registeredBy = context.map { $0.sessionId } ?? completedEntry?.sessionId
+		if let registeredBy, registeredBy != caller {
+			requestRegistryLock.unlock()
+			throw BridgeFailure(
+				message: "cancel refused: request '\(target)' was registered by another session",
+				code: "not_request_owner",
+				effectPossible: false
+			)
+		}
+		let completed = completedEntry != nil
 		if context == nil && !completed {
-			let now = Date()
-			cancelTombstones.removeAll { $0.id == target }
-			cancelTombstones.append((target, now))
+			let now = monotonicSeconds()
+			cancelTombstones.removeAll { $0.id == target && $0.sessionId == caller }
+			cancelTombstones.append(CancelTombstone(id: target, at: now, sessionId: caller))
 			pruneTombstones(now: now)
 		}
 		requestRegistryLock.unlock()
@@ -905,7 +968,7 @@ final class Bridge {
 			return ["acknowledged": true, "state": completed ? "completed" : "not_found"]
 		}
 		context.requestCancel()
-		let waitUntil = Date().addingTimeInterval(0.3)
+		let waitUntil = monotonicSeconds() + 0.3
 		while true {
 			requestRegistryLock.lock()
 			let stillActive = activeRequests[target] === context
@@ -916,14 +979,30 @@ final class Bridge {
 			if !stillActive {
 				return ["acknowledged": true, "state": "completed", "effectPossible": context.effectPossible]
 			}
-			if Date() >= waitUntil {
+			if monotonicSeconds() >= waitUntil {
 				return ["acknowledged": true, "state": "stopping", "effectPossible": true]
 			}
 			usleep(5_000)
 		}
 	}
 
-	private func handleRequest(_ request: [String: Any]) throws -> Any {
+	private func requestDeadline(_ requests: [[String: Any]], receivedAt: Double) throws -> Double? {
+		if requests.contains(where: { $0["deadlineMs"] != nil && $0["budgetMs"] == nil }) {
+			throw BridgeFailure(
+				message: "deadlineMs is not accepted since protocol 8; send budgetMs, the request's time budget in milliseconds",
+				code: "invalid_args",
+				effectPossible: false
+			)
+		}
+		let budgets = requests.compactMap { ($0["budgetMs"] as? NSNumber)?.doubleValue }
+		guard let budget = budgets.min() else { return nil }
+		guard budget.isFinite, budget >= 0 else {
+			throw BridgeFailure(message: "budgetMs must be a finite, non-negative number", code: "invalid_args", effectPossible: false)
+		}
+		return receivedAt + budget / 1000
+	}
+
+	private func handleRequest(_ request: [String: Any], receivedAt: Double) throws -> Any {
 		let cmd = try stringArg(request, "cmd")
 		let session = requestSession(request)
 		let gated = ownerGatedCommands.contains(cmd)
@@ -942,7 +1021,7 @@ final class Bridge {
 		case "release":
 			return ["released": try releaseOwner(session)]
 		case "cancel":
-			return try cancelRequest(request)
+			return try cancelRequest(request, session: session)
 		case "diagnostics":
 			return diagnostics()
 		case "checkPermissions":
@@ -979,15 +1058,14 @@ final class Bridge {
 		case "act":
 			return try tracked(
 				requestIds: [optionalStringArg(request, "requestId")].compactMap { $0 },
-				deadlineMs: (request["deadlineMs"] as? NSNumber)?.doubleValue,
+				deadline: try requestDeadline([request], receivedAt: receivedAt),
 				session: session
 			) { try act(request) }
 		case "actBatch":
 			let actions = request["actions"] as? [[String: Any]] ?? []
-			let deadlines = ([request] + actions).compactMap { ($0["deadlineMs"] as? NSNumber)?.doubleValue }
 			return try tracked(
 				requestIds: ([request] + actions).compactMap { $0["requestId"] as? String },
-				deadlineMs: deadlines.min(),
+				deadline: try requestDeadline([request] + actions, receivedAt: receivedAt),
 				session: session
 			) { try actBatch(request) }
 		case "hitTest":
@@ -1095,7 +1173,7 @@ final class Bridge {
 		var output: [String: Any] = [
 			"protocolVersion": protocolVersion,
 			"architectureVersion": 1,
-			"invariants": ["state-scoped-observations", "bounded-observation-history", "multi-root-forest", "progressive-disclosure", "atomic-physical-input", "concurrent-requests", "transactional-batching", "foreground-grant-enforced", "request-cancellation", "session-ownership"],
+			"invariants": ["state-scoped-observations", "bounded-observation-history", "multi-root-forest", "progressive-disclosure", "atomic-physical-input", "concurrent-requests", "transactional-batching", "foreground-grant-enforced", "request-cancellation", "session-ownership", "owner-checked-cancel", "monotonic-deadlines", "verified-focus-restore"],
 			"pid": Int32(getpid()),
 			"parentPid": parentPid,
 			"executablePath": CommandLine.arguments.first ?? "",
@@ -1260,30 +1338,62 @@ final class Bridge {
 	}
 
 	private func getFrontmost() throws -> [String: Any] {
-		guard let app = NSWorkspace.shared.frontmostApplication else {
+		let frontPid = currentFrontmostPid() ?? NSWorkspace.shared.frontmostApplication?.processIdentifier
+		guard let frontPid, let app = NSRunningApplication(processIdentifier: frontPid) else {
 			throw BridgeFailure(message: "No frontmost app available", code: "frontmost_unavailable")
 		}
-		let pid = app.processIdentifier
-		let windows = try listWindows(pid: pid)
-
-		var result: [String: Any] = [
-			"appName": app.localizedName ?? "Unknown App",
-			"pid": Int(pid),
-		]
-		if let bundleId = app.bundleIdentifier {
-			result["bundleId"] = bundleId
+		var result: [String: Any] = ["appName": app.localizedName ?? "Unknown App", "pid": Int(frontPid)]
+		if let bundleId = app.bundleIdentifier { result["bundleId"] = bundleId }
+		guard let key = keyWindow(pid: frontPid) else {
+			result["windowSource"] = "unknown"
+			return result
 		}
-
-		if let chosen = windows.sorted(by: { scoreWindow($0) > scoreWindow($1) }).first {
-			result["windowTitle"] = (chosen["title"] as? String) ?? ""
-			if let windowId = chosen["windowId"] {
-				result["windowId"] = windowId
-			}
-			if let windowRef = chosen["windowRef"] as? String {
-				result["windowRef"] = windowRef
-			}
-		}
+		result["windowSource"] = key.source
+		result["windowTitle"] = stringAttribute(key.window, attribute: kAXTitleAttribute as CFString) ?? ""
+		result["windowRef"] = refStore.storeWindow(key.window)
+		if let windowId = cgWindowId(of: key.window, pid: frontPid) { result["windowId"] = Int(windowId) }
 		return result
+	}
+
+	private func keyWindow(pid: Int32) -> (window: AXUIElement, source: String)? {
+		let appElement = AXUIElementCreateApplication(pid)
+		AXUIElementSetMessagingTimeout(appElement, 0.5)
+		if let focused = copyAttribute(appElement, attribute: kAXFocusedWindowAttribute as CFString).flatMap(asAXElement) {
+			return (focused, "focused")
+		}
+		if let main = copyAttribute(appElement, attribute: kAXMainWindowAttribute as CFString).flatMap(asAXElement) {
+			return (main, "main")
+		}
+		return nil
+	}
+
+	private func cgWindowId(of window: AXUIElement, pid: Int32) -> UInt32? {
+		let appElement = AXUIElementCreateApplication(pid)
+		AXUIElementSetMessagingTimeout(appElement, 0.5)
+		let windows = Array(axElementArray(appElement, attribute: kAXWindowsAttribute as CFString).prefix(128))
+		let candidates = cgWindowCandidates(pid: pid)
+		let pairings = windowPairings(windows: windows, candidates: candidates)
+		for candidate in windows {
+			if sameElement(candidate, window) { return pairings[ObjectIdentifier(candidate)]?.candidate?.windowId }
+			for sheet in sheetElements(of: candidate) where sameElement(sheet, window) {
+				return bestCandidate(for: sheet, candidates: candidates)?.windowId
+			}
+		}
+		return nil
+	}
+
+	private func isKeyWindow(_ window: AXUIElement, pid: Int32) -> Bool {
+		guard let key = keyWindow(pid: pid), key.source == "focused" else { return false }
+		return windowsRelated(key.window, window)
+	}
+
+	private func waitUntil(seconds: Double, _ condition: () -> Bool) -> Bool {
+		let end = monotonicSeconds() + seconds
+		while true {
+			if condition() { return true }
+			if monotonicSeconds() >= end { return false }
+			usleep(20_000)
+		}
 	}
 
 	private func getUserContext() throws -> [String: Any] {
@@ -1342,39 +1452,66 @@ final class Bridge {
 	private func restoreUserFocus(_ request: [String: Any]) throws -> [String: Any] {
 		try requireForegroundGrant(request, "restoreUserFocus")
 		let pid = Int32(try intArg(request, "pid"))
-		let targetTitle = optionalStringArg(request, "windowTitle")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-		guard let app = NSRunningApplication(processIdentifier: pid) else {
+		guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else {
 			throw BridgeFailure(message: "App with pid \(pid) is no longer running", code: "app_not_found")
 		}
-
-		let appRestored = app.activate()
-		var restoredWindowTitle = ""
-		var windowRestored = false
-
-		if !targetTitle.isEmpty {
-			let appElement = AXUIElementCreateApplication(pid)
-			let windows = axElementArray(appElement, attribute: kAXWindowsAttribute as CFString)
-			let normalizedTarget = targetTitle.lowercased()
-			if let match = windows.first(where: {
-				(stringAttribute($0, attribute: kAXTitleAttribute as CFString) ?? "")
-					.trimmingCharacters(in: .whitespacesAndNewlines)
-					.lowercased() == normalizedTarget
-			}) {
-				restoredWindowTitle = stringAttribute(match, attribute: kAXTitleAttribute as CFString) ?? ""
-				let setMainStatus = AXUIElementSetAttributeValue(match, kAXMainAttribute as CFString, kCFBooleanTrue)
-				let setFocusedStatus = try setAXFocus(match, foregroundGranted: true)
-				let raiseStatus = AXUIElementPerformAction(match, kAXRaiseAction as CFString)
-				windowRestored = setMainStatus == .success || setFocusedStatus == .success || raiseStatus == .success
-			}
+		let frontBefore = currentFrontmostPid()
+		var result: [String: Any] = ["appName": app.localizedName ?? "Unknown App", "restored": false, "appRestored": false, "windowRestored": false]
+		if let frontBefore { result["frontmostBefore"] = Int(frontBefore) }
+		if let expected = optionalIntArg(request, "expectedFrontmostPid"), frontBefore != Int32(expected) {
+			result["reason"] = "frontmost_changed"
+			return result
 		}
+		let resolved = userWindow(pid: pid, request: request)
+		result["windowMatch"] = resolved.match
+		if let window = resolved.window {
+			result["windowTitle"] = stringAttribute(window, attribute: kAXTitleAttribute as CFString) ?? ""
+			_ = AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+		}
+		if frontBefore != pid {
+			result["activationRequested"] = true
+			_ = app.activate()
+		}
+		let appFront = waitUntil(seconds: 0.6) { currentFrontmostPid() == pid }
+		var windowRestored = false
+		if appFront, let window = resolved.window { windowRestored = try makeKeyWindow(window, pid: pid) }
+		let windowNamed = resolved.match != "none"
+		result["appRestored"] = appFront
+		result["windowRestored"] = windowRestored
+		result["restored"] = appFront && (!windowNamed || windowRestored)
+		if !appFront {
+			result["reason"] = "app_not_frontmost"
+		} else if windowNamed && !windowRestored {
+			result["reason"] = resolved.window == nil ? "window_not_found" : "window_not_key"
+		}
+		return result
+	}
 
-		return [
-			"restored": appRestored || windowRestored,
-			"appRestored": appRestored,
-			"windowRestored": windowRestored,
-			"appName": app.localizedName ?? "Unknown App",
-			"windowTitle": restoredWindowTitle,
-		]
+	private func userWindow(pid: Int32, request: [String: Any]) -> (window: AXUIElement?, match: String) {
+		let windowRef = optionalStringArg(request, "windowRef")
+		let windowId = optionalIntArg(request, "windowId").map { UInt32($0) }
+		if let windowRef, let stored = refStore.window(for: windowRef), pidForElement(stored) == pid,
+			stringAttribute(stored, attribute: kAXRoleAttribute as CFString) != nil
+		{
+			return (stored, "ref")
+		}
+		if let windowId { return (windowElement(pid: pid, windowId: windowId), "id") }
+		if windowRef != nil { return (nil, "ref") }
+		let title = optionalStringArg(request, "windowTitle")?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+		if title.isEmpty { return (nil, "none") }
+		let appElement = AXUIElementCreateApplication(pid)
+		let match = axElementArray(appElement, attribute: kAXWindowsAttribute as CFString).first {
+			(stringAttribute($0, attribute: kAXTitleAttribute as CFString) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == title
+		}
+		return (match, "title")
+	}
+
+	private func makeKeyWindow(_ window: AXUIElement, pid: Int32) throws -> Bool {
+		if isKeyWindow(window, pid: pid) { return true }
+		_ = AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+		_ = try setAXFocus(window, foregroundGranted: true)
+		_ = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+		return waitUntil(seconds: 0.4) { isKeyWindow(window, pid: pid) }
 	}
 
 	private func setWindowFrame(_ request: [String: Any]) throws -> [String: Any] {
@@ -1434,16 +1571,6 @@ final class Bridge {
 			result["reason"] = "focus_failed"
 		}
 		return result
-	}
-
-	private func scoreWindow(_ window: [String: Any]) -> Int {
-		var score = 0
-		if (window["isFocused"] as? Bool) == true { score += 100 }
-		if (window["isMain"] as? Bool) == true { score += 80 }
-		if (window["isMinimized"] as? Bool) == false { score += 40 }
-		if (window["isOnscreen"] as? Bool) == true { score += 20 }
-		if window["windowId"] != nil { score += 10 }
-		return score
 	}
 
 	private func rootKind(role: String, subrole: String) -> String {
@@ -2182,6 +2309,26 @@ final class Bridge {
 	}
 
 	private func act(_ request: [String: Any]) throws -> [String: Any] {
+		let context = activeRequestContext()
+		let baseline = context?.inputEventCount ?? 0
+		do {
+			return try deliverAct(request)
+		} catch var failure as BridgeFailure {
+			guard let context, isGrantedHIDAct(request) else { throw failure }
+			var details = failure.details ?? [:]
+			if details["inputSent"] == nil { details["inputSent"] = context.inputEventCount > baseline }
+			failure.details = details
+			throw failure
+		}
+	}
+
+	private func isGrantedHIDAct(_ request: [String: Any]) -> Bool {
+		let params = request["params"] as? [String: Any] ?? [:]
+		return optionalStringArg(request, "policy") == "foreground" && (request["foregroundGrant"] as? Bool) == true
+			&& (params["delivery"] as? String) != "pid"
+	}
+
+	private func deliverAct(_ request: [String: Any]) throws -> [String: Any] {
 		let lookId = try stringArg(request, "lookId")
 		guard let record = lookRecord(for: lookId) else {
 			throw BridgeFailure(message: "Look id '\(lookId)' is no longer available", code: "stale_look")
@@ -2203,6 +2350,7 @@ final class Bridge {
 		let deferRootDelta = boolArg(request, "deferRootDelta") ?? false
 		let delivery = foregroundGranted && (params["delivery"] as? String) != "pid" ? "hid" : "pid"
 		let frontmostBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
+		context?.beginHIDDestination(delivery == "hid" ? HIDDestination(pid: pid, windowId: record.windowId, frontmostBefore: frontmostBefore, inputBaseline: context?.inputEventCount ?? 0) : nil)
 		var holdsPhysicalInput = false
 		func acquirePhysicalInputIfNeeded() {
 			if delivery == "hid" && !holdsPhysicalInput {
@@ -2226,6 +2374,7 @@ final class Bridge {
 		let beforeValue: String?
 		let beforeSelected: String?
 		func finish(_ response: [String: Any]) throws -> [String: Any] {
+			let response = withDestinationStatus(response, context: context)
 			if deferRootDelta { return response }
 			var output = try attachRootDelta(to: response, before: beforeRootSnapshot, beforeFrontmostPid: beforeFrontmostPid, pid: pid, eventsLive: eventsLive, eventCursor: eventCursor, beforeCgSignature: beforeCgSignature)
 			attachFrontmost(to: &output, before: frontmostBefore)
@@ -2305,6 +2454,7 @@ final class Bridge {
 			guard foregroundGranted else { throw foregroundRequired("Activating or raising the target requires a host foreground grant") }
 			try checkpoint()
 			context?.markEffect()
+			context?.activationAttempted = true
 			if let app = NSRunningApplication(processIdentifier: pid), !app.isActive {
 				performed["activated"] = app.activate()
 			}
@@ -2317,18 +2467,23 @@ final class Bridge {
 		}
 
 		func preflight(_ point: CGPoint) throws {
-			guard let element else { preflightCapsUnknown = true; return }
 			for attempt in 0..<4 {
-				guard let hit = hitTestElement(at: point) else { preflightCapsUnknown = true; return }
-				if sameElement(hit, element) || isElement(hit, descendantOf: element) || isElement(element, descendantOf: hit) { return }
-				let role = stringAttribute(hit, attribute: kAXRoleAttribute as CFString) ?? ""
-				if role == "AXWindow" || role == "AXApplication" { preflightCapsUnknown = true; return }
+				let hit = hitTestElement(at: point)
+				switch preflightVerdict(hit: hit, element: element, point: point, pid: pid) {
+				case .clear:
+					return
+				case .capsUnknown:
+					preflightCapsUnknown = true
+					return
+				case .occluded:
+					break
+				}
 				if delivery == "hid" && attempt < 3 {
 					try focusTargetForPhysicalInput()
 					usleep(20_000)
 					continue
 				}
-				throw BridgeFailure(message: "Target is occluded by \(payloadNode(element: hit))", code: "occluded_target")
+				throw occludedFailure(hit: hit, point: point)
 			}
 		}
 
@@ -2565,6 +2720,7 @@ final class Bridge {
 			acquirePhysicalInputIfNeeded()
 			if delivery == "hid" && !preserveFocus { try focusTargetForPhysicalInput() }
 			let text = params["text"] as? String ?? ""
+			if delivery == "hid" { context?.charactersSent = 0 }
 			try postUnicodeText(text, pid: pid, delivery: delivery)
 			performed["grounding"] = "coordinates"
 			if let element, !text.isEmpty {
@@ -2865,7 +3021,56 @@ final class Bridge {
 	private func batchStepError(_ failure: BridgeFailure, context: RequestContext?) -> [String: Any] {
 		var stepError: [String: Any] = ["code": failure.code, "message": failure.message, "effectPossible": failure.effectPossible ?? context?.effectPossible ?? true]
 		if let evidence = failure.details?["evidence"] { stepError["evidence"] = evidence }
+		for key in ["inputSent", "activationAttempted", "charactersSent", "destinationReason"] {
+			if let value = failure.details?[key] { stepError[key] = value }
+		}
 		return stepError
+	}
+
+	private func withDestinationStatus(_ response: [String: Any], context: RequestContext?) -> [String: Any] {
+		guard let status = context?.destinationWindowStatus, var performed = response["performed"] as? [String: Any] else { return response }
+		var output = response
+		performed["destinationWindow"] = status
+		output["performed"] = performed
+		return output
+	}
+
+	private enum PreflightVerdict {
+		case clear
+		case capsUnknown
+		case occluded
+	}
+
+	private func cgWindowOwnerPid(at point: CGPoint) -> Int32? {
+		let entries = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
+		for entry in entries {
+			guard let ownerPid = (entry[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value, ownerPid != getpid() else { continue }
+			let layer = (entry[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
+			let alpha = (entry[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
+			guard layer == 0, alpha > 0,
+				let boundsDict = entry[kCGWindowBounds as String] as? [String: Any],
+				let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
+				bounds.contains(point)
+			else { continue }
+			return ownerPid
+		}
+		return nil
+	}
+
+	private func preflightVerdict(hit: AXUIElement?, element: AXUIElement?, point: CGPoint, pid: Int32) -> PreflightVerdict {
+		let ownerPid = hit.map { pidForElement($0) } ?? cgWindowOwnerPid(at: point)
+		if let ownerPid, ownerPid != pid, ownerPid != getpid() { return .occluded }
+		guard let element, let hit else { return .capsUnknown }
+		if sameElement(hit, element) || isElement(hit, descendantOf: element) || isElement(element, descendantOf: hit) { return .clear }
+		let role = stringAttribute(hit, attribute: kAXRoleAttribute as CFString) ?? ""
+		if role == "AXWindow" || role == "AXApplication" { return .capsUnknown }
+		return .occluded
+	}
+
+	private func occludedFailure(hit: AXUIElement?, point: CGPoint) -> BridgeFailure {
+		if let hit { return BridgeFailure(message: "Target is occluded by \(payloadNode(element: hit))", code: "occluded_target") }
+		let owner = cgWindowOwnerPid(at: point).map { appLabel($0) } ?? "another window"
+		return BridgeFailure(message: "Target point is covered by a window of \(owner)", code: "occluded_target")
 	}
 
 	private func attachFrontmost(to response: inout [String: Any], before: pid_t?) {
@@ -4033,6 +4238,24 @@ final class Bridge {
 		let context = activeRequestContext()
 		if delivery == "pid" {
 			context?.markEffect()
+			context?.markInputEvent()
+			event.postToPid(pid)
+			return
+		}
+		guard let context, context.foregroundGrant else {
+			throw foregroundRequired("HID event delivery requires a host foreground grant")
+		}
+		try requireFrontmostForHIDPost(pid: pid, context: context)
+		context.markEffect()
+		context.markInputEvent()
+		event.post(tap: .cghidEventTap)
+	}
+
+	private func postReleaseEvent(_ event: CGEvent, pid: Int32, delivery: String) throws {
+		let context = activeRequestContext()
+		if delivery == "pid" {
+			context?.markEffect()
+			context?.markInputEvent()
 			event.postToPid(pid)
 			return
 		}
@@ -4040,25 +4263,203 @@ final class Bridge {
 			throw foregroundRequired("HID event delivery requires a host foreground grant")
 		}
 		context.markEffect()
-		if let app = NSRunningApplication(processIdentifier: pid), !app.isActive {
-			if #available(macOS 14.0, *) {
-				_ = app.activate()
-			} else {
-				_ = app.activate(options: [.activateIgnoringOtherApps])
-			}
-			usleep(20_000)
-		}
+		context.markInputEvent()
 		event.post(tap: .cghidEventTap)
+	}
+
+	private static let foregroundAcquireBudget: TimeInterval = 0.4
+	private static let foregroundPollMicros: useconds_t = 20_000
+	private static let foregroundRecheckInterval: TimeInterval = 0.1
+
+	private enum HIDGesture {
+		case keyboard
+		case pointer(CGPoint)
+	}
+
+	private enum DestinationProbe {
+		case confirmed(windowVerified: Bool)
+		case mismatch(reason: String, frontmostPid: pid_t?)
+		case gone
+	}
+
+	private func currentFrontmostPid() -> pid_t? {
+		let systemWide = AXUIElementCreateSystemWide()
+		AXUIElementSetMessagingTimeout(systemWide, 0.25)
+		if let focusedApp = copyAttribute(systemWide, attribute: kAXFocusedApplicationAttribute as CFString).flatMap(asAXElement),
+			let focusedPid = pidForElement(focusedApp)
+		{
+			return focusedPid
+		}
+		return NSWorkspace.shared.frontmostApplication?.processIdentifier
+	}
+
+	private func destinationWindow(_ destination: HIDDestination, context: RequestContext) -> AXUIElement? {
+		if !context.destinationWindowResolved {
+			context.destinationWindowResolved = true
+			context.destinationWindowElement = destination.windowId == 0 ? nil : windowElement(pid: destination.pid, windowId: destination.windowId)
+		}
+		return context.destinationWindowElement
+	}
+
+	private func windowsRelated(_ lhs: AXUIElement, _ rhs: AXUIElement) -> Bool {
+		sameElement(lhs, rhs) || isElement(lhs, descendantOf: rhs) || isElement(rhs, descendantOf: lhs)
+	}
+
+	private func probeDestination(_ gesture: HIDGesture, destination: HIDDestination, context: RequestContext) -> DestinationProbe {
+		guard let app = NSRunningApplication(processIdentifier: destination.pid), !app.isTerminated else { return .gone }
+		let front = currentFrontmostPid()
+		guard front == destination.pid else { return .mismatch(reason: "app_not_frontmost", frontmostPid: front) }
+		if case .pointer(let point) = gesture, let hit = hitTestElement(at: point), let hitPid = pidForElement(hit),
+			hitPid != destination.pid, hitPid != getpid()
+		{
+			return .mismatch(reason: "point_covered_by_other_process", frontmostPid: front)
+		}
+		let appElement = AXUIElementCreateApplication(destination.pid)
+		AXUIElementSetMessagingTimeout(appElement, 0.25)
+		let keyWindow = copyAttribute(appElement, attribute: kAXFocusedWindowAttribute as CFString).flatMap(asAXElement)
+			?? copyAttribute(appElement, attribute: kAXMainWindowAttribute as CFString).flatMap(asAXElement)
+		guard let keyWindow, let lookWindow = destinationWindow(destination, context: context) else {
+			return .confirmed(windowVerified: false)
+		}
+		if windowsRelated(keyWindow, lookWindow) { return .confirmed(windowVerified: true) }
+		return .mismatch(reason: "window_not_focused", frontmostPid: front)
+	}
+
+	private func appLabel(_ pid: Int32) -> String {
+		let name = NSRunningApplication(processIdentifier: pid)?.localizedName ?? processName(pid: pid) ?? "pid \(pid)"
+		return "\(name) (pid \(pid))"
+	}
+
+	private func destinationFailure(pid: Int32, context: RequestContext, reason: String, frontmostPid: pid_t?) -> BridgeFailure {
+		let destination = context.hidDestination
+		let sent = context.inputEventCount > (destination?.inputBaseline ?? 0)
+		let target = appLabel(pid)
+		let cause: String
+		switch reason {
+		case "process_not_found":
+			cause = "the target process \(target) is no longer running"
+		case "no_destination":
+			cause = "no foreground destination was recorded for \(target)"
+		case "window_not_focused":
+			cause = "\(target) is frontmost, but its focused window is not this look's window"
+		case "point_covered_by_other_process":
+			cause = "the point is covered by another process's window"
+		default:
+			cause = "\(target) is not the frontmost app" + (frontmostPid.map { "; \(appLabel($0)) is" } ?? "")
+		}
+		var details: [String: Any] = [
+			"inputSent": sent,
+			"activationAttempted": context.activationAttempted,
+			"destinationReason": reason,
+			"targetPid": Int(pid),
+		]
+		if let frontmostPid { details["frontmostPid"] = Int(frontmostPid) }
+		if let before = destination?.frontmostBefore { details["frontmostBefore"] = Int(before) }
+		if let after = NSWorkspace.shared.frontmostApplication?.processIdentifier { details["frontmostAfter"] = Int(after) }
+		let activation = context.activationAttempted
+			? " The helper asked the target to activate or raise its window; that side effect may still bring it to the front."
+			: ""
+		if sent {
+			let characters = context.charactersSent
+			if let characters { details["charactersSent"] = characters }
+			var result: [String: Any] = ["outcome": "partial", "stoppedAt": context.currentStep]
+			if let characters { result["charactersSent"] = characters }
+			let typed = characters.map { " \($0) character(s) of the text were sent first." } ?? ""
+			return BridgeFailure(
+				message: "Foreground input stopped after some input was sent: \(cause). Nothing more was sent.\(typed)\(activation)",
+				code: "foreground_lost",
+				effectPossible: true,
+				result: result,
+				details: details
+			)
+		}
+		let waited = reason == "process_not_found" || reason == "no_destination" ? "" : " within \(Int(Self.foregroundAcquireBudget * 1000)) ms"
+		return BridgeFailure(
+			message: "No input was sent; the target did not come to the front\(waited): \(cause).\(activation)",
+			code: "foreground_not_acquired",
+			effectPossible: context.effectPossible,
+			details: details
+		)
+	}
+
+	private func confirmHIDDestination(_ gesture: HIDGesture, pid: Int32) throws {
+		guard let context = activeRequestContext(), context.foregroundGrant else {
+			throw foregroundRequired("HID event delivery requires a host foreground grant")
+		}
+		guard let destination = context.hidDestination, destination.pid == pid else {
+			throw destinationFailure(pid: pid, context: context, reason: "no_destination", frontmostPid: currentFrontmostPid())
+		}
+		let sent = context.inputEventCount > destination.inputBaseline
+		let deadline = Date().addingTimeInterval(sent ? 0 : Self.foregroundAcquireBudget)
+		var activationRequested = false
+		while true {
+			try checkpoint()
+			switch probeDestination(gesture, destination: destination, context: context) {
+			case .confirmed(let windowVerified):
+				if !windowVerified {
+					context.destinationWindowStatus = "unverified"
+				} else if context.destinationWindowStatus == nil {
+					context.destinationWindowStatus = "verified"
+				}
+				context.lastDestinationCheck = Date()
+				return
+			case .gone:
+				throw destinationFailure(pid: pid, context: context, reason: "process_not_found", frontmostPid: currentFrontmostPid())
+			case .mismatch(let reason, let front):
+				if Date() >= deadline { throw destinationFailure(pid: pid, context: context, reason: reason, frontmostPid: front) }
+				if !activationRequested, reason == "app_not_frontmost", let app = NSRunningApplication(processIdentifier: pid), !app.isActive {
+					activationRequested = true
+					context.markEffect()
+					context.activationAttempted = true
+					if #available(macOS 14.0, *) {
+						_ = app.activate()
+					} else {
+						_ = app.activate(options: [.activateIgnoringOtherApps])
+					}
+				}
+			}
+			usleep(Self.foregroundPollMicros)
+		}
+	}
+
+	private func hidGesture(_ gesture: HIDGesture, pid: Int32, delivery: String, _ body: () throws -> Void) throws {
+		guard delivery == "hid", let context = activeRequestContext() else { return try body() }
+		if context.hidGestureActive { return try body() }
+		try confirmHIDDestination(gesture, pid: pid)
+		context.hidGestureActive = true
+		defer { context.hidGestureActive = false }
+		try body()
+	}
+
+	private func requireFrontmostForHIDPost(pid: Int32, context: RequestContext) throws {
+		guard let destination = context.hidDestination, destination.pid == pid else {
+			throw destinationFailure(pid: pid, context: context, reason: "no_destination", frontmostPid: currentFrontmostPid())
+		}
+		guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else {
+			throw destinationFailure(pid: pid, context: context, reason: "process_not_found", frontmostPid: currentFrontmostPid())
+		}
+		let front = currentFrontmostPid()
+		guard front == pid else {
+			throw destinationFailure(pid: pid, context: context, reason: "app_not_frontmost", frontmostPid: front)
+		}
+	}
+
+	private func recheckHIDDestinationIfDue(pid: Int32, delivery: String) throws {
+		guard delivery == "hid", let context = activeRequestContext() else { return }
+		if let last = context.lastDestinationCheck, Date().timeIntervalSince(last) < Self.foregroundRecheckInterval { return }
+		try confirmHIDDestination(.keyboard, pid: pid)
 	}
 
 	private func postMouseMove(to point: CGPoint, pid: Int32, delivery: String = "hid") throws {
 		if delivery == "hid" { physicalInputLock.lock() }
 		defer { if delivery == "hid" { physicalInputLock.unlock() } }
-		try checkpoint()
-		guard let move = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left) else {
-			throw BridgeFailure(message: "Failed to create mouse move event", code: "input_failed")
+		try hidGesture(.pointer(point), pid: pid, delivery: delivery) {
+			try checkpoint()
+			guard let move = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left) else {
+				throw BridgeFailure(message: "Failed to create mouse move event", code: "input_failed")
+			}
+			try postEvent(move, pid: pid, delivery: delivery)
 		}
-		try postEvent(move, pid: pid, delivery: delivery)
 	}
 
 	private func mouseButton(_ name: String) -> CGMouseButton {
@@ -4108,21 +4509,23 @@ final class Bridge {
 	private func postMouseClick(at point: CGPoint, pid: Int32, button: CGMouseButton = .left, clickCount: Int = 1, delivery: String = "hid") throws {
 		if delivery == "hid" { physicalInputLock.lock() }
 		defer { if delivery == "hid" { physicalInputLock.unlock() } }
-		try postMouseMove(to: point, pid: pid, delivery: delivery)
-		for index in 1...max(1, clickCount) {
-			guard let down = CGEvent(mouseEventSource: nil, mouseType: mouseDownType(for: button), mouseCursorPosition: point, mouseButton: button),
-				let up = CGEvent(mouseEventSource: nil, mouseType: mouseUpType(for: button), mouseCursorPosition: point, mouseButton: button)
-			else {
-				throw BridgeFailure(message: "Failed to create mouse click event", code: "input_failed")
-			}
-			down.setIntegerValueField(.mouseEventClickState, value: Int64(index))
-			up.setIntegerValueField(.mouseEventClickState, value: Int64(index))
-			try checkpoint()
-			try postEvent(down, pid: pid, delivery: delivery)
-			usleep(12_000)
-			try postEvent(up, pid: pid, delivery: delivery)
-			if index < clickCount {
-				usleep(70_000)
+		try hidGesture(.pointer(point), pid: pid, delivery: delivery) {
+			try postMouseMove(to: point, pid: pid, delivery: delivery)
+			for index in 1...max(1, clickCount) {
+				guard let down = CGEvent(mouseEventSource: nil, mouseType: mouseDownType(for: button), mouseCursorPosition: point, mouseButton: button),
+					let up = CGEvent(mouseEventSource: nil, mouseType: mouseUpType(for: button), mouseCursorPosition: point, mouseButton: button)
+				else {
+					throw BridgeFailure(message: "Failed to create mouse click event", code: "input_failed")
+				}
+				down.setIntegerValueField(.mouseEventClickState, value: Int64(index))
+				up.setIntegerValueField(.mouseEventClickState, value: Int64(index))
+				try checkpoint()
+				try postEvent(down, pid: pid, delivery: delivery)
+				usleep(12_000)
+				try postReleaseEvent(up, pid: pid, delivery: delivery)
+				if index < clickCount {
+					usleep(70_000)
+				}
 			}
 		}
 	}
@@ -4133,6 +4536,12 @@ final class Bridge {
 		guard points.count >= 2, let first = points.first else {
 			throw BridgeFailure(message: "Drag requires at least two points", code: "invalid_args")
 		}
+		try hidGesture(.pointer(first), pid: pid, delivery: delivery) {
+			try postMouseDragGesture(points: points, first: first, pid: pid, delivery: delivery)
+		}
+	}
+
+	private func postMouseDragGesture(points: [CGPoint], first: CGPoint, pid: Int32, delivery: String) throws {
 		try postMouseMove(to: first, pid: pid, delivery: delivery)
 		guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: first, mouseButton: .left),
 			let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: first, mouseButton: .left)
@@ -4153,7 +4562,7 @@ final class Bridge {
 		var interrupted = false
 		func releaseButton() throws {
 			up.location = current
-			try postEvent(up, pid: pid, delivery: delivery)
+			try postReleaseEvent(up, pid: pid, delivery: delivery)
 		}
 		usleep(12_000)
 		for move in moves {
@@ -4174,20 +4583,22 @@ final class Bridge {
 	private func postScrollWheel(at point: CGPoint, deltaX: Int, deltaY: Int, pid: Int32, delivery: String = "hid") throws {
 		if delivery == "hid" { physicalInputLock.lock() }
 		defer { if delivery == "hid" { physicalInputLock.unlock() } }
-		try postMouseMove(to: point, pid: pid, delivery: delivery)
-		guard let event = CGEvent(
-			scrollWheelEvent2Source: nil,
-			units: .pixel,
-			wheelCount: 2,
-			wheel1: Int32(-deltaY),
-			wheel2: Int32(deltaX),
-			wheel3: 0
-		) else {
-			throw BridgeFailure(message: "Failed to create scroll event", code: "input_failed")
+		try hidGesture(.pointer(point), pid: pid, delivery: delivery) {
+			try postMouseMove(to: point, pid: pid, delivery: delivery)
+			guard let event = CGEvent(
+				scrollWheelEvent2Source: nil,
+				units: .pixel,
+				wheelCount: 2,
+				wheel1: Int32(-deltaY),
+				wheel2: Int32(deltaX),
+				wheel3: 0
+			) else {
+				throw BridgeFailure(message: "Failed to create scroll event", code: "input_failed")
+			}
+			event.location = point
+			try checkpoint()
+			try postEvent(event, pid: pid, delivery: delivery)
 		}
-		event.location = point
-		try checkpoint()
-		try postEvent(event, pid: pid, delivery: delivery)
 	}
 
 	private func modifierFlag(_ key: String) -> CGEventFlags? {
@@ -4277,32 +4688,42 @@ final class Bridge {
 		}
 		down.flags = flags
 		up.flags = flags
-		try checkpoint()
-		try postEvent(down, pid: pid, delivery: delivery)
-		try postEvent(up, pid: pid, delivery: delivery)
-		usleep(8_000)
+		try hidGesture(.keyboard, pid: pid, delivery: delivery) {
+			try checkpoint()
+			try postEvent(down, pid: pid, delivery: delivery)
+			try postReleaseEvent(up, pid: pid, delivery: delivery)
+			usleep(8_000)
+		}
 	}
 
 	private func postUnicodeText(_ text: String, pid: Int32, delivery: String = "hid") throws {
 		if delivery == "hid" { physicalInputLock.lock() }
 		defer { if delivery == "hid" { physicalInputLock.unlock() } }
-		for scalar in text.unicodeScalars {
-			try checkpoint()
-			let char = String(scalar)
-			if let stroke = physicalKeyStroke(for: char) {
-				try postKey(stroke.key, flags: stroke.flags, pid: pid, delivery: delivery)
-				continue
+		let context = activeRequestContext()
+		let tracksCharacters = delivery == "hid" && context?.hidGestureActive != true && context?.charactersSent != nil
+		try hidGesture(.keyboard, pid: pid, delivery: delivery) {
+			var sentUnits = 0
+			for scalar in text.unicodeScalars {
+				try checkpoint()
+				try recheckHIDDestinationIfDue(pid: pid, delivery: delivery)
+				let char = String(scalar)
+				if let stroke = physicalKeyStroke(for: char) {
+					try postKey(stroke.key, flags: stroke.flags, pid: pid, delivery: delivery)
+				} else {
+					guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
+						let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)
+					else {
+						throw BridgeFailure(message: "Failed to create unicode key event", code: "input_failed")
+					}
+					setUnicodeString(event: down, text: char)
+					setUnicodeString(event: up, text: char)
+					try postEvent(down, pid: pid, delivery: delivery)
+					try postReleaseEvent(up, pid: pid, delivery: delivery)
+					usleep(8_000)
+				}
+				sentUnits += char.utf16.count
+				if tracksCharacters { context?.charactersSent = sentUnits }
 			}
-			guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
-				let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)
-			else {
-				throw BridgeFailure(message: "Failed to create unicode key event", code: "input_failed")
-			}
-			setUnicodeString(event: down, text: char)
-			setUnicodeString(event: up, text: char)
-			try postEvent(down, pid: pid, delivery: delivery)
-			try postEvent(up, pid: pid, delivery: delivery)
-			usleep(8_000)
 		}
 	}
 
@@ -4314,10 +4735,12 @@ final class Bridge {
 		else { throw BridgeFailure(message: "Failed to create unicode text event", code: "input_failed") }
 		setUnicodeString(event: down, text: text)
 		setUnicodeString(event: up, text: text)
-		try checkpoint()
-		try postEvent(down, pid: pid, delivery: delivery)
-		usleep(8_000)
-		try postEvent(up, pid: pid, delivery: delivery)
+		try hidGesture(.keyboard, pid: pid, delivery: delivery) {
+			try checkpoint()
+			try postEvent(down, pid: pid, delivery: delivery)
+			usleep(8_000)
+			try postReleaseEvent(up, pid: pid, delivery: delivery)
+		}
 	}
 
 	private func physicalKeyStroke(for character: String) -> (key: String, flags: CGEventFlags)? {

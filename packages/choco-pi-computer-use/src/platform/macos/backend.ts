@@ -31,7 +31,10 @@ interface ListRootsArgs {
 
 interface RestoreUserFocusArgs {
   pid: number;
+  windowRef?: string;
+  windowId?: number;
   windowTitle?: string;
+  expectedFrontmostPid?: number;
   foregroundGrant: true;
 }
 
@@ -41,6 +44,16 @@ interface FrontmostResponse {
   bundleId?: string;
   windowTitle?: string;
   windowId?: number;
+  windowRef?: string;
+  windowSource?: string;
+}
+
+function windowSourceOf(value: string | undefined): PlatformFrontmostResult["windowSource"] {
+  return value === "focused" || value === "main" || value === "unknown" ? value : undefined;
+}
+
+function integerOf(value: number | undefined): number | undefined {
+  return isNumber(value) && Number.isFinite(value) ? Math.trunc(value) : undefined;
 }
 
 function isPlatformRootKind(value: JsonField): value is PlatformRootKind {
@@ -157,13 +170,18 @@ export const macosBackend: Pick<
     if (!Number.isFinite(pid) || pid <= 0) {
       throw new Error("No frontmost app was available for screenshot targeting.");
     }
-    return {
+    const windowSource = windowSourceOf(result.windowSource);
+    const front: PlatformFrontmostResult = {
       appName: toOptionalString(result.appName) ?? "Unknown App",
       bundleId: toOptionalString(result.bundleId),
       pid,
-      windowTitle: toOptionalString(result.windowTitle),
-      windowId: Number.isFinite(result.windowId) ? Math.trunc(result.windowId!) : undefined,
     };
+    if (windowSource) front.windowSource = windowSource;
+    if (windowSource === "unknown") return front;
+    front.windowTitle = toOptionalString(result.windowTitle);
+    front.windowId = integerOf(result.windowId);
+    front.rootRef = toOptionalString(result.windowRef);
+    return front;
   },
 
   async focusWindow(
@@ -185,8 +203,14 @@ export const macosBackend: Pick<
       pid: Math.trunc(request.pid),
       foregroundGrant: true,
     };
+    const windowRef = request.windowRef?.trim();
+    if (windowRef) args.windowRef = windowRef;
+    const windowId = integerOf(request.windowId);
+    if (windowId !== undefined) args.windowId = windowId;
     const windowTitle = request.windowTitle?.trim();
     if (windowTitle) args.windowTitle = windowTitle;
+    const expected = integerOf(request.expectedFrontmostPid);
+    if (expected !== undefined) args.expectedFrontmostPid = expected;
     const raw: JsonValue = await macosHelper.command("restoreUserFocus", args, { signal });
     if (!isJsonObject(raw)) throw new Error("Helper restoreUserFocus returned an invalid result.");
     return {
@@ -195,6 +219,9 @@ export const macosBackend: Pick<
       windowRestored: toBoolean(raw.windowRestored),
       appName: toOptionalString(raw.appName),
       windowTitle: toOptionalString(raw.windowTitle),
+      reason: toOptionalString(raw.reason),
+      windowMatch: toOptionalString(raw.windowMatch),
+      frontmostPid: isNumber(raw.frontmostBefore) ? integerOf(raw.frontmostBefore) : undefined,
     };
   },
 

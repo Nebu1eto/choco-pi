@@ -66,7 +66,7 @@ async function main(): Promise<void> {
   };
   const pending = new Map<string, JsonObject>();
 
-  const harnessCancel = (requestId: string): void => {
+  const harnessCancel = (requestId: string, session: JsonValue | undefined): void => {
     const row: JsonObject = {
       id: `harness_cancel_${randomUUID()}`,
       cmd: "cancel",
@@ -75,6 +75,7 @@ async function main(): Promise<void> {
       seq: ++seq,
       at: Date.now(),
     };
+    if (isJsonObject(session)) row.session = session;
     rows.push(row);
     void flush();
     const upstream = connect(options.upstream);
@@ -128,7 +129,7 @@ async function main(): Promise<void> {
           pending.set(requestId, row);
           setTimeout(() => {
             if (pending.get(requestId) === row && row.response === undefined)
-              harnessCancel(requestId);
+              harnessCancel(requestId, request.session);
           }, options.cancelAfterMs);
         }
       }

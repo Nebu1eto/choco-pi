@@ -20,7 +20,10 @@ import {
   type HelperCancelledResult,
   type HelperCancelState,
   type HelperClaimResult,
+  type HelperDestinationFailure,
   type HelperRefusalEvidence,
+  type HelperSettlement,
+  isForegroundDestinationCode,
   PlatformCommandError,
   type PlatformDiagnostics,
   type PlatformRequestSession,
@@ -36,6 +39,13 @@ interface HelperResponseEnvelope {
     effectPossible?: boolean;
     activeRequests?: number;
     evidence?: JsonValue;
+    inputSent?: JsonValue;
+    activationAttempted?: JsonValue;
+    charactersSent?: JsonValue;
+    destinationReason?: JsonValue;
+    frontmostPid?: JsonValue;
+    frontmostBefore?: JsonValue;
+    frontmostAfter?: JsonValue;
   };
 }
 
@@ -59,7 +69,14 @@ interface DiagnosticsResponse {
 const COMMAND_TIMEOUT_MS = 15_000;
 const CANCEL_ACK_TIMEOUT_MS = 500;
 const RELEASE_TIMEOUT_MS = 500;
-const HELPER_PROTOCOL_VERSION = 7;
+const SETTLE_GRACE_MS = 2_000;
+const SETTLE_POLL_MS = 150;
+const HELPER_PROTOCOL_VERSION = 8;
+const SETTLED_STATES: ReadonlySet<HelperCancelState> = new Set([
+  "stopped",
+  "completed",
+  "not_found",
+]);
 const OWNER_GATED_COMMANDS = new Set([
   "act",
   "actBatch",
@@ -132,9 +149,11 @@ export class HelperCommandError extends PlatformCommandError {
       result?: JsonValue;
       activeRequests?: number;
       evidence?: HelperRefusalEvidence;
+      destination?: HelperDestinationFailure;
+      inputSent?: boolean;
     },
   ) {
-    super(message, details?.evidence, code);
+    super(message, details?.evidence, code, details?.destination, details?.inputSent);
     this.name = "HelperCommandError";
     this.effectPossible = details?.effectPossible;
     this.result = details?.result;
@@ -181,6 +200,28 @@ export function parseRefusalEvidence(value: JsonField): HelperRefusalEvidence | 
   const pixelChange = booleanField(value.pixelChange);
   if (pixelChange !== undefined) evidence.pixelChange = pixelChange;
   return Object.keys(evidence).length > 0 ? evidence : undefined;
+}
+
+export function parseDestinationFailure(
+  error: HelperResponseEnvelope["error"],
+): HelperDestinationFailure | undefined {
+  if (!error || !isForegroundDestinationCode(error.code)) return undefined;
+  const inputSent = booleanField(error.inputSent);
+  const failure: HelperDestinationFailure = {
+    inputSent: inputSent ?? error.code !== "foreground_not_acquired",
+  };
+  const activationAttempted = booleanField(error.activationAttempted);
+  if (activationAttempted !== undefined) failure.activationAttempted = activationAttempted;
+  const charactersSent = numberField(error.charactersSent);
+  if (charactersSent !== undefined) failure.charactersSent = charactersSent;
+  if (isString(error.destinationReason)) failure.reason = error.destinationReason;
+  const frontmostPid = numberField(error.frontmostPid);
+  if (frontmostPid !== undefined) failure.frontmostPid = frontmostPid;
+  const frontmostBefore = numberField(error.frontmostBefore);
+  if (frontmostBefore !== undefined) failure.frontmostBefore = frontmostBefore;
+  const frontmostAfter = numberField(error.frontmostAfter);
+  if (frontmostAfter !== undefined) failure.frontmostAfter = frontmostAfter;
+  return failure;
 }
 
 function parseCancelAck(value: JsonField): HelperCancelAck {
@@ -416,6 +457,9 @@ export class MacosHelperClient {
       const id = `req_${++this.requestSequence}`;
       const wire = wireArgs(args);
       const requestId = semanticRequestId(wire);
+      const owner = requestSession(wire);
+      const budgetMs = numberField(wire.budgetMs) ?? timeoutMs;
+      const settleBy = performance.now() + budgetMs + SETTLE_GRACE_MS;
       const socket = net.createConnection(HELPER_SOCKET_PATH);
       let buffer = "";
       let settled = false;
@@ -442,7 +486,7 @@ export class MacosHelperClient {
           });
           return;
         }
-        void this.sendCancel(requestId).then((ack) => {
+        void this.sendCancel(requestId, owner).then((ack) => {
           error.cancel = ack;
           const stoppedByHelper = lateResponse?.error?.code === "cancelled";
           const state = stoppedByHelper ? "stopped" : ack.state;
@@ -459,6 +503,10 @@ export class MacosHelperClient {
             result: stoppedByHelper ? parseCancelledResult(lateResponse?.result) : undefined,
             clientTimeout: error instanceof HelperTransportError,
             state,
+            settle:
+              state === "stopped" || state === "completed"
+                ? undefined
+                : this.settlement(requestId, owner, settleBy),
           });
           settle(() => {
             socket.destroy();
@@ -508,6 +556,8 @@ export class MacosHelperClient {
                   result: parsed.result ?? undefined,
                   activeRequests: numberField(parsed?.error?.activeRequests),
                   evidence: parseRefusalEvidence(parsed?.error?.evidence),
+                  destination: parseDestinationFailure(parsed?.error),
+                  inputSent: booleanField(parsed?.error?.inputSent),
                 },
               ),
             );
@@ -520,7 +570,35 @@ export class MacosHelperClient {
     });
   }
 
-  private async sendCancel(requestId: string): Promise<HelperCancelAck> {
+  private settlement(
+    requestId: string,
+    owner: PlatformRequestSession | undefined,
+    settleBy: number,
+  ): () => Promise<HelperSettlement> {
+    let pending: Promise<HelperSettlement> | undefined;
+    const poll = async (): Promise<HelperSettlement> => {
+      const until = Math.max(settleBy, performance.now() + 2 * CANCEL_ACK_TIMEOUT_MS);
+      for (;;) {
+        const ack = await this.sendCancel(requestId, owner);
+        if (SETTLED_STATES.has(ack.state)) return { settled: true, state: ack.state };
+        const left = until - performance.now();
+        if (left <= 0) return { settled: false, state: ack.state };
+        await new Promise((resolve) => setTimeout(resolve, Math.min(SETTLE_POLL_MS, left)));
+      }
+    };
+    return () => (pending ??= poll());
+  }
+
+  private async sendCancel(
+    requestId: string,
+    owner: PlatformRequestSession | undefined,
+  ): Promise<HelperCancelAck> {
+    const request: JsonObject = {
+      id: `cancel_${++this.requestSequence}`,
+      cmd: "cancel",
+      target: requestId,
+    };
+    if (owner) request.session = { id: owner.id, generation: owner.generation };
     return await new Promise<HelperCancelAck>((resolve) => {
       const socket = net.createConnection(HELPER_SOCKET_PATH);
       let buffer = "";
@@ -537,11 +615,7 @@ export class MacosHelperClient {
         CANCEL_ACK_TIMEOUT_MS,
       );
       socket.setEncoding("utf8");
-      socket.on("connect", () =>
-        socket.write(
-          `${JSON.stringify({ id: `cancel_${++this.requestSequence}`, cmd: "cancel", target: requestId })}\n`,
-        ),
-      );
+      socket.on("connect", () => socket.write(`${JSON.stringify(request)}\n`));
       socket.on("data", (chunk) => {
         buffer += chunk;
         const newline = buffer.indexOf("\n");

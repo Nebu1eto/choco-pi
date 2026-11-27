@@ -24,7 +24,7 @@ interface InterventionRequest {
   id: string;
   cmd: "look" | "act";
   session: { id: string; generation: number };
-  deadlineMs: number;
+  budgetMs: number;
   fixtureMutation?: string;
   policy?: string;
   action?: string;
@@ -115,7 +115,7 @@ export async function launch(
                   id: randomUUID(),
                   cmd: "look",
                   session: { id: p.sessionId, generation: 0 },
-                  deadlineMs: Date.now() + 2000,
+                  budgetMs: 2000,
                   fixtureMutation: "bump_root_generation",
                 }),
             WAIT_BOUND_MS,
@@ -134,7 +134,7 @@ export async function launch(
               id: randomUUID(),
               cmd: "act",
               session: { id: randomUUID(), generation: 0 },
-              deadlineMs: Date.now() + 2000,
+              budgetMs: 2000,
               policy: "background",
               action: "click",
               x: 1,

@@ -114,6 +114,8 @@ export interface ExecutionTrace {
   frontmostAfter?: JsonValue;
   focusRestored?: boolean;
   focusRestoreReason?: string;
+  focusWindowRestored?: boolean;
+  foregroundSection?: ForegroundSectionTrace;
   verification?: {
     status: "verified" | "preexisting" | "failed";
     text?: string;
@@ -192,6 +194,7 @@ export interface TerminalDesktopActionDetails {
     | "target_closed"
     | "post_action_observation_failed"
     | "foreground_required"
+    | "foreground_not_acquired"
     | "cancelled"
     | "owned_by_other_session";
   baseStateId: string;
@@ -205,7 +208,7 @@ export interface TerminalDesktopActionDetails {
     nativeWindowRef?: string;
   };
   execution: ExecutionTrace | InterruptedExecutionTrace;
-  error: { code: string; message: string };
+  error: { code: string; message: string; inputSent?: boolean; effectPossible?: boolean };
   nextStep?: "observe_then_retry";
   config?: ComputerUseDetailsConfig;
 }
@@ -388,11 +391,30 @@ export interface NoteWindowInput {
 
 export type NativePreparedAction = Exclude<PreparedAction, { action: "wait" }>;
 
+export interface CapturedFocus {
+  pid: number;
+  windowId?: number;
+  windowRef?: string;
+  windowTitle?: string;
+  windowSource?: "focused" | "main" | "unknown";
+}
+
+export interface ForegroundSectionTrace {
+  waitedMs: number;
+  previousDeliveryUnconfirmed?: string;
+}
+
+export interface ForegroundSectionLease {
+  readonly trace: ForegroundSectionTrace;
+  release(unconfirmedRequestId?: string): void;
+}
+
 export interface ForegroundSession {
   ctx?: ExtensionContext;
   focusCaptured: boolean;
-  focusBefore?: { pid: number; windowTitle?: string };
-  lastRequest?: { requestId: string; policy: DeliveryPolicy };
+  focusBefore?: CapturedFocus;
+  lastRequest?: { requestId: string; policy: DeliveryPolicy; budgetMs: number; sentAt: number };
+  section?: ForegroundSectionLease;
 }
 
 export interface HelperRefusalSignal {
