@@ -64,7 +64,7 @@ The script always compiles the helper with `xcrun swiftc` for the host architect
 
 ## Configure computer use
 
-Settings are read from `~/.pi/agent/extensions/pi-computer-use.json`, then from the project's `.pi/computer-use.json`, then from environment variables; a later source overrides an earlier one. Neither file exists until you create it. This example shows the default values:
+Settings are read from `~/.pi/agent/extensions/pi-computer-use.json`, then from the project's `.pi/computer-use.json`, then from environment variables; a later source overrides an earlier one, except for `blocked_apps` and `unblocked_apps` (see **Blocked apps** below). Neither file exists until you create it. This example shows the default values:
 
 ```json
 {
@@ -74,7 +74,9 @@ Settings are read from `~/.pi/agent/extensions/pi-computer-use.json`, then from 
   "cursor_overlay": true,
   "foreground_grant": [],
   "foreground_prompt": "ask",
-  "restore_focus": true
+  "restore_focus": true,
+  "blocked_apps": [],
+  "unblocked_apps": []
 }
 ```
 
@@ -87,14 +89,25 @@ Settings are read from `~/.pi/agent/extensions/pi-computer-use.json`, then from 
 | `foreground_grant`  | `PI_COMPUTER_USE_FOREGROUND_GRANT` (comma-separated) | Bundle IDs, or `"*"`, of apps the agent may activate, raise, and send keyboard and mouse events to. No tool call can change this list. See below.  |
 | `foreground_prompt` | `PI_COMPUTER_USE_FOREGROUND_PROMPT`                  | What happens when an app needs focus and no grant covers it: `ask` (default), `always`, or `off`. See below.                                       |
 | `restore_focus`     | `PI_COMPUTER_USE_RESTORE_FOCUS`                      | After granted foreground input takes focus, gives focus back to the app you had in front, unless you have switched to another app in the meantime. |
+| `blocked_apps`      | `PI_COMPUTER_USE_BLOCKED_APPS` (comma-separated)     | Bundle IDs of further apps the agent may not observe or operate. Entries from every source add up. See below.                                      |
+| `unblocked_apps`    | none; the user file only                             | Bundle IDs to remove from the built-in blocked list. Ignored in the project file and in `PI_COMPUTER_USE_UNBLOCKED_APPS`. See below.               |
 
-**Foreground grants.** Without a grant, input goes to the app in the background. Pointer input that has no accessibility route is first tried in the background: it is sent to the app's process without taking focus, and the helper watches the app and the window's pixels for a short settling period. If nothing visibly changes, the action is refused with `foreground_required` and is not sent again in that call. For a granted app, such pointer input goes straight to the foreground.
+**Foreground grants.** Without a grant, input goes to the app in the background. Pointer input that has no accessibility route is first tried in the background: it is sent to the app's process without taking focus, and the helper watches the target for a short settling period. A change at the target itself (its value, its window, or the pixels around it) counts as success. A change only elsewhere in the window is reported as an unverified effect, and the agent is told to confirm it in the returned state. If nothing changes, the action is refused with `foreground_required` and is not sent again in that call. For a granted app, such pointer input goes straight to the foreground. Foreground input is sent only after the helper confirms that the app and its window came to the front; otherwise nothing is sent and the call says so. If the app is no longer in front when a mouse button or key is released, the call stops and says that input may have reached another app.
 
 **Foreground prompt.** `foreground_prompt` applies when an app needs focus and no grant covers it. If the helper confirmed that nothing was delivered, a grant retries the action once in the foreground. If the input was already tried in the background with no visible change, the grant applies to the next call only, and the agent is told to observe the app before it tries again. The values are:
 
 - `ask` (default): in an interactive TUI session, Pi asks once per app per session, offering **Allow for this session**, **Always allow** (which adds the bundle ID to `foreground_grant` in the user file), or **Not now**.
 - `always`: an explicit opt-in that lets the agent activate and send input to any app without asking. Each such app stays granted for the rest of the session, in every host mode.
 - `off`: never ask; only `foreground_grant` applies.
+
+**Blocked apps.** Computer use never observes or operates some apps, so the agent cannot type into the terminal running Pi or read your passwords outside Pi's shell approval. A blocked app is refused on every tool (`observe_ui`, `search_ui`, `expand_ui`, `inspect_ui`, `read_text`, `wait_for`, `act_ui`) and every delivery path, including Accessibility-only input, before anything is captured or sent. The tool fails with `app_blocked`. `find_roots` still lists the app's windows, marked `BLOCKED` (`blocked: true` and `block_reason` in the details). Browser pages that Pi controls through its managed browser are not affected; a browser app's own windows follow the same rules as any app. Blocked by default:
+
+- The app hosting Pi: any app whose process is Pi's process or one of its parent processes, and the app whose bundle ID macOS passes to Pi in `__CFBundleIdentifier`. Pi looks up its parent processes with `ps`. If that fails, Pi blocks its own process and its direct parent, shows the failure in `/computer-use`, and tries the lookup again on the next tool call. The helper also looks up Pi's parent processes itself and refuses all of them, so the app hosting Pi stays blocked while Pi's own lookup fails.
+- Terminals: Terminal (`com.apple.Terminal`), iTerm2 (`com.googlecode.iterm2`), Warp (`dev.warp.Warp-Stable`), kitty (`net.kovidgoyal.kitty`, `net.kovidgoyal.kitty-quick-access`), Ghostty (`com.mitchellh.ghostty`), Alacritty (`org.alacritty`), WezTerm (`com.github.wez.wezterm`), Hyper (`co.zeit.hyper`), and Tabby (`org.tabby`).
+- Password managers: 1Password 7 (`com.agilebits.onepassword7`), 1Password 8 (`com.1password.1password`), Bitwarden (`com.bitwarden.desktop`), Passwords (`com.apple.Passwords`), and Keychain Access (`com.apple.keychainaccess`).
+- The macOS authentication dialog (`com.apple.SecurityAgent`) and the helper itself (`com.injaneity.pi-computer-use`).
+
+Any source can add apps with `blocked_apps`, and a block added there always applies. Only `unblocked_apps` in the user file can lift a built-in block. The project file and the environment cannot unblock anything: such an entry is ignored, and `/computer-use` lists it as ignored. The app hosting Pi and the helper can never be unblocked. Bundle IDs match exactly, ignoring case; there are no wildcards. A terminal that reaches Pi through a detached `tmux` or `screen` server, or over SSH, is not one of Pi's parent processes, so only its bundle ID protects it: add an unlisted terminal to `blocked_apps`.
 
 File edits take effect on the next tool call; environment variables are read when Pi starts. `/computer-use` shows the active settings and this session's grants. `/computer-use grant ask|always|off` sets `foreground_prompt` for the current session and saves it to the user file.
 

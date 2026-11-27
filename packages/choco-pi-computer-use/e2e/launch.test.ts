@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { Plan } from "./isolation.ts";
-import { launch } from "./launch.ts";
+import { launch, parseEventLine } from "./launch.ts";
 import { KILL_GRACE_MS, WAIT_BOUND_MS } from "./process.ts";
 
 function dummy(dir: string, script: string): Plan {
@@ -27,6 +27,16 @@ function dummy(dir: string, script: string): Plan {
 async function scratch(): Promise<string> {
   return await mkdtemp(join(tmpdir(), "cu-e2e-launch-"));
 }
+
+test("an event line that is not JSON is skipped, JSON is parsed, and nothing else is swallowed", () => {
+  assert.equal(parseEventLine("Pi says hello"), undefined);
+  assert.equal(parseEventLine(""), undefined);
+  assert.deepEqual(parseEventLine('{"type":"tool_execution_end","toolName":"act_ui"}'), {
+    type: "tool_execution_end",
+    toolName: "act_ui",
+  });
+  assert.equal(parseEventLine("42"), 42);
+});
 
 test("launch returns after Pi exits even though stderr EOF preceded the exit (tier-A hang)", async () => {
   const dir = await scratch();

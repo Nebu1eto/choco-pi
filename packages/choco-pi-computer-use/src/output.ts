@@ -1,16 +1,10 @@
-import {
-  closeSync,
-  mkdtempSync,
-  openSync,
-  readSync,
-  rmSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { closeSync, mkdtempSync, openSync, readSync, writeFileSync } from "node:fs";
+import { rm, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { isNumber, type JsonField } from "./json.ts";
+import type { SessionScope } from "./runtime.ts";
 
 export const MODEL_TEXT_MAX_BYTES = 48 * 1024;
 export const MODEL_TEXT_MAX_LINES = 2_000;
@@ -26,6 +20,7 @@ interface StoredOutput {
   storedBytes: number;
   totalBytes: number;
   complete: boolean;
+  owner: SessionScope;
 }
 
 const outputs = new Map<string, StoredOutput>();
@@ -46,7 +41,13 @@ function boundedPrefix(value: string, maxBytes: number, maxLines: number): strin
   return new TextDecoder().decode(utf8Prefix(new TextEncoder().encode(lineBounded), maxBytes));
 }
 
-function storeOutput(value: string): StoredOutput {
+function discard(target: string, recursive: boolean): void {
+  void (recursive ? rm(target, { recursive: true, force: true }) : unlink(target)).catch(
+    () => undefined,
+  );
+}
+
+function storeOutput(value: string, owner: SessionScope): StoredOutput {
   const encoded = new TextEncoder().encode(value);
   const stored =
     encoded.byteLength > OUTPUT_ENTRY_MAX_BYTES
@@ -62,6 +63,7 @@ function storeOutput(value: string): StoredOutput {
     storedBytes: stored.byteLength,
     totalBytes: encoded.byteLength,
     complete: stored.byteLength === encoded.byteLength,
+    owner,
   };
   outputs.set(entry.ref, entry);
   outputBytes += entry.storedBytes;
@@ -71,9 +73,7 @@ function storeOutput(value: string): StoredOutput {
     const oldest = outputs.get(oldestRef)!;
     outputs.delete(oldestRef);
     outputBytes -= oldest.storedBytes;
-    try {
-      unlinkSync(oldest.filePath);
-    } catch {}
+    discard(oldest.filePath, false);
   }
   return entry;
 }
@@ -92,6 +92,7 @@ function refinementFor(tool: string): string {
 export function applyOutputEnvelope<T>(
   tool: string,
   result: AgentToolResult<T>,
+  owner: SessionScope,
 ): AgentToolResult<T> {
   const textParts = result.content.filter(
     (part): part is Extract<(typeof result.content)[number], { type: "text" }> =>
@@ -102,7 +103,7 @@ export function applyOutputEnvelope<T>(
   const lines = combined === "" ? 0 : combined.split("\n").length;
   if (bytes <= MODEL_TEXT_MAX_BYTES && lines <= MODEL_TEXT_MAX_LINES) return result;
 
-  const entry = storeOutput(combined);
+  const entry = storeOutput(combined, owner);
   const preview = boundedPrefix(combined, MODEL_PREVIEW_BYTES, MODEL_TEXT_MAX_LINES - 4);
   const returnedBytes = new TextEncoder().encode(preview).byteLength;
   const availability = entry.complete
@@ -117,13 +118,13 @@ export function applyOutputEnvelope<T>(
   return { ...result, content: [{ type: "text", text: `${preview}\n\n${trailer}` }, ...images] };
 }
 
-export function boundToolError(tool: string, cause: unknown): Error {
+export function boundToolError(tool: string, cause: unknown, owner: SessionScope): Error {
   const message = cause instanceof Error ? cause.message : String(cause);
   const bytes = new TextEncoder().encode(message).byteLength;
   const lines = message.split("\n").length;
   if (bytes <= MODEL_TEXT_MAX_BYTES && lines <= MODEL_TEXT_MAX_LINES)
     return cause instanceof Error ? cause : new Error(message);
-  const entry = storeOutput(message);
+  const entry = storeOutput(message, owner);
   const preview = boundedPrefix(message, MODEL_PREVIEW_BYTES, MODEL_TEXT_MAX_LINES - 4);
   const returnedBytes = new TextEncoder().encode(preview).byteLength;
   const storageNote = entry.complete
@@ -137,6 +138,7 @@ export function boundToolError(tool: string, cause: unknown): Error {
 export function readStoredOutput(
   ref: string,
   offsetValue: JsonField,
+  reader: SessionScope,
 ):
   | {
       text: string;
@@ -148,7 +150,7 @@ export function readStoredOutput(
     }
   | undefined {
   const entry = outputs.get(ref);
-  if (!entry) return undefined;
+  if (!entry || entry.owner !== reader || reader.retired) return undefined;
   let offset = Math.min(
     entry.storedBytes,
     Math.max(
@@ -179,13 +181,18 @@ export function readStoredOutput(
   };
 }
 
-export function clearStoredOutputs(): void {
-  outputs.clear();
-  if (outputDirectory) {
-    try {
-      rmSync(outputDirectory, { recursive: true, force: true });
-    } catch {}
+export function clearStoredOutputs(sessionKey?: string): void {
+  if (sessionKey !== undefined) {
+    for (const [ref, entry] of outputs) {
+      if (entry.owner.key !== sessionKey) continue;
+      outputs.delete(ref);
+      outputBytes -= entry.storedBytes;
+      discard(entry.filePath, false);
+    }
+    return;
   }
+  outputs.clear();
+  if (outputDirectory) discard(outputDirectory, true);
   outputDirectory = undefined;
   outputBytes = 0;
   nextOutputId = 1;

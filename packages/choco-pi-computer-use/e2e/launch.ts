@@ -70,6 +70,14 @@ export interface LaunchResult {
   intervention?: RecordValue;
   defects: string[];
 }
+export function parseEventLine(line: string): JsonValue | undefined {
+  try {
+    return JSON.parse(line);
+  } catch (error) {
+    if (error instanceof SyntaxError) return undefined;
+    throw error;
+  }
+}
 export async function launch(
   p: Plan,
   deadline: AbortSignal,
@@ -98,52 +106,50 @@ export async function launch(
     while (newline >= 0) {
       const line = stream.slice(0, newline);
       stream = stream.slice(newline + 1);
-      try {
-        const item: JsonValue = JSON.parse(line);
-        if (
-          isJsonObject(item) &&
-          !injected &&
-          scenario === "S5" &&
-          item.type === "tool_execution_end" &&
-          item.toolName === "observe_ui"
-        ) {
-          injected = true;
-          intervention = within(
-            mutate
-              ? mutate()
-              : wire(p.socket, {
-                  id: randomUUID(),
-                  cmd: "look",
-                  session: { id: p.sessionId, generation: 0 },
-                  budgetMs: 2000,
-                  fixtureMutation: "bump_root_generation",
-                }),
-            WAIT_BOUND_MS,
-          );
-        }
-        if (
-          isJsonObject(item) &&
-          !injected &&
-          scenario === "S7" &&
-          item.type === "tool_execution_end" &&
-          item.toolName === "act_ui"
-        ) {
-          injected = true;
-          intervention = within(
-            wire(p.socket, {
-              id: randomUUID(),
-              cmd: "act",
-              session: { id: randomUUID(), generation: 0 },
-              budgetMs: 2000,
-              policy: "background",
-              action: "click",
-              x: 1,
-              y: 1,
-            }),
-            WAIT_BOUND_MS,
-          );
-        }
-      } catch {}
+      const item = parseEventLine(line);
+      if (
+        isJsonObject(item) &&
+        !injected &&
+        scenario === "S5" &&
+        item.type === "tool_execution_end" &&
+        item.toolName === "observe_ui"
+      ) {
+        injected = true;
+        intervention = within(
+          mutate
+            ? mutate()
+            : wire(p.socket, {
+                id: randomUUID(),
+                cmd: "look",
+                session: { id: p.sessionId, generation: 0 },
+                budgetMs: 2000,
+                fixtureMutation: "bump_root_generation",
+              }),
+          WAIT_BOUND_MS,
+        );
+      }
+      if (
+        isJsonObject(item) &&
+        !injected &&
+        scenario === "S7" &&
+        item.type === "tool_execution_end" &&
+        item.toolName === "act_ui"
+      ) {
+        injected = true;
+        intervention = within(
+          wire(p.socket, {
+            id: randomUUID(),
+            cmd: "act",
+            session: { id: randomUUID(), generation: 0 },
+            budgetMs: 2000,
+            policy: "background",
+            action: "click",
+            x: 1,
+            y: 1,
+          }),
+          WAIT_BOUND_MS,
+        );
+      }
       newline = stream.indexOf("\n");
     }
   });

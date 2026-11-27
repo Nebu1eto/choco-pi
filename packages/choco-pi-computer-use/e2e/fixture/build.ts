@@ -95,6 +95,8 @@ export async function buildFixture(outDir: string): Promise<FixtureBuild> {
     "AppKit",
     "-framework",
     "WebKit",
+    "-framework",
+    "SwiftUI",
     source,
     "-o",
     binary,

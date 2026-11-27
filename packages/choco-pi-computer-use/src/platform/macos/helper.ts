@@ -16,6 +16,7 @@ import {
 import { toBoolean, toFiniteNumber, toOptionalString } from "../coerce.ts";
 import {
   HelperInterruption,
+  type HelperAppBlock,
   type HelperCancelAck,
   type HelperCancelledResult,
   type HelperCancelState,
@@ -46,6 +47,10 @@ interface HelperResponseEnvelope {
     frontmostPid?: JsonValue;
     frontmostBefore?: JsonValue;
     frontmostAfter?: JsonValue;
+    blockedPid?: JsonValue;
+    blockedApp?: JsonValue;
+    blockedBundleId?: JsonValue;
+    blockMatch?: JsonValue;
   };
 }
 
@@ -116,10 +121,12 @@ export class HelperTransportError extends Error {
   effectPossible?: boolean;
   response?: HelperInterruptedResponse;
   interruption?: HelperInterruption;
+  readonly connectionLost: boolean;
 
-  constructor(message: string) {
+  constructor(message: string, connectionLost = false) {
     super(message);
     this.name = "HelperTransportError";
+    this.connectionLost = connectionLost;
   }
 }
 
@@ -140,6 +147,7 @@ export class HelperCommandError extends PlatformCommandError {
   readonly result?: JsonValue;
   readonly interruption?: HelperInterruption;
   readonly activeRequests?: number;
+  readonly appBlock?: HelperAppBlock;
 
   constructor(
     message: string,
@@ -151,6 +159,7 @@ export class HelperCommandError extends PlatformCommandError {
       evidence?: HelperRefusalEvidence;
       destination?: HelperDestinationFailure;
       inputSent?: boolean;
+      appBlock?: HelperAppBlock;
     },
   ) {
     super(message, details?.evidence, code, details?.destination, details?.inputSent);
@@ -158,6 +167,7 @@ export class HelperCommandError extends PlatformCommandError {
     this.effectPossible = details?.effectPossible;
     this.result = details?.result;
     this.activeRequests = details?.activeRequests;
+    this.appBlock = details?.appBlock;
     if (code === "cancelled" || code === "owned_by_other_session")
       this.interruption = new HelperInterruption({
         code,
@@ -199,7 +209,24 @@ export function parseRefusalEvidence(value: JsonField): HelperRefusalEvidence | 
   if (isString(value.pixelCheck)) evidence.pixelCheck = value.pixelCheck;
   const pixelChange = booleanField(value.pixelChange);
   if (pixelChange !== undefined) evidence.pixelChange = pixelChange;
+  const outside = booleanField(value.pixelChangeOutsideTarget);
+  if (outside !== undefined) evidence.pixelChangeOutsideTarget = outside;
+  const elsewhere = booleanField(value.frontmostChangedElsewhere);
+  if (elsewhere !== undefined) evidence.frontmostChangedElsewhere = elsewhere;
+  const changedTo = numberField(value.frontmostChangedTo);
+  if (changedTo !== undefined) evidence.frontmostChangedTo = changedTo;
   return Object.keys(evidence).length > 0 ? evidence : undefined;
+}
+
+function parseAppBlock(error: HelperResponseEnvelope["error"]): HelperAppBlock | undefined {
+  if (error?.code !== "app_blocked") return undefined;
+  const pid = numberField(error.blockedPid);
+  if (pid === undefined) return undefined;
+  const block: HelperAppBlock = { pid: Math.trunc(pid) };
+  if (isString(error.blockedApp)) block.appName = error.blockedApp;
+  if (isString(error.blockedBundleId)) block.bundleId = error.blockedBundleId;
+  if (isString(error.blockMatch)) block.match = error.blockMatch;
+  return block;
 }
 
 export function parseDestinationFailure(
@@ -464,6 +491,7 @@ export class MacosHelperClient {
       let buffer = "";
       let settled = false;
       let interrupted = false;
+      let written = false;
       let lateResponse: HelperResponseEnvelope | undefined;
       const cleanup = () => {
         clearTimeout(timer);
@@ -501,7 +529,8 @@ export class MacosHelperClient {
             effectPossible: error.effectPossible,
             cancel: ack,
             result: stoppedByHelper ? parseCancelledResult(lateResponse?.result) : undefined,
-            clientTimeout: error instanceof HelperTransportError,
+            clientTimeout: error instanceof HelperTransportError && !error.connectionLost,
+            connectionLost: error instanceof HelperTransportError && error.connectionLost,
             state,
             settle:
               state === "stopped" || state === "completed"
@@ -524,7 +553,10 @@ export class MacosHelperClient {
       const onAbort = () => interrupt(new HelperAbortedError());
       signal?.addEventListener("abort", onAbort, { once: true });
       socket.setEncoding("utf8");
-      socket.on("connect", () => socket.write(`${JSON.stringify({ id, cmd, ...wire })}\n`));
+      socket.on("connect", () => {
+        written = true;
+        socket.write(`${JSON.stringify({ id, cmd, ...wire })}\n`);
+      });
       socket.on("data", (chunk) => {
         buffer += chunk;
         const newline = buffer.indexOf("\n");
@@ -558,15 +590,24 @@ export class MacosHelperClient {
                   evidence: parseRefusalEvidence(parsed?.error?.evidence),
                   destination: parseDestinationFailure(parsed?.error),
                   inputSent: booleanField(parsed?.error?.inputSent),
+                  appBlock: parseAppBlock(parsed?.error),
                 },
               ),
             );
         });
       });
-      socket.on("error", (error) => {
-        if (interrupted) return;
-        settle(() => reject(new HelperTransportError(error.message)));
-      });
+      const connectionLost = (reason: string) => {
+        if (settled || interrupted) return;
+        if (written && requestId) {
+          interrupt(
+            new HelperTransportError(`Daemon connection ${reason} after '${cmd}' was sent.`, true),
+          );
+          return;
+        }
+        settle(() => reject(new HelperTransportError(`Daemon connection ${reason}.`)));
+      };
+      socket.on("error", (error) => connectionLost(`failed (${error.message})`));
+      socket.on("close", () => connectionLost("closed before a response"));
     });
   }
 

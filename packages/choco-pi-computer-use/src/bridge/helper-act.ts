@@ -316,11 +316,11 @@ async function restoreTargetWindow(
   signal?: AbortSignal,
 ): Promise<void> {
   const user = session?.focusBefore;
+  if (user?.pid !== target.pid) return record(false, "target_was_frontmost");
   const otherWindow =
-    user?.pid === target.pid &&
-    user.windowId !== undefined &&
-    target.windowId > 0 &&
-    user.windowId !== target.windowId;
+    user.windowId !== undefined && target.windowId > 0
+      ? user.windowId !== target.windowId
+      : user.windowRef !== undefined && user.windowRef !== target.nativeWindowRef;
   if (!otherWindow) return record(false, "target_was_frontmost");
   await restoreWhileTargetFrontmost(
     target.pid,

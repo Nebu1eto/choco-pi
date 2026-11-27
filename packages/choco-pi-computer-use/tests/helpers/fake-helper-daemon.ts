@@ -20,6 +20,7 @@ export const FAKE_SCRIPTS = [
   "s7-ownership",
   "s8-foreground-not-acquired",
   "s9-foreground-lost",
+  "s10-pid-unknown",
 ] as const;
 export type FakeScript = (typeof FAKE_SCRIPTS)[number];
 
@@ -40,6 +41,9 @@ export interface FakeHelperDaemonOptions {
   foregroundHoldMs?: number;
   targetKeyWindowId?: number;
   userApp?: FakeUserApp;
+  realOwner?: "window" | "element";
+  dropForegroundActConnection?: boolean;
+  setTextValueOnly?: boolean;
 }
 
 export interface FakeHelperDaemon {
@@ -95,6 +99,16 @@ const NO_AX_ACTION_REASON =
   "target has no accessibility action; pointer delivery needs a host foreground grant";
 export const PID_NO_CHANGE_REASON =
   "Pid-targeted pointer input produced no observable change; pointer delivery needs a host foreground grant";
+export const PID_OUTSIDE_TARGET_EVIDENCE = {
+  deliveryUsed: "pid_pointer",
+  pidPointerAttempted: true,
+  observableChange: false,
+  pixelCheck: "compared",
+  pixelChange: false,
+  pixelChangeOutsideTarget: true,
+  pixelRegion: "element",
+  changeOutsideTarget: true,
+} as const;
 
 function framesDiffer(left: Frame, right: Frame): boolean {
   return (
@@ -192,6 +206,14 @@ function sessionOf(request: JsonObject): Session | undefined {
   return { id: raw.id, generation: numberField(raw, "generation") ?? 0 };
 }
 
+function isGrantedHidRequest(request: JsonObject): boolean {
+  return (
+    request.policy === "foreground" &&
+    request.foregroundGrant === true &&
+    objectField(request, "params").delivery !== "pid"
+  );
+}
+
 class FakeHelperState {
   readonly script: FakeScript;
   private protocolVersion: number;
@@ -206,6 +228,8 @@ class FakeHelperState {
   private readonly secondTarget: boolean;
   private readonly foregroundHoldMs: number;
   private readonly targetKeyWindowId?: number;
+  private readonly realOwner?: "window" | "element";
+  private readonly setTextValueOnly: boolean;
   private owner?: Session & { lastSeen: number };
   private ownerActive = 0;
   private readonly active = new Map<string, Tracked>();
@@ -242,6 +266,8 @@ class FakeHelperState {
     this.secondTarget = options.secondTarget === true;
     this.foregroundHoldMs = options.foregroundHoldMs ?? 0;
     this.targetKeyWindowId = options.targetKeyWindowId;
+    this.realOwner = options.realOwner;
+    this.setTextValueOnly = options.setTextValueOnly === true;
     const user = options.userApp ?? "terminal";
     this.userApp = user === "neutral" ? NEUTRAL_USER_APP : TERMINAL_USER_APP;
     this.userWindowTitle = USER_WINDOW_TITLES[user];
@@ -371,6 +397,34 @@ class FakeHelperState {
 
   private targetApp(pid: number | undefined): typeof FAKE_APP {
     return this.secondTarget && pid === FAKE_APP_B.pid ? FAKE_APP_B : FAKE_APP;
+  }
+
+  private enforceAppPolicy(request: JsonObject, owner: typeof FAKE_APP, act: boolean): void {
+    const list = objectField(request, "appBlocklist");
+    const pids = Array.isArray(list.pids) ? list.pids.filter(isNumber) : [];
+    const bundleIds = Array.isArray(list.bundleIds)
+      ? list.bundleIds.filter(isString).map((bundleId) => bundleId.toLowerCase())
+      : [];
+    const match = pids.includes(owner.pid)
+      ? "pid"
+      : bundleIds.includes(owner.bundleId.toLowerCase())
+        ? "bundle_id"
+        : undefined;
+    if (!match) return;
+    const details: JsonObject = {
+      blockedPid: owner.pid,
+      blockedApp: owner.appName,
+      blockedBundleId: owner.bundleId,
+      blockMatch: match,
+    };
+    if (act) details.inputSent = false;
+    throw new FakeFailure(
+      "app_blocked",
+      `app_blocked: computer-use is not allowed to operate ${owner.appName} (${owner.bundleId}, pid ${owner.pid}); the helper refused the real owner of the requested window or element, and nothing was observed or sent to it`,
+      false,
+      undefined,
+      details,
+    );
   }
 
   private getFrontmost(): JsonObject {
@@ -641,13 +695,19 @@ class FakeHelperState {
       this.checkpoint(tracked);
       return await body(tracked);
     } catch (error) {
-      if (error instanceof FakeFailure && error.effectPossible === undefined)
+      const hid = requests.some(isGrantedHidRequest);
+      if (
+        error instanceof FakeFailure &&
+        (error.effectPossible === undefined || (hid && error.details?.inputSent === undefined))
+      )
         throw new FakeFailure(
           error.code,
           error.message,
-          tracked.effect,
+          error.effectPossible ?? tracked.effect,
           error.result,
-          error.details,
+          hid && error.details?.inputSent === undefined
+            ? { ...error.details, inputSent: tracked.effect }
+            : error.details,
         );
       throw error;
     } finally {
@@ -735,6 +795,14 @@ class FakeHelperState {
   }
 
   private look(request: JsonObject): JsonObject {
+    const requested =
+      this.secondTarget &&
+      (request.windowId === WINDOW_ID_B ||
+        request.windowRef === ROOT_REF_B ||
+        request.pid === FAKE_APP_B.pid)
+        ? FAKE_APP_B
+        : FAKE_APP;
+    this.enforceAppPolicy(request, this.realOwner === "window" ? this.userApp : requested, false);
     this.lookCount += 1;
     const bump =
       request.fixtureMutation === "bump_root_generation" ||
@@ -764,7 +832,8 @@ class FakeHelperState {
     const customView =
       this.script === "s2-foreground-required" ||
       this.script === "s6-grant" ||
-      this.script === "s8-foreground-not-acquired"
+      this.script === "s8-foreground-not-acquired" ||
+      this.script === "s10-pid-unknown"
         ? [
             this.node(
               CUSTOM_VIEW_REF,
@@ -852,6 +921,9 @@ class FakeHelperState {
     const delivery = granted && params.delivery !== "pid" ? "hid" : "pid";
     const frontmostBefore = this.frontmost.pid;
     const app = this.targetApp(this.lookApps.get(lookId) ?? numberField(request, "pid"));
+    this.enforceAppPolicy(request, this.realOwner === "window" ? this.userApp : app, true);
+    if (this.realOwner === "element" && ref !== undefined)
+      this.enforceAppPolicy(request, this.userApp, true);
     const effect = (activates = delivery === "hid") => {
       tracked.effect = true;
       if (activates) this.frontmost = app;
@@ -944,6 +1016,12 @@ class FakeHelperState {
         await this.sleep(tracked, this.pidSettleHoldMs);
         this.checkpoint(tracked);
       }
+      if (this.script === "s10-pid-unknown")
+        return finish({
+          outcome: "unknown",
+          performed: { delivery: "pid", grounding: "coordinates", verification: "caller_required" },
+          evidence: { ...PID_OUTSIDE_TARGET_EVIDENCE },
+        });
       throw new FakeFailure("foreground_required", PID_NO_CHANGE_REASON, effectBefore, undefined, {
         evidence: {
           deliveryUsed: "pid_pointer",
@@ -961,9 +1039,20 @@ class FakeHelperState {
       this.checkpoint(tracked);
       effect();
       this.fieldValue = isString(params.text) ? params.text : "";
+      if (this.setTextValueOnly)
+        return finish({
+          outcome: "unknown",
+          performed: {
+            delivery: "ax",
+            grounding: "description",
+            textCommit: "value",
+            textCommitUnavailable: "selected_text_not_settable",
+          },
+          evidence: { value: this.fieldValue, valueWriteOnly: true },
+        });
       return finish({
         outcome: "worked",
-        performed: { delivery: "ax", grounding: "description" },
+        performed: { delivery: "ax", grounding: "description", textCommit: "selected_text" },
         evidence: { value: this.fieldValue },
       });
     }
@@ -1064,7 +1153,14 @@ class FakeHelperState {
       tracked.step = index;
       try {
         this.checkpoint(tracked);
-        const step = await this.act(action, true, tracked);
+        const list = request.appBlocklist;
+        const step = await this.act(
+          list !== undefined && action.appBlocklist === undefined
+            ? { ...action, appBlocklist: list }
+            : action,
+          true,
+          tracked,
+        );
         steps.push(step);
         if (step.outcome === "didnt") {
           stoppedAt = index;
@@ -1138,6 +1234,7 @@ export async function startFakeHelperDaemon(
       .catch(() => undefined);
   };
   let closing: Promise<void> | undefined;
+  let resetDone = false;
 
   const respond = async (socket: net.Socket, line: string) => {
     let request: JsonObject;
@@ -1167,6 +1264,16 @@ export async function startFakeHelperDaemon(
       }
       log(entry);
     } else if (request.cmd === "act" || request.cmd === "actBatch") {
+      if (
+        options.dropForegroundActConnection &&
+        !resetDone &&
+        request.cmd === "act" &&
+        request.policy === "foreground"
+      ) {
+        resetDone = true;
+        entry.connectionDropped = true;
+        socket.destroy();
+      }
       try {
         response = { id, ok: true, result: await state.handle(request) };
       } catch (error) {

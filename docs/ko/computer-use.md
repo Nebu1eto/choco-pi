@@ -64,7 +64,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 에이전트는 화면 
 
 ## computer use 설정
 
-설정은 `~/.pi/agent/extensions/pi-computer-use.json`, 프로젝트의 `.pi/computer-use.json`, 환경 변수 순으로 읽으며, 나중에 읽은 값이 앞의 값을 덮어씁니다. 두 파일은 직접 만들기 전에는 없습니다. 아래 예시의 값이 기본값입니다.
+설정은 `~/.pi/agent/extensions/pi-computer-use.json`, 프로젝트의 `.pi/computer-use.json`, 환경 변수 순으로 읽으며, 나중에 읽은 값이 앞의 값을 덮어씁니다. 다만 `blocked_apps`와 `unblocked_apps`는 예외이며, 아래 **차단된 앱** 설명을 참고하세요. 두 파일은 직접 만들기 전에는 없습니다. 아래 예시의 값이 기본값입니다.
 
 ```json
 {
@@ -74,7 +74,9 @@ helper에는 macOS 권한 두 가지가 필요합니다. 에이전트는 화면 
   "cursor_overlay": true,
   "foreground_grant": [],
   "foreground_prompt": "ask",
-  "restore_focus": true
+  "restore_focus": true,
+  "blocked_apps": [],
+  "unblocked_apps": []
 }
 ```
 
@@ -87,14 +89,25 @@ helper에는 macOS 권한 두 가지가 필요합니다. 에이전트는 화면 
 | `foreground_grant`  | `PI_COMPUTER_USE_FOREGROUND_GRANT`(쉼표로 구분) | 에이전트가 앞으로 가져오고, 창을 올리고, 키보드·마우스 이벤트를 보낼 수 있는 앱의 번들 ID 목록이며, `"*"`도 쓸 수 있습니다. 이 목록은 도구 호출로 바꿀 수 없습니다. 아래 설명을 참고하세요. |
 | `foreground_prompt` | `PI_COMPUTER_USE_FOREGROUND_PROMPT`             | 앱에 포커스가 필요한데 허용 목록에 없을 때 어떻게 할지 정합니다. `ask`(기본값), `always`, `off` 중 하나이며, 아래 설명을 참고하세요.                                                        |
 | `restore_focus`     | `PI_COMPUTER_USE_RESTORE_FOCUS`                 | 허용된 포그라운드 입력이 포커스를 가져간 뒤, 그사이 사용자가 다른 앱으로 전환하지 않았다면 원래 앞에 있던 앱에 포커스를 돌려줍니다.                                                         |
+| `blocked_apps`      | `PI_COMPUTER_USE_BLOCKED_APPS`(쉼표로 구분)     | 에이전트가 살펴보거나 조작할 수 없게 추가로 막을 앱의 번들 ID 목록입니다. 모든 설정 소스의 항목이 합쳐집니다. 아래 설명을 참고하세요.                                                       |
+| `unblocked_apps`    | 없음(사용자 파일에서만)                         | 기본 차단 목록에서 뺄 앱의 번들 ID 목록입니다. 프로젝트 파일과 `PI_COMPUTER_USE_UNBLOCKED_APPS`에 적은 값은 무시합니다. 아래 설명을 참고하세요.                                             |
 
-**포그라운드 허용 목록.** 허용 목록에 없는 앱에는 입력을 백그라운드로 보냅니다. 접근성 경로가 없는 포인터 입력도 먼저 백그라운드로 시도합니다. 포커스를 가져오지 않고 앱 프로세스에 입력을 보낸 뒤, helper가 잠깐 기다리며 앱과 창 픽셀에 변화가 있는지 지켜봅니다. 눈에 띄는 변화가 없으면 `foreground_required`로 거부하고, 같은 호출 안에서는 다시 보내지 않습니다. 허용 목록에 있는 앱에는 이런 포인터 입력을 처음부터 포그라운드로 보냅니다.
+**포그라운드 허용 목록.** 허용 목록에 없는 앱에는 입력을 백그라운드로 보냅니다. 접근성 경로가 없는 포인터 입력도 먼저 백그라운드로 시도합니다. 포커스를 가져오지 않고 앱 프로세스에 입력을 보낸 뒤, helper가 잠깐 기다리며 대상에 변화가 있는지 지켜봅니다. 대상 자체(값, 창, 대상 주변 픽셀)가 바뀌면 성공으로 봅니다. 창의 다른 곳만 바뀌었으면 효과를 확인하지 못한 것으로 보고하고, 에이전트에게 반환된 상태에서 직접 확인하라고 알립니다. 아무 변화도 없으면 `foreground_required`로 거부하고, 같은 호출 안에서는 다시 보내지 않습니다. 허용 목록에 있는 앱에는 이런 포인터 입력을 처음부터 포그라운드로 보냅니다. 포그라운드 입력은 helper가 그 앱과 창이 실제로 앞으로 나왔는지 확인한 뒤에만 보냅니다. 확인되지 않으면 아무것도 보내지 않고 그 사실을 알립니다. 마우스 버튼이나 키를 놓는 순간 그 앱이 더 이상 앞에 있지 않으면, 호출을 멈추고 입력이 다른 앱에 갔을 수 있다고 알립니다.
 
 **포그라운드 허용 확인.** `foreground_prompt`는 앱에 포커스가 필요한데 허용 목록에 없을 때 적용됩니다. helper가 입력이 전혀 전달되지 않았음을 확인했다면, 허용한 뒤 같은 동작을 포그라운드에서 한 번 다시 시도합니다. 이미 백그라운드로 시도했는데 눈에 띄는 변화가 없었다면, 허용은 다음 호출부터 적용되고 에이전트는 다시 시도하기 전에 앱을 먼저 살펴보라는 안내를 받습니다. 값은 다음 중 하나입니다.
 
 - `ask`(기본값): 대화형 TUI 세션에서 앱마다 세션당 한 번 묻습니다. **Allow for this session**, **Always allow**(사용자 파일의 `foreground_grant`에 번들 ID 추가), **Not now** 중에서 고르면 됩니다.
 - `always`: 묻지 않고 어떤 앱이든 앞으로 가져와 입력을 보내도록 명시적으로 허용합니다. 이렇게 허용된 앱은 호스트 모드와 관계없이 세션이 끝날 때까지 허용 상태로 남습니다.
 - `off`: 묻지 않으며, `foreground_grant`만 적용합니다.
+
+**차단된 앱.** computer use는 일부 앱을 절대 살펴보거나 조작하지 않습니다. 그래서 에이전트는 Pi의 셸 승인을 거치지 않고 Pi가 실행 중인 터미널에 입력하거나 비밀번호를 읽을 수 없습니다. 차단된 앱은 모든 도구(`observe_ui`, `search_ui`, `expand_ui`, `inspect_ui`, `read_text`, `wait_for`, `act_ui`)와 손쉬운 사용 기능만 쓰는 입력을 포함한 모든 전달 경로에서, 화면을 캡처하거나 입력을 보내기 전에 거부되며, 도구는 `app_blocked`로 실패합니다. `find_roots`는 이런 앱의 창도 보여 주지만 `BLOCKED`로 표시합니다(세부 정보에는 `blocked: true`와 `block_reason`). Pi가 관리형 브라우저로 제어하는 브라우저 페이지에는 영향이 없고, 브라우저 앱 자체의 창은 다른 앱과 같은 규칙을 따릅니다. 기본으로 차단하는 앱은 다음과 같습니다.
+
+- Pi를 실행하고 있는 앱: Pi 프로세스나 그 상위 프로세스에 해당하는 앱, 그리고 macOS가 `__CFBundleIdentifier`로 Pi에 넘겨준 번들 ID의 앱입니다. Pi는 상위 프로세스를 `ps`로 조회합니다. 조회에 실패하면 자기 프로세스와 바로 위 부모 프로세스를 차단하고, `/computer-use`에 실패 사실을 표시한 뒤, 다음 도구 호출 때 다시 조회합니다. helper도 Pi의 상위 프로세스를 직접 조회해 모두 거부하므로, Pi의 조회가 실패하는 동안에도 Pi를 실행하고 있는 앱은 차단된 상태로 남습니다.
+- 터미널: Terminal(`com.apple.Terminal`), iTerm2(`com.googlecode.iterm2`), Warp(`dev.warp.Warp-Stable`), kitty(`net.kovidgoyal.kitty`, `net.kovidgoyal.kitty-quick-access`), Ghostty(`com.mitchellh.ghostty`), Alacritty(`org.alacritty`), WezTerm(`com.github.wez.wezterm`), Hyper(`co.zeit.hyper`), Tabby(`org.tabby`).
+- 비밀번호 관리자: 1Password 7(`com.agilebits.onepassword7`), 1Password 8(`com.1password.1password`), Bitwarden(`com.bitwarden.desktop`), 암호(`com.apple.Passwords`), 키체인 접근(`com.apple.keychainaccess`).
+- macOS 인증 대화상자(`com.apple.SecurityAgent`)와 helper 자신(`com.injaneity.pi-computer-use`).
+
+어느 설정 소스에서든 `blocked_apps`로 앱을 추가할 수 있으며, 이렇게 추가한 차단은 항상 적용됩니다. 기본 차단은 사용자 파일의 `unblocked_apps`로만 풀 수 있습니다. 프로젝트 파일과 환경 변수로는 어떤 앱도 차단을 풀 수 없으며, 그런 항목은 무시되고 `/computer-use`에 무시된 항목으로 표시됩니다. Pi를 실행하고 있는 앱과 helper는 차단을 풀 수 없습니다. 번들 ID는 대소문자만 무시하고 정확히 일치해야 하며, 와일드카드는 쓸 수 없습니다. 분리된 `tmux`나 `screen` 서버, 또는 SSH를 거쳐 Pi에 연결된 터미널은 Pi의 상위 프로세스가 아니므로 번들 ID로만 보호됩니다. 목록에 없는 터미널은 `blocked_apps`에 추가하세요.
 
 파일을 고치면 다음 도구 호출부터 적용되고, 환경 변수는 Pi가 시작될 때 읽습니다. `/computer-use`는 현재 적용 중인 설정과 이 세션에서 허용한 앱을 보여 줍니다. `/computer-use grant ask|always|off`는 현재 세션의 `foreground_prompt`를 바꾸고 그 값을 사용자 파일에 저장합니다.
 

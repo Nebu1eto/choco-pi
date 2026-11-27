@@ -66,6 +66,7 @@ export async function ensurePermissions(
   signal?: AbortSignal,
 ): Promise<PermissionStatus> {
   let status = await bridge.checkPermissions(signal);
+  throwIfAborted(signal);
   if (allGranted(status, bridge.kinds)) return status;
 
   if (!ctx.hasUI) throw new Error(bridge.copy.nonInteractiveError(helperPath));
@@ -86,14 +87,20 @@ export async function ensurePermissions(
       options,
       { signal },
     );
+    throwIfAborted(signal);
     if (!choice || choice === "Cancel") throw new Error(bridge.copy.incompleteError(helperPath));
 
     const selected = bridge.kinds.find(({ openOption }) => choice === openOption);
-    if (selected) await bridge.openPermissionPane(selected.kind, signal);
+    if (selected) {
+      await bridge.openPermissionPane(selected.kind, signal);
+      throwIfAborted(signal);
+    }
 
     if (choice.startsWith("Recheck")) {
       await bridge.restartHelper(signal);
+      throwIfAborted(signal);
       status = await bridge.checkPermissions(signal);
+      throwIfAborted(signal);
       if (allGranted(status, bridge.kinds)) {
         ctx.ui.notify(bridge.copy.readyMessage, "info");
       } else {

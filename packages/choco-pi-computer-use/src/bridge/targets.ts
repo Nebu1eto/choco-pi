@@ -1,4 +1,10 @@
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
+import {
+  appBlockFor,
+  assertAppAllowed,
+  describeAppBlockReason,
+  type AppBlockReason,
+} from "../app-policy.ts";
 import { listCdpPageContexts } from "../cdp.ts";
 import { getComputerUseConfig, isBrowserUseEnabled } from "../config.ts";
 import type { FindParams, ObserveTargetParams, RootSelector } from "../contract.ts";
@@ -27,6 +33,26 @@ import type {
   ResolvedTarget,
   WindowRefRecord,
 } from "./types.ts";
+
+type ListedRoot = ListWindowsDetails["windows"][number];
+
+export type FindRootsWindow = ListedRoot & { blocked: boolean; block_reason?: AppBlockReason };
+
+export type FindRootsDetails = Omit<ListWindowsDetails, "windows"> & { windows: FindRootsWindow[] };
+
+function withAppPolicy(root: ListedRoot): FindRootsWindow {
+  const block = root.kind === "browser_page" ? undefined : appBlockFor(root);
+  return block
+    ? { ...root, blocked: true, block_reason: block.reason }
+    : { ...root, blocked: false };
+}
+
+function formatFindRootsLine(root: FindRootsWindow): string {
+  const line = formatWindowLine(root);
+  return root.blocked && root.block_reason
+    ? `${line} BLOCKED: computer-use may not operate this app (${describeAppBlockReason(root.block_reason)}; user-level policy)`
+    : line;
+}
 
 export async function listApps(signal?: AbortSignal): Promise<HelperApp[]> {
   return await currentPlatformBackend.listApps(signal);
@@ -240,6 +266,7 @@ export function nativeWindowRequest(
 }
 
 export function setCurrentTarget(target: ResolvedTarget): void {
+  assertAppAllowed(target);
   assertBrowserUseAllowed(target);
   const windowRef = target.windowRef ?? storeWindowRefForTarget(target);
   operationState().currentTarget = {
@@ -275,6 +302,7 @@ export async function resolveTargetByWindowSelector(
 
   const fromRef = runtimeState.windowRefs.get(normalized);
   if (fromRef) {
+    assertAppAllowed(fromRef);
     const app: HelperApp = {
       appName: fromRef.appName,
       bundleId: fromRef.bundleId,
@@ -309,6 +337,7 @@ export async function resolveTargetByWindowSelector(
       const windows = await listWindows(app.pid, signal);
       const match = windows.find((window) => window.windowId === numericWindowId);
       if (match) {
+        assertAppAllowed(app);
         assertBrowserUseAllowed(app);
         const resolved = toResolvedTarget(app, match);
         setCurrentTarget(resolved);
@@ -347,6 +376,7 @@ export async function resolveTargetByWindowSelector(
       `Root query '${normalized}' did not match any current root. Call find_roots to inspect roots.`,
     );
   const app: HelperApp = { appName: match.app, bundleId: match.bundleId, pid: match.pid };
+  assertAppAllowed(app);
   const roots = await listWindows(match.pid, signal);
   const helperRoot =
     roots.find(
@@ -362,6 +392,7 @@ export async function resolveTargetByWindowSelector(
 
 export async function resolveCurrentTarget(signal?: AbortSignal): Promise<ResolvedTarget> {
   const current = currentTargetOrThrow();
+  assertAppAllowed(current);
   const windows = await listWindows(current.pid, signal);
   if (!windows.length) {
     throw new Error(CURRENT_TARGET_GONE_ERROR);
@@ -430,6 +461,7 @@ export async function resolveFrontmostTarget(signal?: AbortSignal): Promise<Reso
     bundleId: frontmost.bundleId,
     pid: frontmost.pid,
   };
+  assertAppAllowed(app);
 
   const windows = await listWindows(frontmost.pid, signal);
   if (!windows.length) {
@@ -576,7 +608,7 @@ export async function windowDetailsForFind(
 export async function performListWindows(
   params: FindParams,
   signal?: AbortSignal,
-): Promise<AgentToolResult<ListWindowsDetails>> {
+): Promise<AgentToolResult<FindRootsDetails>> {
   const rawParams = params ?? {};
   const query: FindParams = {
     text: trimOrUndefined(rawParams.text),
@@ -612,7 +644,7 @@ export async function performListWindows(
         url: page.url,
       }))
     : [];
-  const allRoots = [...desktopForest, ...browserForest];
+  const allRoots = [...desktopForest, ...browserForest].map(withAppPolicy);
   const forest = allRoots.filter((root) => !query.kind || root.kind === query.kind);
   const ranked = forest
     .map((root, order) => ({
@@ -632,7 +664,7 @@ export async function performListWindows(
     );
   const totalMatches = ranked.length;
   const windows = ranked.slice(0, 12).map((entry) => entry.root);
-  const details: ListWindowsDetails = {
+  const details: FindRootsDetails = {
     tool: "find_roots",
     query,
     windows,
@@ -641,7 +673,7 @@ export async function performListWindows(
     hasMore: totalMatches > windows.length,
     config,
   };
-  const lines = windows.map(formatWindowLine);
+  const lines = windows.map(formatFindRootsLine);
   const text = lines.length
     ? `Found ${totalMatches} matching root${totalMatches === 1 ? "" : "s"}; returned ${windows.length}${totalMatches > windows.length ? ". Refine the filters for additional roots" : ""}. Use @r refs with observe_ui({ root: "@rN" }).\n${lines.join("\n")}`
     : query.text || query.app || query.bundleId || query.pid || query.kind

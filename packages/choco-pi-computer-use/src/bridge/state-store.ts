@@ -324,7 +324,27 @@ export async function acquireForegroundSection(
   };
 }
 
-async function releaseInstanceHelperOwner(): Promise<void> {
+function releaseManagedBrowser(): void {
+  disconnectCdp();
+  const managedBrowser = runtimeState.managedBrowser;
+  runtimeState.managedBrowser = undefined;
+  if (managedBrowser) {
+    managedBrowser.kill("SIGTERM");
+    managedBrowser.unref();
+  }
+  if (
+    runtimeState.managedBrowserCdpPort &&
+    process.env.PI_COMPUTER_USE_CDP_PORT === runtimeState.managedBrowserCdpPort
+  ) {
+    if (runtimeState.previousCdpPort === undefined) delete process.env.PI_COMPUTER_USE_CDP_PORT;
+    else process.env.PI_COMPUTER_USE_CDP_PORT = runtimeState.previousCdpPort;
+  }
+  runtimeState.managedBrowserCdpPort = undefined;
+  runtimeState.previousCdpPort = undefined;
+}
+
+async function releaseInstanceProcessResources(): Promise<void> {
+  releaseManagedBrowser();
   await currentPlatformBackend.shutdown?.();
 }
 
@@ -340,7 +360,7 @@ function instanceHasLiveSessions(slot: ProcessSlot): boolean {
 export function registerComputerUseSession(sessionKey: string): void {
   const slot = processSlot();
   slot.sessions.set(sessionKey, INSTANCE_ID);
-  slot.releasers.set(INSTANCE_ID, releaseInstanceHelperOwner);
+  slot.releasers.set(INSTANCE_ID, releaseInstanceProcessResources);
 }
 
 export function hasOtherLiveSession(sessionKey: string): boolean {
@@ -355,6 +375,7 @@ export function liveComputerUseSessions(): string[] {
 
 export async function endComputerUseSession(sessionKey: string): Promise<void> {
   retireSessionScope(sessionKey);
+  clearStoredOutputs(sessionKey);
   const slot = processSlot();
   if (slot.sessions.get(sessionKey) === INSTANCE_ID) slot.sessions.delete(sessionKey);
   if (instanceHasLiveSessions(slot)) return;
@@ -381,26 +402,11 @@ async function releaseInstanceResources(slot: ProcessSlot): Promise<void> {
   await closed;
   if (resourceScheduler === closing) resourceScheduler = new ResourceScheduler();
   if (instanceHasLiveSessions(slot)) return;
-  disconnectCdp();
-  const managedBrowser = runtimeState.managedBrowser;
-  runtimeState.managedBrowser = undefined;
-  if (managedBrowser) {
-    managedBrowser.kill("SIGTERM");
-    managedBrowser.unref();
-  }
-  if (
-    runtimeState.managedBrowserCdpPort &&
-    process.env.PI_COMPUTER_USE_CDP_PORT === runtimeState.managedBrowserCdpPort
-  ) {
-    if (runtimeState.previousCdpPort === undefined) delete process.env.PI_COMPUTER_USE_CDP_PORT;
-    else process.env.PI_COMPUTER_USE_CDP_PORT = runtimeState.previousCdpPort;
-  }
-  runtimeState.managedBrowserCdpPort = undefined;
-  runtimeState.previousCdpPort = undefined;
   clearStoredOutputs();
   retireAllSessionScopes();
 
   if (!processEnding || slot.sessions.size > 0) return;
+  releaseManagedBrowser();
   const releasers = [...slot.releasers.values()];
   slot.releasers.clear();
   await Promise.allSettled(releasers.map(async (release) => await release()));

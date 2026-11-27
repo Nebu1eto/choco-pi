@@ -16,7 +16,7 @@ import {
   type ComputerUsePlatformBackend,
   type PlatformRequestSession,
 } from "../src/platform/types.ts";
-import { createTestExtensionContext } from "./helpers/extension-context.ts";
+import { createTestExtensionContext, type TestUiOptions } from "./helpers/extension-context.ts";
 import {
   CUSTOM_VIEW_NAME,
   CUSTOM_VIEW_REF,
@@ -24,7 +24,9 @@ import {
   FAKE_APP_B,
   FAKE_WINDOW_TITLE,
   FAKE_WINDOW_TITLE_B,
+  PID_OUTSIDE_TARGET_EVIDENCE,
   RESIZED_FRAME,
+  TERMINAL_USER_APP,
   USER_WINDOW_ID,
   NEUTRAL_USER_APP,
   defaultSlowHoldMs,
@@ -49,6 +51,7 @@ const { ensureMacosReady, releaseMacosOwnership } =
   await import("../src/platform/macos/permissions.ts");
 const { replacePlatformBackendForTest } = await import("../src/platform/index.ts");
 const bridge = await import("../src/bridge.ts");
+const { AppBlockedError } = await import("../src/app-policy.ts");
 
 let daemon: FakeHelperDaemon | undefined;
 
@@ -134,6 +137,7 @@ async function actThroughBridge(
     findFixture?: boolean;
     signal?: AbortSignal;
     actions?: UiAction[];
+    ui?: TestUiOptions;
   } = {},
 ): Promise<{ details: JsonObject; text: string }> {
   const saved = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -151,7 +155,7 @@ async function actThroughBridge(
   const restore = replacePlatformBackendForTest(backend);
   const signal = options.signal ?? new AbortController().signal;
   try {
-    const ctx = await createTestExtensionContext(cwd);
+    const ctx = await createTestExtensionContext(cwd, options.ui);
     await bridge.shutdownComputerUseSession();
     if (options.findFixture)
       await bridge.executeFind("find", { app: FAKE_APP.appName }, signal, undefined, ctx);
@@ -1633,4 +1637,251 @@ test("the helper deadline is the relative budget from receipt, and an absolute d
   );
   assert.ok(refused instanceof helper.HelperCommandError);
   assert.equal(refused.code, "invalid_args");
+});
+
+test("bridge: a background pid click that changed only pixels outside the target is unknown, never retried or prompted", async () => {
+  const fake = await startDaemon({ script: "s10-pid-unknown" });
+  const prompts: string[] = [];
+  const { details, text } = await actThroughBridge(wireBackend(), undefined, {
+    ref: "@e5",
+    findFixture: true,
+    ui: {
+      select: async (title) => {
+        prompts.push(title);
+        return undefined;
+      },
+    },
+  });
+  const acts = fake.requests.filter((request) => request.cmd === "act");
+  assert.equal(acts.length, 1, "the delivered background click is never retried");
+  assert.equal(acts[0]?.policy, "background");
+  assert.equal(acts[0]?.foregroundGrant, undefined);
+  const result = field(field(acts[0]!, "response"), "result");
+  assert.equal(result.outcome, "unknown");
+  assert.deepEqual(field(result, "evidence"), { ...PID_OUTSIDE_TARGET_EVIDENCE });
+  assert.deepEqual(prompts, [], "an unverified effect asks for no foreground grant");
+  const execution = field(details, "execution");
+  assert.equal(execution.outcome, "unknown");
+  assert.equal(execution.refusal, undefined, "not a refusal");
+  assert.equal(execution.retryDeferred, undefined);
+  assert.equal(execution.escalatedToForeground, undefined);
+  const steps = execution.steps;
+  assert.ok(Array.isArray(steps) && steps.length === 1 && isJsonObject(steps[0]));
+  assert.equal(steps[0].outcome, "unknown");
+  assert.equal(steps[0].refusal, undefined);
+  assert.equal(field(steps[0], "evidence").changeOutsideTarget, true);
+  assert.match(text, /Effect not verified for action 1 \(click: unknown\)/);
+  assert.doesNotMatch(text, /foreground_required/);
+});
+
+test("look and act requests carry the session's app blocklist", async () => {
+  const fake = await startDaemon({ script: "s1-ok" });
+  await actThroughBridge(wireBackend(), undefined, { findFixture: true });
+  for (const cmd of ["look", "act"]) {
+    const request = fake.requests.find((candidate) => candidate.cmd === cmd);
+    assert.ok(request, `the bridge sent ${cmd}`);
+    const list = field(request, "appBlocklist");
+    assert.ok(Array.isArray(list.bundleIds) && list.bundleIds.includes("com.apple.Terminal"));
+    assert.ok(
+      Array.isArray(list.pids) && list.pids.includes(process.pid),
+      "this process is blocked",
+    );
+  }
+  for (const request of fake.requests.filter((candidate) => candidate.cmd === "listRoots"))
+    assert.equal(request.appBlocklist, undefined, "root listings are not filtered");
+});
+
+test("bridge: the helper's app_blocked on a window's real owner reads like the TypeScript check, before any capture", async () => {
+  const fake = await startDaemon({ script: "s1-ok", userApp: "terminal", realOwner: "window" });
+  const error = await rejection(
+    actThroughBridge(wireBackend(), undefined, { ref: "@e3", findFixture: true }),
+  );
+  assert.ok(error instanceof AppBlockedError, `got ${error.name}: ${error.message}`);
+  assert.equal(error.reason, "terminal");
+  assert.equal(error.pid, TERMINAL_USER_APP.pid);
+  const typeScriptSide = new AppBlockedError(TERMINAL_USER_APP, {
+    reason: "terminal",
+    matched: TERMINAL_USER_APP.bundleId,
+  });
+  assert.equal(error.message, typeScriptSide.message);
+  assert.equal("effectPossible" in error && error.effectPossible, false);
+  assert.equal(fake.requests.filter((request) => request.cmd === "act").length, 0);
+});
+
+test("bridge: the helper's app_blocked on the element an act resolves sends nothing and is not retried", async () => {
+  const fake = await startDaemon({
+    script: "s2-foreground-required",
+    userApp: "terminal",
+    realOwner: "element",
+  });
+  const prompts: string[] = [];
+  const error = await rejection(
+    actThroughBridge(wireBackend(), undefined, {
+      ref: "@e5",
+      findFixture: true,
+      ui: {
+        select: async (title) => {
+          prompts.push(title);
+          return undefined;
+        },
+      },
+    }),
+  );
+  assert.ok(error instanceof AppBlockedError, `got ${error.name}: ${error.message}`);
+  assert.match(error.message, /^app_blocked: computer-use is not allowed to operate Terminal/);
+  const acts = fake.requests.filter((request) => request.cmd === "act");
+  assert.equal(acts.length, 1, "no retry and no foreground escalation");
+  const refusal = field(field(acts[0]!, "response"), "error");
+  assert.equal(refusal.code, "app_blocked");
+  assert.equal(refusal.inputSent, false);
+  assert.equal(refusal.effectPossible, false);
+  assert.deepEqual(prompts, []);
+});
+
+function injectResetAfterForegroundActWrite(): () => void {
+  const original = net.createConnection;
+  let injected = false;
+  const failing = (socketPath: string): net.Socket => {
+    const socket = original(socketPath);
+    const realWrite = socket.write.bind(socket);
+    Object.defineProperty(socket, "write", {
+      configurable: true,
+      writable: true,
+      value: (chunk: string): boolean => {
+        const accepted = realWrite(chunk);
+        if (!injected && chunk.includes('"cmd":"act"') && chunk.includes('"policy":"foreground"')) {
+          injected = true;
+          setTimeout(() => {
+            socket.destroy(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
+          }, 30);
+        }
+        return accepted;
+      },
+    });
+    return socket;
+  };
+  Object.defineProperty(net, "createConnection", {
+    configurable: true,
+    writable: true,
+    value: failing,
+  });
+  return () =>
+    Object.defineProperty(net, "createConnection", {
+      configurable: true,
+      writable: true,
+      value: original,
+    });
+}
+
+async function lostConnectionHoldsSection(fault: "helper_closed" | "client_reset"): Promise<void> {
+  const fake = await startDaemon({
+    script: "s6-grant",
+    secondTarget: true,
+    foregroundHoldMs: 1_500,
+    cancelBlockMs: 1_000,
+    dropForegroundActConnection: fault === "helper_closed",
+  });
+  await withGrantedBridge(async (ctx) => {
+    const first = await prepareCustomView(ctx, FAKE_APP.appName, FAKE_WINDOW_TITLE);
+    const second = await prepareCustomView(ctx, FAKE_APP_B.appName, FAKE_WINDOW_TITLE_B);
+    const restoreNet = fault === "client_reset" ? injectResetAfterForegroundActWrite() : undefined;
+    let lost: JsonObject;
+    try {
+      lost = await actCustomView(ctx, first);
+    } finally {
+      restoreNet?.();
+    }
+    const execution = field(lost, "execution");
+    assert.equal(lost.status, "cancelled", JSON.stringify(lost));
+    assert.equal(execution.reason, "connection_lost");
+    assert.equal(execution.effectPossible, true);
+    const followedAt = fake.requests.length;
+    const next = await actCustomView(ctx, second);
+    assert.equal(field(next, "execution").focusRestoreReason, "restored");
+    const unfinished = fake.requests.find(
+      (request) => request.cmd === "act" && request.pid === FAKE_APP.pid,
+    );
+    if (fault === "helper_closed") assert.equal(unfinished?.connectionDropped, true);
+    const answeredAt = unfinished?.answeredAt;
+    assert.ok(isNumber(answeredAt), "the accepted act ran to its end in the helper");
+    const capture = fake.requests
+      .slice(followedAt)
+      .find((request) => request.cmd === "getFrontmost");
+    assert.ok(isNumber(capture?.receivedAt));
+    assert.ok(
+      capture.receivedAt >= answeredAt,
+      "the next foreground call waited for the request the lost connection left running",
+    );
+    const cancels = fake.requests.filter(
+      (request) => request.cmd === "cancel" && request.target === unfinished?.requestId,
+    );
+    assert.ok(cancels.length >= 1, "the client cancelled the unconfirmed request");
+  });
+}
+
+test("bridge: a socket error after a foreground act was written holds the section until the helper reports it stopped", async () => {
+  await lostConnectionHoldsSection("client_reset");
+});
+
+test("bridge: the helper closing the connection after a foreground act was sent holds the section the same way", async () => {
+  await lostConnectionHoldsSection("helper_closed");
+});
+
+test("bridge: a granted HID act refused before any input reports inputSent false in the step error", async () => {
+  await startDaemon({ script: "s6-grant" });
+  await withGrantedBridge(async (ctx) => {
+    const prepared = await prepareCustomView(ctx, FAKE_APP.appName, FAKE_WINDOW_TITLE);
+    const mutator = new helper.MacosHelperClient();
+    let acts = 0;
+    const restore = replacePlatformBackendForTest(
+      wireBackend(async (request, options) => {
+        acts += 1;
+        if (acts === 2)
+          await mutator.command("look", {
+            pid: FAKE_APP.pid,
+            fixtureMutation: "bump_root_generation",
+          });
+        return await macosBackend.act(request, options);
+      }),
+    );
+    try {
+      const result = await bridge.executeAct(
+        "act",
+        {
+          stateId: prepared.stateId,
+          actions: [
+            { action: "click", ref: prepared.ref },
+            { action: "click", ref: prepared.ref },
+          ],
+        },
+        new AbortController().signal,
+        undefined,
+        ctx,
+      );
+      const parsed: JsonValue = JSON.parse(JSON.stringify(result.details));
+      assert.ok(isJsonObject(parsed));
+      assert.equal(parsed.status, "partial");
+      const error = field(field(parsed, "execution"), "error");
+      assert.equal(error.code, "stale_look");
+      assert.equal(error.inputSent, false, "the helper counted no event for the refused act");
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("bridge: a set_text the helper could only write as a value is reported unverified, not as a change", async () => {
+  const fake = await startDaemon({ script: "s1-ok", setTextValueOnly: true });
+  const { details, text } = await actThroughBridge(wireBackend(), undefined, {
+    findFixture: true,
+    actions: [{ action: "setText", ref: "@e2", text: "value only" }],
+  });
+  const execution = field(details, "execution");
+  assert.equal(execution.outcome, "unknown");
+  const steps = execution.steps;
+  assert.ok(Array.isArray(steps) && isJsonObject(steps[0]));
+  assert.equal(field(steps[0], "performed").textCommit, "value");
+  assert.match(text, /Effect not verified for action 1 \(set_text: unknown\)/);
+  const acts = fake.requests.filter((request) => request.cmd === "act");
+  assert.equal(acts.length, 1, "an unverified set_text is never retried or escalated");
 });

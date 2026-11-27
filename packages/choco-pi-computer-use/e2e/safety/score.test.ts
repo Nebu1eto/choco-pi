@@ -4,6 +4,7 @@ import type { JsonObject } from "../../src/json.ts";
 import {
   diagnosticsBlock,
   focusState,
+  foreignActivation,
   holderInput,
   isMainHelper,
   scoreCancel,
@@ -12,6 +13,8 @@ import {
   scoreJudgementControl,
   scoreMisdelivery,
   scoreParallel,
+  scorePolicyBlocked,
+  scorePolicyControl,
   scoreRestore,
 } from "./score.ts";
 
@@ -620,4 +623,144 @@ test("isMainHelper refuses the main helper apps and socket only", () => {
     true,
   );
   assert.equal(isMainHelper("/tmp/s/pi-computer-use.app", "/tmp/s/bridge.sock", home), false);
+});
+
+test("foreignActivation counts only an activation while the act was in flight", () => {
+  const during = foreignActivation([row("appActive", 900), row("appActive", 1_150)], 1_000, 1_400);
+  assert.deepEqual(during, { observed: true, reason: "activation_during_act", activatedAt: 1_150 });
+  assert.deepEqual(foreignActivation([row("appActive", 900)], 1_000, 1_400), {
+    observed: false,
+    reason: "activation_not_observed",
+  });
+  assert.deepEqual(foreignActivation([row("selfActivate", 1_100)], 1_000, 1_400), {
+    observed: false,
+    reason: "activation_not_observed",
+  });
+  assert.deepEqual(foreignActivation([row("appActive", 1_500)], 1_000, 1_400), {
+    observed: false,
+    reason: "activation_after_reply",
+    activatedAt: 1_500,
+  });
+  const decided = scoreJudgement({
+    reply: { ok: false, error: { code: "foreground_required", effectPossible: false } },
+    target: [],
+    window,
+    interference: during,
+  });
+  assert.equal(decided.verdict, "PASS");
+  const fooled = scoreJudgement({
+    reply: answered("worked"),
+    target: [],
+    window,
+    interference: during,
+  });
+  assert.equal(fooled.verdict, "FAIL");
+});
+
+const blocked = (inputSent?: boolean, effectPossible: boolean | undefined = false): JsonObject => {
+  const error: JsonObject = { code: "app_blocked", message: "app_blocked: refused" };
+  if (effectPossible !== undefined) error.effectPossible = effectPossible;
+  if (inputSent !== undefined) error.inputSent = inputSent;
+  return { ok: false, error };
+};
+
+test("scorePolicyBlocked passes only app_blocked refusals with no fixture effect", () => {
+  const safe = [
+    { label: "look_by_bundle", cmd: "look" as const, reply: blocked() },
+    { label: "act_by_pid", cmd: "act" as const, reply: blocked(false) },
+  ];
+  const quiet = [row("launched", 500), row("customHit", 2_500)];
+  assert.equal(scorePolicyBlocked({ replies: safe, target: quiet, window }).verdict, "PASS");
+
+  const observed = scorePolicyBlocked({
+    replies: [
+      {
+        label: "look_by_bundle",
+        cmd: "look",
+        reply: { ok: true, result: { lookId: "look_1" } },
+      },
+    ],
+    target: quiet,
+    window,
+  });
+  assert.equal(observed.verdict, "FAIL");
+  assert.match(observed.failures[0] ?? "", /look_by_bundle: helper answered ok/);
+
+  const wrongCode = scorePolicyBlocked({
+    replies: [{ label: "act_by_pid", cmd: "act", reply: refusal(false) }],
+    target: quiet,
+    window,
+  });
+  assert.match(wrongCode.failures[0] ?? "", /activation_failed instead of app_blocked/);
+
+  const noInputFlag = scorePolicyBlocked({
+    replies: [{ label: "act_by_pid", cmd: "act", reply: blocked(undefined) }],
+    target: quiet,
+    window,
+  });
+  assert.match(noInputFlag.failures[0] ?? "", /without inputSent:false/);
+
+  const maybeEffect = scorePolicyBlocked({
+    replies: [{ label: "look_by_pid", cmd: "look", reply: blocked(undefined, true) }],
+    target: quiet,
+    window,
+  });
+  assert.match(maybeEffect.failures[0] ?? "", /without effectPossible:false/);
+
+  const missing = scorePolicyBlocked({
+    replies: [{ label: "act_by_bundle", cmd: "act", reply: undefined }],
+    target: quiet,
+    window,
+  });
+  assert.match(missing.failures[0] ?? "", /no reply/);
+
+  const hit = scorePolicyBlocked({ replies: safe, target: [row("customHit", 1_200)], window });
+  assert.equal(hit.verdict, "FAIL");
+  assert.match(hit.failures[0] ?? "", /fixture logged input: customHit@1200/);
+
+  const activated = scorePolicyBlocked({
+    replies: safe,
+    target: [row("appActive", 1_300, { window: "main" })],
+    window,
+  });
+  assert.match(activated.failures[0] ?? "", /fixture was activated: appActive\(main\)@1300/);
+});
+
+test("scorePolicyControl requires an observation, a delivered press, and exactly one increment", () => {
+  const lookOk: JsonObject = { ok: true, result: { lookId: "look_2" } };
+  const hitOnce = [row("increment", 1_200)];
+  assert.equal(
+    scorePolicyControl({ look: lookOk, act: answered("worked"), target: hitOnce, window }).verdict,
+    "PASS",
+  );
+  assert.equal(
+    scorePolicyControl({ look: lookOk, act: answered("unknown"), target: hitOnce, window }).verdict,
+    "PASS",
+  );
+  const refused = scorePolicyControl({ look: blocked(), act: undefined, target: [], window });
+  assert.equal(refused.verdict, "FAIL");
+  assert.match(refused.failures[0] ?? "", /not answered with an observation: error:app_blocked/);
+  const notDelivered = scorePolicyControl({
+    look: lookOk,
+    act: blocked(false),
+    target: [],
+    window,
+  });
+  assert.match(notDelivered.failures[0] ?? "", /not delivered: error:app_blocked/);
+  const didnt = scorePolicyControl({
+    look: lookOk,
+    act: answered("didnt"),
+    target: hitOnce,
+    window,
+  });
+  assert.equal(didnt.verdict, "FAIL");
+  const noHit = scorePolicyControl({ look: lookOk, act: answered("worked"), target: [], window });
+  assert.match(noHit.failures[0] ?? "", /recorded 0 increment/);
+  const twoHits = scorePolicyControl({
+    look: lookOk,
+    act: answered("worked"),
+    target: [row("increment", 1_200), row("increment", 1_300)],
+    window,
+  });
+  assert.match(twoHits.failures[0] ?? "", /recorded 2 increment/);
 });

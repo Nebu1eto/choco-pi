@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 import WebKit
 
 let targetBundleId = "com.choco-pi.FocusFixture"
@@ -27,6 +28,9 @@ let noise = !isHolder && flag("CU_FIXTURE_NOISE")
 let deadViewEnabled = !isHolder && flag("CU_FIXTURE_DEAD_VIEW")
 let webEnabled = !isHolder && flag("CU_FIXTURE_WEB")
 let activateAtLaunch = !isHolder && flag("CU_FIXTURE_ACTIVATE")
+// Matrix mode (safety/matrix.ts): extra AppKit and SwiftUI windows, the web page loaded from
+let matrixEnabled = !isHolder && flag("CU_FIXTURE_MATRIX")
+let webPagePath: String? = env["CU_FIXTURE_WEB_PAGE"].flatMap { $0.isEmpty ? nil : $0 }
 let windowOffset: NSPoint = {
 	guard let parts = numbers("CU_FIXTURE_OFFSET"), parts.count == 2 else { return .zero }
 	return NSPoint(x: parts[0], y: parts[1])
@@ -81,6 +85,10 @@ func cocoaRect(fromTopLeft rect: NSRect) -> NSRect {
 	return NSRect(x: rect.origin.x, y: primaryHeight - rect.origin.y - rect.size.height, width: rect.size.width, height: rect.size.height)
 }
 
+func matrixOrigin(left: Double, top: Double, width: Double, height: Double) -> NSPoint {
+	cocoaRect(fromTopLeft: NSRect(x: left, y: top, width: width, height: height)).origin
+}
+
 final class CustomView: NSView {
 	var hits = 0
 	var onHit: ((Int) -> Void)?
@@ -127,8 +135,107 @@ final class DeadView: NSView {
 	override func rightMouseDown(with event: NSEvent) {}
 }
 
+final class DragView: NSView {
+	var start: NSPoint?
+	var moves = 0
+
+	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+	override func isAccessibilityElement() -> Bool { true }
+	override func accessibilityRole() -> NSAccessibility.Role? { .group }
+	override func accessibilityLabel() -> String? { "Drag View" }
+	override func accessibilityIdentifier() -> String { "cu-drag" }
+	override func isAccessibilityEnabled() -> Bool { true }
+
+	func region(_ point: NSPoint) -> String {
+		if point.x < bounds.width / 3 { return "A" }
+		if point.x > bounds.width * 2 / 3 { return "B" }
+		return "mid"
+	}
+
+	override func draw(_ dirtyRect: NSRect) {
+		NSColor.systemPurple.withAlphaComponent(0.25).setFill()
+		bounds.fill()
+		let font: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 14)]
+		("A" as NSString).draw(at: NSPoint(x: 12, y: bounds.midY - 8), withAttributes: font)
+		("B" as NSString).draw(at: NSPoint(x: bounds.width - 24, y: bounds.midY - 8), withAttributes: font)
+	}
+
+	override func mouseDown(with event: NSEvent) {
+		let point = convert(event.locationInWindow, from: nil)
+		start = point
+		moves = 0
+		log.write("dragDown", ["region": region(point)])
+	}
+
+	override func mouseDragged(with event: NSEvent) { moves += 1 }
+
+	override func mouseUp(with event: NSEvent) {
+		let point = convert(event.locationInWindow, from: nil)
+		log.write("dragUp", ["startRegion": start.map(region) ?? "none", "endRegion": region(point), "moves": moves])
+		start = nil
+	}
+}
+
+final class StripeView: NSView {
+	override var isFlipped: Bool { true }
+
+	override func draw(_ dirtyRect: NSRect) {
+		for index in 0..<30 {
+			let rect = NSRect(x: 0, y: CGFloat(index) * 40, width: bounds.width, height: 40)
+			(index % 2 == 0 ? NSColor.systemYellow.withAlphaComponent(0.3) : NSColor.white).setFill()
+			rect.fill()
+			("Row \(index)" as NSString).draw(at: NSPoint(x: 8, y: rect.minY + 12), withAttributes: [.font: NSFont.systemFont(ofSize: 12)])
+		}
+	}
+}
+
+final class SwiftUIModel: ObservableObject {
+	@Published var text = ""
+	@Published var toggle = false
+}
+
+struct MatrixSwiftUIView: View {
+	@ObservedObject var model: SwiftUIModel
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 14) {
+			Button("SwiftUI Button") { log.write("swiftuiButton") }
+				.accessibilityIdentifier("cu-sw-button")
+			TextField("SwiftUI Field", text: $model.text)
+				.frame(width: 300)
+				.accessibilityIdentifier("cu-sw-field")
+			Toggle("SwiftUI Toggle", isOn: $model.toggle)
+				.accessibilityIdentifier("cu-sw-toggle")
+			ZStack {
+				Rectangle().fill(Color.orange.opacity(0.35))
+				Text("Tap Area")
+			}
+			.frame(width: 300, height: 90)
+			.contentShape(Rectangle())
+			.onTapGesture { log.write("swiftuiTap") }
+			.accessibilityElement(children: .ignore)
+			.accessibilityLabel("SwiftUI Tap Area")
+			.accessibilityIdentifier("cu-sw-tap")
+		}
+		.padding(20)
+		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+		.onChange(of: model.text) { value in log.write("swiftuiText", describe(value)) }
+		.onChange(of: model.toggle) { value in log.write("swiftuiToggle", ["isOn": value]) }
+	}
+}
+
 final class WebLogger: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
 	func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+		if let fields = message.body as? [String: Any], let event = fields["event"] as? String {
+			var row = fields
+			row.removeValue(forKey: "event")
+			if let value = fields["value"] as? String {
+				row.removeValue(forKey: "value")
+				row.merge(describe(value)) { _, new in new }
+			}
+			log.write(event, row)
+			return
+		}
 		log.write("webValue", describe(message.body as? String ?? ""))
 	}
 
@@ -147,7 +254,7 @@ field.addEventListener("input", () => window.webkit.messageHandlers.cu.postMessa
 </script></body></html>
 """
 
-final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate {
+final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate, NSMenuDelegate {
 	var window: NSWindow!
 	var windows: [NSWindow] = []
 	var labels: [ObjectIdentifier: String] = [:]
@@ -166,6 +273,14 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 	var noiseTimer: Timer?
 	var noiseTicks = 0
 	var stickyStreak = false
+	let scrollView = NSScrollView(frame: NSRect(x: 20, y: 140, width: 220, height: 180))
+	let dragView = DragView(frame: NSRect(x: 260, y: 140, width: 240, height: 180))
+	let popup = NSPopUpButton(frame: NSRect(x: 20, y: 90, width: 180, height: 28), pullsDown: false)
+	var checkbox: NSButton?
+	let swiftModel = SwiftUIModel()
+	var lastScrollY: Double?
+	var lastResponder: [String: String] = [:]
+	var lastSelection: [String: String] = [:]
 
 	func label(_ window: NSWindow?) -> String {
 		guard let window else { return "" }
@@ -243,14 +358,140 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 		}
 
 		if webEnabled {
-			let web = makeWindow("CU Fixture Web", "web", origin: NSPoint(x: 560, y: 660), size: NSSize(width: 420, height: 200))
+			let webSize = matrixEnabled ? NSSize(width: 640, height: 340) : NSSize(width: 420, height: 200)
+			let webOrigin = matrixEnabled ? matrixOrigin(left: 560, top: 80, width: 640, height: 340) : NSPoint(x: 560, y: 660)
+			let web = makeWindow("CU Fixture Web", "web", origin: webOrigin, size: webSize)
 			let config = WKWebViewConfiguration()
 			config.userContentController.add(webLogger, name: "cu")
-			let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 420, height: 200), configuration: config)
+			let view = WKWebView(frame: NSRect(origin: .zero, size: webSize), configuration: config)
 			view.navigationDelegate = webLogger
 			web.contentView?.addSubview(view)
-			view.loadHTMLString(webPage, baseURL: nil)
+			let page = webPagePath.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) } ?? webPage
+			view.loadHTMLString(page, baseURL: nil)
 			webView = view
+		}
+		if matrixEnabled { buildMatrixWindows() }
+	}
+
+	func buildMatrixWindows() {
+		let size = NSSize(width: 520, height: 340)
+		let appkit = makeWindow("CU Matrix AppKit", "appkit", origin: matrixOrigin(left: 20, top: 80, width: 520, height: 340), size: size)
+		if let content = appkit.contentView {
+			scrollView.hasVerticalScroller = true
+			scrollView.documentView = StripeView(frame: NSRect(x: 0, y: 0, width: 200, height: 1200))
+			scrollView.setAccessibilityIdentifier("cu-scroll")
+			scrollView.contentView.postsBoundsChangedNotifications = true
+			NotificationCenter.default.addObserver(
+				forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main
+			) { [weak self] _ in self?.logScroll() }
+			content.addSubview(scrollView)
+			content.addSubview(dragView)
+			popup.addItems(withTitles: ["One", "Two", "Three"])
+			popup.target = self
+			popup.action = #selector(popupChanged)
+			popup.setAccessibilityIdentifier("cu-popup")
+			popup.menu?.delegate = self
+			content.addSubview(popup)
+			let box = NSButton(checkboxWithTitle: "Check Me", target: self, action: #selector(checkboxChanged))
+			box.frame = NSRect(x: 220, y: 92, width: 160, height: 24)
+			box.setAccessibilityIdentifier("cu-checkbox")
+			content.addSubview(box)
+			checkbox = box
+			scrollToMiddle()
+		}
+		let swiftui = makeWindow("CU Matrix SwiftUI", "swiftui", origin: matrixOrigin(left: 1220, top: 80, width: 480, height: 340), size: NSSize(width: 480, height: 340))
+		let hosting = NSHostingView(rootView: MatrixSwiftUIView(model: swiftModel))
+		hosting.frame = NSRect(x: 0, y: 0, width: 480, height: 340)
+		hosting.autoresizingMask = [.width, .height]
+		swiftui.contentView?.addSubview(hosting)
+	}
+
+	func scrollToMiddle() {
+		scrollView.contentView.scroll(to: NSPoint(x: 0, y: 500))
+		scrollView.reflectScrolledClipView(scrollView.contentView)
+	}
+
+	func logScroll() {
+		let position = Double(scrollView.contentView.bounds.origin.y).rounded()
+		if position == lastScrollY { return }
+		lastScrollY = position
+		log.write("scrollPosition", ["y": position])
+	}
+
+	@objc func popupChanged() {
+		log.write("popupSelected", ["index": popup.indexOfSelectedItem, "title": popup.titleOfSelectedItem ?? ""])
+	}
+
+	@objc func checkboxChanged() {
+		log.write("checkbox", ["state": checkbox?.state.rawValue ?? -1])
+	}
+
+	func menuWillOpen(_ menu: NSMenu) {
+		log.write("menuOpened", ["active": NSApp.isActive])
+		let timer = Timer(timeInterval: 0.4, repeats: false) { _ in menu.cancelTracking() }
+		RunLoop.main.add(timer, forMode: .common)
+	}
+
+	func menuDidClose(_ menu: NSMenu) { log.write("menuClosed") }
+
+	func reset(_ body: String) {
+		var seq = 0
+		var text = ""
+		if let data = body.data(using: .utf8), let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+			seq = (parsed["seq"] as? NSNumber)?.intValue ?? 0
+			text = parsed["text"] as? String ?? ""
+		}
+		popup.menu?.cancelTracking()
+		for each in windows { _ = each.makeFirstResponder(nil) }
+		field.stringValue = text
+		checkbox?.state = .off
+		popup.selectItem(at: 0)
+		scrollToMiddle()
+		swiftModel.text = text
+		swiftModel.toggle = false
+		let finish = { [weak self] in
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+				self?.poll()
+				log.write("resetDone", ["seq": seq])
+			}
+		}
+		guard let webView else { return finish() }
+		let literal = (try? JSONSerialization.data(withJSONObject: [text])).flatMap { String(data: $0, encoding: .utf8) } ?? "[\"\"]"
+		webView.evaluateJavaScript("if (window.cuReset) window.cuReset(\(seq), \(literal)[0]); true") { _, error in
+			if let error { log.write("resetWebError", ["message": error.localizedDescription]) }
+			finish()
+		}
+	}
+
+	func pollResponders() {
+		for each in windows {
+			let key = label(each)
+			var kind = "none"
+			var owner = ""
+			var selection: NSRange?
+			var textLength = 0
+			if let editor = each.firstResponder as? NSTextView {
+				kind = editor.isFieldEditor ? "fieldEditor" : "textView"
+				if let control = editor.delegate as? NSView { owner = control.accessibilityIdentifier() }
+				selection = editor.selectedRange()
+				textLength = (editor.string as NSString).length
+			} else if let responder = each.firstResponder, responder !== each {
+				kind = String(describing: type(of: responder))
+			}
+			let signature = "\(kind)|\(owner)"
+			if lastResponder[key] != signature {
+				lastResponder[key] = signature
+				log.write("responder", ["window": key, "kind": kind, "owner": owner])
+			}
+			guard let selection else {
+				lastSelection[key] = nil
+				continue
+			}
+			let selected = "\(selection.location),\(selection.length),\(textLength)"
+			if lastSelection[key] != selected {
+				lastSelection[key] = selected
+				log.write("editorSelection", ["window": key, "owner": owner, "location": selection.location, "length": selection.length, "textLength": textLength])
+			}
 		}
 	}
 
@@ -287,6 +528,27 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 				return event
 			}
 		}
+		if matrixEnabled {
+			NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+				var fields = self?.windowFields(event.window) ?? [:]
+				fields["keyCode"] = Int(event.keyCode)
+				fields["flags"] = Int(event.modifierFlags.intersection(.deviceIndependentFlagsMask).rawValue)
+				log.write("targetKeyDown", fields)
+				return event
+			}
+			NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
+				var fields = self?.windowFields(event.window) ?? [:]
+				fields["button"] = Int(event.buttonNumber)
+				log.write("targetMouseDown", fields)
+				return event
+			}
+			NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+				var fields = self?.windowFields(event.window) ?? [:]
+				fields["deltaY"] = Double(event.scrollingDeltaY)
+				log.write("targetScrollWheel", fields)
+				return event
+			}
+		}
 
 		for number in [SIGTERM, SIGUSR1] {
 			signal(number, SIG_IGN)
@@ -319,6 +581,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 		var launched: [String: Any] = ["bundleId": bundleId, "title": windowTitle, "frame": frameFields(window.frame), "active": NSApp.isActive]
 		launched["windows"] = windows.map { ["window": label($0), "windowNumber": $0.windowNumber, "title": $0.title, "frame": frameFields($0.frame)] as [String: Any] }
 		launched["options"] = ["sticky": sticky, "noise": noise, "deadView": deadViewEnabled, "web": webEnabled, "windowCount": windowCount, "keyWindow": keyWindowIndex, "sameTitle": sameTitle]
+		if matrixEnabled { launched["matrix"] = true }
 		log.write("launched", launched)
 	}
 
@@ -376,6 +639,10 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 		}
 		if sticky && !quitting && !NSApp.isActive { reactivate("poll") }
 		guard let directory = log.directory else { return }
+		if matrixEnabled {
+			pollResponders()
+			if let body = trigger(".cu-reset-\(triggerName)") { reset(body) }
+		}
 		let quitFile = directory.appendingPathComponent(".cu-quit").path
 		if FileManager.default.fileExists(atPath: quitFile) { quit(".cu-quit") }
 		let resizeFile = directory.appendingPathComponent(".cu-resize").path
@@ -385,9 +652,28 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 		}
 		if trigger(".cu-activate-\(triggerName)") != nil {
 			let key = windows[keyWindowIndex - 1]
+			if #available(macOS 14.0, *) { NSApp.activate() }
 			NSApp.activate(ignoringOtherApps: true)
 			key.makeKeyAndOrderFront(nil)
 			log.write("selfActivate", ["activeNow": NSApp.isActive])
+		}
+		if let body = trigger(".cu-yield-\(triggerName)") {
+			let parts = body.split(whereSeparator: { $0 == " " || $0 == "\n" }).map(String.init)
+			if parts.count == 2, let pid = Int32(parts[0]), let app = NSRunningApplication(processIdentifier: pid) {
+				let requested: Bool
+				if #available(macOS 14.0, *) {
+					NSApp.yieldActivation(to: app)
+					requested = app.activate(from: NSRunningApplication.current, options: [])
+				} else {
+					requested = app.activate(options: [])
+				}
+				log.write("yieldActivation", ["toPid": Int(pid), "to": parts[1], "requested": requested, "activeNow": NSApp.isActive])
+				if let directory = log.directory {
+					try? "1\n".write(to: directory.appendingPathComponent(".cu-activate-\(parts[1])"), atomically: true, encoding: .utf8)
+				}
+			} else {
+				log.write("yieldActivation", ["invalid": body])
+			}
 		}
 		if let body = trigger(".cu-cover-\(triggerName)") {
 			let parts = body.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }

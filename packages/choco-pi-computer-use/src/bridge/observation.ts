@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
+import { assertAppAllowed } from "../app-policy.ts";
 import { cdpSnapshotForContext, cdpTabForWindow } from "../cdp.ts";
 import type {
   ExpandUiParams,
@@ -93,6 +94,7 @@ export async function performLook(
   },
   signal?: AbortSignal,
 ): Promise<LookResponse> {
+  assertAppAllowed(target);
   if ((!Number.isFinite(target.windowId) || target.windowId <= 0) && !target.nativeWindowRef)
     throw new Error(
       `Current platform requires a stable root id to observe '${target.windowTitle}'. Call find_roots and select a root with a stable id.`,

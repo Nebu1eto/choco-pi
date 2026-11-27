@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -18,13 +19,32 @@ export interface ComputerUseConfigSource {
   path: string;
   exists: boolean;
   values?: Partial<ComputerUseConfig>;
+  appPolicy?: AppPolicyConfigValues;
   error?: string;
+}
+
+export interface AppPolicyConfigValues {
+  blocked_apps?: string[];
+  unblocked_apps?: string[];
+}
+
+export interface IgnoredUnblock {
+  source: string;
+  bundleIds: string[];
+}
+
+export interface AppPolicySettings {
+  blockedApps: string[];
+  unblockedApps: string[];
+  ignoredUnblocks: IgnoredUnblock[];
 }
 
 export interface LoadedComputerUseConfig {
   config: ComputerUseConfig;
   sources: ComputerUseConfigSource[];
   env: Partial<ComputerUseConfig>;
+  envAppPolicy: AppPolicyConfigValues;
+  appPolicy: AppPolicySettings;
 }
 
 const DEFAULT_CONFIG: ComputerUseConfig = {
@@ -38,7 +58,16 @@ const DEFAULT_CONFIG: ComputerUseConfig = {
 };
 
 let activeConfig: ComputerUseConfig = { ...DEFAULT_CONFIG, foreground_grant: [] };
-let activeLoadedConfig: LoadedComputerUseConfig = { config: activeConfig, sources: [], env: {} };
+let activeLoadedConfig: LoadedComputerUseConfig = {
+  config: activeConfig,
+  sources: [],
+  env: {},
+  envAppPolicy: {},
+  appPolicy: { blockedApps: [], unblockedApps: [], ignoredUnblocks: [] },
+};
+
+export const BLOCKED_APPS_ENV = "PI_COMPUTER_USE_BLOCKED_APPS";
+export const UNBLOCKED_APPS_ENV = "PI_COMPUTER_USE_UNBLOCKED_APPS";
 
 function parseBoolean(value: JsonField): boolean | undefined {
   if (value === true || value === false) return value;
@@ -63,6 +92,21 @@ function parseForegroundGrant(value: JsonField): string[] | undefined {
   if (isString(value)) return normalizeGrantEntries(value.split(","));
   if (!Array.isArray(value)) return undefined;
   return normalizeGrantEntries(value.filter(isString));
+}
+
+function parseBundleIdList(value: JsonField): string[] | undefined {
+  return parseForegroundGrant(value);
+}
+
+function normalizeAppPolicy(raw: JsonValue): AppPolicyConfigValues {
+  if (!isJsonObject(raw)) return {};
+  const source = isJsonObject(raw.computer_use) ? raw.computer_use : raw;
+  const out: AppPolicyConfigValues = {};
+  const blocked = parseBundleIdList(source.blocked_apps);
+  if (blocked !== undefined) out.blocked_apps = blocked;
+  const unblocked = parseBundleIdList(source.unblocked_apps);
+  if (unblocked !== undefined) out.unblocked_apps = unblocked;
+  return out;
 }
 
 export type ForegroundPromptMode = "ask" | "always" | "off";
@@ -105,7 +149,12 @@ function readConfigFile(filePath: string): ComputerUseConfigSource {
   if (!existsSync(filePath)) return { path: filePath, exists: false };
   try {
     const parsed: JsonValue = JSON.parse(readFileSync(filePath, "utf-8"));
-    return { path: filePath, exists: true, values: normalizePartial(parsed) };
+    return {
+      path: filePath,
+      exists: true,
+      values: normalizePartial(parsed),
+      appPolicy: normalizeAppPolicy(parsed),
+    };
   } catch (error) {
     return {
       path: filePath,
@@ -136,6 +185,39 @@ function readEnv(): Partial<ComputerUseConfig> {
   return out;
 }
 
+function readEnvAppPolicy(): AppPolicyConfigValues {
+  const out: AppPolicyConfigValues = {};
+  const blocked = process.env[BLOCKED_APPS_ENV];
+  if (blocked !== undefined) out.blocked_apps = normalizeGrantEntries(blocked.split(","));
+  const unblocked = process.env[UNBLOCKED_APPS_ENV];
+  if (unblocked !== undefined) out.unblocked_apps = normalizeGrantEntries(unblocked.split(","));
+  return out;
+}
+
+function resolveAppPolicy(
+  sources: ComputerUseConfigSource[],
+  userIndex: number,
+  envAppPolicy: AppPolicyConfigValues,
+): AppPolicySettings {
+  const blockedApps: string[] = [];
+  const ignoredUnblocks: IgnoredUnblock[] = [];
+  let unblockedApps: string[] = [];
+  sources.forEach((source, index) => {
+    const values = source.appPolicy;
+    if (!values) return;
+    blockedApps.push(...(values.blocked_apps ?? []));
+    const unblocked = values.unblocked_apps ?? [];
+    if (index === userIndex) unblockedApps = unblocked;
+    else if (unblocked.length > 0)
+      ignoredUnblocks.push({ source: source.path, bundleIds: unblocked });
+  });
+  blockedApps.push(...(envAppPolicy.blocked_apps ?? []));
+  const envUnblocked = envAppPolicy.unblocked_apps ?? [];
+  if (envUnblocked.length > 0)
+    ignoredUnblocks.push({ source: UNBLOCKED_APPS_ENV, bundleIds: envUnblocked });
+  return { blockedApps: normalizeGrantEntries(blockedApps), unblockedApps, ignoredUnblocks };
+}
+
 export function userComputerUseConfigPath(): string {
   return path.join(getAgentDir(), "extensions", "pi-computer-use.json");
 }
@@ -151,13 +233,25 @@ export function loadComputerUseConfig(cwd: string): LoadedComputerUseConfig {
     if (source.values) Object.assign(config, source.values);
   }
   Object.assign(config, env);
+  const envAppPolicy = readEnvAppPolicy();
+  const appPolicy = resolveAppPolicy(sources, 0, envAppPolicy);
   activeConfig = config;
-  activeLoadedConfig = { config, sources, env };
+  activeLoadedConfig = { config, sources, env, envAppPolicy, appPolicy };
   return activeLoadedConfig;
 }
 
 export function getComputerUseConfig(): ComputerUseConfig {
   return activeConfig;
+}
+
+const operationAppPolicy = new AsyncLocalStorage<AppPolicySettings>();
+
+export function runWithAppPolicy<T>(policy: AppPolicySettings, work: () => T): T {
+  return operationAppPolicy.run(policy, work);
+}
+
+export function getAppPolicySettings(): AppPolicySettings {
+  return operationAppPolicy.getStore() ?? activeLoadedConfig.appPolicy;
 }
 
 export function getLoadedComputerUseConfig(): LoadedComputerUseConfig {

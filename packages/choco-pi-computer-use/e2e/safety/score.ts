@@ -361,6 +361,109 @@ export function scoreJudgementControl(input: JudgementControlInput): Score {
   return { verdict: verdictOf(failures), failures, notes: { answer: answerOf(facts), hits } };
 }
 
+export interface ForeignActivation {
+  observed: boolean;
+  reason: string;
+  activatedAt?: number;
+}
+
+export function foreignActivation(
+  other: JsonObject[],
+  sentAt: number,
+  answeredAt: number,
+): ForeignActivation {
+  const activated = other.find(
+    (row) => row.event === "appActive" && (ts(row) ?? -Infinity) >= sentAt,
+  );
+  const activatedAt = activated ? ts(activated) : undefined;
+  if (activatedAt === undefined) return { observed: false, reason: "activation_not_observed" };
+  if (activatedAt > answeredAt)
+    return { observed: false, reason: "activation_after_reply", activatedAt };
+  return { observed: true, reason: "activation_during_act", activatedAt };
+}
+
+export interface PolicyReply {
+  label: string;
+  cmd: "look" | "act";
+  reply: JsonObject | undefined;
+}
+
+export interface PolicyBlockedInput {
+  replies: PolicyReply[];
+  target: JsonObject[];
+  window: TimeWindow;
+}
+
+export function scorePolicyBlocked(input: PolicyBlockedInput): Score {
+  const failures: string[] = [];
+  const answers: JsonObject = {};
+  for (const { label, cmd, reply } of input.replies) {
+    const facts = replyFacts(reply);
+    answers[label] = answerOf(facts);
+    if (!facts) {
+      failures.push(`${label}: helper sent no reply`);
+      continue;
+    }
+    if (facts.ok) {
+      failures.push(`${label}: helper answered ${answerOf(facts)} for a blocked app`);
+      continue;
+    }
+    if (facts.code !== "app_blocked") {
+      failures.push(`${label}: refused with ${facts.code ?? "no code"} instead of app_blocked`);
+      continue;
+    }
+    if (facts.effectPossible !== false)
+      failures.push(`${label}: app_blocked without effectPossible:false`);
+    if (cmd === "act" && errorField(reply, "inputSent") !== false)
+      failures.push(`${label}: app_blocked act without inputSent:false`);
+    if (cmd === "look" && reply && isJsonObject(reply.result))
+      failures.push(`${label}: the refused look still returned an observation`);
+  }
+  const effects = eventsIn(
+    input.target,
+    [...TARGET_INPUT_EVENTS, "keyDown", "mouseDown"],
+    input.window,
+  );
+  if (effects.length > 0)
+    failures.push(`fixture logged input: ${effects.slice(0, 4).map(describeRow).join(", ")}`);
+  const activated = eventsIn(input.target, ["appActive", "windowKey"], input.window);
+  if (activated.length > 0)
+    failures.push(`fixture was activated: ${activated.slice(0, 4).map(describeRow).join(", ")}`);
+  return {
+    verdict: verdictOf(failures),
+    failures,
+    notes: { answers, targetEffects: effects.map(describeRow) },
+  };
+}
+
+export interface PolicyControlInput {
+  look: JsonObject | undefined;
+  act: JsonObject | undefined;
+  target: JsonObject[];
+  window: TimeWindow;
+}
+
+export function scorePolicyControl(input: PolicyControlInput): Score {
+  const failures: string[] = [];
+  const lookFacts = replyFacts(input.look);
+  const actFacts = replyFacts(input.act);
+  const lookResult = input.look && isJsonObject(input.look.result) ? input.look.result : undefined;
+  if (!lookFacts?.ok || !lookResult || !isString(lookResult.lookId))
+    failures.push(
+      `look with an empty list was not answered with an observation: ${answerOf(lookFacts)}`,
+    );
+  else if (!actFacts?.ok || (actFacts.outcome !== "worked" && actFacts.outcome !== "unknown"))
+    failures.push(`press with an empty list was not delivered: ${answerOf(actFacts)}`);
+  const increments = eventsIn(input.target, ["increment"], input.window).length;
+  if (failures.length === 0 && increments !== 1)
+    failures.push(`the fixture recorded ${increments} increment(s) instead of 1`);
+  return {
+    verdict: verdictOf(failures),
+    failures,
+    notes: { look: answerOf(lookFacts), act: answerOf(actFacts), increments },
+  };
+}
+
 export interface CancelInput {
   target: JsonObject[];
   window: TimeWindow;

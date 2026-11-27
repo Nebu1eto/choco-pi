@@ -139,6 +139,16 @@ export interface HelperRefusalEvidence {
   deliveryUsed?: string;
   pixelCheck?: string;
   pixelChange?: boolean;
+  pixelChangeOutsideTarget?: boolean;
+  frontmostChangedElsewhere?: boolean;
+  frontmostChangedTo?: number;
+}
+
+export interface HelperAppBlock {
+  pid: number;
+  appName?: string;
+  bundleId?: string;
+  match?: string;
 }
 
 export const FOREGROUND_NOT_ACQUIRED = "foreground_not_acquired";
@@ -266,6 +276,7 @@ export class HelperInterruption {
   readonly cancel?: HelperCancelAck;
   readonly result?: HelperCancelledResult;
   readonly clientTimeout: boolean;
+  readonly connectionLost: boolean;
   readonly state: HelperInterruptionState;
   readonly reason?: string;
   readonly settle?: () => Promise<HelperSettlement>;
@@ -276,6 +287,7 @@ export class HelperInterruption {
     cancel?: HelperCancelAck;
     result?: HelperCancelledResult;
     clientTimeout?: boolean;
+    connectionLost?: boolean;
     state?: HelperInterruptionState;
     settle?: () => Promise<HelperSettlement>;
   }) {
@@ -293,6 +305,7 @@ export class HelperInterruption {
     this.cancel = fields.cancel;
     this.result = fields.result;
     this.clientTimeout = fields.clientTimeout === true;
+    this.connectionLost = fields.connectionLost === true;
     this.settle = fields.settle;
   }
 }

@@ -4,12 +4,15 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { AGENT_TOOL_NAMES, type ActParams, type UiAction } from "../contract.ts";
+import { assertAppAllowed, ensureAppPolicyReady, retryFailedHostLookup } from "../app-policy.ts";
+import { loadComputerUseConfig, runWithAppPolicy } from "../config.ts";
 import { isJsonObject, isNumber, isString } from "../json.ts";
 import type { WindowNote } from "../note.ts";
 import type { SerializedOutline } from "../outline.ts";
 import { applyOutputEnvelope, boundToolError, clearStoredOutputs } from "../output.ts";
 import { toFiniteNumber } from "../platform/coerce.ts";
 import {
+  currentSessionScope,
   resetSessionScope,
   runInSessionScope,
   sessionScopeFor,
@@ -27,7 +30,6 @@ import {
   clearSessionRootRefs,
   desktopResourceKey,
   ensureReady,
-  hasOtherLiveSession,
   observationRefreshRequired,
   operationState,
   persistOperation,
@@ -112,10 +114,15 @@ export async function executeTool<P, T>(
   run: () => Promise<T>,
 ): Promise<T> {
   const sessionKey = sessionKeyOf(ctx);
+  const { appPolicy } = loadComputerUseConfig(ctx.cwd);
   registerComputerUseSession(sessionKey);
-  return await runInSessionScope(
-    sessionScopeFor(sessionKey),
-    async () => await executeToolInScope(tool, ctx, params, signal, run),
+  return await runWithAppPolicy(
+    appPolicy,
+    async () =>
+      await runInSessionScope(
+        sessionScopeFor(sessionKey),
+        async () => await executeToolInScope(tool, ctx, params, signal, run),
+      ),
   );
 }
 
@@ -152,6 +159,9 @@ async function executeToolInScope<P, T>(
   return await savedStates.operations.run(operation, async () => {
     await resourceScheduler.read("session-lifecycle", async () => await ensureReady(ctx, signal));
     throwIfAborted(signal);
+    await ensureAppPolicyReady();
+    throwIfAborted(signal);
+    if (operation.currentTarget && !operation.contextId) assertAppAllowed(operation.currentTarget);
     if (AUTO_OBSERVE_TOOLS.has(tool) && !operation.currentCapture) {
       await performObserve({ mode: "semantic" }, signal);
       throwIfAborted(signal);
@@ -185,21 +195,25 @@ export function makeToolExecutor<P, D>(
     _onUpdate: AgentToolUpdateCallback<D> | undefined,
     ctx: ExtensionContext,
   ): Promise<AgentToolResult<D>> => {
+    let owner: SessionScope = currentSessionScope();
     try {
+      owner = sessionScopeFor(sessionKeyOf(ctx));
       return applyOutputEnvelope(
         tool,
         await executeTool(tool, ctx, params, signal, () => perform(params, signal, ctx)),
+        owner,
       );
     } catch (error) {
-      throw boundToolError(tool, error);
+      throw boundToolError(tool, error, owner);
     }
   };
 }
 
 export function beginComputerUseSession(ctx: ExtensionContext): SessionScope {
   const sessionKey = sessionKeyOf(ctx);
-  if (!hasOtherLiveSession(sessionKey)) clearStoredOutputs();
+  clearStoredOutputs(sessionKey);
   registerComputerUseSession(sessionKey);
+  retryFailedHostLookup();
   const scope = resetSessionScope(sessionKey);
   runInSessionScope(scope, () => reconstructStateFromBranch(ctx));
   return scope;

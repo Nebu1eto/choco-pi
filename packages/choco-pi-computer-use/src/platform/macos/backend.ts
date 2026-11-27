@@ -1,3 +1,11 @@
+import {
+  AppBlockedError,
+  appBlockFor,
+  DEFAULT_BLOCKED_APPS,
+  effectiveAppBlocklist,
+  type AppBlock,
+  type EffectiveAppBlocklist,
+} from "../../app-policy.ts";
 import { getComputerUseConfig } from "../../config.ts";
 import { isJsonObject, isNumber, type JsonField, type JsonValue } from "../../json.ts";
 import { parseLookResponse, type LookResponse } from "../../outline.ts";
@@ -5,6 +13,7 @@ import { toBoolean, toFiniteNumber, toOptionalString } from "../coerce.ts";
 import type {
   ComputerUsePlatformBackend,
   FramePoints,
+  HelperAppBlock,
   HelperActResult,
   PlatformActRequest,
   PlatformApp,
@@ -22,7 +31,49 @@ import type {
   PlatformWaitForRequest,
   PlatformWaitForResponse,
 } from "../types.ts";
-import { macosHelper } from "./helper.ts";
+import { HelperCommandError, macosHelper } from "./helper.ts";
+
+export class HelperAppBlockedError extends AppBlockedError {
+  readonly effectPossible = false;
+  readonly inputSent = false;
+}
+
+function helperAppBlock(block: HelperAppBlock): AppBlock {
+  const decided = appBlockFor({ bundleId: block.bundleId, pid: block.pid });
+  if (decided) return decided;
+  const matched = block.bundleId ?? `pid ${block.pid}`;
+  if (block.match === "helper") return { reason: "helper", matched };
+  if (block.match === "pid") return { reason: "host_app", matched: `pid ${block.pid}` };
+  const wanted = block.bundleId?.toLowerCase();
+  const builtIn = DEFAULT_BLOCKED_APPS.find((app) => app.bundleId.toLowerCase() === wanted);
+  return builtIn
+    ? { reason: builtIn.reason, matched: builtIn.bundleId }
+    : { reason: "user_blocked", matched };
+}
+
+async function mapAppBlocked<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (
+      error instanceof HelperCommandError &&
+      error.code === "app_blocked" &&
+      error.appBlock &&
+      error.appBlock.match !== "unknown_owner"
+    ) {
+      const block = error.appBlock;
+      throw new HelperAppBlockedError(
+        { appName: block.appName ?? `pid ${block.pid}`, bundleId: block.bundleId, pid: block.pid },
+        helperAppBlock(block),
+      );
+    }
+    throw error;
+  }
+}
+
+function withAppBlocklist<T extends object>(args: T): T & { appBlocklist: EffectiveAppBlocklist } {
+  return { ...args, appBlocklist: effectiveAppBlocklist() };
+}
 
 interface ListRootsArgs {
   pid?: number;
@@ -188,10 +239,12 @@ export const macosBackend: Pick<
     target: PlatformTarget,
     signal?: AbortSignal,
   ): Promise<PlatformFocusWindowResult> {
-    return await macosHelper.command<PlatformFocusWindowResult>(
-      "focusWindow",
-      { ...target },
-      { signal },
+    return await mapAppBlocked(() =>
+      macosHelper.command<PlatformFocusWindowResult>(
+        "focusWindow",
+        withAppBlocklist({ ...target }),
+        { signal },
+      ),
     );
   },
 
@@ -230,18 +283,20 @@ export const macosBackend: Pick<
     options?: { timeoutMs?: number; signal?: AbortSignal },
   ): Promise<LookResponse> {
     return parseLookResponse(
-      await macosHelper.command(
-        "look",
-        {
-          baseLookId: request.baseLookId,
-          windowId: request.target.windowId,
-          windowRef: request.target.rootRef,
-          maxDimension: request.maxDimension,
-          readText: request.readText,
-          scopeRef: request.scopeRef,
-          includeImage: request.includeImage,
-        },
-        options,
+      await mapAppBlocked(() =>
+        macosHelper.command(
+          "look",
+          withAppBlocklist({
+            baseLookId: request.baseLookId,
+            windowId: request.target.windowId,
+            windowRef: request.target.rootRef,
+            maxDimension: request.maxDimension,
+            readText: request.readText,
+            scopeRef: request.scopeRef,
+            includeImage: request.includeImage,
+          }),
+          options,
+        ),
       ),
     );
   },
@@ -250,10 +305,15 @@ export const macosBackend: Pick<
     request: PlatformActRequest,
     options?: { timeoutMs?: number; signal?: AbortSignal },
   ): Promise<HelperActResult> {
-    return await macosHelper.command<HelperActResult>(
-      "act",
-      { ...helperAction(request), cursorOverlay: getComputerUseConfig().cursor_overlay },
-      options,
+    return await mapAppBlocked(() =>
+      macosHelper.command<HelperActResult>(
+        "act",
+        withAppBlocklist({
+          ...helperAction(request),
+          cursorOverlay: getComputerUseConfig().cursor_overlay,
+        }),
+        options,
+      ),
     );
   },
 
@@ -262,10 +322,14 @@ export const macosBackend: Pick<
     options?: { timeoutMs?: number; signal?: AbortSignal },
   ): Promise<HelperActResult> {
     const cursorOverlay = getComputerUseConfig().cursor_overlay;
-    return await macosHelper.command<HelperActResult>(
-      "actBatch",
-      { actions: requests.map((request) => ({ ...helperAction(request), cursorOverlay })) },
-      options,
+    return await mapAppBlocked(() =>
+      macosHelper.command<HelperActResult>(
+        "actBatch",
+        withAppBlocklist({
+          actions: requests.map((request) => ({ ...helperAction(request), cursorOverlay })),
+        }),
+        options,
+      ),
     );
   },
 
@@ -273,13 +337,25 @@ export const macosBackend: Pick<
     args: PlatformReadTextRequest,
     options?: { timeoutMs?: number; signal?: AbortSignal },
   ): Promise<PlatformReadTextResponse> {
-    return await macosHelper.command<PlatformReadTextResponse>("axReadText", { ...args }, options);
+    return await mapAppBlocked(() =>
+      macosHelper.command<PlatformReadTextResponse>(
+        "axReadText",
+        withAppBlocklist({ ...args }),
+        options,
+      ),
+    );
   },
 
   async waitFor(
     args: PlatformWaitForRequest,
     options?: { timeoutMs?: number; signal?: AbortSignal },
   ): Promise<PlatformWaitForResponse> {
-    return await macosHelper.command<PlatformWaitForResponse>("axWaitFor", { ...args }, options);
+    return await mapAppBlocked(() =>
+      macosHelper.command<PlatformWaitForResponse>(
+        "axWaitFor",
+        withAppBlocklist({ ...args }),
+        options,
+      ),
+    );
   },
 };

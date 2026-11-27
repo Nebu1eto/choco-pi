@@ -142,13 +142,20 @@ class ForegroundRequiredFixtureError extends PlatformCommandError {
   }
 }
 
+interface FrontmostFixture {
+  pid: number;
+  windowId?: number;
+  noWindowId?: boolean;
+  rootRef?: string;
+}
+
 function fakeBackend(
   respond: Responder,
   requests: PlatformActRequest[],
   outlineOnly = false,
   restores: PlatformRestoreUserFocusRequest[] = [],
   restoreFails = false,
-  frontmost: { pid: number; windowId?: number } = { pid: root.pid! },
+  frontmost: FrontmostFixture = { pid: root.pid! },
   roots: PlatformRoot[] = [root],
 ): ComputerUsePlatformBackend {
   let observationCount = 0;
@@ -177,8 +184,8 @@ function fakeBackend(
         bundleId: root.bundleId,
         pid: root.pid!,
         windowTitle: root.title,
-        windowId: frontmost.windowId ?? root.windowId,
-        rootRef: root.rootRef,
+        windowId: frontmost.noWindowId ? undefined : (frontmost.windowId ?? root.windowId),
+        rootRef: frontmost.rootRef ?? root.rootRef,
         windowSource: "focused",
       };
     },
@@ -188,7 +195,10 @@ function fakeBackend(
     async restoreUserFocus(request) {
       restores.push(request);
       if (restoreFails) throw new Error("restore fixture failure");
-      const windowNamed = request.windowId !== undefined || request.windowTitle !== undefined;
+      const windowNamed =
+        request.windowId !== undefined ||
+        request.windowRef !== undefined ||
+        request.windowTitle !== undefined;
       return {
         restored: true,
         appRestored: true,
@@ -291,7 +301,7 @@ interface Scenario {
   userConfig?: JsonObject;
   readOnlyUserConfig?: boolean;
   restoreFails?: boolean;
-  frontmost?: { pid: number; windowId?: number };
+  frontmost?: FrontmostFixture;
   roots?: PlatformRoot[];
   headless?: boolean;
 }
@@ -2489,6 +2499,38 @@ test("waiting for the foreground section honors the abort signal", async () => {
       confirm({ settled: true, state: "stopped" });
       await actOnce(context, [{ action: "click", x: 100, y: 100 }]);
       assert.equal(context.requests.length, 3, "the aborted waiter left the queue");
+    },
+  );
+});
+
+test("when the target was frontmost on another of its windows without a window id, that window is restored by its ref", async () => {
+  await withFixture(
+    {
+      grant: BUNDLE_ID,
+      frontmost: { pid: root.pid!, noWindowId: true, rootRef: "native-other-window" },
+    },
+    grantedResponder(root.pid!, root.pid!),
+    async (context) => {
+      const details = await actOnce(context, [{ action: "click", x: 100, y: 100 }]);
+      assert.deepEqual(context.restores, [
+        { pid: root.pid, windowRef: "native-other-window", expectedFrontmostPid: root.pid },
+      ]);
+      const execution = objectField(details, "execution");
+      assert.equal(execution.focusRestored, true);
+      assert.equal(execution.focusRestoreReason, "target_window_restored");
+      assert.equal(execution.focusWindowRestored, true);
+    },
+  );
+});
+
+test("a ref-only key window that is the acted window is left alone", async () => {
+  await withFixture(
+    { grant: BUNDLE_ID, frontmost: { pid: root.pid!, noWindowId: true } },
+    grantedResponder(root.pid!, root.pid!),
+    async (context) => {
+      const details = await actOnce(context, [{ action: "click", x: 100, y: 100 }]);
+      assert.deepEqual(context.restores, []);
+      assert.equal(objectField(details, "execution").focusRestoreReason, "target_was_frontmost");
     },
   );
 });

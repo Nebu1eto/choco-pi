@@ -6,7 +6,12 @@ import path from "node:path";
 import test from "node:test";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createComputerUseSessionHandlers } from "../extensions/computer-use.ts";
-import { executeInspectUi, executeObserve, shutdownComputerUseSession } from "../src/bridge.ts";
+import {
+  executeInspectUi,
+  executeObserve,
+  executeReadText,
+  shutdownComputerUseSession,
+} from "../src/bridge.ts";
 import {
   helperRequestSession,
   liveComputerUseSessions,
@@ -16,6 +21,7 @@ import {
 } from "../src/bridge/state-store.ts";
 import { foregroundGrantCovers, getSessionGrants, grantForSession } from "../src/config.ts";
 import { restoreOutline, type LookResponse, type SerializedOutlineNode } from "../src/outline.ts";
+import { ensurePermissions } from "../src/permissions.ts";
 import { replacePlatformBackendForTest } from "../src/platform/index.ts";
 import type { ComputerUsePlatformBackend, PlatformRoot } from "../src/platform/types.ts";
 import { runInSessionScope, sessionScopeFor } from "../src/runtime.ts";
@@ -74,6 +80,8 @@ function serializedNode(): SerializedOutlineNode {
 
 interface BackendRecord {
   shutdowns: number;
+  observeError?: string;
+  ensureReady?: ComputerUsePlatformBackend["ensureReady"];
 }
 
 function fakeBackend(record: BackendRecord): ComputerUsePlatformBackend {
@@ -83,7 +91,8 @@ function fakeBackend(record: BackendRecord): ComputerUsePlatformBackend {
     async shutdown() {
       record.shutdowns += 1;
     },
-    async ensureReady(_ctx, state) {
+    async ensureReady(ctx, state, signal) {
+      if (record.ensureReady) return await record.ensureReady(ctx, state, signal);
       return state;
     },
     async listApps() {
@@ -109,6 +118,7 @@ function fakeBackend(record: BackendRecord): ComputerUsePlatformBackend {
       throw new Error("Session lifetime tests must not restore focus.");
     },
     async observe(request): Promise<LookResponse> {
+      if (record.observeError !== undefined) throw new Error(record.observeError);
       observations += 1;
       const outline = restoreOutline({ lookId: `look-${observations}`, root: serializedNode() });
       return {
@@ -369,7 +379,7 @@ function isStateStoreInstance<T>(value: T): value is T & StateStoreInstance {
   );
 }
 
-test("a separately evaluated module instance shares the helper owner and the live sessions", async () => {
+test("a separately evaluated module instance shares the helper owner, the live sessions, and the managed browser", async () => {
   await withFixture(async (fixture) => {
     const specifier = new URL("../src/bridge/state-store.ts?second-instance", import.meta.url).href;
     const second: unknown = await import(specifier);
@@ -381,7 +391,9 @@ test("a separately evaluated module instance shares the helper owner and the liv
     const generation = helperRequestSession.generation;
 
     await parentLoad.sessionShutdown({ type: "session_shutdown", reason: "quit" }, fixture.parent);
-    assert.equal(fixture.browser.killed, true, "this instance released its own resources");
+    assert.equal(fixture.browser.killed, false, "the managed browser outlives this instance");
+    assert.equal(runtimeState.managedBrowser, fixture.browser);
+    assert.equal(process.env.PI_COMPUTER_USE_CDP_PORT, "9555", "the CDP port stays exported");
     assert.equal(fixture.record.shutdowns, 0, "the helper claim outlives this instance");
     assert.equal(helperRequestSession.generation, generation);
     assert.deepEqual(liveComputerUseSessions(), ["worktree-child"]);
@@ -389,6 +401,143 @@ test("a separately evaluated module instance shares the helper owner and the liv
     await second.endComputerUseSession("worktree-child");
     assert.deepEqual(liveComputerUseSessions(), []);
     assert.equal(helperRequestSession.generation, generation + 1);
+    assert.equal(fixture.browser.killed, true, "the last live session stopped the browser");
+    await exited(fixture.browser);
+    assert.equal(runtimeState.managedBrowser, undefined);
+    assert.equal(process.env.PI_COMPUTER_USE_CDP_PORT, undefined, "the CDP port was restored");
     assert.equal(fixture.record.shutdowns, 2, "the last session released every instance's claim");
+  });
+});
+
+function textContent<T>(content: AgentToolResult<T>["content"]): string {
+  return content
+    .filter(
+      (part): part is Extract<(typeof content)[number], { type: "text" }> => part.type === "text",
+    )
+    .map((part) => part.text)
+    .join("\n");
+}
+
+test("a stored @o output is readable only by the session that produced it", async () => {
+  await withFixture(async (fixture) => {
+    const parentLoad = createComputerUseSessionHandlers();
+    await parentLoad.sessionStart({ type: "session_start", reason: "startup" }, fixture.parent);
+    const childLoad = createComputerUseSessionHandlers();
+    await childLoad.sessionStart({ type: "session_start", reason: "startup" }, fixture.child);
+    fixture.record.observeError = `secret-of-parent ${"x".repeat(64 * 1024)}`;
+    let message = "";
+    await assert.rejects(
+      executeObserve(
+        "observe-big",
+        { mode: "semantic" },
+        fixture.signal,
+        undefined,
+        fixture.parent,
+      ),
+      (error: Error) => {
+        message = error.message;
+        return true;
+      },
+    );
+    fixture.record.observeError = undefined;
+    const ref = /read_text\(\{ ref: "(@o\d+)"/.exec(message)?.[1];
+    assert.ok(ref, `the oversized error was stored: ${message.slice(-200)}`);
+
+    await assert.rejects(
+      executeReadText("read-child", { ref }, fixture.signal, undefined, fixture.child),
+      /unavailable or was evicted/,
+      "another live session cannot read it",
+    );
+    const page = await executeReadText(
+      "read-parent",
+      { ref },
+      fixture.signal,
+      undefined,
+      fixture.parent,
+    );
+    assert.match(textContent(page.content), /secret-of-parent/);
+
+    const third = await createTestExtensionContext(path.dirname(fixture.parent.cwd));
+    const thirdLoad = createComputerUseSessionHandlers();
+    await thirdLoad.sessionStart({ type: "session_start", reason: "startup" }, third);
+    await assert.rejects(
+      executeReadText("read-third", { ref }, fixture.signal, undefined, third),
+      /unavailable or was evicted/,
+    );
+    await thirdLoad.sessionShutdown({ type: "session_shutdown", reason: "quit" }, third);
+    await childLoad.sessionShutdown({ type: "session_shutdown", reason: "quit" }, fixture.child);
+    await executeReadText("read-parent-again", { ref }, fixture.signal, undefined, fixture.parent);
+
+    await parentLoad.sessionShutdown({ type: "session_shutdown", reason: "new" }, fixture.parent);
+    const nextLoad = createComputerUseSessionHandlers();
+    await nextLoad.sessionStart({ type: "session_start", reason: "new" }, fixture.parent);
+    await assert.rejects(
+      executeReadText("read-restarted", { ref }, fixture.signal, undefined, fixture.parent),
+      /unavailable or was evicted/,
+    );
+    await nextLoad.sessionShutdown({ type: "session_shutdown", reason: "quit" }, fixture.parent);
+  });
+});
+
+test("permission setup of a session that ended while it awaited never touches that session's UI", async () => {
+  await withFixture(async (fixture) => {
+    const selects: string[] = [];
+    const notices: string[] = [];
+    const ctx = await createTestExtensionContext(path.dirname(fixture.parent.cwd), {
+      select: async (title) => {
+        selects.push(title);
+        return "Cancel";
+      },
+      notify: (message) => {
+        notices.push(message);
+      },
+    });
+    let openGate: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    let entered: () => void = () => undefined;
+    const checking = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let checks = 0;
+    fixture.record.ensureReady = async (setupCtx, state, signal) => {
+      await ensurePermissions(
+        setupCtx,
+        {
+          kinds: [{ kind: "accessibility", openOption: "Open Accessibility Settings (missing)" }],
+          copy: {
+            nonInteractiveError: () => "non-interactive",
+            prompt: () => "grant the helper",
+            incompleteError: () => "setup incomplete",
+            readyMessage: "ready",
+            stillMissing: () => "still missing",
+          },
+          checkPermissions: async () => {
+            checks += 1;
+            if (checks === 1) {
+              entered();
+              await gate;
+            }
+            return { accessibility: false, screenRecording: false };
+          },
+          registerPermissions: async () => undefined,
+          openPermissionPane: async () => undefined,
+          restartHelper: async () => undefined,
+        },
+        "/test/pi-computer-use.app",
+        signal,
+      );
+      return state;
+    };
+    const load = createComputerUseSessionHandlers();
+    const started = load.sessionStart({ type: "session_start", reason: "startup" }, ctx);
+    await checking;
+    await load.sessionShutdown({ type: "session_shutdown", reason: "quit" }, ctx);
+    openGate();
+    await started;
+    assert.deepEqual(selects, [], "the retired session's setup asked nothing");
+    assert.deepEqual(notices, [], "and showed nothing");
+    assert.equal(checks, 1, "it stopped at the first await after the session ended");
   });
 });

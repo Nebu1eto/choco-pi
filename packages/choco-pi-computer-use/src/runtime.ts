@@ -3,18 +3,22 @@ import { randomUUID } from "node:crypto";
 
 export class SessionScope {
   readonly key: string;
-  private retiredFlag = false;
+  private readonly retirement = new AbortController();
 
   constructor(key: string) {
     this.key = key;
   }
 
   get retired(): boolean {
-    return this.retiredFlag;
+    return this.retirement.signal.aborted;
+  }
+
+  get signal(): AbortSignal {
+    return this.retirement.signal;
   }
 
   retire(): void {
-    this.retiredFlag = true;
+    if (!this.retirement.signal.aborted) this.retirement.abort();
   }
 }
 

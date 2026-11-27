@@ -1,4 +1,5 @@
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
+import { assertAppAllowed } from "../app-policy.ts";
 import { cdpSnapshotForContext, type CdpPageSnapshot } from "../cdp.ts";
 import type { ActParams, ReadTextParams, WaitForParams } from "../contract.ts";
 import {
@@ -15,6 +16,7 @@ import {
 import { readStoredOutput, UI_TEXT_PAGE_CHARS } from "../output.ts";
 import { toFiniteNumber } from "../platform/coerce.ts";
 import { currentPlatformBackend } from "../platform/index.ts";
+import { currentSessionScope } from "../runtime.ts";
 import { changesBetween, renderChanges } from "../view.ts";
 import { captureCurrentTarget } from "./observation.ts";
 import {
@@ -57,7 +59,7 @@ export async function performReadText(
 ): Promise<AgentToolResult<ReadTextDetails>> {
   const ref = trimOrUndefined(params.ref);
   if (ref?.startsWith("@o")) {
-    const page = readStoredOutput(ref, params.offset);
+    const page = readStoredOutput(ref, params.offset, currentSessionScope());
     if (!page)
       throw new Error(
         `Output ref '${ref}' is unavailable or was evicted. Rerun the focused query.`,
@@ -106,6 +108,7 @@ export async function performReadText(
     );
   const node = outlineNodeByRef(ref);
   const state = operationState();
+  if (state.currentTarget) assertAppAllowed(state.currentTarget);
   if (!state.resourceKey || state.epoch === undefined)
     throw new Error("The observation has no live resource identity. Observe again.");
   const raw = (

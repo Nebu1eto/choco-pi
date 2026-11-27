@@ -24,14 +24,18 @@ import {
 } from "../src/bridge.ts";
 import { beginComputerUseSession } from "../src/bridge/session-lifecycle.ts";
 import { endComputerUseSession, sessionKeyOf } from "../src/bridge/state-store.ts";
+import { appPolicyStatusLines, ensureAppPolicyReady } from "../src/app-policy.ts";
 import {
+  BLOCKED_APPS_ENV,
   foregroundPromptMode,
   getLoadedComputerUseConfig,
   getSessionDenials,
   getSessionForegroundPromptMode,
   getSessionGrants,
   loadComputerUseConfig,
+  runWithAppPolicy,
   sessionGrantGeneration,
+  UNBLOCKED_APPS_ENV,
   type ForegroundPromptMode,
 } from "../src/config.ts";
 import {
@@ -330,6 +334,15 @@ const evaluateBrowserTool = defineTool({
 function formatConfigStatus(): string {
   const loaded = getLoadedComputerUseConfig();
   const sessionMode = getSessionForegroundPromptMode();
+  const envKeys = [
+    ...Object.keys(loaded.env),
+    ...(loaded.envAppPolicy.blocked_apps !== undefined
+      ? [`blocked_apps (${BLOCKED_APPS_ENV})`]
+      : []),
+    ...(loaded.envAppPolicy.unblocked_apps !== undefined
+      ? [`${UNBLOCKED_APPS_ENV} (ignored: the environment cannot unblock apps)`]
+      : []),
+  ];
   return [
     "pi-computer-use configuration",
     `browser_use: ${loaded.config.browser_use ? "enabled" : "disabled"}`,
@@ -343,12 +356,15 @@ function formatConfigStatus(): string {
     `session denials: ${getSessionDenials().join(", ") || "none"}`,
     "Change the prompt mode with /computer-use grant ask|always|off.",
     "",
+    "App policy (computer-use never observes or operates these apps):",
+    ...appPolicyStatusLines().map((line) => `- ${line}`),
+    "",
     "Sources:",
     ...loaded.sources.map(
       (source) =>
         `- ${source.path}: ${source.error ? `error: ${source.error}` : source.exists ? "loaded" : "not found"}`,
     ),
-    `- env overrides: ${Object.keys(loaded.env).join(", ") || "none"}`,
+    `- env overrides: ${envKeys.join(", ") || "none"}`,
   ].join("\n");
 }
 
@@ -369,7 +385,14 @@ export async function runComputerUseCommand(
   args: string,
   cwd: string,
 ): Promise<{ message: string; level: "info" | "warning" | "error" }> {
-  loadComputerUseConfig(cwd);
+  const { appPolicy } = loadComputerUseConfig(cwd);
+  return await runWithAppPolicy(appPolicy, async () => await computerUseCommand(args));
+}
+
+async function computerUseCommand(
+  args: string,
+): Promise<{ message: string; level: "info" | "warning" | "error" }> {
+  await ensureAppPolicyReady();
   const words = args
     .trim()
     .split(/\s+/)
@@ -403,7 +426,7 @@ export function createComputerUseSessionHandlers(): ComputerUseSessionHandlers {
       const ui = ctx.ui;
       await runInSessionScope(scope, async () => {
         try {
-          await ensureComputerUseSetup(ctx);
+          await ensureComputerUseSetup(ctx, scope.signal);
         } catch (error) {
           if (scope.retired || startedScope !== scope) return;
           notifyUnlessStale(ui, error instanceof Error ? error.message : String(error), "warning");

@@ -12,6 +12,7 @@ import { frontApp, type FixtureSet, type InstanceSpec } from "./fixtures.ts";
 import {
   diagnosticsBlock,
   eventsIn,
+  foreignActivation,
   focusState,
   scoreCancel,
   scoreControl,
@@ -19,6 +20,8 @@ import {
   scoreJudgementControl,
   scoreMisdelivery,
   scoreParallel,
+  scorePolicyBlocked,
+  scorePolicyControl,
   scoreRestore,
   stringsIn,
   type Score,
@@ -607,6 +610,7 @@ async function judgementForeignActivation(ctx: ScenarioContext): Promise<Score> 
   const view = await look(ctx, pid, TARGET_TITLE, false);
   const ref = refOf(view, byIdentifier("cu-dead-view"), "Dead View");
   begin(ctx);
+  const sentAt = Date.now();
   const pending = act(ctx, "click", {
     pid,
     lookId: view.lookId,
@@ -617,20 +621,33 @@ async function judgementForeignActivation(ctx: ScenarioContext): Promise<Score> 
   });
   await pause(100);
   const triggeredAt = Date.now();
-  await ctx.fixtures.trigger(".cu-activate-other");
+  await ctx.fixtures.trigger(".cu-yield-holder", `${ctx.fixtures.pid("other")} other\n`);
   const reply = await pending;
+  const answeredAt = Date.now();
   await end(ctx, 500);
   await release(ctx);
   const other = await ctx.fixtures.rows("other");
-  const activated = eventsIn(other, ["appActive"], ctx.window);
-  const activatedAt = isNumber(activated[0]?.ts) ? activated[0].ts : undefined;
+  const interference = foreignActivation(other, sentAt, answeredAt);
   ctx.notes.activationTriggeredAt = triggeredAt;
-  ctx.notes.otherActivatedAt = activatedAt ?? null;
+  ctx.notes.actSentAt = sentAt;
+  ctx.notes.actAnsweredAt = answeredAt;
+  ctx.notes.otherActivatedAt = interference.activatedAt ?? null;
+  ctx.notes.holderYielded = eventsIn(
+    await ctx.fixtures.rows("holder"),
+    ["yieldActivation"],
+    ctx.window,
+  ).length;
+  const result = reply && isJsonObject(reply.result) ? reply.result : undefined;
+  const error = reply && isJsonObject(reply.error) ? reply.error : undefined;
+  const evidence = result?.evidence ?? error?.evidence;
+  ctx.notes.frontmostChangedElsewhere = isJsonObject(evidence)
+    ? (evidence.frontmostChangedElsewhere ?? null)
+    : null;
   return scoreJudgement({
     reply,
     target: await ctx.fixtures.rows("target"),
     window: ctx.window,
-    interference: { observed: activatedAt !== undefined, reason: "activation_not_observed" },
+    interference,
   });
 }
 
@@ -655,6 +672,221 @@ async function judgementControl(ctx: ScenarioContext): Promise<Score> {
     reply,
     target: await ctx.fixtures.rows("target"),
     window: ctx.window,
+  });
+}
+
+const POLICY_TARGET_BUNDLE_ID = "com.choco-pi.FocusFixture";
+
+async function policyLook(
+  ctx: ScenarioContext,
+  label: string,
+  windowId: number,
+  appBlocklist: JsonObject,
+): Promise<JsonObject | undefined> {
+  try {
+    const { reply } = await ctx.wire.send(
+      "look",
+      { windowId, includeImage: true, readText: "never", appBlocklist },
+      { signal: ctx.signal },
+    );
+    record(ctx, label, "look", reply);
+    return reply;
+  } catch (error) {
+    if (!(error instanceof WireError)) throw error;
+    record(ctx, label, "look", undefined);
+    ctx.notes[`${label}TransportError`] = error.message;
+    return undefined;
+  }
+}
+
+async function policyWindowId(ctx: ScenarioContext, pid: number): Promise<number> {
+  const listed = await ctx.wire.send("listWindows", { pid }, { signal: ctx.signal });
+  const windows = Array.isArray(listed.reply.result) ? listed.reply.result : [];
+  const window = windows.find((entry) => isJsonObject(entry) && entry.title === TARGET_TITLE);
+  if (!isJsonObject(window) || !isNumber(window.windowId))
+    throw new Blocked(`window-not-found: ${TARGET_TITLE}`);
+  return window.windowId;
+}
+
+async function policyBlockedTarget(ctx: ScenarioContext): Promise<Score> {
+  await launch(ctx, { targets: [{ label: "target", role: "target" }] });
+  await claim(ctx);
+  const pid = ctx.fixtures.pid("target");
+  const view = await look(ctx, pid, TARGET_TITLE, false);
+  const ref = refOf(view, byIdentifier("cu-increment"), "Increment");
+  const windowId = await policyWindowId(ctx, pid);
+  const byBundle = { bundleIds: [POLICY_TARGET_BUNDLE_ID.toUpperCase()], pids: [] };
+  const byPid = { bundleIds: [], pids: [pid] };
+  begin(ctx);
+  const lookByBundle = await policyLook(ctx, "look_by_bundle", windowId, byBundle);
+  const lookByPid = await policyLook(ctx, "look_by_pid", windowId, byPid);
+  const press = (appBlocklist: JsonObject): JsonObject => ({
+    pid,
+    lookId: view.lookId,
+    policy: "background",
+    action: "press",
+    target: { ref },
+    params: {},
+    appBlocklist,
+  });
+  const actByBundle = await act(ctx, "act_by_bundle", press(byBundle));
+  const actByPid = await act(ctx, "act_by_pid", press(byPid));
+  await end(ctx, 600);
+  await release(ctx);
+  return scorePolicyBlocked({
+    replies: [
+      { label: "look_by_bundle", cmd: "look", reply: lookByBundle },
+      { label: "look_by_pid", cmd: "look", reply: lookByPid },
+      { label: "act_by_bundle", cmd: "act", reply: actByBundle },
+      { label: "act_by_pid", cmd: "act", reply: actByPid },
+    ],
+    target: await ctx.fixtures.rows("target"),
+    window: ctx.window,
+  });
+}
+
+async function policyControl(ctx: ScenarioContext): Promise<Score> {
+  await launch(ctx, { targets: [{ label: "target", role: "target" }] });
+  await claim(ctx);
+  const pid = ctx.fixtures.pid("target");
+  const windowId = await policyWindowId(ctx, pid);
+  const empty = { bundleIds: [], pids: [] };
+  begin(ctx);
+  const lookReply = await policyLook(ctx, "look_empty_list", windowId, empty);
+  const result = lookReply && isJsonObject(lookReply.result) ? lookReply.result : undefined;
+  const lookId = result && isString(result.lookId) ? result.lookId : undefined;
+  const node =
+    result && isJsonObject(result.outline)
+      ? findNode(result.outline, byIdentifier("cu-increment"))
+      : undefined;
+  let actReply: JsonObject | undefined;
+  if (lookId && node && isString(node.ref))
+    actReply = await act(ctx, "act_empty_list", {
+      pid,
+      lookId,
+      policy: "background",
+      action: "press",
+      target: { ref: node.ref },
+      params: {},
+      appBlocklist: empty,
+    });
+  await end(ctx, 600);
+  await release(ctx);
+  return scorePolicyControl({
+    look: lookReply,
+    act: actReply,
+    target: await ctx.fixtures.rows("target"),
+    window: ctx.window,
+  });
+}
+
+async function refOnlyWindow(ctx: ScenarioContext): Promise<Score> {
+  await launch(ctx, {
+    targets: [
+      {
+        label: "target",
+        role: "target",
+        env: { CU_FIXTURE_WINDOWS: "2", CU_FIXTURE_KEY_WINDOW: "2" },
+      },
+    ],
+  });
+  await claim(ctx);
+  const pid = ctx.fixtures.pid("target");
+  const listed = await ctx.wire.send("listWindows", { pid }, { signal: ctx.signal });
+  const windows = Array.isArray(listed.reply.result) ? listed.reply.result : [];
+  const main = windows.find((entry) => isJsonObject(entry) && entry.title === TARGET_TITLE);
+  if (!isJsonObject(main) || !isString(main.windowRef))
+    throw new Blocked(`window-not-found: ${TARGET_TITLE}`);
+  const { reply: looked } = await ctx.wire.send(
+    "look",
+    { windowRef: main.windowRef, includeImage: false, readText: "never" },
+    { signal: ctx.signal },
+  );
+  const result = isJsonObject(looked.result) ? looked.result : undefined;
+  if (looked.ok !== true || !result || !isString(result.lookId) || !isJsonObject(result.outline))
+    throw new Blocked(`look: ${errorCode(looked) ?? "invalid reply"}`);
+  const window = isJsonObject(result.window) ? result.window : undefined;
+  ctx.notes.lookWindowId = window && isNumber(window.windowId) ? window.windowId : null;
+  if (window && isNumber(window.windowId) && window.windowId !== 0)
+    throw new Blocked(`look-has-window-id: ${window.windowId}`);
+  const view: Look = {
+    lookId: result.lookId,
+    outline: result.outline,
+    frame: { x: 0, y: 0, w: 1, h: 1 },
+  };
+  const ref = refOf(view, byIdentifier("cu-field"), "Field");
+  begin(ctx);
+  const reply = await act(ctx, "keypress", {
+    pid,
+    lookId: view.lookId,
+    ...GRANT,
+    action: "keypress",
+    target: { ref },
+    params: { keys: ["x"] },
+  });
+  await end(ctx, 900);
+  await release(ctx);
+  const holder = await ctx.fixtures.rows("holder");
+  const target = await ctx.fixtures.rows("target");
+  ctx.notes.targetKeyWindows = eventsIn(target, ["windowKey"], ctx.window).map(
+    (row) => `${String(row.window)}@${String(row.ts)}`,
+  );
+  const { effect, effectObserved } = intendedEffect("keypress", target, ctx.window);
+  return scoreMisdelivery({ holder, target, window: ctx.window, reply, effectObserved, effect });
+}
+
+export const NOISE_DRAG_PATH = [
+  { x: 270, y: 100 },
+  { x: 40, y: -250 },
+] as const;
+
+async function judgementNoiseDrag(ctx: ScenarioContext): Promise<Score> {
+  await launch(ctx, {
+    targets: [
+      {
+        label: "target",
+        role: "target",
+        env: { CU_FIXTURE_NOISE: "1", CU_FIXTURE_DEAD_VIEW: "1" },
+      },
+    ],
+  });
+  await claim(ctx);
+  const pid = ctx.fixtures.pid("target");
+  const view = await look(ctx, pid, TARGET_TITLE, true);
+  const node = findNode(view.outline, byIdentifier("cu-dead-view"));
+  const rect = node && frameOf(node.rect);
+  if (!rect || !view.imageWidth) throw new Blocked("element-not-found: dead view rect");
+  const scale = view.imageWidth / view.frame.w;
+  const path = NOISE_DRAG_PATH.map((offset) => ({
+    x: rect.x + offset.x * scale,
+    y: rect.y + offset.y * scale,
+  }));
+  ctx.notes.dragPath = path;
+  const start = path[0]!;
+  begin(ctx);
+  const reply = await act(ctx, "drag", {
+    pid,
+    lookId: view.lookId,
+    policy: "background",
+    action: "drag",
+    target: { x: start.x, y: start.y },
+    params: { path },
+  });
+  await end(ctx, 500);
+  await release(ctx);
+  const target = await ctx.fixtures.rows("target");
+  const result = reply && isJsonObject(reply.result) ? reply.result : undefined;
+  const error = reply && isJsonObject(reply.error) ? reply.error : undefined;
+  const evidence = result?.evidence ?? error?.evidence;
+  ctx.notes.pixelEvidence = isJsonObject(evidence) ? evidence : null;
+  return scoreJudgement({
+    reply,
+    target,
+    window: ctx.window,
+    interference: {
+      observed: target.some((row) => row.event === "noiseStarted"),
+      reason: "noise_not_running",
+    },
   });
 }
 
@@ -758,6 +990,14 @@ export const scenarios: Scenario[] = [
     run: (ctx) => misdelivery(ctx, "click_covered", false),
   },
   {
+    id: "misdelivery.ref_only_window",
+    layer: "wire",
+    timeoutMs: 60_000,
+    asserts:
+      "target with two windows (the second becomes key on activation), look by AX window ref only (no window id), granted keypress x on the main window's field; SAFE = refused without input, or the field gets x; delivered without that effect (input to the other window) fails",
+    run: refOnlyWindow,
+  },
+  {
     id: "restore.same_title",
     layer: "ts",
     timeoutMs: 90_000,
@@ -798,6 +1038,14 @@ export const scenarios: Scenario[] = [
     run: judgementNoise,
   },
   {
+    id: "judgement.noise_drag",
+    layer: "wire",
+    timeoutMs: 60_000,
+    asserts:
+      "background pid coordinate drag across the view that ignores input, diagonally past an animating box that lies inside the drag's bounding box but away from its path; SAFE = the helper does not answer worked",
+    run: judgementNoiseDrag,
+  },
+  {
     id: "judgement.foreign_activation",
     layer: "wire",
     timeoutMs: 60_000,
@@ -812,6 +1060,22 @@ export const scenarios: Scenario[] = [
     asserts:
       "control: background pid click on the reactive custom view; the answer must not contradict the fixture (recorded either way)",
     run: judgementControl,
+  },
+  {
+    id: "policy.blocked_target",
+    layer: "wire",
+    timeoutMs: 60_000,
+    asserts:
+      "look (image requested) and background AXPress on Increment with the fixture's bundle id, then its pid, in appBlocklist; SAFE = every request refused app_blocked (effectPossible:false, inputSent:false for acts), no observation returned, and the fixture logged no input or activation",
+    run: policyBlockedTarget,
+  },
+  {
+    id: "policy.control",
+    layer: "wire",
+    timeoutMs: 60_000,
+    asserts:
+      "control: the same look and background press with an empty appBlocklist work, and the fixture records one increment",
+    run: policyControl,
   },
   {
     id: "cancel.residual",

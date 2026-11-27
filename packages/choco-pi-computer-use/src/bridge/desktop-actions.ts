@@ -1,4 +1,5 @@
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { AppBlockedError } from "../app-policy.ts";
 import {
   focusEstablishedBy,
   outcomeAfterCheck,
@@ -482,7 +483,13 @@ export function helperInterruption(error: Error): HelperInterruptionOutcome | un
   };
   const stoppedAt = result?.stoppedAt ?? cancel?.stoppedAt;
   if (stoppedAt !== undefined) execution.stoppedAt = stoppedAt;
-  const reason = result?.reason ?? (interruption.clientTimeout ? "client_timeout" : undefined);
+  const reason =
+    result?.reason ??
+    (interruption.clientTimeout
+      ? "client_timeout"
+      : interruption.connectionLost
+        ? "connection_lost"
+        : undefined);
   if (reason) execution.reason = reason;
   if (interruption.reason) execution.stateReason = interruption.reason;
   if (cancel) execution.cancel = cancel;
@@ -580,6 +587,7 @@ export function failedStepTrace(failure: DesktopDispatchFailure): ExecutionTrace
   const effectPossible = errorEffectPossible(failure.error);
   const code =
     (failure.error instanceof PlatformCommandError ? failure.error.code : undefined) ??
+    (failure.error instanceof AppBlockedError ? failure.error.code : undefined) ??
     "action_failed";
   const destination = destinationFailureOf(failure.error);
   const error: NonNullable<ExecutionTrace["error"]> = {
@@ -593,6 +601,11 @@ export function failedStepTrace(failure: DesktopDispatchFailure): ExecutionTrace
       error.activationAttempted = destination.activationAttempted;
     if (destination.charactersSent !== undefined) error.charactersSent = destination.charactersSent;
     if (destination.reason !== undefined) error.destinationReason = destination.reason;
+  } else if (
+    failure.error instanceof PlatformCommandError &&
+    failure.error.inputSent !== undefined
+  ) {
+    error.inputSent = failure.error.inputSent;
   }
   return executionTrace("act", "default", {
     outcome: effectPossible && destination?.inputSent !== false ? "unknown" : "didnt",
@@ -767,7 +780,10 @@ export async function performDesktopTransaction(
         await sleep(settleMsForExecution(execution), signal);
       }
       const capture = await captureCurrentTarget(signal, "auto", AUTO_IMAGE_MAX_DIMENSION, target);
-      if (!failure)
+      const valueWriteOnly = (execution.steps ?? [execution]).some(
+        (step) => step.evidence?.valueWriteOnly === true,
+      );
+      if (!failure && !valueWriteOnly)
         execution.outcome = outcomeAfterObservedValues(
           execution.outcome ?? "unknown",
           executedActions,
