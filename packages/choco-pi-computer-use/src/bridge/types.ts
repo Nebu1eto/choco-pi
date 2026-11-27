@@ -2,7 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { PreparedAction } from "../actions.ts";
 import type { CdpConsoleEntry, CdpPageSnapshot } from "../cdp.ts";
-import type { ComputerUseConfig } from "../config.ts";
+import type { BackgroundDeliveryMode, ComputerUseConfig } from "../config.ts";
 import type { FindParams, UiAction } from "../contract.ts";
 import type { GrantPromptOutcome } from "../grant-prompt.ts";
 import type { JsonObject, JsonValue } from "../json.ts";
@@ -41,7 +41,10 @@ export type ActionDelivery = "ax" | NativeInputDelivery;
 export type DeliveryPolicy = PlatformDeliveryPolicy;
 export type ActOutcome = "worked" | "didnt" | "unknown";
 export type ObservationRefreshReason = "missing" | "stale";
-export type ComputerUseDetailsConfig = ComputerUseConfig & { notes?: string[] };
+export type ComputerUseDetailsConfig = Omit<ComputerUseConfig, "background_delivery"> & {
+  background_delivery?: BackgroundDeliveryMode;
+  notes?: string[];
+};
 
 export interface ForegroundRefusal {
   code: "foreground_required";

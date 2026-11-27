@@ -538,3 +538,250 @@ export function isMainHelper(app: string, socket: string, home: string = homedir
   const mainSocket = resolve(home, "Library/Caches/pi-computer-use/bridge.sock");
   return apps.includes(resolve(app).replace(/\/+$/, "")) || resolve(socket) === mainSocket;
 }
+
+export const HOLDER_DISTURBANCE_EVENTS = ["appInactive", "windowResignKey", "keyDown", "mouseDown"];
+
+export function extendedStatusOf(reply: JsonObject | undefined): string | undefined {
+  const result = reply && isJsonObject(reply.result) ? reply.result : undefined;
+  const performed = result && isJsonObject(result.performed) ? result.performed : undefined;
+  if (performed && isString(performed.extendedDelivery)) return performed.extendedDelivery;
+  const error = reply && isJsonObject(reply.error) ? reply.error : undefined;
+  return error && isString(error.extendedDelivery) ? error.extendedDelivery : undefined;
+}
+
+function extendedReasonOf(reply: JsonObject | undefined): string | undefined {
+  const result = reply && isJsonObject(reply.result) ? reply.result : undefined;
+  const performed = result && isJsonObject(result.performed) ? result.performed : undefined;
+  if (performed && isString(performed.extendedDeliveryReason))
+    return performed.extendedDeliveryReason;
+  const error = reply && isJsonObject(reply.error) ? reply.error : undefined;
+  return error && isString(error.extendedDeliveryReason) ? error.extendedDeliveryReason : undefined;
+}
+
+function holderDisturbance(holder: JsonObject[], window: TimeWindow, failures: string[]): number {
+  const rows = eventsIn(holder, HOLDER_DISTURBANCE_EVENTS, window);
+  if (rows.length > 0)
+    failures.push("holder disturbed: " + rows.slice(0, 6).map(describeRow).join(", "));
+  return rows.length;
+}
+
+function leftActive(target: JsonObject[], label: string, failures: string[]): boolean {
+  const active = focusState(target).active === true;
+  if (active) failures.push(label + " still believes it is active after the act");
+  return active;
+}
+
+export interface ExtendedTarget {
+  label: string;
+  rows: JsonObject[];
+  reply: JsonObject | undefined;
+}
+
+export interface ExtendedClickInput {
+  holder: JsonObject[];
+  targets: ExtendedTarget[];
+  window: TimeWindow;
+}
+
+export function scoreExtendedClick(input: ExtendedClickInput): Score {
+  const failures: string[] = [];
+  const notes: JsonObject = {};
+  notes.holderDisturbance = holderDisturbance(input.holder, input.window, failures);
+  for (const target of input.targets) {
+    const facts = replyFacts(target.reply);
+    const hits = eventsIn(target.rows, ["customHit"], input.window).length;
+    const status = extendedStatusOf(target.reply);
+    notes[target.label] = {
+      answer: answerOf(facts),
+      hits,
+      extendedDelivery: status ?? null,
+      activations: eventsIn(target.rows, ["appActive"], input.window).length,
+      deactivations: eventsIn(target.rows, ["appInactive"], input.window).length,
+    };
+    if (!facts) failures.push(target.label + ": helper sent no reply");
+    else if (!facts.ok || facts.outcome === "didnt")
+      failures.push(target.label + ": answered " + answerOf(facts) + " (a no-effect claim)");
+    if (status !== "used")
+      failures.push(target.label + ": extended delivery not used (" + String(status) + ")");
+    if (hits !== 1)
+      failures.push(
+        target.label + ": custom view hit " + String(hits) + " time(s), expected exactly 1",
+      );
+    leftActive(target.rows, target.label, failures);
+  }
+  return { verdict: verdictOf(failures), failures, notes };
+}
+
+export interface StandardControlInput {
+  holder: JsonObject[];
+  target: JsonObject[];
+  window: TimeWindow;
+  reply: JsonObject | undefined;
+}
+
+export function scoreStandardControl(input: StandardControlInput): Score {
+  const failures: string[] = [];
+  const facts = replyFacts(input.reply);
+  const hits = eventsIn(input.target, ["customHit"], input.window).length;
+  const activations = eventsIn(input.target, ["appActive"], input.window).length;
+  const notes: JsonObject = { answer: answerOf(facts), hits, activations };
+  notes.holderDisturbance = holderDisturbance(input.holder, input.window, failures);
+  if (facts?.code !== "foreground_required")
+    failures.push("standard answer is " + answerOf(facts) + ", expected error:foreground_required");
+  if (extendedStatusOf(input.reply) !== undefined)
+    failures.push("a standard reply reports extended delivery");
+  if (hits > 0)
+    failures.push("standard pid click hit the custom view " + String(hits) + " time(s)");
+  if (activations > 0) failures.push("standard delivery activated the target");
+  return { verdict: verdictOf(failures), failures, notes };
+}
+
+export interface ExtendedInterruptedInput {
+  holder: JsonObject[];
+  target: JsonObject[];
+  window: TimeWindow;
+  reply: JsonObject | undefined;
+  reason: "cancelled" | "deadline";
+}
+
+export function scoreExtendedInterrupted(input: ExtendedInterruptedInput): Score {
+  const failures: string[] = [];
+  const facts = replyFacts(input.reply);
+  const error = input.reply && isJsonObject(input.reply.error) ? input.reply.error : undefined;
+  const result = input.reply && isJsonObject(input.reply.result) ? input.reply.result : undefined;
+  const reason = result && isString(result.reason) ? result.reason : undefined;
+  const activations = eventsIn(input.target, ["appActive"], input.window).length;
+  const notes: JsonObject = {
+    answer: answerOf(facts),
+    stopReason: reason ?? null,
+    extendedDelivery: extendedStatusOf(input.reply) ?? null,
+    activations,
+    deactivations: eventsIn(input.target, ["appInactive"], input.window).length,
+    typed: eventsIn(input.target, ["fieldValue"], input.window).length,
+  };
+  notes.holderDisturbance = holderDisturbance(input.holder, input.window, failures);
+  leftActive(input.target, "target", failures);
+  let inconclusive: string | undefined;
+  if (facts?.ok) inconclusive = "completed";
+  else {
+    if (facts?.code !== "cancelled")
+      failures.push("act ended with " + answerOf(facts) + ", expected error:cancelled");
+    else if (reason !== input.reason)
+      failures.push("stopped for " + String(reason) + ", expected " + input.reason);
+    if (error?.extendedDelivery !== "used")
+      failures.push("the error does not say extended delivery was used");
+  }
+  if (activations === 0 && failures.length === 0) inconclusive = "not_activated";
+  return { verdict: verdictOf(failures, inconclusive), failures, notes };
+}
+
+export interface ExtendedMenuInput {
+  holder: JsonObject[];
+  target: JsonObject[];
+  window: TimeWindow;
+  reply: JsonObject | undefined;
+}
+
+export function scoreExtendedMenu(input: ExtendedMenuInput): Score {
+  const failures: string[] = [];
+  const status = extendedStatusOf(input.reply);
+  const reason = extendedReasonOf(input.reply);
+  const activations = eventsIn(input.target, ["appActive"], input.window).length;
+  const notes: JsonObject = {
+    answer: answerOf(replyFacts(input.reply)),
+    extendedDelivery: status ?? null,
+    extendedDeliveryReason: reason ?? null,
+    activations,
+    menuOpened: eventsIn(input.target, ["menuOpened"], input.window).length,
+  };
+  notes.holderDisturbance = holderDisturbance(input.holder, input.window, failures);
+  if (status !== "not_applicable")
+    failures.push("extended delivery status is " + String(status) + ", expected not_applicable");
+  if (status === "not_applicable" && reason !== "menu_element")
+    failures.push("not applicable for " + String(reason) + ", expected menu_element");
+  if (activations > 0)
+    failures.push("the target was told it is active (" + String(activations) + " appActive)");
+  return { verdict: verdictOf(failures), failures, notes };
+}
+
+export interface ExtendedKeyUnresolvedInput {
+  holder: JsonObject[];
+  target: JsonObject[];
+  window: TimeWindow;
+  reply: JsonObject | undefined;
+}
+
+export function scoreExtendedKeyUnresolved(input: ExtendedKeyUnresolvedInput): Score {
+  const failures: string[] = [];
+  const facts = replyFacts(input.reply);
+  const typed = eventsIn(input.target, ["fieldValue", "targetKeyDown"], input.window);
+  const notes: JsonObject = {
+    answer: answerOf(facts),
+    extendedDelivery: extendedStatusOf(input.reply) ?? null,
+    keyWindowAcquired: errorField(input.reply, "keyWindowAcquired") ?? null,
+    observedWindowResolved: errorField(input.reply, "observedWindowResolved") ?? null,
+    targetInput: typed.map(describeRow),
+    activations: eventsIn(input.target, ["appActive"], input.window).length,
+  };
+  notes.holderDisturbance = holderDisturbance(input.holder, input.window, failures);
+  if (facts?.code !== "foreground_required")
+    failures.push("answered " + answerOf(facts) + ", expected the key-window refusal");
+  else {
+    if (errorField(input.reply, "keyWindowAcquired") !== false)
+      failures.push("the refusal does not say keyWindowAcquired:false");
+    if (errorField(input.reply, "observedWindowResolved") !== false)
+      failures.push("the refusal does not say the observed window was unresolved");
+    if (extendedStatusOf(input.reply) !== "used")
+      failures.push("the refusal does not say extended delivery was used");
+  }
+  if (typed.length > 0)
+    failures.push("the target got key input: " + typed.slice(0, 4).map(describeRow).join(", "));
+  leftActive(input.target, "target", failures);
+  return { verdict: verdictOf(failures), failures, notes };
+}
+
+export interface DeepAncestryInput {
+  control: JsonObject | undefined;
+  blocked: JsonObject | undefined;
+  targetPid: number;
+  depth: number;
+  target: JsonObject[];
+  window: TimeWindow;
+}
+
+export function scoreDeepAncestry(input: DeepAncestryInput): Score {
+  const failures: string[] = [];
+  const control = replyFacts(input.control);
+  const blocked = replyFacts(input.blocked);
+  const notes: JsonObject = {
+    control: answerOf(control),
+    blocked: answerOf(blocked),
+    blockMatch: errorField(input.blocked, "blockMatch") ?? null,
+    blockedPid: errorField(input.blocked, "blockedPid") ?? null,
+    depth: input.depth,
+  };
+  if (!control?.ok)
+    failures.push("control look answered " + answerOf(control) + ", expected an observation");
+  if (blocked?.ok)
+    failures.push(
+      "look under a " +
+        String(input.depth) +
+        "-deep chain was answered " +
+        answerOf(blocked) +
+        " for an ancestor of the client",
+    );
+  else if (blocked?.code !== "app_blocked")
+    failures.push("refused with " + answerOf(blocked) + " instead of app_blocked");
+  else {
+    if (errorField(input.blocked, "blockMatch") !== "pid") failures.push("blockMatch is not pid");
+    if (errorField(input.blocked, "blockedPid") !== input.targetPid)
+      failures.push("blockedPid is not the target");
+    if (blocked.effectPossible !== false) failures.push("app_blocked without effectPossible:false");
+    if (input.blocked && isJsonObject(input.blocked.result))
+      failures.push("the refused look still returned an observation");
+  }
+  const effects = eventsIn(input.target, [...TARGET_INPUT_EVENTS, "appActive"], input.window);
+  if (effects.length > 0)
+    failures.push("fixture logged: " + effects.slice(0, 4).map(describeRow).join(", "));
+  return { verdict: verdictOf(failures), failures, notes };
+}

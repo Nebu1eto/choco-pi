@@ -9,6 +9,11 @@ import {
   isMainHelper,
   scoreCancel,
   scoreControl,
+  scoreExtendedClick,
+  scoreExtendedInterrupted,
+  scoreDeepAncestry,
+  scoreExtendedKeyUnresolved,
+  scoreExtendedMenu,
   scoreJudgement,
   scoreJudgementControl,
   scoreMisdelivery,
@@ -16,6 +21,7 @@ import {
   scorePolicyBlocked,
   scorePolicyControl,
   scoreRestore,
+  scoreStandardControl,
 } from "./score.ts";
 
 const window = { from: 1_000, to: 2_000 };
@@ -763,4 +769,265 @@ test("scorePolicyControl requires an observation, a delivered press, and exactly
     window,
   });
   assert.match(twoHits.failures[0] ?? "", /recorded 2 increment/);
+});
+
+const used = (outcome: string): JsonObject => ({
+  ok: true,
+  result: { outcome, performed: { delivery: "pid", extendedDelivery: "used" } },
+});
+const activeThenInactive = [
+  row("appActive", 1_100),
+  row("customHit", 1_200),
+  row("appInactive", 1_500),
+];
+
+test("extended click: one hit, used, deactivated, holder undisturbed passes; each rule can fail it", () => {
+  const pass = scoreExtendedClick({
+    holder: [row("appActive", 900)],
+    targets: [{ label: "target", rows: activeThenInactive, reply: used("worked") }],
+    window,
+  });
+  assert.equal(pass.verdict, "PASS", pass.failures.join("; "));
+  const cases: [string, Parameters<typeof scoreExtendedClick>[0], RegExp][] = [
+    [
+      "holder lost key",
+      {
+        holder: [row("windowResignKey", 1_300)],
+        targets: [{ label: "target", rows: activeThenInactive, reply: used("unknown") }],
+        window,
+      },
+      /holder disturbed/,
+    ],
+    [
+      "left active",
+      {
+        holder: [],
+        targets: [
+          {
+            label: "target",
+            rows: [row("appActive", 1_100), row("customHit", 1_200)],
+            reply: used("unknown"),
+          },
+        ],
+        window,
+      },
+      /still believes it is active/,
+    ],
+    [
+      "duplicate",
+      {
+        holder: [],
+        targets: [
+          {
+            label: "target",
+            rows: [...activeThenInactive, row("customHit", 1_300)],
+            reply: used("worked"),
+          },
+        ],
+        window,
+      },
+      /hit 2 time/,
+    ],
+    [
+      "no-effect claim",
+      {
+        holder: [],
+        targets: [
+          {
+            label: "target",
+            rows: activeThenInactive,
+            reply: { ok: false, error: { code: "foreground_required", extendedDelivery: "used" } },
+          },
+        ],
+        window,
+      },
+      /no-effect claim/,
+    ],
+    [
+      "not used",
+      {
+        holder: [],
+        targets: [{ label: "target", rows: activeThenInactive, reply: answered("worked") }],
+        window,
+      },
+      /extended delivery not used/,
+    ],
+  ];
+  for (const [name, input, failure] of cases) {
+    const score = scoreExtendedClick(input);
+    assert.equal(score.verdict, "FAIL", name);
+    assert.ok(
+      score.failures.some((entry) => failure.test(entry)),
+      name + ": " + score.failures.join("; "),
+    );
+  }
+});
+
+test("standard control: refused as today with no hit or activation passes, otherwise fails", () => {
+  const refused = { ok: false, error: { code: "foreground_required", effectPossible: false } };
+  const pass = scoreStandardControl({ holder: [], target: [], window, reply: refused });
+  assert.equal(pass.verdict, "PASS", pass.failures.join("; "));
+  const hit = scoreStandardControl({
+    holder: [],
+    target: [row("customHit", 1_200)],
+    window,
+    reply: answered("worked"),
+  });
+  assert.equal(hit.verdict, "FAIL");
+  assert.match(hit.failures.join(";"), /expected error:foreground_required/);
+  assert.match(hit.failures.join(";"), /hit the custom view/);
+  const activated = scoreStandardControl({
+    holder: [],
+    target: [row("appActive", 1_100)],
+    window,
+    reply: refused,
+  });
+  assert.match(activated.failures.join(";"), /activated the target/);
+});
+
+test("extended interrupted: cancelled, used, deactivated passes; left active or wrong reason fails", () => {
+  const cancelled = (reason: string): JsonObject => ({
+    ok: false,
+    error: { code: "cancelled", effectPossible: true, extendedDelivery: "used" },
+    result: { outcome: "partial", reason },
+  });
+  const rows = [row("appActive", 1_100), row("fieldValue", 1_200), row("appInactive", 1_400)];
+  const pass = scoreExtendedInterrupted({
+    holder: [],
+    target: rows,
+    window,
+    reply: cancelled("cancelled"),
+    reason: "cancelled",
+  });
+  assert.equal(pass.verdict, "PASS", pass.failures.join("; "));
+  const stuck = scoreExtendedInterrupted({
+    holder: [],
+    target: rows.slice(0, 2),
+    window,
+    reply: cancelled("deadline"),
+    reason: "deadline",
+  });
+  assert.equal(stuck.verdict, "FAIL");
+  assert.match(stuck.failures.join(";"), /still believes it is active/);
+  const wrong = scoreExtendedInterrupted({
+    holder: [],
+    target: rows,
+    window,
+    reply: cancelled("deadline"),
+    reason: "cancelled",
+  });
+  assert.match(wrong.failures.join(";"), /stopped for deadline/);
+  const never = scoreExtendedInterrupted({
+    holder: [],
+    target: [],
+    window,
+    reply: cancelled("cancelled"),
+    reason: "cancelled",
+  });
+  assert.equal(never.verdict, "INCONCLUSIVE(not_activated)");
+  const finished = scoreExtendedInterrupted({
+    holder: [],
+    target: rows,
+    window,
+    reply: used("worked"),
+    reason: "cancelled",
+  });
+  assert.equal(finished.verdict, "INCONCLUSIVE(completed)");
+});
+
+test("extended popup: not_applicable for menu_element without activation passes; the mechanism on it fails", () => {
+  const notApplicable: JsonObject = {
+    ok: false,
+    error: { code: "foreground_required", extendedDelivery: "not_applicable" },
+    result: {
+      outcome: "didnt",
+      performed: { extendedDelivery: "not_applicable", extendedDeliveryReason: "menu_element" },
+    },
+  };
+  const pass = scoreExtendedMenu({ holder: [], target: [], window, reply: notApplicable });
+  assert.equal(pass.verdict, "PASS", pass.failures.join("; "));
+  const driven = scoreExtendedMenu({
+    holder: [row("windowResignKey", 1_300)],
+    target: [row("appActive", 1_100), row("menuOpened", 1_200)],
+    window,
+    reply: used("worked"),
+  });
+  assert.equal(driven.verdict, "FAIL");
+  assert.match(driven.failures.join(";"), /expected not_applicable/);
+  assert.match(driven.failures.join(";"), /told it is active/);
+  assert.match(driven.failures.join(";"), /holder disturbed/);
+});
+
+test("scoreExtendedKeyUnresolved: only the key-window refusal for an unresolved window, with no key, passes", () => {
+  const refused: JsonObject = {
+    ok: false,
+    error: {
+      code: "foreground_required",
+      effectPossible: false,
+      keyWindowAcquired: false,
+      observedWindowResolved: false,
+      extendedDelivery: "used",
+    },
+  };
+  const target = [row("appActive", 1_100), row("appInactive", 1_500)];
+  const pass = scoreExtendedKeyUnresolved({ holder: [], target, window, reply: refused });
+  assert.equal(pass.verdict, "PASS", pass.failures.join("; "));
+  const sent = scoreExtendedKeyUnresolved({
+    holder: [],
+    target: [...target, row("fieldValue", 1_300, { value: "x" })],
+    window,
+    reply: { ok: true, result: { outcome: "unknown", performed: { extendedDelivery: "used" } } },
+  });
+  assert.equal(sent.verdict, "FAIL");
+  assert.match(sent.failures.join(";"), /expected the key-window refusal/);
+  assert.match(sent.failures.join(";"), /got key input/);
+  const resolved: JsonObject = {
+    ok: false,
+    error: {
+      code: "foreground_required",
+      keyWindowAcquired: false,
+      observedWindowResolved: true,
+      extendedDelivery: "used",
+    },
+  };
+  const other = scoreExtendedKeyUnresolved({ holder: [], target, window, reply: resolved });
+  assert.equal(other.verdict, "FAIL");
+  assert.match(other.failures.join(";"), /unresolved/);
+});
+
+test("scoreDeepAncestry: the control observes and the deep client is refused for the target pid", () => {
+  const observed: JsonObject = { ok: true, result: { lookId: "l1" } };
+  const blocked: JsonObject = {
+    ok: false,
+    error: { code: "app_blocked", effectPossible: false, blockMatch: "pid", blockedPid: 42 },
+  };
+  const pass = scoreDeepAncestry({
+    control: observed,
+    blocked,
+    targetPid: 42,
+    depth: 81,
+    target: [],
+    window,
+  });
+  assert.equal(pass.verdict, "PASS", pass.failures.join("; "));
+  const missed = scoreDeepAncestry({
+    control: observed,
+    blocked: observed,
+    targetPid: 42,
+    depth: 81,
+    target: [],
+    window,
+  });
+  assert.equal(missed.verdict, "FAIL");
+  assert.match(missed.failures.join(";"), /ancestor of the client/);
+  const refusesAll = scoreDeepAncestry({
+    control: blocked,
+    blocked,
+    targetPid: 42,
+    depth: 81,
+    target: [],
+    window,
+  });
+  assert.equal(refusesAll.verdict, "FAIL");
+  assert.match(refusesAll.failures.join(";"), /control look/);
 });

@@ -389,7 +389,7 @@ test("a failed ancestry lookup falls back to this process and its parent and sho
       throw new Error("ps unavailable");
     },
   });
-  config.loadComputerUseConfig(projectDir);
+  await config.loadComputerUseConfig(projectDir);
   await policy.ensureAppPolicyReady();
   const state = policy.hostProcessState();
   assert.equal(state.status, "failed");
@@ -407,7 +407,7 @@ test("a failed ancestry lookup falls back to this process and its parent and sho
 test("unit: helper, SecurityAgent, defaults, the native blocklist, and ps parsing", async () => {
   const lifted = policy.DEFAULT_BLOCKED_APPS[1]!.bundleId;
   await setup({ user: { unblocked_apps: ["com.apple.SecurityAgent", lifted] } });
-  config.loadComputerUseConfig(projectDir);
+  await config.loadComputerUseConfig(projectDir);
   await policy.ensureAppPolicyReady();
   assert.equal(
     policy.appBlockFor({ bundleId: helper.HELPER_BUNDLE_ID, pid: 999_002 })?.reason,
@@ -484,7 +484,7 @@ test("an in-flight call keeps the app policy it loaded when another session load
   try {
     const observing = bridge.executeObserve("observe", { root: ref }, signal, undefined, ctx);
     await gated.entered;
-    config.loadComputerUseConfig(other);
+    await config.loadComputerUseConfig(other);
     assert.deepEqual(config.getAppPolicySettings().blockedApps, []);
     gated.open();
     await assertBlocked(observing, FAKE_APP.appName, "user_blocked");
@@ -503,7 +503,7 @@ test("the blocklist sent to the helper is the one the call loaded, with this pro
   try {
     const observing = bridge.executeObserve("observe", { root: ref }, signal, undefined, ctx);
     await gated.entered;
-    config.loadComputerUseConfig(other);
+    await config.loadComputerUseConfig(other);
     gated.open();
     await observing;
   } finally {

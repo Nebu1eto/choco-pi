@@ -30,6 +30,9 @@ let webEnabled = !isHolder && flag("CU_FIXTURE_WEB")
 let activateAtLaunch = !isHolder && flag("CU_FIXTURE_ACTIVATE")
 // Matrix mode (safety/matrix.ts): extra AppKit and SwiftUI windows, the web page loaded from
 let matrixEnabled = !isHolder && flag("CU_FIXTURE_MATRIX")
+let unpairedWindowEnabled = !isHolder && flag("CU_FIXTURE_UNPAIRED_WINDOW")
+// A chain of nested shells of this depth under the target (safety ancestry check), or nil.
+let chainDepth: Int? = isHolder ? nil : env["CU_FIXTURE_SPAWN_CHAIN"].flatMap { Int($0) }.map { max(1, min(200, $0)) }
 let webPagePath: String? = env["CU_FIXTURE_WEB_PAGE"].flatMap { $0.isEmpty ? nil : $0 }
 let windowOffset: NSPoint = {
 	guard let parts = numbers("CU_FIXTURE_OFFSET"), parts.count == 2 else { return .zero }
@@ -224,6 +227,12 @@ struct MatrixSwiftUIView: View {
 	}
 }
 
+final class UnpairedWindow: NSWindow {
+	override func accessibilityRole() -> NSAccessibility.Role? { .group }
+	override func accessibilityTitle() -> String? { "AX Alias" }
+	override func accessibilityFrame() -> NSRect { frame.offsetBy(dx: 6000, dy: 6000) }
+}
+
 final class WebLogger: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
 	func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
 		if let fields = message.body as? [String: Any], let event = fields["event"] as? String {
@@ -281,6 +290,8 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 	var lastScrollY: Double?
 	var lastResponder: [String: String] = [:]
 	var lastSelection: [String: String] = [:]
+	var unpairedWindow: NSWindow?
+	var chainProcess: Process?
 
 	func label(_ window: NSWindow?) -> String {
 		guard let window else { return "" }
@@ -316,8 +327,40 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 		guard let content = window.contentView else { return }
 		buildControls(content, size: size)
 		buildExtraWindows()
+		buildOptionalExtras()
 		installObservers()
 		finishLaunch()
+	}
+
+	func buildOptionalExtras() {
+		if unpairedWindowEnabled {
+			let hidden = UnpairedWindow(
+				contentRect: NSRect(x: 560 + windowOffset.x, y: 40 + windowOffset.y, width: 200, height: 80),
+				styleMask: [.titled], backing: .buffered, defer: false
+			)
+			hidden.title = "CU Unpaired Window"
+			hidden.isReleasedWhenClosed = false
+			hidden.isRestorable = false
+			hidden.orderFrontRegardless()
+			unpairedWindow = hidden
+			log.write("unpairedWindow", ["windowNumber": hidden.windowNumber, "frame": frameFields(hidden.frame)])
+		}
+		if let chainDepth, let directory = log.directory {
+			let script = directory.appendingPathComponent("chain.sh")
+			let leaf = directory.appendingPathComponent("chain-leaf.pid")
+			let body = "#!/bin/sh\nif [ \"$1\" -gt 0 ]; then /bin/sh \"$0\" $(($1 - 1)) \"$2\"; status=$?; exit $status; fi\necho $$ > \"$2.tmp\" && mv \"$2.tmp\" \"$2\"\nexec /bin/sleep 120\n"
+			do {
+				try body.write(to: script, atomically: true, encoding: .utf8)
+				let process = Process()
+				process.executableURL = URL(fileURLWithPath: "/bin/sh")
+				process.arguments = [script.path, String(chainDepth), leaf.path]
+				try process.run()
+				chainProcess = process
+				log.write("chainSpawned", ["depth": chainDepth, "rootPid": Int(process.processIdentifier)])
+			} catch {
+				log.write("chainFailed", ["message": error.localizedDescription])
+			}
+		}
 	}
 
 	func buildControls(_ content: NSView, size: NSSize) {

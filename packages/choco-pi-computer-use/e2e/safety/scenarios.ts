@@ -1,4 +1,5 @@
-import { realpath } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   isJsonObject,
@@ -8,6 +9,7 @@ import {
   type JsonValue,
 } from "../../src/json.ts";
 import { fixtureApps } from "../fixture/build.ts";
+import { command } from "../preflight.ts";
 import { frontApp, type FixtureSet, type InstanceSpec } from "./fixtures.ts";
 import {
   diagnosticsBlock,
@@ -23,6 +25,12 @@ import {
   scorePolicyBlocked,
   scorePolicyControl,
   scoreRestore,
+  scoreExtendedClick,
+  scoreExtendedInterrupted,
+  scoreDeepAncestry,
+  scoreExtendedKeyUnresolved,
+  scoreExtendedMenu,
+  scoreStandardControl,
   stringsIn,
   type Score,
   type TimeWindow,
@@ -941,6 +949,429 @@ async function cancelResidual(ctx: ScenarioContext): Promise<Score> {
   });
 }
 
+const EXTENDED = { policy: "background", backgroundDelivery: "extended" };
+
+async function requireExtended(ctx: ScenarioContext): Promise<void> {
+  const { reply } = await ctx.wire.send("diagnostics", {}, { signal: ctx.signal });
+  const result = isJsonObject(reply.result) ? reply.result : undefined;
+  const capability =
+    result && isJsonObject(result.extendedDelivery) ? result.extendedDelivery : undefined;
+  ctx.notes.extendedCapability = capability ?? null;
+  if (capability?.available !== true)
+    throw new Blocked("extended_unavailable: " + String(capability?.reason ?? "not reported"));
+}
+
+function centreOf(view: Look, identifier: string, what: string) {
+  const node = findNode(view.outline, byIdentifier(identifier));
+  const rect = node && frameOf(node.rect);
+  if (!rect || !view.imageWidth) throw new Blocked("element-not-found: " + what + " rect");
+  return { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
+}
+
+async function extendedCustomClick(
+  ctx: ScenarioContext,
+  delivery: "extended" | "standard",
+): Promise<Score> {
+  await launch(ctx, { targets: [{ label: "target", role: "target" }] });
+  if (delivery === "extended") await requireExtended(ctx);
+  await claim(ctx);
+  const pid = ctx.fixtures.pid("target");
+  const view = await look(ctx, pid, TARGET_TITLE, true);
+  const point = centreOf(view, "cu-custom-view", "custom view");
+  begin(ctx);
+  const reply = await act(ctx, "click", {
+    pid,
+    lookId: view.lookId,
+    ...(delivery === "extended" ? EXTENDED : { policy: "background" }),
+    action: "click",
+    target: point,
+    params: {},
+  });
+  await end(ctx, 900);
+  await release(ctx);
+  const holder = await ctx.fixtures.rows("holder");
+  const target = await ctx.fixtures.rows("target");
+  if (delivery === "standard")
+    return scoreStandardControl({ holder, target, window: ctx.window, reply });
+  return scoreExtendedClick({
+    holder,
+    targets: [{ label: "target", rows: target, reply }],
+    window: ctx.window,
+  });
+}
+
+async function extendedParallel(ctx: ScenarioContext): Promise<Score> {
+  await launch(ctx, {
+    targets: [
+      { label: "a", role: "target" },
+      { label: "b", role: "target", env: { CU_FIXTURE_OFFSET: "500,0" } },
+    ],
+  });
+  await requireExtended(ctx);
+  await claim(ctx);
+  const views = await Promise.all(
+    ["a", "b"].map(async (label) => {
+      const pid = ctx.fixtures.pid(label);
+      const view = await look(ctx, pid, TARGET_TITLE, true);
+      return { label, pid, view, point: centreOf(view, "cu-custom-view", label + " custom view") };
+    }),
+  );
+  begin(ctx);
+  const replies = await Promise.all(
+    views.map(({ label, pid, view, point }) =>
+      act(ctx, label, {
+        pid,
+        lookId: view.lookId,
+        ...EXTENDED,
+        action: "click",
+        target: point,
+        params: {},
+      }),
+    ),
+  );
+  await end(ctx, 900);
+  await release(ctx);
+  return scoreExtendedClick({
+    holder: await ctx.fixtures.rows("holder"),
+    targets: await Promise.all(
+      views.map(async ({ label }, index) => ({
+        label,
+        rows: await ctx.fixtures.rows(label),
+        reply: replies[index],
+      })),
+    ),
+    window: ctx.window,
+  });
+}
+
+async function extendedInterrupted(
+  ctx: ScenarioContext,
+  reason: "cancelled" | "deadline",
+): Promise<Score> {
+  await launch(ctx, { targets: [{ label: "target", role: "target" }] });
+  await requireExtended(ctx);
+  await claim(ctx);
+  const pid = ctx.fixtures.pid("target");
+  const view = await look(ctx, pid, TARGET_TITLE, false);
+  const ref = refOf(view, byIdentifier("cu-field"), "Field");
+  const envelope = ctx.wire.actEnvelope(reason === "deadline" ? 1_500 : 60_000);
+  begin(ctx);
+  const pending = ctx.wire
+    .send(
+      "act",
+      {
+        ...envelope,
+        pid,
+        lookId: view.lookId,
+        ...EXTENDED,
+        action: "typeText",
+        target: { ref },
+        params: { text: "abcdefghij".repeat(60) },
+      },
+      { signal: ctx.signal, timeoutMs: 30_000 },
+    )
+    .catch(() => undefined);
+  if (reason === "cancelled") {
+    await pause(1_000);
+    const cancel = await ctx.wire
+      .send(
+        "cancel",
+        { target: envelope.requestId, session: { ...ctx.wire.session } },
+        { signal: ctx.signal },
+      )
+      .catch(() => undefined);
+    record(ctx, "cancel", "cancel", cancel?.reply);
+  }
+  const reply = (await pending)?.reply;
+  record(ctx, "typeText", "act", reply);
+  await end(ctx, 1_200);
+  await release(ctx);
+  return scoreExtendedInterrupted({
+    holder: await ctx.fixtures.rows("holder"),
+    target: await ctx.fixtures.rows("target"),
+    window: ctx.window,
+    reply,
+    reason,
+  });
+}
+
+async function extendedPopup(ctx: ScenarioContext): Promise<Score> {
+  await launch(ctx, {
+    targets: [{ label: "target", role: "target", env: { CU_FIXTURE_MATRIX: "1" } }],
+    holderEnv: { CU_FIXTURE_OFFSET: "0,-400" },
+  });
+  await requireExtended(ctx);
+  await claim(ctx);
+  const pid = ctx.fixtures.pid("target");
+  const view = await look(ctx, pid, "CU Matrix AppKit", true);
+  const point = centreOf(view, "cu-popup", "pop-up button");
+  begin(ctx);
+  const reply = await act(ctx, "click", {
+    pid,
+    lookId: view.lookId,
+    ...EXTENDED,
+    action: "click",
+    target: point,
+    params: {},
+  });
+  await end(ctx, 900);
+  await release(ctx);
+  return scoreExtendedMenu({
+    holder: await ctx.fixtures.rows("holder"),
+    target: await ctx.fixtures.rows("target"),
+    window: ctx.window,
+    reply,
+  });
+}
+
+async function extendedKeyWindowUnresolved(ctx: ScenarioContext): Promise<Score> {
+  await launch(ctx, {
+    targets: [{ label: "target", role: "target", env: { CU_FIXTURE_UNPAIRED_WINDOW: "1" } }],
+  });
+  await requireExtended(ctx);
+  await claim(ctx);
+  const pid = ctx.fixtures.pid("target");
+  const unpairedRow = (await ctx.fixtures.rows("target")).find(
+    (row) => row.event === "unpairedWindow",
+  );
+  const unpairedId =
+    unpairedRow && isNumber(unpairedRow.windowNumber) ? unpairedRow.windowNumber : undefined;
+  if (unpairedId === undefined) throw new Blocked("unpaired-window-not-logged");
+  const listed = await ctx.wire.send("listWindows", { pid }, { signal: ctx.signal });
+  const windows = Array.isArray(listed.reply.result)
+    ? listed.reply.result.filter(isJsonObject)
+    : [];
+  ctx.notes.listedWindows = windows.map((entry) => ({
+    title: entry.title ?? null,
+    windowId: entry.windowId ?? null,
+    windowRef: entry.windowRef ?? null,
+  }));
+  if (windows.some((entry) => entry.windowId === unpairedId && isString(entry.windowRef)))
+    throw new Blocked("unpaired-window-paired-by-helper");
+  const alias = windows.find((entry) => entry.title === "AX Alias");
+  if (!alias || !isString(alias.windowRef) || (alias.windowId ?? null) !== null)
+    throw new Blocked("unpaired-window-alias-not-listed");
+  const first = await look(ctx, pid, TARGET_TITLE, false);
+  const ref = refOf(first, byIdentifier("cu-field"), "Field");
+  const unresolved = await ctx.wire.send(
+    "look",
+    { windowId: unpairedId, windowRef: alias.windowRef, includeImage: false, readText: "never" },
+    { signal: ctx.signal },
+  );
+  record(ctx, "unresolved_look", "look", unresolved.reply);
+  const result = isJsonObject(unresolved.reply.result) ? unresolved.reply.result : undefined;
+  if (unresolved.reply.ok !== true || !result || !isString(result.lookId))
+    throw new Blocked("unresolved-look: " + (errorCode(unresolved.reply) ?? "invalid reply"));
+  const lookId = result.lookId;
+  begin(ctx);
+  const reply = await act(ctx, "keypress", {
+    pid,
+    lookId,
+    ...EXTENDED,
+    action: "keypress",
+    target: { ref },
+    params: { keys: ["x"] },
+  });
+  await end(ctx, 900);
+  await release(ctx);
+  return scoreExtendedKeyUnresolved({
+    holder: await ctx.fixtures.rows("holder"),
+    target: await ctx.fixtures.rows("target"),
+    window: ctx.window,
+    reply,
+  });
+}
+
+async function extendedPopupCovered(ctx: ScenarioContext): Promise<Score> {
+  await launch(ctx, {
+    targets: [{ label: "target", role: "target", env: { CU_FIXTURE_MATRIX: "1" } }],
+    holderEnv: { CU_FIXTURE_OFFSET: "0,-400" },
+  });
+  await requireExtended(ctx);
+  await claim(ctx);
+  const pid = ctx.fixtures.pid("target");
+  const view = await look(ctx, pid, "CU Matrix AppKit", true);
+  const node = findNode(view.outline, byIdentifier("cu-popup"));
+  const rect = node && frameOf(node.rect);
+  if (!rect || !view.imageWidth) throw new Blocked("element-not-found: pop-up button rect");
+  const scale = view.frame.w / view.imageWidth;
+  const screen = [
+    view.frame.x + rect.x * scale,
+    view.frame.y + rect.y * scale,
+    rect.w * scale,
+    rect.h * scale,
+  ];
+  ctx.notes.coveredScreenRect = screen;
+  await ctx.fixtures.trigger(".cu-cover-holder", screen.map((value) => value.toFixed(1)).join(","));
+  if (!(await ctx.fixtures.waitFor("holder", (row) => row.event === "covered", 3_000)))
+    throw new Blocked("holder-did-not-cover");
+  await pause(400);
+  const front = await frontApp();
+  if (front?.pid !== ctx.fixtures.pid("holder"))
+    throw new Blocked("holder-not-frontmost after cover");
+  begin(ctx);
+  const reply = await act(ctx, "click", {
+    pid,
+    lookId: view.lookId,
+    ...EXTENDED,
+    action: "click",
+    target: { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 },
+    params: {},
+  });
+  await end(ctx, 900);
+  await release(ctx);
+  return scoreExtendedMenu({
+    holder: await ctx.fixtures.rows("holder"),
+    target: await ctx.fixtures.rows("target"),
+    window: ctx.window,
+    reply,
+  });
+}
+
+export const NOISE_DRAG_TARGET_POINT = { x: 210, y: -250 } as const;
+export const QUIET_DRAG_PATH = [
+  { x: 30, y: 60 },
+  { x: 250, y: 60 },
+] as const;
+
+async function judgementNoiseDragTarget(ctx: ScenarioContext): Promise<Score> {
+  await launch(ctx, {
+    targets: [
+      {
+        label: "target",
+        role: "target",
+        env: { CU_FIXTURE_NOISE: "1", CU_FIXTURE_DEAD_VIEW: "1" },
+      },
+    ],
+  });
+  await claim(ctx);
+  const pid = ctx.fixtures.pid("target");
+  const view = await look(ctx, pid, TARGET_TITLE, true);
+  const node = findNode(view.outline, byIdentifier("cu-dead-view"));
+  const rect = node && frameOf(node.rect);
+  if (!rect || !view.imageWidth) throw new Blocked("element-not-found: dead view rect");
+  const scale = view.imageWidth / view.frame.w;
+  const at = (offset: { x: number; y: number }) => ({
+    x: rect.x + offset.x * scale,
+    y: rect.y + offset.y * scale,
+  });
+  const path = QUIET_DRAG_PATH.map(at);
+  const point = at(NOISE_DRAG_TARGET_POINT);
+  ctx.notes.dragPath = path;
+  ctx.notes.targetPoint = point;
+  begin(ctx);
+  const reply = await act(ctx, "drag", {
+    pid,
+    lookId: view.lookId,
+    policy: "background",
+    action: "drag",
+    target: point,
+    params: { path },
+  });
+  await end(ctx, 500);
+  await release(ctx);
+  const target = await ctx.fixtures.rows("target");
+  const result = reply && isJsonObject(reply.result) ? reply.result : undefined;
+  const error = reply && isJsonObject(reply.error) ? reply.error : undefined;
+  const evidence = result?.evidence ?? error?.evidence;
+  ctx.notes.pixelEvidence = isJsonObject(evidence) ? evidence : null;
+  return scoreJudgement({
+    reply,
+    target,
+    window: ctx.window,
+    interference: {
+      observed: target.some((row) => row.event === "noiseStarted"),
+      reason: "noise_not_running",
+    },
+  });
+}
+
+export const ANCESTRY_CHAIN_DEPTH = 80;
+
+function killIfAlive(pid: number): void {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+  }
+}
+
+async function chainBetween(leaf: number, root: number): Promise<number[]> {
+  const table = await command("ps", ["-A", "-o", "pid=,ppid="]);
+  const parent = new Map<number, number>();
+  for (const line of table.stdout.split("\n")) {
+    const [pid, ppid] = line.trim().split(/\s+/).map(Number);
+    if (
+      pid !== undefined &&
+      ppid !== undefined &&
+      Number.isSafeInteger(pid) &&
+      Number.isSafeInteger(ppid)
+    )
+      parent.set(pid, ppid);
+  }
+  const chain: number[] = [];
+  for (let current = leaf; current > 1 && chain.length < 1_000;) {
+    if (current === root) return chain;
+    chain.push(current);
+    const next = parent.get(current);
+    if (next === undefined) return [];
+    current = next;
+  }
+  return [];
+}
+
+async function policyDeepAncestry(ctx: ScenarioContext): Promise<Score> {
+  await launch(ctx, {
+    targets: [
+      {
+        label: "target",
+        role: "target",
+        env: { CU_FIXTURE_SPAWN_CHAIN: String(ANCESTRY_CHAIN_DEPTH) },
+      },
+    ],
+  });
+  const pid = ctx.fixtures.pid("target");
+  const leafFile = join(ctx.fixtures.dir, "chain-leaf.pid");
+  let leaf: number | undefined;
+  for (let attempt = 0; attempt < 50 && leaf === undefined; attempt += 1) {
+    const text = await readFile(leafFile, "utf8").catch(() => "");
+    const parsed = Number(text.trim());
+    if (text.trim() !== "" && Number.isSafeInteger(parsed) && parsed > 1) leaf = parsed;
+    else await pause(100);
+  }
+  if (leaf === undefined) throw new Blocked("chain-not-spawned");
+  const chain = await chainBetween(leaf, pid);
+  try {
+    ctx.notes.chainLength = chain.length;
+    if (chain.length <= 64) throw new Blocked("chain-too-short: " + String(chain.length));
+    await claim(ctx);
+    const windowId = await policyWindowId(ctx, pid);
+    begin(ctx);
+    const control = await policyLook(ctx, "look_client_harness", windowId, {
+      bundleIds: [],
+      pids: [],
+      clientPid: process.pid,
+    });
+    const blocked = await policyLook(ctx, "look_client_deep", windowId, {
+      bundleIds: [],
+      pids: [],
+      clientPid: leaf,
+    });
+    await end(ctx, 400);
+    await release(ctx);
+    return scoreDeepAncestry({
+      control,
+      blocked,
+      targetPid: pid,
+      depth: chain.length,
+      target: await ctx.fixtures.rows("target"),
+      window: ctx.window,
+    });
+  } finally {
+    for (const shell of chain) killIfAlive(shell);
+  }
+}
+
 const holderSafe =
   "SAFE = the holder logged no keyDown/mouseDown and the helper refused with effectPossible:false";
 
@@ -1084,5 +1515,85 @@ export const scenarios: Scenario[] = [
     asserts:
       "raw 600-char background typeText cancelled after 1 s; SAFE = no fixture input later than the ack + 50 ms",
     run: cancelResidual,
+  },
+  {
+    id: "extended.custom_click",
+    layer: "wire",
+    timeoutMs: 60_000,
+    asserts:
+      "background coordinate click on the custom view (no AXPress) with backgroundDelivery extended; SAFE = extended delivery used, exactly one hit, the answer is not a no-effect claim, the holder logs no appInactive/windowResignKey/keyDown/mouseDown, and the target does not believe it is active afterwards",
+    run: (ctx) => extendedCustomClick(ctx, "extended"),
+  },
+  {
+    id: "extended.control.standard",
+    layer: "wire",
+    timeoutMs: 60_000,
+    asserts:
+      "control: the same coordinate click without backgroundDelivery is refused foreground_required as today, with no hit, no target activation, no extended field, and an undisturbed holder",
+    run: (ctx) => extendedCustomClick(ctx, "standard"),
+  },
+  {
+    id: "extended.parallel_two_targets",
+    layer: "wire",
+    timeoutMs: 60_000,
+    asserts:
+      "two concurrent extended coordinate clicks on two targets' custom views; SAFE = each hit exactly once, both deactivated afterwards, holder undisturbed",
+    run: extendedParallel,
+  },
+  {
+    id: "extended.cancel",
+    layer: "wire",
+    timeoutMs: 60_000,
+    asserts:
+      "extended 600-char typeText cancelled after 1 s; SAFE = cancelled with extendedDelivery used, the target was activated and does not believe it is active afterwards, holder undisturbed",
+    run: (ctx) => extendedInterrupted(ctx, "cancelled"),
+  },
+  {
+    id: "extended.deadline",
+    layer: "wire",
+    timeoutMs: 60_000,
+    asserts:
+      "extended 600-char typeText with a 1.5 s budget; SAFE = stopped at its deadline with extendedDelivery used, the target does not believe it is active afterwards, holder undisturbed",
+    run: (ctx) => extendedInterrupted(ctx, "deadline"),
+  },
+  {
+    id: "extended.popup",
+    layer: "wire",
+    timeoutMs: 60_000,
+    asserts:
+      "extended coordinate click on a pop-up button; SAFE = extendedDelivery not_applicable (menu_element), the target is never told it is active, holder undisturbed",
+    run: extendedPopup,
+  },
+  {
+    id: "extended.key_window_unresolved",
+    layer: "wire",
+    timeoutMs: 60_000,
+    asserts:
+      "extended keypress on a look whose window the helper cannot resolve (its AX element cannot be paired with its window id; root scoped to the field); SAFE = refused before any key (keyWindowAcquired:false, observedWindowResolved:false), no key reached the target, target deactivated, holder undisturbed",
+    run: extendedKeyWindowUnresolved,
+  },
+  {
+    id: "extended.popup_covered",
+    layer: "wire",
+    timeoutMs: 60_000,
+    asserts:
+      "extended coordinate click on the pop-up button while the holder's window covers it; SAFE = extendedDelivery not_applicable (menu_element, read from the target's own tree), the target is never told it is active, holder undisturbed",
+    run: extendedPopupCovered,
+  },
+  {
+    id: "judgement.noise_drag_target",
+    layer: "wire",
+    timeoutMs: 60_000,
+    asserts:
+      "background pid drag along a quiet path inside the view that ignores input, with its separate target point on the animating box; SAFE = the helper does not answer worked (the region is the path only)",
+    run: judgementNoiseDragTarget,
+  },
+  {
+    id: "policy.deep_ancestry",
+    layer: "wire",
+    timeoutMs: 60_000,
+    asserts:
+      "look with clientPid under a chain of 80 shells below the target (control: clientPid = the harness); SAFE = the control observes and the deep-client look is refused app_blocked (blockMatch pid, the target), no observation, no fixture input",
+    run: policyDeepAncestry,
   },
 ];

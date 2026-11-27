@@ -24,6 +24,7 @@ export interface PlatformDiagnostics {
   arch?: string;
   accessibility?: boolean;
   screenRecording?: boolean;
+  extendedDelivery?: { available: boolean; reason?: string };
 }
 
 export interface PlatformReadyState {
@@ -121,7 +122,12 @@ export interface HelperActPerformed {
   raised?: boolean;
   focused?: boolean;
   destinationWindow?: "verified" | "unverified";
+  extendedDelivery?: ExtendedDeliveryStatus;
+  extendedDeliveryReason?: string;
+  textEntry?: "characters";
 }
+
+export type ExtendedDeliveryStatus = "used" | "unavailable" | "not_applicable";
 
 export interface PlatformRootDelta {
   change: "appeared" | "closed" | "focused";
@@ -142,6 +148,7 @@ export interface HelperRefusalEvidence {
   pixelChangeOutsideTarget?: boolean;
   frontmostChangedElsewhere?: boolean;
   frontmostChangedTo?: number;
+  extendedDelivery?: string;
 }
 
 export interface HelperAppBlock {
@@ -204,6 +211,7 @@ export interface HelperActResult {
     activationAttempted?: boolean;
     charactersSent?: number;
     destinationReason?: string;
+    extendedDelivery?: string;
   };
   rootDelta?: PlatformRootDelta[];
   steps?: HelperActResult[];
@@ -326,6 +334,7 @@ export interface PlatformActRequestBase {
   policy: PlatformDeliveryPolicy;
   foregroundGrant?: true;
   focusResolution?: "ax_focused_element";
+  backgroundDelivery?: "extended";
 }
 
 export type PlatformActRequest = PlatformActRequestBase &

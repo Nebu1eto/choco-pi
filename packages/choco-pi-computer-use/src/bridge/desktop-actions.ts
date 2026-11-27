@@ -16,6 +16,7 @@ import { currentPlatformBackend } from "../platform/index.ts";
 import {
   HelperInterruption,
   PlatformCommandError,
+  type HelperActResult,
   type HelperInterruptionState,
   type PlatformRoot as HelperWindow,
 } from "../platform/types.ts";
@@ -26,6 +27,7 @@ import {
   batchPreparationError,
   deliveredActionsText,
   destinationFailureOf,
+  endedAfterExtendedDelivery,
   endForegroundSection,
   ensurePointIsInLookImage,
   errorEffectPossible,
@@ -169,17 +171,9 @@ export async function dispatchUiTransaction(
     if (!result.steps || result.steps.length === 0)
       throw new Error("Native action transaction returned no checked steps.");
     const execution = aggregateExecutions(
-      result.steps.map((step, index) => {
-        const trace = executionTraceFromAct(step, "ax_only");
-        trace.requestId = requests[index]?.requestId;
-        const action = prepared[index];
-        const refusal = action && refusalForResult(target, action, true, "ax_only", step);
-        if (refusal) {
-          trace.outcome = "didnt";
-          trace.refusal = refusal;
-        }
-        return trace;
-      }),
+      result.steps.map((step, index) =>
+        nativeBatchStepTrace(step, prepared[index], target, requests[index]?.requestId),
+      ),
     );
     const batchTrace = executionTraceFromAct(result, "ax_only");
     execution.outcome = result.outcome;
@@ -212,7 +206,7 @@ export async function dispatchUiTransaction(
         break;
       }
       steps.push(step);
-      if (step.refusal || step.outcome === "didnt") break;
+      if (step.refusal || step.outcome === "didnt" || endedAfterExtendedDelivery(step)) break;
     }
     const execution = aggregateExecutions(steps);
     if (session.section) execution.foregroundSection = session.section.trace;
@@ -232,6 +226,29 @@ export async function dispatchUiTransaction(
   } finally {
     endForegroundSection(session, unfinished);
   }
+}
+
+export function nativeBatchStepTrace(
+  step: HelperActResult,
+  action: NativePreparedAction | undefined,
+  target: ResolvedTarget,
+  requestId: string | undefined,
+): ExecutionTrace {
+  const trace = executionTraceFromAct(step, "ax_only");
+  trace.requestId = requestId;
+  if (
+    step.error?.extendedDelivery === "used" ||
+    step.error?.evidence?.extendedDelivery === "used"
+  ) {
+    trace.outcome = "unknown";
+    return trace;
+  }
+  const refusal = action && refusalForResult(target, action, true, "ax_only", step);
+  if (refusal) {
+    trace.outcome = "didnt";
+    trace.refusal = refusal;
+  }
+  return trace;
 }
 
 function unfinishedDelivery(error: Error): HelperInterruption | undefined {
@@ -268,6 +285,25 @@ export function unverifiedEffectText(unverified: UnverifiedAction[]): string {
     )
     .join(", ");
   return ` Effect not verified for ${listed}; confirm it in the returned state before reporting success.`;
+}
+
+export function extendedDeliveryText(execution: ExecutionTrace): string {
+  const steps = execution.steps ?? [execution];
+  const used = steps.filter((step) => step.performed?.extendedDelivery === "used").length;
+  if (used === 0) return "";
+  const ended = steps.findIndex(endedAfterExtendedDelivery);
+  const endedText =
+    ended < 0
+      ? ""
+      : ` Action ${ended + 1} ended after the app was told it was active, before its effect could be verified.`;
+  return ` Extended background delivery was used for ${used === 1 ? "1 action" : `${used} actions`} (the app was told it was active while the input was sent); an effect that was not verified was not sent again.${endedText}`;
+}
+
+export function notSentText(executed: number, total: number): string {
+  if (executed >= total) return "";
+  const first = executed + 1;
+  const range = first === total ? `Action ${total} was` : `Actions ${first}-${total} were`;
+  return ` ${range} not sent.`;
 }
 
 export function markUnverifiedRegions(
@@ -809,7 +845,7 @@ export async function performDesktopTransaction(
         : `Executed ${executedActions.length} checked UI action${plural} in ${target.appName} — ${target.windowTitle}. Returned state ${capture.capture.stateId}.`;
       const result = await buildToolResult(
         "act_ui",
-        `${summary}${unverifiedEffectText(unverified)}`,
+        `${summary}${unverifiedEffectText(unverified)}${extendedDeliveryText(execution)}${failure ? "" : notSentText(executedActions.length, actions.length)}`,
         capture,
         execution,
         signal,

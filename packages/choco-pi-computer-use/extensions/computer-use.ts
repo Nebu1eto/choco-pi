@@ -23,9 +23,10 @@ import {
   executeWaitFor,
 } from "../src/bridge.ts";
 import { beginComputerUseSession } from "../src/bridge/session-lifecycle.ts";
-import { endComputerUseSession, sessionKeyOf } from "../src/bridge/state-store.ts";
+import { endComputerUseSession, runtimeState, sessionKeyOf } from "../src/bridge/state-store.ts";
 import { appPolicyStatusLines, ensureAppPolicyReady } from "../src/app-policy.ts";
 import {
+  BACKGROUND_DELIVERY_ENV,
   BLOCKED_APPS_ENV,
   foregroundPromptMode,
   getLoadedComputerUseConfig,
@@ -36,6 +37,7 @@ import {
   runWithAppPolicy,
   sessionGrantGeneration,
   UNBLOCKED_APPS_ENV,
+  type BackgroundDeliveryMode,
   type ForegroundPromptMode,
 } from "../src/config.ts";
 import {
@@ -331,6 +333,23 @@ const evaluateBrowserTool = defineTool({
     executeEvaluateBrowser(id, toEvaluateBrowserParams(params), signal, onUpdate, ctx),
 });
 
+function backgroundDeliveryStatus(mode: BackgroundDeliveryMode): string {
+  const diagnostics = runtimeState.helperDiagnostics;
+  const fallback = mode === "extended" ? "; extended requests are delivered as standard" : "";
+  const helper = !diagnostics
+    ? "helper not checked yet in this session"
+    : !diagnostics.extendedDelivery
+      ? `this helper does not support extended delivery${fallback}`
+      : diagnostics.extendedDelivery.available
+        ? "the helper can use extended delivery"
+        : `the helper cannot use extended delivery (${diagnostics.extendedDelivery.reason ?? "unavailable"})${fallback}`;
+  const meaning =
+    mode === "extended"
+      ? "opt-in, undocumented macOS interfaces"
+      : `default; "extended" in the config or ${BACKGROUND_DELIVERY_ENV} opts in`;
+  return `background_delivery: ${mode} (${meaning}; ${helper})`;
+}
+
 function formatConfigStatus(): string {
   const loaded = getLoadedComputerUseConfig();
   const sessionMode = getSessionForegroundPromptMode();
@@ -352,6 +371,7 @@ function formatConfigStatus(): string {
     `foreground_grant: ${loaded.config.foreground_grant.join(", ") || "none"}`,
     `foreground_prompt: ${foregroundPromptMode()}${sessionMode ? " (set for this session)" : ""}`,
     `restore_focus: ${loaded.config.restore_focus ? "enabled" : "disabled"}`,
+    backgroundDeliveryStatus(loaded.config.background_delivery),
     `session grants: ${getSessionGrants().join(", ") || "none"}`,
     `session denials: ${getSessionDenials().join(", ") || "none"}`,
     "Change the prompt mode with /computer-use grant ask|always|off.",
@@ -385,7 +405,7 @@ export async function runComputerUseCommand(
   args: string,
   cwd: string,
 ): Promise<{ message: string; level: "info" | "warning" | "error" }> {
-  const { appPolicy } = loadComputerUseConfig(cwd);
+  const { appPolicy } = await loadComputerUseConfig(cwd);
   return await runWithAppPolicy(appPolicy, async () => await computerUseCommand(args));
 }
 
@@ -418,13 +438,14 @@ export function createComputerUseSessionHandlers(): ComputerUseSessionHandlers {
 
   return {
     async sessionStart(_event, ctx) {
-      loadComputerUseConfig(ctx.cwd);
+      const cwd = ctx.cwd;
       const scope = beginComputerUseSession(ctx);
       startedSessionKey = scope.key;
       startedScope = scope;
-      if (!ctx.hasUI) return;
-      const ui = ctx.ui;
+      const ui = ctx.hasUI ? ctx.ui : undefined;
       await runInSessionScope(scope, async () => {
+        await loadComputerUseConfig(cwd);
+        if (!ui || scope.retired || startedScope !== scope) return;
         try {
           await ensureComputerUseSetup(ctx, scope.signal);
         } catch (error) {

@@ -487,6 +487,63 @@ export function renderCellTable(tables: CellTable[]): string {
   return [...header, ...rows.map((row) => "| " + row + " |")].join("\n");
 }
 
+export function believesActive(rows: JsonObject[]): boolean {
+  const states = rows.filter((row) => row.event === "appActive" || row.event === "appInactive");
+  return states.length > 0 && states[states.length - 1]?.event === "appActive";
+}
+
+export interface AfterState {
+  cell: string;
+  measured: number;
+  extendedUsed: number;
+  extendedOther: Record<string, number>;
+  activated: number;
+  leftActive: number | null;
+}
+
+export function summarizeAfterState(cellIds: string[], reps: Rep[]): AfterState[] {
+  return cellIds.map((cell) => {
+    const mine = reps.filter(
+      (rep) => rep.cell === cell && rep.mode === "background" && !rep.skipped,
+    );
+    const extendedOther: Record<string, number> = {};
+    let extendedUsed = 0;
+    let activated = 0;
+    let leftActive: number | null = null;
+    for (const rep of mine) {
+      const status = rep.notes.extendedDelivery;
+      if (status === "used") extendedUsed += 1;
+      else if (isString(status)) extendedOther[status] = (extendedOther[status] ?? 0) + 1;
+      const rows = rep.notes.targetFocusRows;
+      if (Array.isArray(rows) && rows.some((row) => isString(row) && row.startsWith("appActive")))
+        activated += 1;
+      const active = rep.notes.targetBelievesActive;
+      if (active === true || active === false) leftActive = (leftActive ?? 0) + (active ? 1 : 0);
+    }
+    return { cell, measured: mine.length, extendedUsed, extendedOther, activated, leftActive };
+  });
+}
+
+export function renderAfterStateTable(rows: AfterState[]): string {
+  const header = [
+    "| cell | measured | extended used | other extended status | target activated during act | target left active |",
+    "| --- | --- | --- | --- | --- | --- |",
+  ];
+  const body = rows.map((row) =>
+    [
+      row.cell,
+      String(row.measured),
+      String(row.extendedUsed),
+      fmtAnswers(row.extendedOther),
+      row.leftActive === null ? "n/o" : String(row.activated),
+      row.leftActive === null ? "n/o" : String(row.leftActive),
+    ]
+      .map(cellText)
+      .join(" | "),
+  );
+  return [...header, ...body.map((row) => "| " + row + " |")].join("\n");
+}
+
 export function renderLatencyTable(summaries: LatencySummary[]): string {
   const pair = (summary: LatencySummary, field: string): string => {
     const stat = summary.stats[field];

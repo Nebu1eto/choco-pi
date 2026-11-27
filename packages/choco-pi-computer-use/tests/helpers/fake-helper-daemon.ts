@@ -44,6 +44,14 @@ export interface FakeHelperDaemonOptions {
   realOwner?: "window" | "element";
   dropForegroundActConnection?: boolean;
   setTextValueOnly?: boolean;
+  extendedDelivery?: "available" | "unavailable";
+  extendedAnswer?:
+    | "unknown"
+    | "foreground_required"
+    | "foreground_required_bare"
+    | "didnt"
+    | "ending"
+    | "key_window_refusal";
 }
 
 export interface FakeHelperDaemon {
@@ -230,6 +238,8 @@ class FakeHelperState {
   private readonly targetKeyWindowId?: number;
   private readonly realOwner?: "window" | "element";
   private readonly setTextValueOnly: boolean;
+  private readonly extendedDelivery?: "available" | "unavailable";
+  private readonly extendedAnswer: NonNullable<FakeHelperDaemonOptions["extendedAnswer"]>;
   private owner?: Session & { lastSeen: number };
   private ownerActive = 0;
   private readonly active = new Map<string, Tracked>();
@@ -268,6 +278,8 @@ class FakeHelperState {
     this.targetKeyWindowId = options.targetKeyWindowId;
     this.realOwner = options.realOwner;
     this.setTextValueOnly = options.setTextValueOnly === true;
+    this.extendedDelivery = options.extendedDelivery;
+    this.extendedAnswer = options.extendedAnswer ?? "unknown";
     const user = options.userApp ?? "terminal";
     this.userApp = user === "neutral" ? NEUTRAL_USER_APP : TERMINAL_USER_APP;
     this.userWindowTitle = USER_WINDOW_TITLES[user];
@@ -499,6 +511,65 @@ class FakeHelperState {
     }
   }
 
+  private extendedStatus(request: JsonObject, policy: string): string | undefined {
+    if (request.backgroundDelivery !== "extended") return undefined;
+    if (this.extendedDelivery !== "available") return "unavailable";
+    return policy === "background" ? "used" : "not_applicable";
+  }
+
+  private extendedPointerAnswer(): JsonObject {
+    const evidence: JsonObject = {
+      deliveryUsed: "pid_pointer",
+      pidPointerAttempted: true,
+      observableChange: false,
+      pixelCheck: "compared",
+      pixelChange: false,
+    };
+    const performed: JsonObject = {
+      delivery: "pid",
+      grounding: "coordinates",
+      verification: "caller_required",
+      extendedDelivery: "used",
+    };
+    switch (this.extendedAnswer) {
+      case "foreground_required":
+        throw new FakeFailure("foreground_required", PID_NO_CHANGE_REASON, false, undefined, {
+          evidence: { ...evidence, extendedDelivery: "used" },
+          extendedDelivery: "used",
+        });
+      case "foreground_required_bare":
+        throw new FakeFailure("foreground_required", PID_NO_CHANGE_REASON, false, undefined, {
+          extendedDelivery: "used",
+        });
+      case "didnt":
+        return {
+          outcome: "didnt",
+          performed,
+          evidence: { observableChange: false, extendedDelivery: "used" },
+        };
+      case "ending":
+        return {
+          outcome: "unknown",
+          performed: { delivery: "pid", extendedDelivery: "used" },
+          evidence: {
+            extendedDelivery: "used",
+            observableChange: false,
+            extendedDeliveryEnding: {
+              code: "foreground_required",
+              message: "The text field does not accept accessibility focus",
+            },
+          },
+        };
+      case "key_window_refusal":
+      case "unknown":
+        return {
+          outcome: "unknown",
+          performed,
+          evidence: { ...evidence, extendedDelivery: "used" },
+        };
+    }
+  }
+
   private diagnostics(): JsonObject {
     const output: JsonObject = {
       protocolVersion: this.protocolVersion,
@@ -526,6 +597,11 @@ class FakeHelperState {
     };
     if (this.executablePath) output.executablePath = this.executablePath;
     if (this.startedAt !== undefined) output.startedAt = this.startedAt;
+    if (this.extendedDelivery)
+      output.extendedDelivery =
+        this.extendedDelivery === "available"
+          ? { available: true, osMajorVersion: 27, missingSymbols: [] }
+          : { available: false, osMajorVersion: 26, missingSymbols: [], reason: "os_not_measured" };
     return output;
   }
 
@@ -1016,13 +1092,15 @@ class FakeHelperState {
         await this.sleep(tracked, this.pidSettleHoldMs);
         this.checkpoint(tracked);
       }
+      const extended = this.extendedStatus(request, policy);
+      if (extended === "used") return finish(this.extendedPointerAnswer());
       if (this.script === "s10-pid-unknown")
         return finish({
           outcome: "unknown",
           performed: { delivery: "pid", grounding: "coordinates", verification: "caller_required" },
           evidence: { ...PID_OUTSIDE_TARGET_EVIDENCE },
         });
-      throw new FakeFailure("foreground_required", PID_NO_CHANGE_REASON, effectBefore, undefined, {
+      const details: JsonObject = {
         evidence: {
           deliveryUsed: "pid_pointer",
           pidPointerAttempted: true,
@@ -1030,7 +1108,15 @@ class FakeHelperState {
           pixelCheck: "compared",
           pixelChange: false,
         },
-      });
+      };
+      if (extended) details.extendedDelivery = extended;
+      throw new FakeFailure(
+        "foreground_required",
+        PID_NO_CHANGE_REASON,
+        effectBefore,
+        undefined,
+        details,
+      );
     }
 
     if (action === "setText") {
@@ -1058,6 +1144,29 @@ class FakeHelperState {
     }
     if (action === "typeText") {
       const text = isString(params.text) ? params.text : "";
+      if (
+        this.extendedStatus(request, policy) === "used" &&
+        this.extendedAnswer === "key_window_refusal"
+      ) {
+        this.checkpoint(tracked);
+        effect();
+        throw new FakeFailure(
+          "foreground_required",
+          "Extended background delivery could not make the observed window the target's key window; no key input was sent",
+          false,
+          undefined,
+          { keyWindowAcquired: false, observedWindowResolved: true, extendedDelivery: "used" },
+        );
+      }
+      if (this.extendedStatus(request, policy) === "used" && this.extendedAnswer === "didnt") {
+        this.checkpoint(tracked);
+        effect();
+        return finish({
+          outcome: "didnt",
+          performed: { delivery, grounding: "coordinates", extendedDelivery: "used" },
+          evidence: { value: this.fieldValue, valueChanged: false, extendedDelivery: "used" },
+        });
+      }
       if (this.script === "s3-didnt") {
         this.checkpoint(tracked);
         effect();

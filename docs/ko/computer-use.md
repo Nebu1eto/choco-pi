@@ -75,22 +75,24 @@ helper에는 macOS 권한 두 가지가 필요합니다. 에이전트는 화면 
   "foreground_grant": [],
   "foreground_prompt": "ask",
   "restore_focus": true,
+  "background_delivery": "standard",
   "blocked_apps": [],
   "unblocked_apps": []
 }
 ```
 
-| 키                  | 환경 변수                                       | 효과                                                                                                                                                                                        |
-| ------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `browser_use`       | `PI_COMPUTER_USE_BROWSER_USE`                   | 에이전트가 브라우저 창을 조작할 수 있게 합니다.                                                                                                                                             |
-| `managed_browser`   | `PI_COMPUTER_USE_MANAGED_BROWSER`               | 관리형 브라우저가 필요할 때 Pi가 실행할 브라우저입니다. `chrome`이나 `helium`을 쓸 수 있습니다.                                                                                             |
-| `headless`          | `PI_COMPUTER_USE_HEADLESS`                      | 포인터나 키보드 이벤트를 쓰지 않고 손쉬운 사용 기능으로만 동작을 전달합니다.                                                                                                                |
-| `cursor_overlay`    | `PI_COMPUTER_USE_CURSOR_OVERLAY`                | 에이전트가 조작하는 동안 화면에 에이전트 커서를 표시합니다.                                                                                                                                 |
-| `foreground_grant`  | `PI_COMPUTER_USE_FOREGROUND_GRANT`(쉼표로 구분) | 에이전트가 앞으로 가져오고, 창을 올리고, 키보드·마우스 이벤트를 보낼 수 있는 앱의 번들 ID 목록이며, `"*"`도 쓸 수 있습니다. 이 목록은 도구 호출로 바꿀 수 없습니다. 아래 설명을 참고하세요. |
-| `foreground_prompt` | `PI_COMPUTER_USE_FOREGROUND_PROMPT`             | 앱에 포커스가 필요한데 허용 목록에 없을 때 어떻게 할지 정합니다. `ask`(기본값), `always`, `off` 중 하나이며, 아래 설명을 참고하세요.                                                        |
-| `restore_focus`     | `PI_COMPUTER_USE_RESTORE_FOCUS`                 | 허용된 포그라운드 입력이 포커스를 가져간 뒤, 그사이 사용자가 다른 앱으로 전환하지 않았다면 원래 앞에 있던 앱에 포커스를 돌려줍니다.                                                         |
-| `blocked_apps`      | `PI_COMPUTER_USE_BLOCKED_APPS`(쉼표로 구분)     | 에이전트가 살펴보거나 조작할 수 없게 추가로 막을 앱의 번들 ID 목록입니다. 모든 설정 소스의 항목이 합쳐집니다. 아래 설명을 참고하세요.                                                       |
-| `unblocked_apps`    | 없음(사용자 파일에서만)                         | 기본 차단 목록에서 뺄 앱의 번들 ID 목록입니다. 프로젝트 파일과 `PI_COMPUTER_USE_UNBLOCKED_APPS`에 적은 값은 무시합니다. 아래 설명을 참고하세요.                                             |
+| 키                    | 환경 변수                                       | 효과                                                                                                                                                                                        |
+| --------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `browser_use`         | `PI_COMPUTER_USE_BROWSER_USE`                   | 에이전트가 브라우저 창을 조작할 수 있게 합니다.                                                                                                                                             |
+| `managed_browser`     | `PI_COMPUTER_USE_MANAGED_BROWSER`               | 관리형 브라우저가 필요할 때 Pi가 실행할 브라우저입니다. `chrome`이나 `helium`을 쓸 수 있습니다.                                                                                             |
+| `headless`            | `PI_COMPUTER_USE_HEADLESS`                      | 포인터나 키보드 이벤트를 쓰지 않고 손쉬운 사용 기능으로만 동작을 전달합니다.                                                                                                                |
+| `cursor_overlay`      | `PI_COMPUTER_USE_CURSOR_OVERLAY`                | 에이전트가 조작하는 동안 화면에 에이전트 커서를 표시합니다.                                                                                                                                 |
+| `foreground_grant`    | `PI_COMPUTER_USE_FOREGROUND_GRANT`(쉼표로 구분) | 에이전트가 앞으로 가져오고, 창을 올리고, 키보드·마우스 이벤트를 보낼 수 있는 앱의 번들 ID 목록이며, `"*"`도 쓸 수 있습니다. 이 목록은 도구 호출로 바꿀 수 없습니다. 아래 설명을 참고하세요. |
+| `foreground_prompt`   | `PI_COMPUTER_USE_FOREGROUND_PROMPT`             | 앱에 포커스가 필요한데 허용 목록에 없을 때 어떻게 할지 정합니다. `ask`(기본값), `always`, `off` 중 하나이며, 아래 설명을 참고하세요.                                                        |
+| `restore_focus`       | `PI_COMPUTER_USE_RESTORE_FOCUS`                 | 허용된 포그라운드 입력이 포커스를 가져간 뒤, 그사이 사용자가 다른 앱으로 전환하지 않았다면 원래 앞에 있던 앱에 포커스를 돌려줍니다.                                                         |
+| `background_delivery` | `PI_COMPUTER_USE_BACKGROUND_DELIVERY`           | `standard`(기본값)나 `extended`입니다. `extended`는 앱에 활성화되었다고 알려 더 많은 입력을 백그라운드로 전달하는 선택 기능입니다. 아래 설명을 참고하세요.                                  |
+| `blocked_apps`        | `PI_COMPUTER_USE_BLOCKED_APPS`(쉼표로 구분)     | 에이전트가 살펴보거나 조작할 수 없게 추가로 막을 앱의 번들 ID 목록입니다. 모든 설정 소스의 항목이 합쳐집니다. 아래 설명을 참고하세요.                                                       |
+| `unblocked_apps`      | 없음(사용자 파일에서만)                         | 기본 차단 목록에서 뺄 앱의 번들 ID 목록입니다. 프로젝트 파일과 `PI_COMPUTER_USE_UNBLOCKED_APPS`에 적은 값은 무시합니다. 아래 설명을 참고하세요.                                             |
 
 **포그라운드 허용 목록.** 허용 목록에 없는 앱에는 입력을 백그라운드로 보냅니다. 접근성 경로가 없는 포인터 입력도 먼저 백그라운드로 시도합니다. 포커스를 가져오지 않고 앱 프로세스에 입력을 보낸 뒤, helper가 잠깐 기다리며 대상에 변화가 있는지 지켜봅니다. 대상 자체(값, 창, 대상 주변 픽셀)가 바뀌면 성공으로 봅니다. 창의 다른 곳만 바뀌었으면 효과를 확인하지 못한 것으로 보고하고, 에이전트에게 반환된 상태에서 직접 확인하라고 알립니다. 아무 변화도 없으면 `foreground_required`로 거부하고, 같은 호출 안에서는 다시 보내지 않습니다. 허용 목록에 있는 앱에는 이런 포인터 입력을 처음부터 포그라운드로 보냅니다. 포그라운드 입력은 helper가 그 앱과 창이 실제로 앞으로 나왔는지 확인한 뒤에만 보냅니다. 확인되지 않으면 아무것도 보내지 않고 그 사실을 알립니다. 마우스 버튼이나 키를 놓는 순간 그 앱이 더 이상 앞에 있지 않으면, 호출을 멈추고 입력이 다른 앱에 갔을 수 있다고 알립니다.
 
@@ -100,9 +102,17 @@ helper에는 macOS 권한 두 가지가 필요합니다. 에이전트는 화면 
 - `always`: 묻지 않고 어떤 앱이든 앞으로 가져와 입력을 보내도록 명시적으로 허용합니다. 이렇게 허용된 앱은 호스트 모드와 관계없이 세션이 끝날 때까지 허용 상태로 남습니다.
 - `off`: 묻지 않으며, `foreground_grant`만 적용합니다.
 
+**확장 백그라운드 전달.** `background_delivery`의 기본값은 `standard`이며, 위에서 설명한 대로 동작합니다. `extended`를 직접 켜면 포커스를 가져오지 않고도 훨씬 많은 입력이 동작합니다. 손쉬운 사용 동작이 없는 뷰를 클릭하거나, WebKit과 Chromium의 웹 페이지에 입력하는 경우가 여기에 해당합니다. 이런 동작마다 helper는 대상 앱에 앱이 활성화되었다고 알리고, 살펴본 창을 키 윈도로 만들고, 모든 포인터 이벤트를 그 창으로 보냅니다. 동작이 끝나면, 실패하거나 취소된 경우에도, 앱에 다시 비활성화되었다고 알립니다. 사용자가 앞에 둔 앱은 바뀌지 않습니다. 웹 버튼과 링크는 손쉬운 사용 기능으로 누르고, 웹 텍스트 필드는 손쉬운 사용 기능으로 포커스를 준 뒤 한 글자씩 키 입력을 보냅니다. 팝업 버튼과 메뉴, 보안 텍스트 필드, helper가 앱 자체의 손쉬운 사용 정보에서 알아볼 수 없는 컨트롤, 이미 앞에 있는 앱, 백그라운드에서 이미 동작하는 손쉬운 사용 동작, 허용된 포그라운드 입력에는 기존 동작을 그대로 씁니다. 다른 앱의 창이 컨트롤을 가려도 helper가 알아보는 컨트롤은 달라지지 않습니다. helper가 효과를 확인하지 못한 동작은 확인되지 않은 것으로 보고하며, 포그라운드로 다시 보내지 않습니다. 앱에 활성화되었다고 알린 뒤 동작이 도중에 끝난 경우(예: 포커스를 받지 않는 웹 텍스트 필드)도 마찬가지이며, 이때 그 호출의 나머지 동작은 보내지 않습니다.
+
+확장 전달은 문서화되지 않은 macOS 인터페이스에 의존하며, macOS 27에서만 측정했습니다. 다른 버전이거나 이 인터페이스를 찾지 못하면 helper는 기존 방식으로 전달하고 결과에 그 사실을 적습니다. helper가 이 방식을 쓸 수 있는지는 `/computer-use`에서 확인할 수 있습니다. 다음 위험이 있습니다.
+
+- 대상 앱은 동작마다 0.5초쯤 자기가 활성화되었다고 여깁니다. 활성화에 반응하는 앱은 패널을 열거나 스스로 앞으로 나올 수 있습니다.
+- helper가 보내는 키 윈도 기록 때문에 앱은 마우스 누름을 한 번 더 받습니다.
+- 동작 도중 helper가 충돌하거나 SIGKILL로 종료되면, 앱은 다음에 활성화되거나 비활성화될 때까지 자기가 활성화되었다고 여깁니다. 정상 종료(helper의 `shutdown` 명령, SIGTERM, SIGINT, SIGHUP)에서는 종료 전에 앱에 먼저 알립니다.
+
 **차단된 앱.** computer use는 일부 앱을 절대 살펴보거나 조작하지 않습니다. 그래서 에이전트는 Pi의 셸 승인을 거치지 않고 Pi가 실행 중인 터미널에 입력하거나 비밀번호를 읽을 수 없습니다. 차단된 앱은 모든 도구(`observe_ui`, `search_ui`, `expand_ui`, `inspect_ui`, `read_text`, `wait_for`, `act_ui`)와 손쉬운 사용 기능만 쓰는 입력을 포함한 모든 전달 경로에서, 화면을 캡처하거나 입력을 보내기 전에 거부되며, 도구는 `app_blocked`로 실패합니다. `find_roots`는 이런 앱의 창도 보여 주지만 `BLOCKED`로 표시합니다(세부 정보에는 `blocked: true`와 `block_reason`). Pi가 관리형 브라우저로 제어하는 브라우저 페이지에는 영향이 없고, 브라우저 앱 자체의 창은 다른 앱과 같은 규칙을 따릅니다. 기본으로 차단하는 앱은 다음과 같습니다.
 
-- Pi를 실행하고 있는 앱: Pi 프로세스나 그 상위 프로세스에 해당하는 앱, 그리고 macOS가 `__CFBundleIdentifier`로 Pi에 넘겨준 번들 ID의 앱입니다. Pi는 상위 프로세스를 `ps`로 조회합니다. 조회에 실패하면 자기 프로세스와 바로 위 부모 프로세스를 차단하고, `/computer-use`에 실패 사실을 표시한 뒤, 다음 도구 호출 때 다시 조회합니다. helper도 Pi의 상위 프로세스를 직접 조회해 모두 거부하므로, Pi의 조회가 실패하는 동안에도 Pi를 실행하고 있는 앱은 차단된 상태로 남습니다.
+- Pi를 실행하고 있는 앱: Pi 프로세스나 그 상위 프로세스에 해당하는 앱, 그리고 macOS가 `__CFBundleIdentifier`로 Pi에 넘겨준 번들 ID의 앱입니다. Pi는 상위 프로세스를 `ps`로 조회합니다. 조회에 실패하면 자기 프로세스와 바로 위 부모 프로세스를 차단하고, `/computer-use`에 실패 사실을 표시한 뒤, 다음 도구 호출 때 다시 조회합니다. helper도 Pi의 상위 프로세스를 직접 조회해 모두 거부하므로, Pi의 조회가 실패하는 동안에도 Pi를 실행하고 있는 앱은 차단된 상태로 남습니다. helper가 이 조회를 끝까지 마치지 못하면 요청을 거부합니다.
 - 터미널: Terminal(`com.apple.Terminal`), iTerm2(`com.googlecode.iterm2`), Warp(`dev.warp.Warp-Stable`), kitty(`net.kovidgoyal.kitty`, `net.kovidgoyal.kitty-quick-access`), Ghostty(`com.mitchellh.ghostty`), Alacritty(`org.alacritty`), WezTerm(`com.github.wez.wezterm`), Hyper(`co.zeit.hyper`), Tabby(`org.tabby`).
 - 비밀번호 관리자: 1Password 7(`com.agilebits.onepassword7`), 1Password 8(`com.1password.1password`), Bitwarden(`com.bitwarden.desktop`), 암호(`com.apple.Passwords`), 키체인 접근(`com.apple.keychainaccess`).
 - macOS 인증 대화상자(`com.apple.SecurityAgent`)와 helper 자신(`com.injaneity.pi-computer-use`).

@@ -32,6 +32,67 @@ struct HIDDestination {
 	let inputBaseline: Int
 }
 
+struct ExtendedDeliveryTarget {
+	let pid: Int32
+	let windowId: UInt32
+	let windowFrame: CGRect
+}
+
+final class ExtendedDeliverySupport {
+	typealias PostRecordFn = @convention(c) (UnsafeMutableRawPointer, UnsafeMutablePointer<UInt8>) -> Int32
+	typealias GetPSNFn = @convention(c) (pid_t, UnsafeMutableRawPointer) -> Int32
+	typealias SetWindowLocationFn = @convention(c) (CGEvent, CGPoint) -> Void
+
+	static let measuredOSMajorVersions: [Int] = [27]
+	static let shared = ExtendedDeliverySupport()
+
+	let postRecord: PostRecordFn?
+	let getPSN: GetPSNFn?
+	let setWindowLocation: SetWindowLocationFn?
+	let osMajorVersion: Int
+	let missingSymbols: [String]
+
+	private init() {
+		let skyLight = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_NOW)
+		let everywhere = UnsafeMutableRawPointer(bitPattern: -2)
+		func symbol(_ name: String) -> UnsafeMutableRawPointer? {
+			if let skyLight, let found = dlsym(skyLight, name) { return found }
+			return dlsym(everywhere, name)
+		}
+		let post = symbol("SLPSPostEventRecordTo")
+		let psn = symbol("GetProcessForPID")
+		let location = symbol("CGEventSetWindowLocation")
+		postRecord = post.map { unsafeBitCast($0, to: PostRecordFn.self) }
+		getPSN = psn.map { unsafeBitCast($0, to: GetPSNFn.self) }
+		setWindowLocation = location.map { unsafeBitCast($0, to: SetWindowLocationFn.self) }
+		var missing: [String] = []
+		if post == nil { missing.append("SLPSPostEventRecordTo") }
+		if psn == nil { missing.append("GetProcessForPID") }
+		if location == nil { missing.append("CGEventSetWindowLocation") }
+		missingSymbols = missing
+		osMajorVersion = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+	}
+
+	var unavailableReason: String? {
+		if !missingSymbols.isEmpty { return "missing_symbols" }
+		if !Self.measuredOSMajorVersions.contains(osMajorVersion) { return "os_not_measured" }
+		return nil
+	}
+
+	var available: Bool { unavailableReason == nil }
+
+	func diagnostics() -> [String: Any] {
+		var output: [String: Any] = [
+			"available": available,
+			"osMajorVersion": osMajorVersion,
+			"measuredOSMajorVersions": Self.measuredOSMajorVersions,
+			"missingSymbols": missingSymbols,
+		]
+		if let unavailableReason { output["reason"] = unavailableReason }
+		return output
+	}
+}
+
 final class RequestContext {
 	let requestIds: [String]
 	let deadline: Double?
@@ -45,6 +106,10 @@ final class RequestContext {
 	var destinationWindowResolved = false
 	var lastDestinationCheck: Date?
 	var charactersSent: Int?
+	var extendedDelivery: ExtendedDeliveryTarget?
+	var extendedDeliveryStatus: String?
+	var extendedDeliveryReason: String?
+	var extendedDeliveryActivated = false
 	private let heartbeat: (() -> Void)?
 	private let lock = NSLock()
 	private var cancelRequested: Bool
@@ -584,10 +649,15 @@ final class Bridge {
 	private var ownerActiveRequests = 0
 	private let ownerTTL: TimeInterval = 30
 	private let ownerGatedCommands: Set<String> = ["act", "actBatch", "focusWindow", "setWindowFrame", "beginInputSuppression", "endInputSuppression", "restoreUserFocus"]
+	private let extendedActivationLock = NSLock()
+	private var extendedActivations: [Int32: (count: Int, target: ExtendedDeliveryTarget)] = [:]
+	private var extendedShuttingDown = false
+	private var terminationSources: [DispatchSourceSignal] = []
 
 	func run() {
 		if CommandLine.arguments.contains("serve") {
 			let socketPath = argumentValue("--socket") ?? defaultSocketPath()
+			installTerminationHandlers()
 			Thread.detachNewThread { [self] in runServer(socketPath: socketPath) }
 			NSApp.run()
 			return
@@ -596,6 +666,7 @@ final class Bridge {
 			autoreleasepool {
 				let data = FileHandle.standardInput.availableData
 				if data.isEmpty {
+					deactivateExtendedTargets()
 					exit(0)
 				}
 				stdinBuffer.append(data)
@@ -881,6 +952,7 @@ final class Bridge {
 		case .notFound:
 			return nil
 		case .found:
+			if activeRequestContext()?.extendedDelivery != nil { return nil }
 			return foregroundRequired("Focusing web content requires a host foreground grant")
 		case .inconclusive:
 			return foregroundRequired("The focus target's web-content ancestry is inconclusive (ancestry inconclusive); focusing it requires a host foreground grant")
@@ -1087,7 +1159,10 @@ final class Bridge {
 		case "openPermissionPane":
 			return try openPermissionPane(request)
 		case "shutdown":
-			DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { exit(0) }
+			DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { [self] in
+				deactivateExtendedTargets()
+				exit(0)
+			}
 			return ["shuttingDown": true]
 		case "listApps":
 			return listApps()
@@ -1237,6 +1312,7 @@ final class Bridge {
 				"verified-focus-restore", "owner-checked-app-blocklist", "local-pointer-evidence",
 				"client-ancestry-blocklist", "hid-input-sent-on-every-error", "observed-window-destination",
 				"post-release-destination-check", "path-segment-pointer-evidence", "editor-text-commit",
+				"extended-background-delivery",
 			],
 			"pid": Int32(getpid()),
 			"parentPid": parentPid,
@@ -1247,6 +1323,7 @@ final class Bridge {
 			"accessibility": permissions["accessibility"] ?? false,
 			"screenRecording": permissions["screenRecording"] ?? false,
 			"recentCompletedRequestIds": completedRequestIds(),
+			"extendedDelivery": ExtendedDeliverySupport.shared.diagnostics(),
 		]
 		if let parentPath {
 			output["parentPath"] = parentPath
@@ -1511,6 +1588,7 @@ final class Bridge {
 	private struct AppBlocklist {
 		let bundleIds: Set<String>
 		let pids: Set<Int32>
+		var unknownAncestryOf: Int32?
 	}
 
 	private func appBlocklist(_ request: [String: Any]) throws -> AppBlocklist {
@@ -1522,14 +1600,19 @@ final class Bridge {
 			throw BridgeFailure(message: "appBlocklist must be {bundleIds: [string], pids: [integer], clientPid?: integer}", code: "invalid_args", effectPossible: false)
 		}
 		var blockedPids = Set(pids.map { $0.int32Value })
+		var unknownAncestryOf: Int32?
 		if let rawClient = object["clientPid"] {
 			guard let clientPid = rawClient as? NSNumber, clientPid.int32Value > 1 else {
 				throw BridgeFailure(message: "appBlocklist.clientPid must be a process id", code: "invalid_args", effectPossible: false)
 			}
-			blockedPids.formUnion(processAncestry(of: clientPid.int32Value))
+			if let ancestry = processAncestry(of: clientPid.int32Value) {
+				blockedPids.formUnion(ancestry)
+			} else {
+				unknownAncestryOf = clientPid.int32Value
+			}
 		}
 		let normalized = bundleIds.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }.filter { !$0.isEmpty }
-		return AppBlocklist(bundleIds: Set(normalized), pids: blockedPids)
+		return AppBlocklist(bundleIds: Set(normalized), pids: blockedPids, unknownAncestryOf: unknownAncestryOf)
 	}
 
 	private func parentPid(of pid: Int32) -> Int32? {
@@ -1543,11 +1626,14 @@ final class Bridge {
 		return info.kp_eproc.e_ppid
 	}
 
-	private func processAncestry(of pid: Int32) -> Set<Int32> {
+	private static let processAncestryLimit = 4096
+
+	private func processAncestry(of pid: Int32) -> Set<Int32>? {
 		var chain = Set<Int32>()
-		var current: Int32? = pid
-		while let next = current, next > 1, chain.count < 64, chain.insert(next).inserted {
-			current = parentPid(of: next)
+		var current = pid
+		while current > 1 {
+			guard chain.count < Self.processAncestryLimit, chain.insert(current).inserted, let parent = parentPid(of: current) else { return nil }
+			current = parent
 		}
 		return chain
 	}
@@ -1575,6 +1661,8 @@ final class Bridge {
 		var bundleId = identity.bundleIds.first
 		if pid == getpid() || (ownBundleId != nil && lowered.contains(ownBundleId ?? "")) {
 			match = "helper"
+		} else if list.unknownAncestryOf != nil {
+			match = "unknown_ancestry"
 		} else if list.pids.contains(pid) {
 			match = "pid"
 		} else if let index = lowered.firstIndex(where: { list.bundleIds.contains($0) }) {
@@ -1589,10 +1677,18 @@ final class Bridge {
 		var details: [String: Any] = ["blockedPid": Int(pid), "blockedApp": name, "blockMatch": match]
 		if let bundleId { details["blockedBundleId"] = bundleId }
 		if act { details["inputSent"] = false }
+		if let client = list.unknownAncestryOf { details["unknownAncestryOf"] = Int(client) }
 		let label = [bundleId, "pid \(pid)"].compactMap { $0 }.joined(separator: ", ")
-		let reason = match == "unknown_owner"
-			? "the helper could not identify the real owner of the requested window or element, so it refused it"
-			: "the helper refused the real owner of the requested window or element"
+		let reason: String
+		switch match {
+		case "unknown_owner":
+			reason = "the helper could not identify the real owner of the requested window or element, so it refused it"
+		case "unknown_ancestry":
+			reason = "the helper could not walk the complete process ancestry of the client (pid \(list.unknownAncestryOf ?? 0)), "
+				+ "so it cannot rule out that this app hosts the client (unknown ancestry), and refused it"
+		default:
+			reason = "the helper refused the real owner of the requested window or element"
+		}
 		throw BridgeFailure(
 			message: "app_blocked: computer-use is not allowed to operate \(name) (\(label)); \(reason), and nothing was observed or sent to it",
 			code: "app_blocked",
@@ -2489,6 +2585,17 @@ final class Bridge {
 		do {
 			return try deliverAct(request)
 		} catch var failure as BridgeFailure {
+			if let context, context.extendedDeliveryActivated, failure.code == "foreground_required",
+				(failure.details?["keyWindowAcquired"] as? Bool) != false
+			{
+				return extendedUnverifiedEnding(failure, context: context)
+			}
+			if let status = context?.extendedDeliveryStatus {
+				var details = failure.details ?? [:]
+				if details["extendedDelivery"] == nil { details["extendedDelivery"] = status }
+				if details["extendedDeliveryReason"] == nil, let reason = context?.extendedDeliveryReason { details["extendedDeliveryReason"] = reason }
+				failure.details = details
+			}
 			guard let context, isGrantedHIDAct(request) else { throw failure }
 			var details = failure.details ?? [:]
 			if details["inputSent"] == nil { details["inputSent"] = context.inputEventCount > baseline }
@@ -2503,7 +2610,20 @@ final class Bridge {
 			&& (params["delivery"] as? String) != "pid"
 	}
 
+	private func extendedUnverifiedEnding(_ failure: BridgeFailure, context: RequestContext) -> [String: Any] {
+		var performed: [String: Any] = ["delivery": "pid", "extendedDelivery": "used"]
+		if let reason = context.extendedDeliveryReason { performed["extendedDeliveryReason"] = reason }
+		var evidence: [String: Any] = (failure.details?["evidence"] as? [String: Any]) ?? [:]
+		evidence["extendedDelivery"] = "used"
+		evidence["observableChange"] = false
+		evidence["extendedDeliveryEnding"] = ["code": failure.code, "message": failure.message]
+		return ["outcome": "unknown", "performed": performed, "evidence": evidence]
+	}
+
 	private func deliverAct(_ request: [String: Any]) throws -> [String: Any] {
+		activeRequestContext()?.extendedDeliveryStatus = nil
+		activeRequestContext()?.extendedDeliveryReason = nil
+		activeRequestContext()?.extendedDeliveryActivated = false
 		let lookId = try stringArg(request, "lookId")
 		guard let record = lookRecord(for: lookId) else {
 			throw BridgeFailure(message: "Look id '\(lookId)' is no longer available", code: "stale_look")
@@ -2526,9 +2646,40 @@ final class Bridge {
 		if let stale = windowFrameStaleness(record) { throw stale }
 		let deferRootDelta = boolArg(request, "deferRootDelta") ?? false
 		let delivery = foregroundGranted && (params["delivery"] as? String) != "pid" ? "hid" : "pid"
+		let extendedPlan = extendedDeliveryPlan(request: request, record: record, pid: pid, action: action, target: target, policy: policy, delivery: delivery)
+		context?.extendedDeliveryStatus = extendedPlan.status
+		context?.extendedDeliveryReason = extendedPlan.reason
+		let extendedTarget = context == nil ? nil : extendedPlan.target
+		defer {
+			if let extendedTarget {
+				context?.extendedDelivery = nil
+				endExtendedDelivery(extendedTarget)
+			}
+		}
+		let extendedObservedWindow = extendedTarget == nil ? nil : lookWindowElement(record, pid: pid) ?? windowElement(pid: pid, windowId: record.windowId)
+		if let extendedTarget {
+			do {
+				try beginExtendedDelivery(extendedTarget)
+			} catch let failure as BridgeFailure {
+				context?.extendedDeliveryStatus = "not_applicable"
+				context?.extendedDeliveryReason = failure.code
+				throw failure
+			}
+			context?.extendedDeliveryActivated = true
+			context?.extendedDelivery = extendedTarget
+			if ["typeText", "keypress", "setText"].contains(action) {
+				try requireExtendedKeyWindow(extendedTarget, window: extendedObservedWindow)
+			} else {
+				try settleExtendedKeyWindow(extendedTarget, window: extendedObservedWindow)
+			}
+		}
 		let frontmostBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
 		let observedWindow = lookWindowElement(record, pid: pid)
-		context?.beginHIDDestination(delivery == "hid" ? HIDDestination(pid: pid, windowId: record.windowId, window: observedWindow, frontmostBefore: frontmostBefore, inputBaseline: context?.inputEventCount ?? 0) : nil)
+		context?.beginHIDDestination(
+			delivery == "hid"
+				? HIDDestination(pid: pid, windowId: record.windowId, window: observedWindow, frontmostBefore: frontmostBefore, inputBaseline: context?.inputEventCount ?? 0)
+				: nil
+		)
 		var holdsPhysicalInput = false
 		func acquirePhysicalInputIfNeeded() {
 			if delivery == "hid" && !holdsPhysicalInput {
@@ -2549,10 +2700,18 @@ final class Bridge {
 		let beforeFrontmostPid = deferRootDelta ? nil : NSWorkspace.shared.frontmostApplication?.processIdentifier
 		let beforeSheetCount = windowElement(pid: pid, windowId: record.windowId).map { sheetElements(of: $0).count } ?? 0
 		let beforeFocusedWindow = focusedWindowSummary(pid: pid)
+		func focusedWindowChanged() -> Bool {
+			guard focusedWindowSummary(pid: pid) != beforeFocusedWindow else { return false }
+			return !activationFocusLanded()
+		}
+		func activationFocusLanded() -> Bool {
+			guard extendedTarget != nil, let window = extendedObservedWindow else { return false }
+			return isKeyWindow(window, pid: pid)
+		}
 		let beforeValue: String?
 		let beforeSelected: String?
 		func finish(_ response: [String: Any]) throws -> [String: Any] {
-			let response = withDestinationStatus(response, context: context)
+			let response = withExtendedDeliveryStatus(withDestinationStatus(response, context: context), plan: extendedPlan)
 			if deferRootDelta { return response }
 			var output = try attachRootDelta(to: response, before: beforeRootSnapshot, beforeFrontmostPid: beforeFrontmostPid, pid: pid, eventsLive: eventsLive, eventCursor: eventCursor, beforeCgSignature: beforeCgSignature)
 			attachFrontmost(to: &output, before: frontmostBefore)
@@ -2684,7 +2843,7 @@ final class Bridge {
 				if stringAttribute(target, attribute: kAXValueAttribute as CFString) != beforeValue { return true }
 				if stringAttribute(target, attribute: kAXSelectedTextAttribute as CFString) != beforeSelected { return true }
 			}
-			if focusedWindowSummary(pid: pid) != beforeFocusedWindow { return true }
+			if focusedWindowChanged() { return true }
 			let sheets = windowElement(pid: pid, windowId: record.windowId).map { sheetElements(of: $0).count } ?? beforeSheetCount
 			if sheets != beforeSheetCount { return true }
 			if cgRootSignature(pid: pid) != baselineCg { return true }
@@ -2698,22 +2857,30 @@ final class Bridge {
 		var attemptRegions: [CGRect] = []
 		var attemptRegionKind = "point"
 		var effectBeforeAttempt = false
+		func dragPoints() throws -> [CGPoint] {
+			guard let rawPath = params["path"] as? [[String: Any]], rawPath.count >= 2 else {
+				throw BridgeFailure(message: "drag requires path", code: "invalid_args")
+			}
+			return try rawPath.map { raw -> CGPoint in
+				guard let pathX = (raw["x"] as? NSNumber)?.doubleValue, let pathY = (raw["y"] as? NSNumber)?.doubleValue else {
+					throw BridgeFailure(message: "drag path entries require x and y", code: "invalid_args")
+				}
+				return lookPoint(record: record, x: pathX, y: pathY)
+			}
+		}
 		func beginBackgroundPidAttempt(at point: CGPoint) throws {
 			effectBeforeAttempt = context?.effectPossible ?? false
+			let path = action == "drag" ? try dragPoints() : []
 			attemptPixels = try startPixelProbe(windowId: record.windowId)
 			attemptProbe = capturePointerProbe(pid: pid, element: element, point: point)
-			if let element, let frame = frameForElement(element), frame.width > 0, frame.height > 0 {
+			if action == "drag" {
+				attemptRegions = Self.pathNeighborhoods(path)
+				attemptRegionKind = "point"
+			} else if let element, let frame = frameForElement(element), frame.width > 0, frame.height > 0 {
 				attemptRegions = [frame.insetBy(dx: -Self.pixelTargetMargin, dy: -Self.pixelTargetMargin)]
 				attemptRegionKind = "element"
 			} else {
-				var points = [point]
-				if action == "drag", let rawPath = params["path"] as? [[String: Any]] {
-					points += rawPath.compactMap { raw in
-						guard let pathX = (raw["x"] as? NSNumber)?.doubleValue, let pathY = (raw["y"] as? NSNumber)?.doubleValue else { return nil }
-						return lookPoint(record: record, x: pathX, y: pathY)
-					}
-				}
-				attemptRegions = Self.pathNeighborhoods(points)
+				attemptRegions = Self.pathNeighborhoods([point])
 				attemptRegionKind = "point"
 			}
 		}
@@ -2754,7 +2921,8 @@ final class Bridge {
 				try checkpoint()
 				usleep(50_000)
 				noteForeignFront()
-				if pointerChangeObserved(element, baselineCg: probe.baselineCg, frontmostTargetOnly: true) || pointerProbeChanged(probe) {
+				if pointerChangeObserved(element, baselineCg: probe.baselineCg, frontmostTargetOnly: true)
+					|| pointerProbeChanged(probe, ignoreFocusedElement: activationFocusLanded() && focusedWindowSummary(pid: pid) != beforeFocusedWindow) {
 					try checkpoint()
 					return SettledAttempt(changed: true, elsewhere: elsewhere, evidence: pixelEvidence(axChanged: true, pixelChanged: false))
 				}
@@ -2801,15 +2969,7 @@ final class Bridge {
 				animateCursor(at: point)
 				try postScrollWheel(at: point, deltaX: (params["scrollX"] as? NSNumber)?.intValue ?? 0, deltaY: (params["scrollY"] as? NSNumber)?.intValue ?? 0, pid: pid, delivery: delivery)
 			case "drag":
-				guard let rawPath = params["path"] as? [[String: Any]], rawPath.count >= 2 else {
-					throw BridgeFailure(message: "drag requires path", code: "invalid_args")
-				}
-				let points = try rawPath.map { raw -> CGPoint in
-					guard let x = (raw["x"] as? NSNumber)?.doubleValue, let y = (raw["y"] as? NSNumber)?.doubleValue else {
-						throw BridgeFailure(message: "drag path entries require x and y", code: "invalid_args")
-					}
-					return lookPoint(record: record, x: x, y: y)
-				}
+				let points = try dragPoints()
 				animateCursor(at: point)
 				try postMouseDrag(points: points, pid: pid, delivery: delivery)
 			default:
@@ -2833,11 +2993,14 @@ final class Bridge {
 			let webAncestry = ancestorRole(element, role: "AXWebArea")
 			let inWebArea = webAncestry != .notFound
 			let isTextRole = textRoles.contains(elementRole)
-			let requiresPointerFocus = inWebArea || isTextRole
+			let extendedWeb = extendedTarget != nil && webAncestry == .found
+			let extendedWebPress = extendedWeb && !isTextRole && supportsAction(element, action: kAXPressAction as CFString)
+			let extendedWebPointer = extendedWeb && !isTextRole && !extendedWebPress
+			let requiresPointerFocus = (inWebArea || isTextRole) && !extendedWebPress && !extendedWebPointer
 			if webAncestry == .inconclusive && !foregroundGranted && (isTextRole || policy == "background") {
 				throw foregroundRequired("The target's web-content ancestry is inconclusive (ancestry inconclusive); acting on it requires a host foreground grant")
 			}
-			if isTextRole && !inWebArea && (policy == "background" || policy == "ax_only") {
+			if isTextRole && (!inWebArea || extendedWeb) && (policy == "background" || policy == "ax_only") {
 				var focusSettable = DarwinBoolean(false)
 				let settableStatus = AXUIElementIsAttributeSettable(element, kAXFocusedAttribute as CFString, &focusSettable)
 				let canSetFocus = settableStatus == .success && focusSettable.boolValue
@@ -2886,7 +3049,7 @@ final class Bridge {
 					try executeCoordinates(coordinatePoint())
 				}
 			} else {
-				if !foregroundGranted && !inWebArea {
+				if !foregroundGranted && (!inWebArea || extendedWebPointer) {
 					guard policy == "background" else {
 						throw foregroundRequired("target has no accessibility action; pointer delivery needs a host foreground grant")
 					}
@@ -2914,7 +3077,12 @@ final class Bridge {
 					try postKeyPress(keys: ["cmd", "a"], pid: pid, delivery: delivery)
 					usleep(20_000)
 				}
-				try postAtomicUnicodeText(text, pid: pid, delivery: delivery)
+				if extendedTarget != nil {
+					try postUnicodeText(text, pid: pid, delivery: delivery)
+					performed["textEntry"] = "characters"
+				} else {
+					try postAtomicUnicodeText(text, pid: pid, delivery: delivery)
+				}
 				usleep(40_000)
 				let verificationElement = refreshElement() ?? element
 				let value = stringAttribute(verificationElement, attribute: kAXValueAttribute as CFString) ?? ""
@@ -2943,11 +3111,8 @@ final class Bridge {
 				performed["grounding"] = "description"
 				performed["delivery"] = "ax"
 				let value = stringAttribute(targetElement, attribute: kAXValueAttribute as CFString) ?? ""
-				if value != text && policy != "foreground" {
-					throw foregroundRequired("The background accessibility value write was accepted but did not take effect")
-				}
 				performed["textCommit"] = "value"
-				return try finish(["outcome": value == text ? "unknown" : "didnt", "performed": performed, "evidence": ["value": value, "valueWriteOnly": true]])
+				return try finish(["outcome": "unknown", "performed": performed, "evidence": ["value": value, "valueWriteOnly": true, "valueMatches": value == text]])
 			}
 			try executeCoordinates(coordinatePoint())
 		} else if action == "typeText" {
@@ -3024,11 +3189,14 @@ final class Bridge {
 			evidence["observableChange"] = settled.changed
 			evidence.merge(settled.evidence) { _, new in new }
 			if settled.changed {
-				if beforeFocusedWindow != focusedWindowSummary(pid: pid) { evidence["windowChanged"] = true }
+				if focusedWindowChanged() { evidence["windowChanged"] = true }
 				return try finish(["outcome": "worked", "performed": performed, "evidence": evidence])
 			}
 			if settled.elsewhere {
 				evidence["changeOutsideTarget"] = true
+				return try finish(["outcome": "unknown", "performed": performed, "evidence": evidence])
+			}
+			if extendedTarget != nil {
 				return try finish(["outcome": "unknown", "performed": performed, "evidence": evidence])
 			}
 			throw BridgeFailure(
@@ -3040,7 +3208,7 @@ final class Bridge {
 		}
 
 		let afterSheetCount = windowElement(pid: pid, windowId: record.windowId).map { sheetElements(of: $0).count } ?? beforeSheetCount
-		let windowChanged = beforeFocusedWindow != focusedWindowSummary(pid: pid) || beforeSheetCount != afterSheetCount
+		let windowChanged = focusedWindowChanged() || beforeSheetCount != afterSheetCount
 		var outcome = preflightCapsUnknown ? "unknown" : "unknown"
 		var evidence: [String: Any] = [:]
 		var pointerNoChange = false
@@ -3129,7 +3297,7 @@ final class Bridge {
 		)
 	}
 
-	private func pointerProbeChanged(_ base: PointerProbe) -> Bool {
+	private func pointerProbeChanged(_ base: PointerProbe, ignoreFocusedElement: Bool = false) -> Bool {
 		if let probe = base.probe {
 			if stringAttribute(probe, attribute: kAXValueAttribute as CFString) != base.value { return true }
 			if stringAttribute(probe, attribute: kAXSelectedTextAttribute as CFString) != base.selected { return true }
@@ -3138,6 +3306,7 @@ final class Bridge {
 		}
 		let hitNow = hitTestElement(at: base.point)
 		if !optionalSameElement(base.hit, hitNow), hitNow.flatMap({ pidForElement($0) }) == base.pid { return true }
+		if ignoreFocusedElement { return false }
 		return !optionalSameElement(base.focused, appFocusedElement(pid: base.pid))
 	}
 
@@ -3337,7 +3506,7 @@ final class Bridge {
 	private func batchStepError(_ failure: BridgeFailure, context: RequestContext?) -> [String: Any] {
 		var stepError: [String: Any] = ["code": failure.code, "message": failure.message, "effectPossible": failure.effectPossible ?? context?.effectPossible ?? true]
 		if let evidence = failure.details?["evidence"] { stepError["evidence"] = evidence }
-		for key in ["inputSent", "activationAttempted", "charactersSent", "destinationReason"] {
+		for key in ["inputSent", "activationAttempted", "charactersSent", "destinationReason", "extendedDelivery", "extendedDeliveryReason", "keyWindowAcquired", "observedWindowResolved"] {
 			if let value = failure.details?[key] { stepError[key] = value }
 		}
 		return stepError
@@ -3438,6 +3607,7 @@ final class Bridge {
 				let step = try act(deferred)
 				steps.append(step)
 				if (step["outcome"] as? String) == "didnt" { stoppedAt = index; break }
+				if (step["evidence"] as? [String: Any])?["extendedDeliveryEnding"] != nil { stoppedAt = index; break }
 			} catch var failure as BridgeFailure {
 				if failure.code == "cancelled" {
 					var partial = failure.result ?? [:]
@@ -3446,7 +3616,8 @@ final class Bridge {
 					failure.result = partial
 					throw failure
 				}
-				steps.append(["outcome": "didnt", "error": batchStepError(failure, context: context)])
+				let extendedUsed = (failure.details?["extendedDelivery"] as? String) == "used"
+				steps.append(["outcome": extendedUsed ? "unknown" : "didnt", "error": batchStepError(failure, context: context)])
 				stoppedAt = index
 				break
 			}
@@ -4559,6 +4730,246 @@ final class Bridge {
 		return output.value
 	}
 
+	private struct ExtendedDeliveryPlan {
+		let status: String?
+		let reason: String?
+		let target: ExtendedDeliveryTarget?
+		static let notRequested = ExtendedDeliveryPlan(status: nil, reason: nil, target: nil)
+	}
+
+	private static let menuRoles: Set<String> = ["AXPopUpButton", "AXMenuButton", "AXMenu", "AXMenuItem", "AXMenuBar", "AXMenuBarItem"]
+	private static let extendedTextRoles: Set<String> = ["AXTextField", "AXTextArea", "AXTextView", "AXSearchField", "AXComboBox", "AXEditableText", "AXSecureTextField"]
+
+	private func extendedDeliveryPlan(request: [String: Any], record: LookRecord, pid: Int32, action: String, target: [String: Any], policy: String, delivery: String) -> ExtendedDeliveryPlan {
+		guard optionalStringArg(request, "backgroundDelivery") == "extended" else { return .notRequested }
+		func notApplicable(_ reason: String) -> ExtendedDeliveryPlan { ExtendedDeliveryPlan(status: "not_applicable", reason: reason, target: nil) }
+		let support = ExtendedDeliverySupport.shared
+		if let reason = support.unavailableReason { return ExtendedDeliveryPlan(status: "unavailable", reason: reason, target: nil) }
+		guard policy == "background", delivery == "pid" else { return notApplicable("policy_\(policy)") }
+		if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { return notApplicable("target_frontmost") }
+		guard record.windowId != 0, record.windowFrame.width > 0, record.windowFrame.height > 0 else { return notApplicable("no_window_id") }
+		if let reason = extendedElementExclusion(request: request, record: record, pid: pid, action: action, target: target) { return notApplicable(reason) }
+		return ExtendedDeliveryPlan(status: "used", reason: nil, target: ExtendedDeliveryTarget(pid: pid, windowId: record.windowId, windowFrame: record.windowFrame))
+	}
+
+	private func extendedElementExclusion(request: [String: Any], record: LookRecord, pid: Int32, action: String, target: [String: Any]) -> String? {
+		let element: AXUIElement
+		if optionalStringArg(request, "focusResolution") == "ax_focused_element" {
+			guard let focused = appFocusedElement(pid: pid), pidForElement(focused) == pid else { return "element_unidentified" }
+			element = focused
+		} else if let ref = target["ref"] as? String {
+			let cached = refStore.element(for: ref).flatMap { stringAttribute($0, attribute: kAXRoleAttribute as CFString) != nil && frameForElement($0) != nil ? $0 : nil }
+			guard let resolved = cached ?? refindElement(ref: ref, pid: pid, windowId: record.windowId) else { return "stale_ref" }
+			element = resolved
+		} else if let pointX = (target["x"] as? NSNumber)?.doubleValue, let pointY = (target["y"] as? NSNumber)?.doubleValue {
+			guard record.hasImage, let hit = targetElement(at: lookPoint(record: record, x: pointX, y: pointY), pid: pid, record: record) else { return "element_unidentified" }
+			element = hit
+		} else {
+			return "element_unidentified"
+		}
+		if opensMenu(element) { return "menu_element" }
+		let role = stringAttribute(element, attribute: kAXRoleAttribute as CFString) ?? ""
+		let subrole = stringAttribute(element, attribute: kAXSubroleAttribute as CFString) ?? ""
+		if isSecureTextElement(role: role, subrole: subrole) { return "secure_text" }
+		guard target["ref"] is String else { return nil }
+		switch ancestorRole(element, role: "AXWebArea") {
+		case .found:
+			return nil
+		case .inconclusive:
+			return "web_ancestry_inconclusive"
+		case .notFound:
+			break
+		}
+		switch action {
+		case "press", "click":
+			if Self.extendedTextRoles.contains(role) { return "ax_focus" }
+			if supportsAction(element, action: kAXPressAction as CFString) { return "ax_action" }
+			return nil
+		case "setText":
+			return "ax_text"
+		default:
+			return nil
+		}
+	}
+
+	private func opensMenu(_ element: AXUIElement) -> Bool {
+		var current: AXUIElement? = element
+		for _ in 0..<6 {
+			guard let node = current else { return false }
+			if let role = stringAttribute(node, attribute: kAXRoleAttribute as CFString), Self.menuRoles.contains(role) { return true }
+			current = parentElement(node)
+		}
+		return false
+	}
+
+	private func targetElement(at point: CGPoint, pid: Int32, record: LookRecord) -> AXUIElement? {
+		let app = AXUIElementCreateApplication(pid)
+		AXUIElementSetMessagingTimeout(app, 1.0)
+		var hit: AXUIElement?
+		guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) == .success, let hit, pidForElement(hit) == pid,
+			let window = lookWindowElement(record, pid: pid) ?? windowElement(pid: pid, windowId: record.windowId)
+		else { return nil }
+		if let hitWindow = copyAttribute(hit, attribute: kAXWindowAttribute as CFString).flatMap(asAXElement), windowsRelated(hitWindow, window) { return hit }
+		var current: AXUIElement? = hit
+		for _ in 0..<64 {
+			guard let node = current else { return nil }
+			if sameElement(node, window) { return hit }
+			current = parentElement(node)
+		}
+		return nil
+	}
+
+	private func withExtendedDeliveryStatus(_ response: [String: Any], plan: ExtendedDeliveryPlan) -> [String: Any] {
+		guard let status = plan.status else { return response }
+		var output = response
+		var performed = output["performed"] as? [String: Any] ?? [:]
+		performed["extendedDelivery"] = status
+		if let reason = plan.reason { performed["extendedDeliveryReason"] = reason }
+		output["performed"] = performed
+		guard status == "used" else { return output }
+		var evidence = output["evidence"] as? [String: Any] ?? [:]
+		evidence["extendedDelivery"] = "used"
+		if (output["outcome"] as? String) == "didnt" {
+			output["outcome"] = "unknown"
+			evidence["observableChange"] = false
+		}
+		output["evidence"] = evidence
+		return output
+	}
+
+	private func beginExtendedDelivery(_ target: ExtendedDeliveryTarget) throws {
+		extendedActivationLock.lock()
+		if extendedShuttingDown {
+			extendedActivationLock.unlock()
+			throw BridgeFailure(message: "The helper is shutting down; extended background delivery was not started and nothing was sent", code: "helper_shutting_down", effectPossible: false)
+		}
+		let count = (extendedActivations[target.pid]?.count ?? 0) + 1
+		extendedActivations[target.pid] = (count, target)
+		postAppKitActivation(target, activated: true)
+		postKeyWindowRecords(target)
+		extendedActivationLock.unlock()
+		usleep(30_000)
+	}
+
+	private func requireExtendedKeyWindow(_ target: ExtendedDeliveryTarget, window: AXUIElement?) throws {
+		guard let window else {
+			throw BridgeFailure(
+				message: "Extended background delivery could not resolve the observed window, so it could not confirm that window is the target's key window; no key input was sent, only the activation",
+				code: "foreground_required",
+				effectPossible: false,
+				details: ["keyWindowAcquired": false, "observedWindowResolved": false]
+			)
+		}
+		for attempt in 0..<8 {
+			if isKeyWindow(window, pid: target.pid) { return }
+			try checkpoint()
+			if attempt == 2 {
+				extendedActivationLock.lock()
+				if !extendedShuttingDown { postKeyWindowRecords(target) }
+				extendedActivationLock.unlock()
+			}
+			usleep(25_000)
+		}
+		if isKeyWindow(window, pid: target.pid) { return }
+		throw BridgeFailure(
+			message: "Extended background delivery could not make the observed window the target's key window; no key input was sent",
+			code: "foreground_required",
+			effectPossible: false,
+			details: ["keyWindowAcquired": false, "observedWindowResolved": true]
+		)
+	}
+
+	private func settleExtendedKeyWindow(_ target: ExtendedDeliveryTarget, window: AXUIElement?) throws {
+		guard let window else { return }
+		for _ in 0..<8 {
+			if isKeyWindow(window, pid: target.pid) { return }
+			try checkpoint()
+			usleep(25_000)
+		}
+	}
+
+	private func endExtendedDelivery(_ target: ExtendedDeliveryTarget) {
+		extendedActivationLock.lock()
+		defer { extendedActivationLock.unlock() }
+		guard let entry = extendedActivations[target.pid] else { return }
+		if entry.count > 1 {
+			extendedActivations[target.pid] = (entry.count - 1, entry.target)
+			return
+		}
+		extendedActivations.removeValue(forKey: target.pid)
+		postAppKitActivation(target, activated: false)
+	}
+
+	private func deactivateExtendedTargets() {
+		extendedActivationLock.lock()
+		defer { extendedActivationLock.unlock() }
+		extendedShuttingDown = true
+		for entry in extendedActivations.values { postAppKitActivation(entry.target, activated: false) }
+		extendedActivations.removeAll()
+	}
+
+	private func installTerminationHandlers() {
+		for signalNumber in [SIGTERM, SIGINT, SIGHUP] {
+			_ = signal(signalNumber, SIG_IGN)
+			let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: DispatchQueue.global())
+			source.setEventHandler { [self] in
+				deactivateExtendedTargets()
+				exit(0)
+			}
+			source.resume()
+			terminationSources.append(source)
+		}
+	}
+
+	private func postAppKitActivation(_ target: ExtendedDeliveryTarget, activated: Bool) {
+		let subtype = activated ? NSEvent.EventSubtype.applicationActivated.rawValue : NSEvent.EventSubtype.applicationDeactivated.rawValue
+		let centre = CGPoint(x: target.windowFrame.width / 2, y: target.windowFrame.height / 2)
+		guard let event = NSEvent.otherEvent(
+			with: .appKitDefined, location: centre, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+			windowNumber: Int(target.windowId), context: nil, subtype: subtype, data1: 0, data2: 0
+		),
+			let cgEvent = event.cgEvent
+		else { return }
+		cgEvent.postToPid(target.pid)
+	}
+
+	private func postKeyWindowRecords(_ target: ExtendedDeliveryTarget) {
+		let support = ExtendedDeliverySupport.shared
+		guard let post = support.postRecord, let getPSN = support.getPSN else { return }
+		var psn = ProcessSerialNumber()
+		let found = withUnsafeMutablePointer(to: &psn) { getPSN(target.pid, UnsafeMutableRawPointer($0)) }
+		guard found == 0 else { return }
+		let windowBytes = withUnsafeBytes(of: target.windowId.littleEndian) { Array($0) }
+		for phase: UInt8 in [0x01, 0x02] {
+			var bytes = [UInt8](repeating: 0, count: 0xf8)
+			bytes[0x04] = 0xf8
+			bytes[0x08] = phase
+			bytes[0x3a] = 0x10
+			for index in 0x20..<0x30 { bytes[index] = 0xff }
+			for (index, byte) in windowBytes.enumerated() { bytes[0x3c + index] = byte }
+			_ = withUnsafeMutablePointer(to: &psn) { psnPointer in
+				bytes.withUnsafeMutableBufferPointer { buffer -> Int32 in
+					guard let base = buffer.baseAddress else { return -1 }
+					return post(UnsafeMutableRawPointer(psnPointer), base)
+				}
+			}
+		}
+	}
+
+	private static let extendedPointerTypes: Set<CGEventType> = [
+		.mouseMoved, .leftMouseDown, .leftMouseUp, .leftMouseDragged, .rightMouseDown, .rightMouseUp, .rightMouseDragged,
+		.otherMouseDown, .otherMouseUp, .otherMouseDragged, .scrollWheel,
+	]
+
+	private func addressPointerEvent(_ event: CGEvent, pid: Int32, context: RequestContext?) {
+		guard let target = context?.extendedDelivery, target.pid == pid, Self.extendedPointerTypes.contains(event.type),
+			let windowField = CGEventField(rawValue: 51)
+		else { return }
+		event.setIntegerValueField(windowField, value: Int64(target.windowId))
+		let point = event.location
+		ExtendedDeliverySupport.shared.setWindowLocation?(event, CGPoint(x: point.x - target.windowFrame.origin.x, y: point.y - target.windowFrame.origin.y))
+	}
+
 	private func eventDelivery(_ request: [String: Any]) -> String {
 		optionalStringArg(request, "delivery") == "pid" ? "pid" : "hid"
 	}
@@ -4568,6 +4979,7 @@ final class Bridge {
 		if delivery == "pid" {
 			context?.markEffect()
 			context?.markInputEvent()
+			addressPointerEvent(event, pid: pid, context: context)
 			event.postToPid(pid)
 			return
 		}
@@ -4585,6 +4997,7 @@ final class Bridge {
 		if delivery == "pid" {
 			context?.markEffect()
 			context?.markInputEvent()
+			addressPointerEvent(event, pid: pid, context: context)
 			event.postToPid(pid)
 			return
 		}

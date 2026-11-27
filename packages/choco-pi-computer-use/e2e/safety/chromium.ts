@@ -193,28 +193,146 @@ function signal(pid: number, name: NodeJS.Signals): void {
   }
 }
 
+export interface ProcessRow {
+  pid: number;
+  ppid: number;
+  started: string;
+  executable: string;
+  args: string;
+}
+
+export interface ChromiumLeftover {
+  pid: number;
+  executable: string;
+  reason: string;
+}
+
+export interface OwnershipInput {
+  spawnedPid: number;
+  recorded: Map<number, string>;
+  table: ProcessRow[];
+  appBundle: string;
+  userDataDir: string;
+  selfPid: number;
+}
+
+export interface Ownership {
+  owned: ProcessRow[];
+  leftovers: ChromiumLeftover[];
+}
+
+function namesDirectory(args: string, flag: string, dir: string, below: boolean): boolean {
+  const needle = flag + dir;
+  for (let at = args.indexOf(needle); at >= 0; at = args.indexOf(needle, at + 1)) {
+    if (at > 0 && args[at - 1] !== " ") continue;
+    const next = args[at + needle.length];
+    if (next === undefined || next === " " || (below && next === "/")) return true;
+  }
+  return false;
+}
+
+function annotationNamesDirectory(args: string, dir: string): boolean {
+  return args
+    .split(" ")
+    .some(
+      (arg) =>
+        arg.startsWith("--annotation=") &&
+        (arg.endsWith("=" + dir) || arg.includes("=" + dir + "/")),
+    );
+}
+
+export function classifyProcesses(input: OwnershipInput): Ownership {
+  const rows = new Map(input.table.map((row) => [row.pid, row]));
+  const spawned = rows.get(input.spawnedPid);
+  if (spawned) {
+    const children = new Map<number, ProcessRow[]>();
+    for (const row of input.table) children.set(row.ppid, [...(children.get(row.ppid) ?? []), row]);
+    const seen = new Set<number>();
+    const queue = [spawned];
+    while (queue.length > 0) {
+      const row = queue.shift();
+      if (!row || seen.has(row.pid)) continue;
+      seen.add(row.pid);
+      input.recorded.set(row.pid, row.started);
+      queue.push(...(children.get(row.pid) ?? []));
+    }
+  }
+  const owned = new Map<number, ProcessRow>();
+  for (const [pid, started] of input.recorded) {
+    const row = rows.get(pid);
+    if (row && row.started === started && pid !== input.selfPid) owned.set(pid, row);
+  }
+  const bundle = input.appBundle.endsWith("/") ? input.appBundle : input.appBundle + "/";
+  const leftovers: ChromiumLeftover[] = [];
+  for (const row of input.table) {
+    if (owned.has(row.pid) || row.pid === input.selfPid) continue;
+    const inBundle = row.executable.startsWith(bundle);
+    if (!inBundle && !row.args.includes(input.userDataDir)) continue;
+    const profileArgument = namesDirectory(row.args, "--user-data-dir=", input.userDataDir, false);
+    const crashArgument =
+      row.executable.includes("chrome_crashpad_handler") &&
+      (namesDirectory(row.args, "--database=", input.userDataDir, true) ||
+        annotationNamesDirectory(row.args, input.userDataDir));
+    if (inBundle && (profileArgument || crashArgument)) {
+      owned.set(row.pid, row);
+      continue;
+    }
+    leftovers.push({
+      pid: row.pid,
+      executable: row.executable,
+      reason: inBundle
+        ? "not a descendant, and no argument names this run's profile directory"
+        : "executable outside " + input.appBundle,
+    });
+  }
+  return { owned: [...owned.values()], leftovers };
+}
+
+export async function readProcessTable(): Promise<ProcessRow[]> {
+  const [tree, executables, argv] = await Promise.all([
+    command("ps", ["-A", "-o", "pid=,ppid=,lstart="]),
+    command("ps", ["-A", "-o", "pid=,comm="]),
+    command("ps", ["-A", "-ww", "-o", "pid=,args="]),
+  ]);
+  const byPid = (text: string): Map<number, string> => {
+    const out = new Map<number, string>();
+    for (const line of text.split("\n")) {
+      const match = /^\s*(\d+) (.*)$/.exec(line);
+      if (match?.[1]) out.set(Number(match[1]), (match[2] ?? "").trim());
+    }
+    return out;
+  };
+  const paths = byPid(executables.stdout);
+  const args = byPid(argv.stdout);
+  const rows: ProcessRow[] = [];
+  for (const line of tree.stdout.split("\n")) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
+    if (!match?.[1] || !match[2] || !match[3]) continue;
+    const pid = Number(match[1]);
+    rows.push({
+      pid,
+      ppid: Number(match[2]),
+      started: match[3],
+      executable: paths.get(pid) ?? "",
+      args: args.get(pid) ?? "",
+    });
+  }
+  return rows;
+}
+
 export interface ChromiumStop {
   pids: number[];
   crashpad: { pid: number; exitedOnItsOwn: boolean; terminated: boolean }[];
+  leftovers: ChromiumLeftover[];
   defects: string[];
-}
-
-async function crashpadPids(app: string): Promise<number[]> {
-  const listed = await command("pgrep", [
-    "-f",
-    app + "/Contents/Frameworks/.*chrome_crashpad_handler",
-  ]);
-  return listed.stdout
-    .split("\n")
-    .map((line) => Number(line.trim()))
-    .filter((pid) => Number.isSafeInteger(pid) && pid > 0);
 }
 
 export class ChromiumInstance {
   readonly pid: number;
   readonly userDataDir: string;
   private readonly app: ChromiumApp;
-  private crashpadBefore = new Set<number>();
+  private readonly recorded = new Map<number, string>();
+  private recorder: ReturnType<typeof setInterval> | undefined;
   private writing: Promise<void> = Promise.resolve();
   private exited = false;
 
@@ -230,7 +348,6 @@ export class ChromiumInstance {
     url: string,
     logPath: string,
   ): Promise<ChromiumInstance> {
-    const crashpadBefore = new Set(await crashpadPids(app.app));
     const child = spawn(
       app.binary,
       [
@@ -252,7 +369,6 @@ export class ChromiumInstance {
     );
     if (child.pid === undefined) throw new Error("CHROMIUM_LAUNCH no pid");
     const instance = new ChromiumInstance(child.pid, userDataDir, app);
-    instance.crashpadBefore = crashpadBefore;
     const drain = (chunk: Buffer): void => {
       instance.writing = instance.writing
         .then(() => appendFile(logPath, chunk))
@@ -262,7 +378,13 @@ export class ChromiumInstance {
     child.stderr.on("data", drain);
     child.once("exit", () => {
       instance.exited = true;
+      instance.stopRecorder();
     });
+    const recorder = setInterval(() => {
+      instance.ownership().catch(() => undefined);
+    }, 2_000);
+    recorder.unref();
+    instance.recorder = recorder;
     return instance;
   }
 
@@ -270,78 +392,68 @@ export class ChromiumInstance {
     return !this.exited && alive(this.pid);
   }
 
+  private stopRecorder(): void {
+    if (this.recorder) clearInterval(this.recorder);
+    this.recorder = undefined;
+  }
+
+  async ownership(): Promise<Ownership> {
+    const table = await readProcessTable();
+    const spawnedLive = !this.exited && alive(this.pid);
+    return classifyProcesses({
+      spawnedPid: spawnedLive ? this.pid : -1,
+      recorded: this.recorded,
+      table,
+      appBundle: this.app.app,
+      userDataDir: this.userDataDir,
+      selfPid: process.pid,
+    });
+  }
+
   async ownedPids(): Promise<number[]> {
-    const owned = new Set<number>();
-    const table = await command("ps", ["-A", "-o", "pid=,ppid="]);
-    const children = new Map<number, number[]>();
-    for (const line of table.stdout.split("\n")) {
-      const [pid, ppid] = line.trim().split(/\s+/).map(Number);
-      if (!Number.isSafeInteger(pid) || !Number.isSafeInteger(ppid)) continue;
-      children.set(ppid, [...(children.get(ppid) ?? []), pid]);
-    }
-    const queue = [this.pid];
-    while (queue.length > 0) {
-      const pid = queue.shift();
-      if (pid === undefined || owned.has(pid)) continue;
-      if (pid === this.pid || alive(pid)) owned.add(pid);
-      queue.push(...(children.get(pid) ?? []));
-    }
-    const named = await command("pgrep", ["-f", this.userDataDir]);
-    for (const line of named.stdout.split("\n")) {
-      const pid = Number(line.trim());
-      if (Number.isSafeInteger(pid) && pid > 0) owned.add(pid);
-    }
-    owned.delete(process.pid);
-    return [...owned];
+    return (await this.ownership()).owned.map((row) => row.pid);
   }
 
   async stop(): Promise<ChromiumStop> {
-    const pids = await this.ownedPids();
+    const first = await this.ownership();
     const defects: string[] = [];
     if (alive(this.pid)) signal(this.pid, "SIGTERM");
     let until = Date.now() + 5_000;
     while (alive(this.pid) && Date.now() < until) await pause(100);
-    const remaining = [...new Set([...pids, ...(await this.ownedPids())])].filter(alive);
+    this.stopRecorder();
+    const again = await this.ownership();
+    const ownedRows = new Map([...first.owned, ...again.owned].map((row) => [row.pid, row]));
+    const remaining = [...ownedRows.keys()].filter(alive);
     for (const pid of remaining) signal(pid, "SIGTERM");
     until = Date.now() + 2_000;
     while (remaining.some(alive) && Date.now() < until) await pause(100);
     for (const pid of remaining.filter(alive)) signal(pid, "SIGKILL");
     await pause(300);
-    const survivors = [...new Set([...remaining, ...(await this.ownedPids())])].filter(alive);
+    const last = await this.ownership();
+    const survivors = [...new Set([...remaining, ...last.owned.map((row) => row.pid)])].filter(
+      alive,
+    );
     if (survivors.length > 0)
       defects.push("chromium pids survived SIGKILL: " + survivors.join(","));
-    const fresh = (await crashpadPids(this.app.app)).filter(
-      (pid) => !this.crashpadBefore.has(pid) && !pids.includes(pid),
-    );
+    let leftovers = last.leftovers;
     until = Date.now() + 10_000;
-    while (fresh.some(alive) && Date.now() < until) await pause(200);
-    const lingering = fresh.filter(alive);
-    const registered = this.app.bundleId
-      ? (await command("lsappinfo", ["find", "bundleid=" + this.app.bundleId])).stdout.trim()
-      : "unknown";
-    const terminate = lingering.length > 0 && registered === "";
-    if (terminate) {
-      for (const pid of lingering) signal(pid, "SIGTERM");
-      until = Date.now() + 2_000;
-      while (lingering.some(alive) && Date.now() < until) await pause(100);
-      for (const pid of lingering.filter(alive)) signal(pid, "SIGKILL");
-      await pause(300);
+    while (leftovers.length > 0 && Date.now() < until) {
+      await pause(200);
+      leftovers = (await this.ownership()).leftovers;
     }
-    const crashpad = fresh.map((pid) => ({
-      pid,
-      exitedOnItsOwn: !lingering.includes(pid),
-      terminated: terminate && lingering.includes(pid),
-    }));
-    const left = fresh.filter(alive);
-    if (left.length > 0)
+    if (leftovers.length > 0)
       defects.push(
-        "crash handler pids " +
-          left.join(",") +
-          (terminate
-            ? " survived SIGKILL"
-            : " appeared during the instance and still run (another instance is registered; not signalled)"),
+        "chromium leftovers (ownership not established, not signalled): " +
+          leftovers.map((left) => String(left.pid) + " " + left.executable).join(", "),
       );
+    const crashpad = [...ownedRows.values()]
+      .filter((row) => row.executable.includes("chrome_crashpad_handler"))
+      .map((row) => ({
+        pid: row.pid,
+        exitedOnItsOwn: !remaining.includes(row.pid),
+        terminated: remaining.includes(row.pid),
+      }));
     await this.writing;
-    return { pids: [...new Set([...pids, ...remaining])], crashpad, defects };
+    return { pids: [...ownedRows.keys()], crashpad, leftovers, defects };
   }
 }

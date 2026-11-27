@@ -17,16 +17,20 @@ import {
   findChromium,
   PageServer,
   type ChromiumApp,
+  type ChromiumLeftover,
 } from "./chromium.ts";
 import { FixtureSet, frontApp, sweepFixtureProcesses, type FrontApp } from "./fixtures.ts";
 import {
+  believesActive,
   classifyAnswer,
   countNodes,
   evaluateEffect,
   holderDisturbances,
+  renderAfterStateTable,
   renderCellTable,
   renderLatencyTable,
   summarize,
+  summarizeAfterState,
   summarizeLooks,
   targetArrival,
   type CellInfo,
@@ -359,6 +363,8 @@ interface Options {
   chromium: boolean;
   latency: boolean;
   settleMs: number;
+  backgroundDelivery: "standard" | "extended";
+  afterCheck: boolean;
 }
 
 class ArgumentError extends Error {}
@@ -381,7 +387,7 @@ function parse(argv: string[]): Options {
   const out = value("--out");
   if (!helperApp || !helperSocket || !out)
     throw new ArgumentError(
-      "usage: matrix.ts --helper-app <app> --helper-socket <socket> --out <dir> [--reps N] [--fg-reps N] [--looks N] [--surfaces ids] [--cells substrings] [--no-chromium] [--skip-latency] [--settle-ms N]",
+      "usage: matrix.ts --helper-app <app> --helper-socket <socket> --out <dir> [--reps N] [--fg-reps N] [--looks N] [--surfaces ids] [--cells substrings] [--no-chromium] [--skip-latency] [--settle-ms N] [--background-delivery standard|extended] [--after-check]",
     );
   const known = SURFACES.map((surface) => surface.id);
   const surfaceList = value("--surfaces");
@@ -397,6 +403,9 @@ function parse(argv: string[]): Options {
     surfaces.push(found);
   }
   const cellList = value("--cells");
+  const delivery = value("--background-delivery") ?? "standard";
+  if (delivery !== "standard" && delivery !== "extended")
+    throw new ArgumentError("--background-delivery must be standard or extended");
   return {
     helperApp: resolve(helperApp),
     helperSocket: resolve(helperSocket),
@@ -414,6 +423,8 @@ function parse(argv: string[]): Options {
     chromium: !argv.includes("--no-chromium"),
     latency: !argv.includes("--skip-latency"),
     settleMs: count("--settle-ms", 800, 100),
+    backgroundDelivery: delivery,
+    afterCheck: argv.includes("--after-check"),
   };
 }
 
@@ -644,6 +655,84 @@ async function restoreHolder(ctx: Context, before: JsonObject): Promise<JsonObje
   };
 }
 
+function extendedStatus(reply: JsonObject | undefined): string | undefined {
+  const result = reply && isJsonObject(reply.result) ? reply.result : undefined;
+  const performed = result && isJsonObject(result.performed) ? result.performed : undefined;
+  if (performed && isString(performed.extendedDelivery)) return performed.extendedDelivery;
+  const error = reply && isJsonObject(reply.error) ? reply.error : undefined;
+  return error && isString(error.extendedDelivery) ? error.extendedDelivery : undefined;
+}
+
+async function holderClick(ctx: Context): Promise<JsonObject> {
+  const listed = await ctx.wire.send("listWindows", { pid: ctx.holderPid });
+  const windows = Array.isArray(listed.reply.result) ? listed.reply.result : [];
+  const window = windows.find(
+    (entry) => isJsonObject(entry) && entry.title === fixtureApps.holder.title,
+  );
+  if (!isJsonObject(window)) return { error: "holder_window_not_found" };
+  const looked = await ctx.wire.send("look", {
+    windowId: window.windowId ?? null,
+    includeImage: true,
+    readText: "never",
+  });
+  const result = isJsonObject(looked.reply.result) ? looked.reply.result : undefined;
+  if (!result || !isString(result.lookId)) return { error: "holder_look_failed" };
+  const image = isJsonObject(result.image) ? result.image : {};
+  const width = isNumber(image.width) ? image.width : 200;
+  const height = isNumber(image.height) ? image.height : 100;
+  const from = Date.now();
+  const sent = await sendAct(ctx, {
+    pid: ctx.holderPid,
+    lookId: result.lookId,
+    policy: "foreground",
+    foregroundGrant: true,
+    action: "click",
+    target: { x: Math.round(width * 0.85), y: Math.round(height * 0.85) },
+    params: {},
+  });
+  await pause(500);
+  const rows = (await ctx.fixtures.rows("holder")).filter(
+    (row) => isNumber(row.ts) && row.ts >= from,
+  );
+  return {
+    ok: sent.reply?.ok ?? null,
+    holderMouseDown: rows.filter((row) => row.event === "mouseDown").length,
+    holderResignRows: rows.filter(
+      (row) => row.event === "appInactive" || row.event === "windowResignKey",
+    ).length,
+    holderFrontAfter: await holderFront(ctx),
+  };
+}
+
+async function afterCheck(
+  ctx: Context,
+  cell: Cell,
+  surface: Surface,
+  routes: Map<string, string>,
+): Promise<JsonObject> {
+  await pause(1_000);
+  const out: JsonObject = { cell: cell.id };
+  if (ctx.target.fixtureTarget)
+    out.targetBelievesActiveIdle = believesActive(await ctx.target.rows());
+  out.holderFrontIdle = await holderFront(ctx);
+  out.holderClick = await holderClick(ctx);
+  const rep = await runRep(ctx, cell, surface, "foreground", 0, routes);
+  out.targetForeground = JSON.parse(
+    JSON.stringify({
+      skipped: rep.skipped,
+      effect: rep.effect.effect,
+      answer: rep.answer.answer,
+      holder: rep.holder,
+      notes: rep.notes,
+    }),
+  );
+  if (ctx.target.fixtureTarget) {
+    await pause(500);
+    out.targetBelievesActiveEnd = believesActive(await ctx.target.rows());
+  }
+  return out;
+}
+
 function skippedRep(cell: Cell, mode: Mode, rep: number, reason: string): Rep {
   return {
     cell: cell.id,
@@ -676,10 +765,12 @@ async function runRep(
   const fields = actFields(cell, found.node);
   if (isString(fields)) return skippedRep(cell, mode, rep, fields);
   if (!(await holderFront(ctx))) return skippedRep(cell, mode, rep, "holder_not_front_after_look");
-  const policy =
+  const policy: JsonObject =
     mode === "foreground"
       ? { policy: "foreground", foregroundGrant: true }
-      : { policy: "background" };
+      : ctx.options.backgroundDelivery === "extended"
+        ? { policy: "background", backgroundDelivery: "extended" }
+        : { policy: "background" };
   let frontBefore: JsonObject = {};
   if (mode === "foreground") {
     const front = await ctx.wire.send("getFrontmost", {}).catch(() => undefined);
@@ -701,6 +792,24 @@ async function runRep(
   if (ctx.target.fixtureTarget)
     notes.targetActivatedBefore = targetRowsBefore.some((row) => row.event === "appActive");
   const rows = await ctx.target.rows();
+  const extended = extendedStatus(sent.reply);
+  if (extended) notes.extendedDelivery = extended;
+  if (ctx.target.fixtureTarget) {
+    const inside = rows.filter(
+      (row) => isNumber(row.ts) && row.ts >= window.from && row.ts <= window.to,
+    );
+    notes.targetFocusRows = inside
+      .filter((row) =>
+        ["appActive", "appInactive", "windowKey", "windowResignKey", "frontmost"].includes(
+          String(row.event),
+        ),
+      )
+      .map((row) => String(row.event) + ":" + String(row.window ?? row.bundleId ?? ""));
+    notes.targetMouseWindows = inside
+      .filter((row) => row.event === "targetMouseDown" || row.event === "targetKeyDown")
+      .map((row) => String(row.event) + ":" + String(row.window ?? ""));
+    notes.targetBelievesActive = believesActive(rows);
+  }
   if (surface.web && ctx.target.fixtureTarget) {
     const dom = targetArrival(rows, window, true);
     notes.dom = { mouseDown: dom.mouseDown, keyDown: dom.keyDown, wheel: dom.scrollWheel };
@@ -732,8 +841,10 @@ interface Run {
     pid: number;
     pids: number[];
     crashpad: { pid: number; exitedOnItsOwn: boolean; terminated: boolean }[];
+    leftovers: ChromiumLeftover[];
   }[];
   aborted: boolean;
+  afterChecks: JsonObject[];
 }
 
 let cellSeq = 0;
@@ -898,6 +1009,8 @@ async function runCells(
       );
       await onRep();
     }
+    if (run.options.afterCheck && mode === "background" && !run.aborted)
+      run.afterChecks.push(await afterCheck(ctx, cell, surface, routes));
   }
 }
 
@@ -986,6 +1099,7 @@ function markdown(
   cellTables: CellTable[],
   latency: string,
   options: Options,
+  afterState: string,
 ): string {
   const cellsSection = cellTables
     .map((table) => "- " + table.info.id + ": effect = " + table.info.effect)
@@ -1008,13 +1122,17 @@ function markdown(
       String(options.fgReps) +
       " per cell (policy foreground with grant, HID delivery). Settle after each act: " +
       String(options.settleMs) +
-      " ms.",
+      " ms." +
+      (options.backgroundDelivery === "extended"
+        ? ' Background delivery: extended (every background act carries backgroundDelivery: "extended").'
+        : ""),
     "Effects are what the fixture (or the Chromium page through the harness server) recorded; answers are the helper's reply. No cell has a verdict.",
     "",
     "Columns: bg effect = repetitions with the intended effect / measured repetitions; answers: R:<code> = refused with that code; false worked = answered worked without the effect; refused w/ effect and didnt w/ effect = answered no-effect although the effect was recorded; dup = repetitions where the effect happened more than once (n/o = not observable for this effect); bg input reached app = repetitions in which the target process (Chromium: the page DOM) saw any mouse/key/scroll event; holder disturbance = repetitions with any holder appInactive, windowResignKey, keyDown, mouseDown, or another app becoming frontmost, with totals. Route = element role and accessibility actions from the look.",
     "",
     renderCellTable(cellTables),
     "",
+    ...(afterState ? [afterState, ""] : []),
     "## Observation latency (look), median / p95",
     "",
     "Wall ms is the harness round trip (one socket connection per request, like the wire layer); the other columns are the helper's own timings. Nodes = outline node count; reply bytes = JSON reply size.",
@@ -1076,6 +1194,7 @@ async function main(): Promise<number> {
     defects: [],
     chromiumStops: [],
     aborted: false,
+    afterChecks: [],
   };
   process.once("SIGINT", () => {
     run.aborted = true;
@@ -1117,6 +1236,49 @@ async function main(): Promise<number> {
   const setups: JsonObject[] = [];
   let status = "complete";
   const write = async (final: boolean): Promise<void> => {
+    const afterStateSection = (): string => {
+      if (options.backgroundDelivery !== "extended" && !options.afterCheck) return "";
+      const lines = [
+        "## Target after-state (background repetitions)",
+        "",
+        "Extended used = repetitions whose reply said performed.extendedDelivery used; activated = the target logged appActive during the act window; left active = the target's last appActive/appInactive row was appActive when the repetition was scored (n/o: no fixture log, Chromium).",
+        "",
+        renderAfterStateTable(
+          summarizeAfterState(
+            selected.map((cell) => cell.id),
+            reps,
+          ),
+        ),
+      ];
+      if (run.afterChecks.length > 0) {
+        const flag = (value: JsonValue | undefined): string =>
+          value === true ? "yes" : value === false ? "no" : "-";
+        lines.push(
+          "",
+          "After-check per cell (1 s after the last background repetition): idle target active, holder frontmost, a granted click on the holder (holder mouseDown rows), one granted act on the target (effect), target active at the end.",
+          "",
+          "| cell | idle target active | holder front | holder click mouseDown | granted act effect | target active at end |",
+          "| --- | --- | --- | --- | --- | --- |",
+          ...run.afterChecks.map((check) => {
+            const click = isJsonObject(check.holderClick) ? check.holderClick : {};
+            const act = isJsonObject(check.targetForeground) ? check.targetForeground : {};
+            return (
+              "| " +
+              [
+                String(check.cell),
+                flag(check.targetBelievesActiveIdle),
+                flag(check.holderFrontIdle),
+                String(click.holderMouseDown ?? click.error ?? "-"),
+                act.skipped ? "skipped" : flag(act.effect),
+                flag(check.targetBelievesActiveEnd),
+              ].join(" | ") +
+              " |"
+            );
+          }),
+        );
+      }
+      return lines.join("\n");
+    };
     const cellTables = tables(selected, reps, routes);
     const latency = summarizeLooks(looks);
     const document: JsonObject = JSON.parse(
@@ -1138,12 +1300,13 @@ async function main(): Promise<number> {
         looks,
         defects: run.defects,
         chromiumStops: run.chromiumStops,
+        afterChecks: run.afterChecks,
       }),
     );
     await writeFile(jsonPath, JSON.stringify(document, null, 2) + "\n");
     await writeFile(
       join(options.out, "matrix.md"),
-      markdown(meta, cellTables, renderLatencyTable(latency), options),
+      markdown(meta, cellTables, renderLatencyTable(latency), options, afterStateSection()),
     );
   };
   const open: Setup[] = [];
@@ -1264,7 +1427,18 @@ async function closeSetup(run: Run, setup: Setup): Promise<void> {
       pid: setup.instance.pid,
       pids: stopped.pids,
       crashpad: stopped.crashpad,
+      leftovers: stopped.leftovers,
     });
+    for (const left of stopped.leftovers)
+      console.log(
+        "chromium leftover (not signalled): pid " +
+          String(left.pid) +
+          " " +
+          left.executable +
+          " (" +
+          left.reason +
+          ")",
+      );
   }
   await setup.server?.stop();
 }

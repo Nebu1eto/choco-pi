@@ -1738,7 +1738,7 @@ test("bridge: the helper's app_blocked on the element an act resolves sends noth
   assert.deepEqual(prompts, []);
 });
 
-function injectResetAfterForegroundActWrite(): () => void {
+function injectFaultAfterForegroundActWrite(fault: "client_reset" | "malformed_reply"): () => void {
   const original = net.createConnection;
   let injected = false;
   const failing = (socketPath: string): net.Socket => {
@@ -1752,7 +1752,10 @@ function injectResetAfterForegroundActWrite(): () => void {
         if (!injected && chunk.includes('"cmd":"act"') && chunk.includes('"policy":"foreground"')) {
           injected = true;
           setTimeout(() => {
-            socket.destroy(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
+            if (fault === "malformed_reply")
+              socket.emit("data", "<html>not a helper reply</html>\n");
+            else
+              socket.destroy(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
           }, 30);
         }
         return accepted;
@@ -1773,7 +1776,9 @@ function injectResetAfterForegroundActWrite(): () => void {
     });
 }
 
-async function lostConnectionHoldsSection(fault: "helper_closed" | "client_reset"): Promise<void> {
+async function lostConnectionHoldsSection(
+  fault: "helper_closed" | "client_reset" | "malformed_reply",
+): Promise<void> {
   const fake = await startDaemon({
     script: "s6-grant",
     secondTarget: true,
@@ -1784,7 +1789,8 @@ async function lostConnectionHoldsSection(fault: "helper_closed" | "client_reset
   await withGrantedBridge(async (ctx) => {
     const first = await prepareCustomView(ctx, FAKE_APP.appName, FAKE_WINDOW_TITLE);
     const second = await prepareCustomView(ctx, FAKE_APP_B.appName, FAKE_WINDOW_TITLE_B);
-    const restoreNet = fault === "client_reset" ? injectResetAfterForegroundActWrite() : undefined;
+    const restoreNet =
+      fault === "helper_closed" ? undefined : injectFaultAfterForegroundActWrite(fault);
     let lost: JsonObject;
     try {
       lost = await actCustomView(ctx, first);
@@ -1825,6 +1831,10 @@ test("bridge: a socket error after a foreground act was written holds the sectio
 
 test("bridge: the helper closing the connection after a foreground act was sent holds the section the same way", async () => {
   await lostConnectionHoldsSection("helper_closed");
+});
+
+test("bridge: an undecodable reply after a foreground act was sent is no confirmation and holds the section the same way", async () => {
+  await lostConnectionHoldsSection("malformed_reply");
 });
 
 test("bridge: a granted HID act refused before any input reports inputSent false in the step error", async () => {

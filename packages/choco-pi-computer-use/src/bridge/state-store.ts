@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { disconnectCdp } from "../cdp.ts";
-import { getComputerUseConfig, isHeadlessMode, loadComputerUseConfig } from "../config.ts";
+import { getBackgroundDelivery, getComputerUseConfig, isHeadlessMode } from "../config.ts";
 import type { ImageMode, UiAction } from "../contract.ts";
 import { isString, type JsonField, type JsonObject } from "../json.ts";
 import {
@@ -444,7 +444,12 @@ export function deliveryPolicyNotes(): string[] {
 
 export function detailsConfig(): ComputerUseDetailsConfig {
   const notes = deliveryPolicyNotes();
-  return notes.length > 0 ? { ...getComputerUseConfig(), notes } : getComputerUseConfig();
+  const { background_delivery: _configured, ...config } = getComputerUseConfig();
+  const shown: ComputerUseDetailsConfig =
+    getBackgroundDelivery() === "extended"
+      ? { ...config, background_delivery: "extended" }
+      : config;
+  return notes.length > 0 ? { ...shown, notes } : shown;
 }
 
 export function nativeInputDelivery(policy = currentDeliveryPolicy()): NativeInputDelivery {
@@ -660,8 +665,6 @@ export function emptyActivation(): ActivationFlags {
 }
 
 export async function ensureReady(ctx: ExtensionContext, signal?: AbortSignal): Promise<void> {
-  loadComputerUseConfig(ctx.cwd);
-
   throwIfAborted(signal);
   const ready = await currentPlatformBackend.ensureReady(
     ctx,

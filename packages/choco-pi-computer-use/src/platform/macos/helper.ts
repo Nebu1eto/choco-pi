@@ -51,6 +51,7 @@ interface HelperResponseEnvelope {
     blockedApp?: JsonValue;
     blockedBundleId?: JsonValue;
     blockMatch?: JsonValue;
+    extendedDelivery?: JsonValue;
   };
 }
 
@@ -69,6 +70,7 @@ interface DiagnosticsResponse {
   arch?: string;
   accessibility?: boolean;
   screenRecording?: boolean;
+  extendedDelivery?: JsonValue;
 }
 
 const COMMAND_TIMEOUT_MS = 15_000;
@@ -215,7 +217,26 @@ export function parseRefusalEvidence(value: JsonField): HelperRefusalEvidence | 
   if (elsewhere !== undefined) evidence.frontmostChangedElsewhere = elsewhere;
   const changedTo = numberField(value.frontmostChangedTo);
   if (changedTo !== undefined) evidence.frontmostChangedTo = changedTo;
+  if (isString(value.extendedDelivery)) evidence.extendedDelivery = value.extendedDelivery;
   return Object.keys(evidence).length > 0 ? evidence : undefined;
+}
+
+export function parseErrorEvidence(
+  error: HelperResponseEnvelope["error"],
+): HelperRefusalEvidence | undefined {
+  const evidence = parseRefusalEvidence(error?.evidence);
+  const extended = error?.extendedDelivery;
+  if (!isString(extended) || evidence?.extendedDelivery !== undefined) return evidence;
+  return { ...evidence, extendedDelivery: extended };
+}
+
+function parseExtendedDeliveryCapability(
+  value: JsonValue | undefined,
+): PlatformDiagnostics["extendedDelivery"] {
+  if (!isJsonObject(value)) return undefined;
+  const available = booleanField(value.available);
+  if (available === undefined) return undefined;
+  return isString(value.reason) ? { available, reason: value.reason } : { available };
 }
 
 function parseAppBlock(error: HelperResponseEnvelope["error"]): HelperAppBlock | undefined {
@@ -565,7 +586,8 @@ export class MacosHelperClient {
         try {
           parsed = JSON.parse(buffer.slice(0, newline));
         } catch (error) {
-          if (!interrupted) settle(() => reject(error));
+          if (!interrupted)
+            undecodableReply(error instanceof Error ? error.message : String(error));
           return;
         }
         if (interrupted) {
@@ -587,7 +609,7 @@ export class MacosHelperClient {
                   effectPossible: booleanField(parsed?.error?.effectPossible),
                   result: parsed.result ?? undefined,
                   activeRequests: numberField(parsed?.error?.activeRequests),
-                  evidence: parseRefusalEvidence(parsed?.error?.evidence),
+                  evidence: parseErrorEvidence(parsed?.error),
                   destination: parseDestinationFailure(parsed?.error),
                   inputSent: booleanField(parsed?.error?.inputSent),
                   appBlock: parseAppBlock(parsed?.error),
@@ -608,6 +630,24 @@ export class MacosHelperClient {
       };
       socket.on("error", (error) => connectionLost(`failed (${error.message})`));
       socket.on("close", () => connectionLost("closed before a response"));
+      const undecodableReply = (reason: string) => {
+        if (settled || interrupted) return;
+        if (written && requestId) {
+          interrupt(
+            new HelperTransportError(
+              `Daemon reply to '${cmd}' could not be decoded (${reason}) after it was sent.`,
+              true,
+            ),
+          );
+          return;
+        }
+        settle(() => {
+          socket.destroy();
+          reject(
+            new HelperTransportError(`Daemon reply to '${cmd}' could not be decoded (${reason}).`),
+          );
+        });
+      };
     });
   }
 
@@ -785,6 +825,7 @@ export class MacosHelperClient {
       arch: toOptionalString(result?.arch),
       accessibility: toBoolean(result?.accessibility),
       screenRecording: toBoolean(result?.screenRecording),
+      extendedDelivery: parseExtendedDeliveryCapability(result?.extendedDelivery),
     };
     this.diagnosticsCache = diagnostics;
     return diagnostics;

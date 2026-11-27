@@ -5,7 +5,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { AGENT_TOOL_NAMES, type ActParams, type UiAction } from "../contract.ts";
 import { assertAppAllowed, ensureAppPolicyReady, retryFailedHostLookup } from "../app-policy.ts";
-import { loadComputerUseConfig, runWithAppPolicy } from "../config.ts";
+import { loadComputerUseConfig, runWithAppPolicy, runWithBackgroundDelivery } from "../config.ts";
 import { isJsonObject, isNumber, isString } from "../json.ts";
 import type { WindowNote } from "../note.ts";
 import type { SerializedOutline } from "../outline.ts";
@@ -114,14 +114,21 @@ export async function executeTool<P, T>(
   run: () => Promise<T>,
 ): Promise<T> {
   const sessionKey = sessionKeyOf(ctx);
-  const { appPolicy } = loadComputerUseConfig(ctx.cwd);
+  const cwd = ctx.cwd;
   registerComputerUseSession(sessionKey);
-  return await runWithAppPolicy(
-    appPolicy,
+  const scope = sessionScopeFor(sessionKey);
+  const { appPolicy, config } = await loadComputerUseConfig(cwd);
+  if (scope.retired) throw new Error(`${tool}: the Pi session ended before the call started.`);
+  return await runWithBackgroundDelivery(
+    config.background_delivery,
     async () =>
-      await runInSessionScope(
-        sessionScopeFor(sessionKey),
-        async () => await executeToolInScope(tool, ctx, params, signal, run),
+      await runWithAppPolicy(
+        appPolicy,
+        async () =>
+          await runInSessionScope(
+            scope,
+            async () => await executeToolInScope(tool, ctx, params, signal, run),
+          ),
       ),
   );
 }

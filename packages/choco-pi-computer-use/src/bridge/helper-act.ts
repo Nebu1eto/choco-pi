@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   foregroundGrantCovers,
   foregroundPromptMode,
+  getBackgroundDelivery,
   getComputerUseConfig,
   isSessionDenied,
 } from "../config.ts";
@@ -135,7 +136,36 @@ export function refusalProvesNoEffect(
   evidence: HelperRefusalEvidence | undefined,
 ): boolean {
   if (effectPossibleFlag !== false) return false;
+  if (usedExtendedDelivery(evidence)) return false;
   return evidence?.pidPointerAttempted !== true || evidence.observableChange === false;
+}
+
+export function usedExtendedDelivery(evidence: HelperRefusalEvidence | undefined): boolean {
+  return evidence?.extendedDelivery === "used";
+}
+
+export function extendedEndingResult(code: string, message: string): HelperActResult {
+  return {
+    outcome: "unknown",
+    performed: { delivery: "pid", extendedDelivery: "used" },
+    evidence: {
+      extendedDelivery: "used",
+      observableChange: false,
+      extendedDeliveryEnding: { code, message },
+    },
+  };
+}
+
+function refusedAfterExtendedDelivery(result: HelperActResult): boolean {
+  const error = result.error;
+  return (
+    error?.code === "foreground_required" &&
+    (error.extendedDelivery === "used" || usedExtendedDelivery(error.evidence))
+  );
+}
+
+export function endedAfterExtendedDelivery(step: ExecutionTrace): boolean {
+  return step.evidence?.extendedDeliveryEnding !== undefined;
 }
 
 export function foregroundCapability(action: NativePreparedAction): string {
@@ -465,11 +495,21 @@ export async function helperAct(
       };
     try {
       const result = checked(await currentPlatformBackend.act(request, { signal, timeoutMs }));
+      if (refusedAfterExtendedDelivery(result))
+        return {
+          request,
+          result: extendedEndingResult(
+            "foreground_required",
+            result.error?.message ?? "The helper refused after extended delivery was used.",
+          ),
+        };
       return { request, result };
     } catch (error) {
       const evidence = error instanceof PlatformCommandError ? error.evidence : undefined;
       if (!(error instanceof Error && "code" in error && error.code === "foreground_required"))
         throw error;
+      if (usedExtendedDelivery(evidence))
+        return { request, result: extendedEndingResult("foreground_required", error.message) };
       return {
         request,
         thrown: {
@@ -488,7 +528,9 @@ export async function helperAct(
   const firstRefusal = helperRefusalSignal(first);
   if (policy !== "background" || firstRefusal?.effectPossible !== false)
     return attemptTrace(target, action, headless, policy, first);
-  const delivered = firstRefusal.evidence?.pidPointerAttempted === true;
+  const delivered =
+    firstRefusal.evidence?.pidPointerAttempted === true ||
+    usedExtendedDelivery(firstRefusal.evidence);
   let escalationReason: ExecutionTrace["escalationReason"];
   let prompt: GrantPromptOutcome | undefined;
   if (foregroundGrantCovers(target.bundleId)) escalationReason = "foreground_required";
@@ -612,6 +654,7 @@ export function refusalForResult(
   policy: DeliveryPolicy,
   result: HelperActResult,
 ): ForegroundRefusal | undefined {
+  if (refusedAfterExtendedDelivery(result)) return undefined;
   if (result.error?.code === "foreground_required") {
     const { evidence } = result.error;
     return foregroundRefusal(
@@ -625,6 +668,7 @@ export function refusalForResult(
     );
   }
   if (policy === "foreground" || result.outcome !== "didnt") return undefined;
+  if (result.performed?.extendedDelivery === "used") return undefined;
   if (headless && !isPointerOnlyClick(action)) return undefined;
   if (!action.wantsForeground && !isKeyboardAction(action) && !isPointerOnlyClick(action))
     return undefined;
@@ -660,6 +704,8 @@ export function helperActRequest(
   };
   if (foregroundGrant) base.foregroundGrant = true;
   if ("focus" in action.target) base.focusResolution = "ax_focused_element";
+  if (policy === "background" && getBackgroundDelivery() === "extended")
+    base.backgroundDelivery = "extended";
   return (() => {
     switch (action.action) {
       case "press":

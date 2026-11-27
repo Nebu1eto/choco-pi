@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { existsSync, readFileSync } from "node:fs";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isJsonObject, isNumber, isString, type JsonField, type JsonValue } from "./json.ts";
@@ -13,6 +13,7 @@ export interface ComputerUseConfig {
   foreground_grant: string[];
   foreground_prompt: ForegroundPromptMode;
   restore_focus: boolean;
+  background_delivery: BackgroundDeliveryMode;
 }
 
 export interface ComputerUseConfigSource {
@@ -55,6 +56,7 @@ const DEFAULT_CONFIG: ComputerUseConfig = {
   foreground_grant: [],
   foreground_prompt: "ask",
   restore_focus: true,
+  background_delivery: "standard",
 };
 
 let activeConfig: ComputerUseConfig = { ...DEFAULT_CONFIG, foreground_grant: [] };
@@ -68,6 +70,7 @@ let activeLoadedConfig: LoadedComputerUseConfig = {
 
 export const BLOCKED_APPS_ENV = "PI_COMPUTER_USE_BLOCKED_APPS";
 export const UNBLOCKED_APPS_ENV = "PI_COMPUTER_USE_UNBLOCKED_APPS";
+export const BACKGROUND_DELIVERY_ENV = "PI_COMPUTER_USE_BACKGROUND_DELIVERY";
 
 function parseBoolean(value: JsonField): boolean | undefined {
   if (value === true || value === false) return value;
@@ -111,6 +114,14 @@ function normalizeAppPolicy(raw: JsonValue): AppPolicyConfigValues {
 
 export type ForegroundPromptMode = "ask" | "always" | "off";
 
+export type BackgroundDeliveryMode = "standard" | "extended";
+
+export function parseBackgroundDelivery(value: JsonField): BackgroundDeliveryMode | undefined {
+  if (!isString(value)) return undefined;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "standard" || normalized === "extended" ? normalized : undefined;
+}
+
 export function parseForegroundPrompt(value: JsonField): ForegroundPromptMode | undefined {
   if (isString(value)) {
     const normalized = value.trim().toLowerCase();
@@ -142,13 +153,19 @@ function normalizePartial(raw: JsonValue): Partial<ComputerUseConfig> {
   if (foregroundPrompt !== undefined) out.foreground_prompt = foregroundPrompt;
   const restoreFocus = parseBoolean(source.restore_focus);
   if (restoreFocus !== undefined) out.restore_focus = restoreFocus;
+  const backgroundDelivery = parseBackgroundDelivery(source.background_delivery);
+  if (backgroundDelivery !== undefined) out.background_delivery = backgroundDelivery;
   return out;
 }
 
-function readConfigFile(filePath: string): ComputerUseConfigSource {
-  if (!existsSync(filePath)) return { path: filePath, exists: false };
+async function readConfigFile(filePath: string): Promise<ComputerUseConfigSource> {
   try {
-    const parsed: JsonValue = JSON.parse(readFileSync(filePath, "utf-8"));
+    await access(filePath);
+  } catch {
+    return { path: filePath, exists: false };
+  }
+  try {
+    const parsed: JsonValue = JSON.parse(await readFile(filePath, "utf-8"));
     return {
       path: filePath,
       exists: true,
@@ -182,6 +199,8 @@ function readEnv(): Partial<ComputerUseConfig> {
   if (foregroundPrompt !== undefined) out.foreground_prompt = foregroundPrompt;
   const restoreFocus = parseBoolean(process.env.PI_COMPUTER_USE_RESTORE_FOCUS);
   if (restoreFocus !== undefined) out.restore_focus = restoreFocus;
+  const backgroundDelivery = parseBackgroundDelivery(process.env[BACKGROUND_DELIVERY_ENV]);
+  if (backgroundDelivery !== undefined) out.background_delivery = backgroundDelivery;
   return out;
 }
 
@@ -222,22 +241,27 @@ export function userComputerUseConfigPath(): string {
   return path.join(getAgentDir(), "extensions", "pi-computer-use.json");
 }
 
-export function loadComputerUseConfig(cwd: string): LoadedComputerUseConfig {
-  const sources = [
-    readConfigFile(userComputerUseConfigPath()),
-    readConfigFile(path.join(cwd, ".pi", "computer-use.json")),
-  ];
+let loadSequence = 0;
+
+export async function loadComputerUseConfig(cwd: string): Promise<LoadedComputerUseConfig> {
+  const sequence = ++loadSequence;
+  const userPath = userComputerUseConfigPath();
+  const projectPath = path.join(cwd, ".pi", "computer-use.json");
   const env = readEnv();
+  const envAppPolicy = readEnvAppPolicy();
+  const sources = await Promise.all([readConfigFile(userPath), readConfigFile(projectPath)]);
   const config: ComputerUseConfig = { ...DEFAULT_CONFIG, foreground_grant: [] };
   for (const source of sources) {
     if (source.values) Object.assign(config, source.values);
   }
   Object.assign(config, env);
-  const envAppPolicy = readEnvAppPolicy();
   const appPolicy = resolveAppPolicy(sources, 0, envAppPolicy);
-  activeConfig = config;
-  activeLoadedConfig = { config, sources, env, envAppPolicy, appPolicy };
-  return activeLoadedConfig;
+  const loaded: LoadedComputerUseConfig = { config, sources, env, envAppPolicy, appPolicy };
+  if (sequence === loadSequence) {
+    activeConfig = config;
+    activeLoadedConfig = loaded;
+  }
+  return loaded;
 }
 
 export function getComputerUseConfig(): ComputerUseConfig {
@@ -252,6 +276,16 @@ export function runWithAppPolicy<T>(policy: AppPolicySettings, work: () => T): T
 
 export function getAppPolicySettings(): AppPolicySettings {
   return operationAppPolicy.getStore() ?? activeLoadedConfig.appPolicy;
+}
+
+const operationBackgroundDelivery = new AsyncLocalStorage<BackgroundDeliveryMode>();
+
+export function runWithBackgroundDelivery<T>(mode: BackgroundDeliveryMode, work: () => T): T {
+  return operationBackgroundDelivery.run(mode, work);
+}
+
+export function getBackgroundDelivery(): BackgroundDeliveryMode {
+  return operationBackgroundDelivery.getStore() ?? activeConfig.background_delivery;
 }
 
 export function getLoadedComputerUseConfig(): LoadedComputerUseConfig {
