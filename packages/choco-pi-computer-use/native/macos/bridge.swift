@@ -60,9 +60,14 @@ struct InputSourceInfo {
 }
 
 let requestSessionKey = "pi.computer-use.request-session"
+let requestSessionGenerationKey = "pi.computer-use.request-session-generation"
 
 func currentRequestSessionId() -> String? {
 	Thread.current.threadDictionary[requestSessionKey] as? String
+}
+
+func currentRequestSessionGeneration() -> Int? {
+	Thread.current.threadDictionary[requestSessionGenerationKey] as? Int
 }
 
 func sessionMayUse(owner: String?, caller: String?) -> Bool {
@@ -146,6 +151,141 @@ final class ExtendedDeliverySupport {
 		]
 		if let unavailableReason { output["reason"] = unavailableReason }
 		return output
+	}
+}
+
+final class OffSpaceSupport {
+	typealias CreateTokenFn = @convention(c) (CFData) -> Unmanaged<AXUIElement>?
+	typealias GetWindowFn = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
+	typealias ConnectionFn = @convention(c) () -> Int32
+	typealias CopyDisplaySpacesFn = @convention(c) (Int32) -> Unmanaged<CFArray>?
+	typealias CopySpacesForWindowsFn = @convention(c) (Int32, Int32, CFArray) -> Unmanaged<CFArray>?
+
+	struct SpaceLayout {
+		let current: Set<Int>
+		let desktop: Set<Int>
+	}
+
+	static let measuredOSMajorVersions: [Int] = [27]
+	static let shared = OffSpaceSupport()
+	static let tokenIdLimit: UInt64 = 4096
+	static let tokenScanBudget: Double = 0.5
+	static let tokenMessagingTimeout: Float = 0.05
+	static let allSpacesMask: Int32 = 7
+	static let tokenMagic: Int32 = 0x636f636f
+
+	let createToken: CreateTokenFn?
+	let getWindow: GetWindowFn?
+	let connection: ConnectionFn?
+	let copyDisplaySpaces: CopyDisplaySpacesFn?
+	let copySpacesForWindows: CopySpacesForWindowsFn?
+	let osMajorVersion: Int
+	let missingSymbols: [String]
+
+	private init() {
+		let skyLight = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_NOW)
+		let everywhere = UnsafeMutableRawPointer(bitPattern: -2)
+		var missing: [String] = []
+		func symbol(_ name: String) -> UnsafeMutableRawPointer? {
+			if let skyLight, let found = dlsym(skyLight, name) { return found }
+			if let found = dlsym(everywhere, name) { return found }
+			missing.append(name)
+			return nil
+		}
+		createToken = symbol("_AXUIElementCreateWithRemoteToken").map { unsafeBitCast($0, to: CreateTokenFn.self) }
+		getWindow = symbol("_AXUIElementGetWindow").map { unsafeBitCast($0, to: GetWindowFn.self) }
+		connection = symbol("CGSMainConnectionID").map { unsafeBitCast($0, to: ConnectionFn.self) }
+		copyDisplaySpaces = symbol("CGSCopyManagedDisplaySpaces").map { unsafeBitCast($0, to: CopyDisplaySpacesFn.self) }
+		copySpacesForWindows = symbol("CGSCopySpacesForWindows").map { unsafeBitCast($0, to: CopySpacesForWindowsFn.self) }
+		missingSymbols = missing
+		osMajorVersion = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+	}
+
+	var unavailableReason: String? {
+		if !missingSymbols.isEmpty { return "missing_symbols" }
+		if !Self.measuredOSMajorVersions.contains(osMajorVersion) { return "os_not_measured" }
+		return nil
+	}
+
+	var available: Bool { unavailableReason == nil }
+
+	var discoveryUnavailableReason: String? {
+		if let unavailableReason { return unavailableReason }
+		return ExtendedDeliverySupport.shared.unavailableReason.map { "extended_delivery_\($0)" }
+	}
+
+	func diagnostics() -> [String: Any] {
+		var output: [String: Any] = [
+			"available": available,
+			"discoveryAvailable": discoveryUnavailableReason == nil,
+			"osMajorVersion": osMajorVersion,
+			"measuredOSMajorVersions": Self.measuredOSMajorVersions,
+			"missingSymbols": missingSymbols,
+			"tokenIdLimit": Int(Self.tokenIdLimit),
+			"tokenScanBudgetMs": Int(Self.tokenScanBudget * 1000),
+		]
+		if let unavailableReason { output["reason"] = unavailableReason }
+		if let discovery = discoveryUnavailableReason { output["discoveryReason"] = discovery }
+		return output
+	}
+
+	func windowId(of element: AXUIElement) -> CGWindowID? {
+		guard available, let getWindow else { return nil }
+		var id: CGWindowID = 0
+		return getWindow(element, &id) == .success && id != 0 ? id : nil
+	}
+
+	func spaceLayout() -> SpaceLayout? {
+		guard available, let connection, let copyDisplaySpaces else { return nil }
+		let displays = (copyDisplaySpaces(connection())?.takeRetainedValue() as? [[String: Any]]) ?? []
+		var current = Set<Int>()
+		var desktop = Set<Int>()
+		for display in displays {
+			if let id = (display["Current Space"] as? [String: Any])?["ManagedSpaceID"] as? Int { current.insert(id) }
+			for space in (display["Spaces"] as? [[String: Any]]) ?? [] {
+				if let id = space["ManagedSpaceID"] as? Int, (space["type"] as? Int) == 0 { desktop.insert(id) }
+			}
+		}
+		return current.isEmpty ? nil : SpaceLayout(current: current, desktop: desktop)
+	}
+
+	func spaces(ofWindow windowId: UInt32) -> [Int] {
+		guard available, let connection, let copySpacesForWindows else { return [] }
+		let ids = [NSNumber(value: windowId)] as CFArray
+		return (copySpacesForWindows(connection(), Self.allSpacesMask, ids)?.takeRetainedValue() as? [Int]) ?? []
+	}
+
+	func isOffSpace(_ windowId: UInt32, layout suppliedLayout: SpaceLayout? = nil) -> Bool {
+		guard windowId != 0, available, let layout = suppliedLayout ?? spaceLayout() else { return false }
+		let spaces = Set(spaces(ofWindow: windowId))
+		return !spaces.isEmpty && spaces.isDisjoint(with: layout.current) && spaces.isSubset(of: layout.desktop)
+	}
+
+	func tokenWindows(pid: Int32, wanted: Set<UInt32>, deadline: Double) -> (found: [UInt32: AXUIElement], scanned: UInt64, complete: Bool) {
+		guard available, let createToken, !wanted.isEmpty else { return ([:], 0, false) }
+		var found: [UInt32: AXUIElement] = [:]
+		var id: UInt64 = 0
+		while id < Self.tokenIdLimit {
+			if found.count == wanted.count || monotonicSeconds() >= deadline { break }
+			var data = Data(count: 20)
+			data.withUnsafeMutableBytes { raw in
+				raw.storeBytes(of: pid, toByteOffset: 0, as: Int32.self)
+				raw.storeBytes(of: Int32(0), toByteOffset: 4, as: Int32.self)
+				raw.storeBytes(of: Self.tokenMagic, toByteOffset: 8, as: Int32.self)
+				raw.storeBytes(of: id, toByteOffset: 12, as: UInt64.self)
+			}
+			id += 1
+			guard let element = createToken(data as CFData)?.takeRetainedValue() else { continue }
+			AXUIElementSetMessagingTimeout(element, Self.tokenMessagingTimeout)
+			var owner: pid_t = 0
+			guard AXUIElementGetPid(element, &owner) == .success, owner == pid else { continue }
+			var role: CFTypeRef?
+			guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success, (role as? String) == "AXWindow",
+				let windowId = windowId(of: element), wanted.contains(windowId), found[windowId] == nil
+			else { continue }
+			found[windowId] = element
+		}
+		return (found, id, id >= Self.tokenIdLimit)
 	}
 }
 
@@ -401,6 +541,7 @@ private struct LookRecord {
 	let rootElement: AXUIElement?
 	let observedFrame: CGRect?
 	var sessionId: String? = currentRequestSessionId()
+	var sessionGeneration: Int? = currentRequestSessionGeneration()
 }
 
 private struct RootAXEvent {
@@ -722,6 +863,17 @@ final class Bridge {
 	private var lookRecords: [String: LookRecord] = [:]
 	private var lookRecordOrder: [String] = []
 	private let lookRecordLock = NSLock()
+	private struct LookRetention {
+		var generation: Int
+		var lastUsed: Double
+		var clientPid: Int32?
+	}
+	private var lookRetention: [String: LookRetention] = [:]
+	private var lastLookRetentionSweep: Double = 0
+	private let looksPerSession = 8
+	private let maxLookSessions = 64
+	private let lookRetentionWithoutClient: TimeInterval = 3600
+	private let lookRetentionSweepInterval: TimeInterval = 5
 	private var caretMemory: [(element: AXUIElement, range: CFRange)] = []
 	private let caretLock = NSLock()
 	private let rootObserverLock = NSLock()
@@ -752,6 +904,8 @@ final class Bridge {
 	private var extendedActivations: [Int32: (count: Int, target: ExtendedDeliveryTarget)] = [:]
 	private var extendedShuttingDown = false
 	private var terminationSources: [DispatchSourceSignal] = []
+	private let offSpaceLock = NSLock()
+	private var offSpaceWindows: [UInt32: (pid: Int32, element: AXUIElement)] = [:]
 
 	func run() {
 		if CommandLine.arguments.contains("serve") {
@@ -999,9 +1153,9 @@ final class Bridge {
 
 	private func finishExpiredSessions(_ ids: [String]) {
 		for id in ids {
-			dropLookRecords(sessionId: id)
 			releaseForegroundSection(holder: id, restore: true)
 		}
+		sweepLookRetention()
 	}
 
 	private func endOwnedRequest(_ session: (id: String, generation: Int)?) {
@@ -1069,7 +1223,17 @@ final class Bridge {
 		let held = foregroundSection != nil
 		let busyTargets = targetHolders.count
 		coordination.unlock()
-		return ["live": live.count, "activeRequests": active, "foregroundSectionHeld": held, "busyTargets": busyTargets, "ttlMs": Int(ownerTTL * 1000)]
+		lookRecordLock.lock()
+		let retainedSessions = Set(lookRecords.values.compactMap { $0.sessionId }).count
+		let retainedLooks = lookRecords.count
+		lookRecordLock.unlock()
+		return [
+			"live": live.count, "activeRequests": active, "foregroundSectionHeld": held, "busyTargets": busyTargets, "ttlMs": Int(ownerTTL * 1000),
+			"looks": [
+				"sessions": retainedSessions, "records": retainedLooks, "perSession": looksPerSession, "maxSessions": maxLookSessions,
+				"retentionWithoutClientMs": Int(lookRetentionWithoutClient * 1000),
+			],
+		]
 	}
 
 	private func waitForCoordination(context: RequestContext?, limit: TimeInterval, _ condition: () -> Bool) throws -> Bool {
@@ -1594,7 +1758,11 @@ final class Bridge {
 		let session = requestSession(request)
 		let threadDictionary = Thread.current.threadDictionary
 		if let session { threadDictionary[requestSessionKey] = session.id } else { threadDictionary.removeObject(forKey: requestSessionKey) }
-		defer { threadDictionary.removeObject(forKey: requestSessionKey) }
+		if let session { threadDictionary[requestSessionGenerationKey] = session.generation } else { threadDictionary.removeObject(forKey: requestSessionGenerationKey) }
+		defer {
+			threadDictionary.removeObject(forKey: requestSessionKey)
+			threadDictionary.removeObject(forKey: requestSessionGenerationKey)
+		}
 		let requestKey = "req:" + UUID().uuidString
 		let keys = (request: requestKey, session: session?.id ?? requestKey)
 		let gated = ownerGatedCommands.contains(cmd)
@@ -1604,6 +1772,7 @@ final class Bridge {
 			finishExpiredSessions(pruneExpiredSessions())
 			refreshOwner(session)
 		}
+		if let session { noteLookSession(session, clientPid: requestClientPid(request)) }
 		defer { if gated { endOwnedRequest(session) } }
 
 		switch cmd {
@@ -1638,9 +1807,9 @@ final class Bridge {
 		case "listApps":
 			return listApps()
 		case "listWindows":
-			return try listWindows(pid: Int32(try intArg(request, "pid")))
+			return try listWindows(pid: Int32(try intArg(request, "pid")), request: request, scanOffSpace: true)
 		case "listRoots":
-			return try listRoots(pid: optionalIntArg(request, "pid").map { Int32($0) }, title: optionalStringArg(request, "title"))
+			return try listRoots(pid: optionalIntArg(request, "pid").map { Int32($0) }, title: optionalStringArg(request, "title"), request: request)
 		case "getFrontmost":
 			return try getFrontmost()
 		case "getUserContext":
@@ -1803,6 +1972,7 @@ final class Bridge {
 				"post-release-destination-check", "path-segment-pointer-evidence", "editor-text-commit",
 				"extended-background-delivery", "multi-session", "per-target-serialization", "exclusive-foreground-section",
 				"session-scoped-looks", "layout-independent-text", "verified-text-entry", "pid-key-destination-check",
+				"looks-outlive-liveness",
 			],
 			"pid": Int32(getpid()),
 			"parentPid": parentPid,
@@ -1816,6 +1986,7 @@ final class Bridge {
 			"extendedDelivery": ExtendedDeliverySupport.shared.diagnostics(),
 			"sessions": sessionDiagnostics(),
 			"inputSource": InputSourceInfo.current().diagnostics(),
+			"offSpace": OffSpaceSupport.shared.diagnostics(),
 		]
 		if let parentPath {
 			output["parentPath"] = parentPath
@@ -2305,6 +2476,15 @@ final class Bridge {
 		let windowId = optionalIntArg(request, "windowId").map { UInt32($0) }
 		let windowRef = optionalStringArg(request, "windowRef")
 		try enforceWindowOwners(pid: pid, windowId: windowId, windowRef: windowRef, request: request, act: true)
+		let addressedWindowId = windowId ?? windowRef.flatMap { refStore.window(for: $0) }.flatMap { OffSpaceSupport.shared.windowId(of: $0) }
+		if let addressedWindowId, OffSpaceSupport.shared.isOffSpace(addressedWindowId) {
+			throw BridgeFailure(
+				message: "off_space_foreground: the window is on a Space no display shows; focusing it would switch the user's Space, so nothing was changed",
+				code: "off_space_foreground",
+				effectPossible: false,
+				details: ["inputSent": false, "activationAttempted": false, "offSpace": true]
+			)
+		}
 		guard let window = windowElement(pid: pid, windowId: windowId, windowRef: windowRef) else {
 			return ["focused": false, "reason": "window_not_found"]
 		}
@@ -2361,7 +2541,7 @@ final class Bridge {
 		}
 	}
 
-	private func listRoots(pid: Int32?, title: String? = nil) throws -> [String: Any] {
+	private func listRoots(pid: Int32?, title: String? = nil, request: [String: Any]? = nil) throws -> [String: Any] {
 		let requestedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
 		let entries = allCGWindowEntries()
 		let isBroadDiscovery = pid == nil && requestedTitle.isEmpty
@@ -2387,7 +2567,8 @@ final class Bridge {
 			let appPid = Int32(rawPid)
 			let appName = app["appName"] as? String ?? processName(pid: appPid) ?? "Unknown App"
 			let bundleId = app["bundleId"] as? String
-			for var root in (try? listWindows(pid: appPid, cgEntries: entries, messagingTimeout: isBroadDiscovery ? 0.25 : 1.0)) ?? [] {
+			let scanOffSpace = pid != nil && requestedTitle.isEmpty && request != nil
+			for var root in (try? listWindows(pid: appPid, cgEntries: entries, messagingTimeout: isBroadDiscovery ? 0.25 : 1.0, request: request, scanOffSpace: scanOffSpace)) ?? [] {
 				root["pid"] = rawPid
 				root["appName"] = appName
 				if let bundleId { root["bundleId"] = bundleId }
@@ -2426,13 +2607,14 @@ final class Bridge {
 		return ["roots": roots]
 	}
 
-	private func listWindows(pid: Int32, cgEntries: [[String: Any]]? = nil, messagingTimeout: Float = 1.0) throws -> [[String: Any]] {
+	private func listWindows(pid: Int32, cgEntries: [[String: Any]]? = nil, messagingTimeout: Float = 1.0, request: [String: Any]? = nil, scanOffSpace: Bool = false) throws -> [[String: Any]] {
 		ensureEnhancedAccessibility(pid: pid)
 		let appElement = AXUIElementCreateApplication(pid)
 		AXUIElementSetMessagingTimeout(appElement, messagingTimeout)
 		let windows = Array(axElementArray(appElement, attribute: kAXWindowsAttribute as CFString).prefix(128))
 		let candidates = cgWindowCandidates(pid: pid, entries: cgEntries)
 		let pairings = windowPairings(windows: windows, candidates: candidates)
+		let spaceLayout = OffSpaceSupport.shared.spaceLayout()
 
 		var output: [[String: Any]] = []
 		for (zIndex, window) in windows.enumerated() {
@@ -2479,6 +2661,11 @@ final class Bridge {
 			]
 			if let candidate {
 				item["windowId"] = Int(candidate.windowId)
+				if let spaceLayout, OffSpaceSupport.shared.isOffSpace(candidate.windowId, layout: spaceLayout) {
+					item["isOnscreen"] = false
+					item["offSpace"] = true
+					item["offSpaceAccess"] = "resolved"
+				}
 			}
 			output.append(item)
 
@@ -2507,6 +2694,8 @@ final class Bridge {
 				output.append(sheetItem)
 			}
 		}
+		let listedIds = Set(windows.compactMap { pairings[ObjectIdentifier($0)]?.candidate?.windowId } + windows.compactMap { OffSpaceSupport.shared.windowId(of: $0) })
+		output += offSpaceRoots(pid: pid, candidates: candidates, listed: listedIds, messagingTimeout: messagingTimeout, request: request, scan: scanOffSpace)
 		return output
 	}
 
@@ -2533,6 +2722,24 @@ final class Bridge {
 			throw BridgeFailure(message: "Root is not owned by a running app", code: "root_not_found")
 		}
 		try enforceWindowOwners(pid: pid, windowId: windowId, windowRef: windowRef, request: request)
+		var offSpaceWindow: AXUIElement?
+		var offSpaceInfo: [String: Any]?
+		if let windowId, !isMenuRoot, OffSpaceSupport.shared.isOffSpace(windowId) {
+			if let requestedRoot, pidForElement(requestedRoot) == pid, stringAttribute(requestedRoot, attribute: kAXRoleAttribute as CFString) != nil {
+				offSpaceWindow = requestedRoot
+				offSpaceInfo = ["discoveryActivation": false, "resolvedBy": "ref"]
+			} else if let cached = cachedOffSpaceWindow(pid: pid, windowId: windowId) {
+				offSpaceWindow = cached
+				offSpaceInfo = ["discoveryActivation": false, "resolvedBy": "cache"]
+			} else if let listed = windowElement(pid: pid, windowId: windowId, windowRef: windowRef) {
+				offSpaceWindow = listed
+				offSpaceInfo = ["discoveryActivation": false, "resolvedBy": "ax_windows"]
+			} else {
+				let resolved = try offSpaceLookWindow(pid: pid, windowId: windowId, request: request)
+				offSpaceWindow = resolved.element
+				offSpaceInfo = resolved.info
+			}
+		}
 		let captureStart = Date()
 		let shouldCapture = !isMenuRoot && (includeImage || readText == "always")
 		let capture = try shouldCapture ? windowId.map { try captureWindow(windowId: $0) } : nil
@@ -2552,7 +2759,7 @@ final class Bridge {
 				"timings": ["captureMs": 0, "describeMs": 0, "readTextMs": 0],
 			]
 		}
-		guard let window = windowElement(pid: pid, windowId: windowId, windowRef: windowRef) else {
+		guard let window = offSpaceWindow ?? windowElement(pid: pid, windowId: windowId, windowRef: windowRef) else {
 			throw BridgeFailure(message: "Root is not available through Accessibility", code: "root_not_found")
 		}
 		let rootElement: AXUIElement
@@ -2640,6 +2847,7 @@ final class Bridge {
 			"readText": ["requested": readText, "executed": readTextExecuted],
 		]
 		if let imagePayload { response["image"] = imagePayload }
+		if let offSpaceInfo { response["offSpace"] = offSpaceInfo }
 		return response
 	}
 
@@ -2650,22 +2858,85 @@ final class Bridge {
 	private func storeLookRecord(_ record: LookRecord) {
 		lookRecordLock.lock()
 		defer { lookRecordLock.unlock() }
+		if let id = record.sessionId, let known = lookRetention[id], (record.sessionGeneration ?? 0) < known.generation { return }
 		lookRecords[record.lookId] = record
 		lookRecordOrder.append(record.lookId)
 		let sameOwner = lookRecordOrder.filter { lookRecords[$0]?.sessionId == record.sessionId }
-		if sameOwner.count > 8 {
-			let evicted = Set(sameOwner.prefix(sameOwner.count - 8))
+		if sameOwner.count > looksPerSession {
+			let evicted = Set(sameOwner.prefix(sameOwner.count - looksPerSession))
 			lookRecordOrder.removeAll { evicted.contains($0) }
 			for id in evicted { lookRecords.removeValue(forKey: id) }
+		}
+		let holders = Set(lookRecords.values.compactMap { $0.sessionId })
+		if holders.count > maxLookSessions {
+			let candidates = holders.filter { $0 != record.sessionId }
+				.sorted { (lookRetention[$0]?.lastUsed ?? 0) < (lookRetention[$1]?.lastUsed ?? 0) }
+			for id in candidates.prefix(holders.count - maxLookSessions) { dropLookRecordsLocked(sessionId: id) }
 		}
 	}
 
 	private func dropLookRecords(sessionId: String) {
 		lookRecordLock.lock()
 		defer { lookRecordLock.unlock() }
+		dropLookRecordsLocked(sessionId: sessionId)
+	}
+
+	private func dropLookRecordsLocked(sessionId: String) {
 		let dropped = Set(lookRecordOrder.filter { lookRecords[$0]?.sessionId == sessionId })
 		lookRecordOrder.removeAll { dropped.contains($0) }
 		for id in dropped { lookRecords.removeValue(forKey: id) }
+		lookRetention.removeValue(forKey: sessionId)
+	}
+
+	private func requestClientPid(_ request: [String: Any]) -> Int32? {
+		let blocklist = (request["appBlocklist"] as? [String: Any])
+			?? ((request["actions"] as? [[String: Any]])?.first?["appBlocklist"] as? [String: Any])
+		guard let pid = (blocklist?["clientPid"] as? NSNumber)?.int32Value, pid > 0 else { return nil }
+		return pid
+	}
+
+	private func noteLookSession(_ session: (id: String, generation: Int), clientPid: Int32?) {
+		lookRecordLock.lock()
+		defer { lookRecordLock.unlock() }
+		let now = monotonicSeconds()
+		guard var entry = lookRetention[session.id] else {
+			let stale = Set(lookRecordOrder.filter { lookRecords[$0]?.sessionId == session.id && lookRecords[$0]?.sessionGeneration != session.generation })
+			if !stale.isEmpty {
+				lookRecordOrder.removeAll { stale.contains($0) }
+				for id in stale { lookRecords.removeValue(forKey: id) }
+			}
+			lookRetention[session.id] = LookRetention(generation: session.generation, lastUsed: now, clientPid: clientPid)
+			return
+		}
+		if session.generation < entry.generation { return }
+		if session.generation > entry.generation {
+			dropLookRecordsLocked(sessionId: session.id)
+			entry = LookRetention(generation: session.generation, lastUsed: now, clientPid: nil)
+		}
+		entry.lastUsed = now
+		if let clientPid { entry.clientPid = clientPid }
+		lookRetention[session.id] = entry
+	}
+
+	private func sweepLookRetention() {
+		let now = monotonicSeconds()
+		lookRecordLock.lock()
+		defer { lookRecordLock.unlock() }
+		guard now - lastLookRetentionSweep >= lookRetentionSweepInterval else { return }
+		lastLookRetentionSweep = now
+		let holders = Set(lookRecords.values.compactMap { $0.sessionId })
+		let gone = lookRetention.filter { id, entry in
+			guard now - entry.lastUsed >= ownerTTL else { return false }
+			if !holders.contains(id) { return true }
+			if let pid = entry.clientPid { return !processExists(pid) }
+			return now - entry.lastUsed >= lookRetentionWithoutClient
+		}.map { $0.key }
+		for id in gone { dropLookRecordsLocked(sessionId: id) }
+	}
+
+	private func processExists(_ pid: Int32) -> Bool {
+		if kill(pid, 0) == 0 { return true }
+		return errno == EPERM
 	}
 
 	private func freshLookId() -> String {
@@ -2679,9 +2950,11 @@ final class Bridge {
 		lookRecordLock.lock()
 		let record = lookRecords[lookId]
 		lookRecordLock.unlock()
-		if let record, !sessionMayUse(owner: record.sessionId, caller: currentRequestSessionId()) {
+		let caller = currentRequestSessionId()
+		if let record, !sessionMayUse(owner: record.sessionId, caller: caller) {
 			throw BridgeFailure(message: "Look id '\(lookId)' belongs to another session; nothing was sent. Observe the window in this session first", code: "not_look_owner", effectPossible: false)
 		}
+		if let record, record.sessionId != nil, record.sessionGeneration != currentRequestSessionGeneration() { return nil }
 		return record
 	}
 
@@ -3073,7 +3346,7 @@ final class Bridge {
 	private func hitTest(_ request: [String: Any]) throws -> [String: Any] {
 		let lookId = try stringArg(request, "lookId")
 		guard let record = try lookRecord(for: lookId) else {
-			throw BridgeFailure(message: "Look id '\(lookId)' is no longer available", code: "stale_look")
+			throw BridgeFailure(message: "Look id '\(lookId)' is no longer available", code: "stale_look", effectPossible: false)
 		}
 		let point = lookPoint(record: record, x: try doubleArg(request, "x"), y: try doubleArg(request, "y"))
 		try enforceWindowOwners(pid: nil, windowId: record.windowId, windowRef: nil, request: request)
@@ -3132,7 +3405,7 @@ final class Bridge {
 		activeRequestContext()?.extendedDeliveryActivated = false
 		let lookId = try stringArg(request, "lookId")
 		guard let record = try lookRecord(for: lookId) else {
-			throw BridgeFailure(message: "Look id '\(lookId)' is no longer available", code: "stale_look")
+			throw BridgeFailure(message: "Look id '\(lookId)' is no longer available", code: "stale_look", effectPossible: false)
 		}
 		let pid = Int32(try intArg(request, "pid"))
 		let action = try stringArg(request, "action")
@@ -3145,6 +3418,15 @@ final class Bridge {
 		let foregroundGranted = policy == "foreground" && (request["foregroundGrant"] as? Bool) == true
 		if policy == "foreground" && !foregroundGranted {
 			throw foregroundRequired("Foreground delivery requires a host foreground grant on the request")
+		}
+		let offSpaceTarget = OffSpaceSupport.shared.isOffSpace(record.windowId)
+		if offSpaceTarget && policy == "foreground" {
+			throw BridgeFailure(
+				message: "off_space_foreground: the target window is on a Space no display shows; foreground delivery would bring it to the front and switch the user's Space, so nothing was activated or sent. Act on it in the background (accessibility actions, or background_delivery: \"extended\" for pointer and key input), or ask the user to show the window first",
+				code: "off_space_foreground",
+				effectPossible: false,
+				details: ["inputSent": false, "activationAttempted": false, "offSpace": true]
+			)
 		}
 		let context = activeRequestContext()
 		context?.foregroundGrant = foregroundGranted
@@ -3217,7 +3499,12 @@ final class Bridge {
 		let beforeValue: String?
 		let beforeSelected: String?
 		func finish(_ response: [String: Any]) throws -> [String: Any] {
-			let response = withExtendedDeliveryStatus(withDestinationStatus(response, context: context), plan: extendedPlan)
+			var response = withExtendedDeliveryStatus(withDestinationStatus(response, context: context), plan: extendedPlan)
+			if offSpaceTarget {
+				var performed = response["performed"] as? [String: Any] ?? [:]
+				performed["offSpace"] = true
+				response["performed"] = performed
+			}
 			if deferRootDelta { return response }
 			var output = try attachRootDelta(to: response, before: beforeRootSnapshot, beforeFrontmostPid: beforeFrontmostPid, pid: pid, eventsLive: eventsLive, eventCursor: eventCursor, beforeCgSignature: beforeCgSignature)
 			attachFrontmost(to: &output, before: frontmostBefore)
@@ -4434,7 +4721,7 @@ final class Bridge {
 		let appElement = AXUIElementCreateApplication(pid)
 		AXUIElementSetMessagingTimeout(appElement, 1.0)
 		let windows = Array(axElementArray(appElement, attribute: kAXWindowsAttribute as CFString).prefix(128))
-		guard !windows.isEmpty else { return nil }
+		guard !windows.isEmpty else { return windowId.flatMap { cachedOffSpaceWindow(pid: pid, windowId: $0) } }
 		guard let windowId else {
 			return windows.first
 		}
@@ -4450,7 +4737,7 @@ final class Bridge {
 				}
 			}
 		}
-		return nil
+		return cachedOffSpaceWindow(pid: pid, windowId: windowId)
 	}
 
 	private func findDescendant(startingAt root: AXUIElement, maxDepth: Int, predicate: (AXUIElement) -> Bool) -> AXUIElement? {
@@ -5474,20 +5761,42 @@ final class Bridge {
 	}
 
 	private func targetElement(at point: CGPoint, pid: Int32, record: LookRecord) -> AXUIElement? {
+		switch appHitTestElement(at: point, pid: pid, record: record) {
+		case .observedWindow(let element):
+			return element
+		case .otherTargetWindow(let element):
+			return opensMenu(element) ? element : windowFrameElement(at: point, pid: pid, record: record)
+		case .unidentified:
+			return OffSpaceSupport.shared.isOffSpace(record.windowId) ? windowFrameElement(at: point, pid: pid, record: record) : nil
+		}
+	}
+
+	private enum AppHit {
+		case observedWindow(AXUIElement)
+		case otherTargetWindow(AXUIElement)
+		case unidentified
+	}
+
+	private func appHitTestElement(at point: CGPoint, pid: Int32, record: LookRecord) -> AppHit {
 		let app = AXUIElementCreateApplication(pid)
 		AXUIElementSetMessagingTimeout(app, 1.0)
 		var hit: AXUIElement?
 		guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) == .success, let hit, pidForElement(hit) == pid,
 			let window = lookWindowElement(record, pid: pid) ?? windowElement(pid: pid, windowId: record.windowId)
-		else { return nil }
-		if let hitWindow = copyAttribute(hit, attribute: kAXWindowAttribute as CFString).flatMap(asAXElement), windowsRelated(hitWindow, window) { return hit }
+		else { return .unidentified }
+		let hitWindow = copyAttribute(hit, attribute: kAXWindowAttribute as CFString).flatMap(asAXElement)
+		if let hitWindow, windowsRelated(hitWindow, window) { return .observedWindow(hit) }
 		var current: AXUIElement? = hit
 		for _ in 0..<64 {
-			guard let node = current else { return nil }
-			if sameElement(node, window) { return hit }
+			guard let node = current else { break }
+			if sameElement(node, window) { return .observedWindow(hit) }
 			current = parentElement(node)
 		}
-		return nil
+		guard let hitWindow, pidForElement(hitWindow) == pid,
+			stringAttribute(hitWindow, attribute: kAXRoleAttribute as CFString) == "AXWindow",
+			let hitWindowId = OffSpaceSupport.shared.windowId(of: hitWindow), hitWindowId != record.windowId
+		else { return .unidentified }
+		return .otherTargetWindow(hit)
 	}
 
 	private func withExtendedDeliveryStatus(_ response: [String: Any], plan: ExtendedDeliveryPlan) -> [String: Any] {
@@ -5577,6 +5886,174 @@ final class Bridge {
 		extendedShuttingDown = true
 		for entry in extendedActivations.values { postAppKitActivation(entry.target, activated: false) }
 		extendedActivations.removeAll()
+	}
+
+	private func verifiedOffSpaceElement(_ element: AXUIElement, pid: Int32, windowId: UInt32) -> Bool {
+		pidForElement(element) == pid
+			&& stringAttribute(element, attribute: kAXRoleAttribute as CFString) == "AXWindow"
+			&& OffSpaceSupport.shared.windowId(of: element) == windowId
+	}
+
+	private func cachedOffSpaceWindow(pid: Int32, windowId: UInt32) -> AXUIElement? {
+		guard OffSpaceSupport.shared.available else { return nil }
+		offSpaceLock.lock()
+		let entry = offSpaceWindows[windowId]
+		offSpaceLock.unlock()
+		guard let entry, entry.pid == pid, verifiedOffSpaceElement(entry.element, pid: pid, windowId: windowId) else { return nil }
+		return entry.element
+	}
+
+	private func rememberOffSpaceWindow(_ element: AXUIElement, pid: Int32, windowId: UInt32) {
+		offSpaceLock.lock()
+		defer { offSpaceLock.unlock() }
+		if offSpaceWindows.count >= 256 { offSpaceWindows.removeAll() }
+		offSpaceWindows[windowId] = (pid, element)
+	}
+
+	private func resolveOffSpaceWindows(pid: Int32, windowIds: [UInt32], scan: Bool, messagingTimeout: Float = 1.0) -> [UInt32: (element: AXUIElement, source: String)] {
+		var found: [UInt32: (element: AXUIElement, source: String)] = [:]
+		for windowId in windowIds {
+			if let cached = cachedOffSpaceWindow(pid: pid, windowId: windowId) { found[windowId] = (cached, "cache") }
+		}
+		var wanted = Set(windowIds).subtracting(found.keys)
+		guard !wanted.isEmpty, OffSpaceSupport.shared.available else { return found }
+		let app = AXUIElementCreateApplication(pid)
+		AXUIElementSetMessagingTimeout(app, messagingTimeout)
+		for (attribute, source) in [(kAXFocusedWindowAttribute, "focused_window"), (kAXMainWindowAttribute, "main_window")] {
+			guard let window = copyAttribute(app, attribute: attribute as CFString).flatMap(asAXElement),
+				let windowId = OffSpaceSupport.shared.windowId(of: window), wanted.contains(windowId),
+				verifiedOffSpaceElement(window, pid: pid, windowId: windowId)
+			else { continue }
+			found[windowId] = (window, source)
+			wanted.remove(windowId)
+		}
+		if scan && !wanted.isEmpty {
+			let scanned = OffSpaceSupport.shared.tokenWindows(pid: pid, wanted: wanted, deadline: monotonicSeconds() + OffSpaceSupport.tokenScanBudget)
+			for (windowId, element) in scanned.found { found[windowId] = (element, "token") }
+		}
+		for (windowId, entry) in found where entry.source != "cache" { rememberOffSpaceWindow(entry.element, pid: pid, windowId: windowId) }
+		return found
+	}
+
+	private func windowAlpha(_ windowId: UInt32) -> Double {
+		let entries = CGWindowListCreateDescriptionFromArray([NSNumber(value: windowId)] as CFArray) as? [[String: Any]]
+		return (entries?.first?[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
+	}
+
+	private func offSpaceRoots(pid: Int32, candidates: [CGWindowCandidate], listed: Set<UInt32>, messagingTimeout: Float, request: [String: Any]?, scan: Bool) -> [[String: Any]] {
+		let support = OffSpaceSupport.shared
+		guard support.available else { return [] }
+		let unlisted = candidates.filter { !listed.contains($0.windowId) && $0.bounds.width >= 100 && $0.bounds.height >= 80 }
+		guard !unlisted.isEmpty, NSRunningApplication(processIdentifier: pid)?.isHidden != true, let layout = support.spaceLayout() else { return [] }
+		let offSpace = unlisted.filter { support.isOffSpace($0.windowId, layout: layout) && windowAlpha($0.windowId) > 0 }
+		guard !offSpace.isEmpty else { return [] }
+		var policyAllows = false
+		if let request, request["appBlocklist"] != nil { policyAllows = (try? enforceAppPolicy(owner: pid, request: request)) != nil }
+		let resolved = policyAllows ? resolveOffSpaceWindows(pid: pid, windowIds: offSpace.map { $0.windowId }, scan: scan, messagingTimeout: messagingTimeout) : [:]
+		var output: [[String: Any]] = []
+		for candidate in offSpace {
+			let element = resolved[candidate.windowId]?.element
+			if let element, boolAttribute(element, attribute: kAXMinimizedAttribute as CFString) == true { continue }
+			let axTitle = element.flatMap { stringAttribute($0, attribute: kAXTitleAttribute as CFString) } ?? ""
+			let role = element.flatMap { stringAttribute($0, attribute: kAXRoleAttribute as CFString) } ?? "AXWindow"
+			let subrole = element.flatMap { stringAttribute($0, attribute: kAXSubroleAttribute as CFString) } ?? ""
+			let sheetCount = element.map { sheetElements(of: $0).count } ?? 0
+			let isModal = element.map { (boolAttribute($0, attribute: "AXModal" as CFString) ?? false) || sheetCount > 0 || isDialogLikeRoot(role: role, subrole: subrole) } ?? false
+			let bounds = candidate.bounds
+			let access = element != nil ? "resolved" : (policyAllows && scan ? "unresolved" : "not_checked")
+			var item: [String: Any] = [
+				"kind": rootKind(role: role, subrole: subrole),
+				"windowId": Int(candidate.windowId),
+				"zOrder": candidate.zOrder,
+				"title": axTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? candidate.title : axTitle,
+				"role": role,
+				"subrole": subrole,
+				"isModal": isModal,
+				"framePoints": ["x": bounds.origin.x, "y": bounds.origin.y, "w": bounds.width, "h": bounds.height],
+				"scaleFactor": displayScaleFactor(for: bounds),
+				"isMinimized": false,
+				"isOnscreen": false,
+				"isMain": element.flatMap { boolAttribute($0, attribute: kAXMainAttribute as CFString) } ?? false,
+				"isFocused": element.flatMap { boolAttribute($0, attribute: kAXFocusedAttribute as CFString) } ?? false,
+				"metadata": ["pairing": ["confidence": element == nil ? "low" : "exact", "score": element == nil ? 0 : 100], "sheetCount": sheetCount, "offSpace": true],
+				"offSpace": true,
+				"offSpaceAccess": access,
+			]
+			if let element {
+				let ref = refStore.storeWindow(element)
+				item["rootRef"] = ref
+				item["windowRef"] = ref
+			}
+			output.append(item)
+		}
+		return output
+	}
+
+	private func offSpaceLookWindow(pid: Int32, windowId: UInt32, request: [String: Any]) throws -> (element: AXUIElement, info: [String: Any]) {
+		if let found = resolveOffSpaceWindows(pid: pid, windowIds: [windowId], scan: true)[windowId] {
+			return (found.element, ["discoveryActivation": false, "resolvedBy": found.source])
+		}
+		let lead = "off_space_window_unresolved: window \(windowId) of \(appLabel(pid)) is on a Space no display shows, and the app has not exposed it to Accessibility (it has not been shown on a visible Space since it opened, or its element lies beyond the helper's scan)"
+		let showOnce = "The user can show the window once (switch to its Space and back)"
+		var details: [String: Any] = ["offSpace": true, "windowId": Int(windowId), "discoveryActivation": false]
+		func refusal(_ message: String) -> BridgeFailure {
+			BridgeFailure(message: message, code: "off_space_window_unresolved", effectPossible: false, details: details)
+		}
+		guard optionalStringArg(request, "backgroundDelivery") == "extended" else {
+			throw refusal("\(lead), so it cannot be read without switching Spaces; nothing was activated or captured. \(showOnce), or enable background_delivery: \"extended\", which lets the helper tell the app it is active for a moment so that it exposes the window")
+		}
+		if let reason = OffSpaceSupport.shared.discoveryUnavailableReason {
+			details["discoveryUnavailableReason"] = reason
+			throw refusal("\(lead); the discovery activation extended delivery would use is unavailable in this helper (\(reason)), so nothing was activated or captured. \(showOnce)")
+		}
+		if currentFrontmostPid() == pid || NSWorkspace.shared.frontmostApplication?.processIdentifier == pid {
+			details["discoveryUnavailableReason"] = "target_frontmost"
+			throw refusal("\(lead); the app is frontmost, so the helper does not tell it it is active, and nothing was activated or captured. \(showOnce)")
+		}
+		guard let bounds = windowInfo(windowId: windowId)?.bounds else {
+			throw BridgeFailure(message: "Window \(windowId) is no longer available", code: "root_not_found")
+		}
+		let before = OffSpaceSupport.shared.spaceLayout()?.current
+		let found = try discoverOffSpaceWindow(ExtendedDeliveryTarget(pid: pid, windowId: windowId, windowFrame: bounds))
+		let after = OffSpaceSupport.shared.spaceLayout()?.current
+		let spacesUnchanged = before != nil && before == after
+		guard let found else {
+			details["discoveryActivation"] = true
+			details["spacesUnchanged"] = spacesUnchanged
+			throw refusal("\(lead); a discovery activation was tried (the app was told it was active for a moment, then inactive) and the window still did not resolve, so nothing was captured. \(showOnce)")
+		}
+		return (found.element, ["discoveryActivation": true, "resolvedBy": found.source, "spacesUnchanged": spacesUnchanged])
+	}
+
+	private func discoverOffSpaceWindow(_ target: ExtendedDeliveryTarget) throws -> (element: AXUIElement, source: String)? {
+		try beginExtendedDelivery(target)
+		defer { endExtendedDelivery(target) }
+		for _ in 0..<8 {
+			if let found = resolveOffSpaceWindows(pid: target.pid, windowIds: [target.windowId], scan: false)[target.windowId] {
+				return (found.element, "discovery_\(found.source)")
+			}
+			usleep(25_000)
+		}
+		return resolveOffSpaceWindows(pid: target.pid, windowIds: [target.windowId], scan: true)[target.windowId].map { ($0.element, "discovery_\($0.source)") }
+	}
+
+	private func windowFrameElement(at point: CGPoint, pid: Int32, record: LookRecord) -> AXUIElement? {
+		guard let window = lookWindowElement(record, pid: pid) ?? windowElement(pid: pid, windowId: record.windowId),
+			pidForElement(window) == pid, OffSpaceSupport.shared.windowId(of: window) == record.windowId,
+			let windowFrame = frameForElement(window), windowFrame.contains(point)
+		else { return nil }
+		var current = window
+		for _ in 0..<32 {
+			let containing = axElementArray(current, attribute: kAXChildrenAttribute as CFString).filter { child in
+				if boolAttribute(child, attribute: "AXHidden" as CFString) == true { return false }
+				guard let frame = frameForElement(child), frame.width > 0, frame.height > 0 else { return false }
+				return frame.contains(point)
+			}
+			if containing.isEmpty { return sameElement(current, window) || pidForElement(current) != pid ? nil : current }
+			guard containing.count == 1 else { return nil }
+			current = containing[0]
+		}
+		return nil
 	}
 
 	private func installTerminationHandlers() {

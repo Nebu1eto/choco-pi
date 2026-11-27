@@ -30,8 +30,14 @@ import {
   scoreDeepAncestry,
   scoreExtendedKeyUnresolved,
   scoreExtendedMenu,
+  scoreExtendedOwnWindowClick,
   scoreStandardControl,
   stringsIn,
+  fixtureLayout,
+  windowsAt,
+  windowsOutside,
+  type FixtureWindow,
+  type PointRect,
   type Score,
   type TimeWindow,
 } from "./score.ts";
@@ -146,6 +152,30 @@ async function launch(ctx: ScenarioContext, layout: Layout): Promise<void> {
   if (layout.frontKey && state.key !== layout.frontKey)
     throw new Blocked(`${label}-key-window: ${state.key ?? "none"} instead of ${layout.frontKey}`);
   ctx.notes.frontBefore = { label, pid: expected, key: state.key ?? null };
+  const placed = await fixtureWindows(ctx);
+  ctx.notes.layout = {
+    primary: placed.primary ?? null,
+    windows: placed.windows.map((window) => ({ name: window.name, frame: window.frame })),
+  };
+  if (placed.defects.length > 0) throw new Blocked("layout: " + placed.defects.join("; "));
+  const outside = placed.primary ? windowsOutside(placed.primary, placed.windows) : [];
+  if (outside.length > 0)
+    throw new Blocked("layout: not on the primary display: " + outside.join(", "));
+}
+
+async function fixtureWindows(
+  ctx: ScenarioContext,
+): Promise<{ primary?: PointRect; windows: FixtureWindow[]; defects: string[] }> {
+  let primary: PointRect | undefined;
+  const windows: FixtureWindow[] = [];
+  const defects: string[] = [];
+  for (const label of ctx.fixtures.instances.keys()) {
+    const layout = fixtureLayout(label, await ctx.fixtures.rows(label));
+    primary ??= layout.primary;
+    windows.push(...layout.windows);
+    defects.push(...layout.defects);
+  }
+  return { primary, windows, defects };
 }
 
 function begin(ctx: ScenarioContext): void {
@@ -899,15 +929,27 @@ async function judgementNoiseDrag(ctx: ScenarioContext): Promise<Score> {
 }
 
 export const CANCEL_MARGIN_MS = 50;
+const LONG_TEXT = "abcdefghij".repeat(60);
 
 async function cancelResidual(ctx: ScenarioContext): Promise<Score> {
   await launch(ctx, { targets: [{ label: "target", role: "target" }] });
   await claim(ctx);
   const pid = ctx.fixtures.pid("target");
-  const view = await look(ctx, pid, TARGET_TITLE, false);
+  const view = await look(ctx, pid, TARGET_TITLE, true);
   const ref = refOf(view, byIdentifier("cu-field"), "Field");
+  const point = centreOf(view, "cu-field", "Field");
+  const focus = await act(ctx, "focus", {
+    pid,
+    lookId: view.lookId,
+    policy: "background",
+    action: "typeText",
+    target: { ref },
+    params: { text: "_" },
+  });
+  if (focus?.ok !== true)
+    throw new Blocked(`focus: ${focus ? (errorCode(focus) ?? "failed") : "no reply"}`);
+  await pause(300);
   const envelope = ctx.wire.actEnvelope();
-  const text = "abcdefghij".repeat(60);
   begin(ctx);
   const pending = ctx.wire
     .send(
@@ -918,8 +960,8 @@ async function cancelResidual(ctx: ScenarioContext): Promise<Score> {
         lookId: view.lookId,
         policy: "background",
         action: "typeText",
-        target: { ref },
-        params: { text },
+        target: point,
+        params: { text: LONG_TEXT },
       },
       { signal: ctx.signal, timeoutMs: 30_000 },
     )
@@ -1048,12 +1090,16 @@ async function extendedInterrupted(
   ctx: ScenarioContext,
   reason: "cancelled" | "deadline",
 ): Promise<Score> {
-  await launch(ctx, { targets: [{ label: "target", role: "target" }] });
+  await launch(ctx, {
+    targets: [{ label: "target", role: "target", env: { CU_FIXTURE_WEB: "1" } }],
+  });
+  if (!(await ctx.fixtures.waitFor("target", (row) => row.event === "webReady", 10_000)))
+    throw new Blocked("web-not-ready");
   await requireExtended(ctx);
   await claim(ctx);
   const pid = ctx.fixtures.pid("target");
-  const view = await look(ctx, pid, TARGET_TITLE, false);
-  const ref = refOf(view, byIdentifier("cu-field"), "Field");
+  const view = await lookWeb(ctx, pid);
+  const ref = refOf(view, isWebInput, "web text input");
   const envelope = ctx.wire.actEnvelope(reason === "deadline" ? 1_500 : 60_000);
   begin(ctx);
   const pending = ctx.wire
@@ -1066,11 +1112,12 @@ async function extendedInterrupted(
         ...EXTENDED,
         action: "typeText",
         target: { ref },
-        params: { text: "abcdefghij".repeat(60) },
+        params: { text: LONG_TEXT },
       },
       { signal: ctx.signal, timeoutMs: 30_000 },
     )
     .catch(() => undefined);
+  let stopAt: number | undefined;
   if (reason === "cancelled") {
     await pause(1_000);
     const cancel = await ctx.wire
@@ -1081,9 +1128,16 @@ async function extendedInterrupted(
       )
       .catch(() => undefined);
     record(ctx, "cancel", "cancel", cancel?.reply);
+    const ack = cancel && isJsonObject(cancel.reply.result) ? cancel.reply.result : undefined;
+    ctx.notes.ack = ack ?? null;
+    if (cancel && ack?.acknowledged === true && isNumber(cancel.row.respondedAt))
+      stopAt = cancel.row.respondedAt;
   }
-  const reply = (await pending)?.reply;
+  const sent = await pending;
+  const reply = sent?.reply;
   record(ctx, "typeText", "act", reply);
+  if (reason === "deadline" && sent && isNumber(sent.row.respondedAt))
+    stopAt = sent.row.respondedAt;
   await end(ctx, 1_200);
   await release(ctx);
   return scoreExtendedInterrupted({
@@ -1092,19 +1146,80 @@ async function extendedInterrupted(
     window: ctx.window,
     reply,
     reason,
+    stopAt,
+    marginMs: CANCEL_MARGIN_MS,
   });
 }
 
-async function extendedPopup(ctx: ScenarioContext): Promise<Score> {
+type PopupCover = "none" | "holder" | "own_window";
+
+const MATRIX_APPKIT_TITLE = "CU Matrix AppKit";
+
+const POPUP_TARGET_ENV = {
+  none: { CU_FIXTURE_MATRIX: "1" },
+  holder: { CU_FIXTURE_MATRIX: "1" },
+  own_window: { CU_FIXTURE_MATRIX: "1", CU_FIXTURE_MATRIX_OVERLAP: "1" },
+} satisfies Record<PopupCover, Record<string, string>>;
+
+type ScreenPoint = { x: number; y: number };
+
+function screenPointOf(view: Look, point: { x: number; y: number }): ScreenPoint {
+  const scale = view.imageWidth ? view.frame.w / view.imageWidth : 1;
+  return { x: view.frame.x + point.x * scale, y: view.frame.y + point.y * scale };
+}
+
+async function requireCover(
+  ctx: ScenarioContext,
+  view: Look,
+  point: { x: number; y: number },
+  observed: string,
+  expected: string[],
+): Promise<void> {
+  const at = screenPointOf(view, point);
+  const placed = await fixtureWindows(ctx);
+  const covering = windowsAt(at, placed.windows, observed);
+  const wanted = [...expected].sort();
+  ctx.notes.cover = { point: at, observed, covering, expected: wanted };
+  if (covering.join(",") !== wanted.join(","))
+    throw new Blocked(
+      `layout: point (${at.x},${at.y}) of ${observed} is under [${covering.join(", ")}], expected [${wanted.join(", ")}]`,
+    );
+}
+
+async function coverWithHolder(ctx: ScenarioContext, view: Look, identifier: string, what: string) {
+  const node = findNode(view.outline, byIdentifier(identifier));
+  const rect = node && frameOf(node.rect);
+  if (!rect || !view.imageWidth) throw new Blocked("element-not-found: " + what + " rect");
+  const scale = view.frame.w / view.imageWidth;
+  const screen = [
+    view.frame.x + rect.x * scale,
+    view.frame.y + rect.y * scale,
+    rect.w * scale,
+    rect.h * scale,
+  ];
+  ctx.notes.coveredScreenRect = screen;
+  await ctx.fixtures.trigger(".cu-cover-holder", screen.map((value) => value.toFixed(1)).join(","));
+  if (!(await ctx.fixtures.waitFor("holder", (row) => row.event === "covered", 3_000)))
+    throw new Blocked("holder-did-not-cover");
+  await pause(400);
+  const front = await frontApp();
+  if (front?.pid !== ctx.fixtures.pid("holder"))
+    throw new Blocked("holder-not-frontmost after cover");
+}
+
+async function extendedPopup(ctx: ScenarioContext, cover: PopupCover): Promise<Score> {
   await launch(ctx, {
-    targets: [{ label: "target", role: "target", env: { CU_FIXTURE_MATRIX: "1" } }],
+    targets: [{ label: "target", role: "target", env: POPUP_TARGET_ENV[cover] }],
     holderEnv: { CU_FIXTURE_OFFSET: "0,-400" },
   });
   await requireExtended(ctx);
   await claim(ctx);
   const pid = ctx.fixtures.pid("target");
-  const view = await look(ctx, pid, "CU Matrix AppKit", true);
+  const view = await look(ctx, pid, MATRIX_APPKIT_TITLE, true);
   const point = centreOf(view, "cu-popup", "pop-up button");
+  if (cover === "holder") await coverWithHolder(ctx, view, "cu-popup", "pop-up button");
+  const expected = { none: [], holder: ["holder:main"], own_window: ["target:swiftui"] }[cover];
+  await requireCover(ctx, view, point, "target:appkit", expected);
   begin(ctx);
   const reply = await act(ctx, "click", {
     pid,
@@ -1121,6 +1236,70 @@ async function extendedPopup(ctx: ScenarioContext): Promise<Score> {
     target: await ctx.fixtures.rows("target"),
     window: ctx.window,
     reply,
+  });
+}
+
+async function extendedCustomClickCovered(ctx: ScenarioContext): Promise<Score> {
+  await launch(ctx, { targets: [{ label: "target", role: "target" }] });
+  await requireExtended(ctx);
+  await claim(ctx);
+  const pid = ctx.fixtures.pid("target");
+  const view = await look(ctx, pid, TARGET_TITLE, true);
+  const point = centreOf(view, "cu-custom-view", "custom view");
+  await coverWithHolder(ctx, view, "cu-custom-view", "custom view");
+  await requireCover(ctx, view, point, "target:main", ["holder:main"]);
+  begin(ctx);
+  const reply = await act(ctx, "click", {
+    pid,
+    lookId: view.lookId,
+    ...EXTENDED,
+    action: "click",
+    target: point,
+    params: {},
+  });
+  await end(ctx, 900);
+  await release(ctx);
+  return scoreExtendedClick({
+    holder: await ctx.fixtures.rows("holder"),
+    targets: [{ label: "target", rows: await ctx.fixtures.rows("target"), reply }],
+    window: ctx.window,
+  });
+}
+
+async function extendedOwnWindowClick(ctx: ScenarioContext): Promise<Score> {
+  await launch(ctx, {
+    targets: [
+      {
+        label: "target",
+        role: "target",
+        env: { CU_FIXTURE_MATRIX: "1", CU_FIXTURE_MATRIX_OVERLAP: "1" },
+      },
+    ],
+    holderEnv: { CU_FIXTURE_OFFSET: "0,-400" },
+  });
+  await requireExtended(ctx);
+  await claim(ctx);
+  const pid = ctx.fixtures.pid("target");
+  const view = await look(ctx, pid, MATRIX_APPKIT_TITLE, true);
+  const point = centreOf(view, "cu-drag", "drag view");
+  await requireCover(ctx, view, point, "target:appkit", ["target:swiftui"]);
+  begin(ctx);
+  const reply = await act(ctx, "click", {
+    pid,
+    lookId: view.lookId,
+    ...EXTENDED,
+    action: "click",
+    target: point,
+    params: {},
+  });
+  await end(ctx, 900);
+  await release(ctx);
+  return scoreExtendedOwnWindowClick({
+    holder: await ctx.fixtures.rows("holder"),
+    target: await ctx.fixtures.rows("target"),
+    window: ctx.window,
+    reply,
+    observedWindow: "appkit",
   });
 }
 
@@ -1175,52 +1354,6 @@ async function extendedKeyWindowUnresolved(ctx: ScenarioContext): Promise<Score>
   await end(ctx, 900);
   await release(ctx);
   return scoreExtendedKeyUnresolved({
-    holder: await ctx.fixtures.rows("holder"),
-    target: await ctx.fixtures.rows("target"),
-    window: ctx.window,
-    reply,
-  });
-}
-
-async function extendedPopupCovered(ctx: ScenarioContext): Promise<Score> {
-  await launch(ctx, {
-    targets: [{ label: "target", role: "target", env: { CU_FIXTURE_MATRIX: "1" } }],
-    holderEnv: { CU_FIXTURE_OFFSET: "0,-400" },
-  });
-  await requireExtended(ctx);
-  await claim(ctx);
-  const pid = ctx.fixtures.pid("target");
-  const view = await look(ctx, pid, "CU Matrix AppKit", true);
-  const node = findNode(view.outline, byIdentifier("cu-popup"));
-  const rect = node && frameOf(node.rect);
-  if (!rect || !view.imageWidth) throw new Blocked("element-not-found: pop-up button rect");
-  const scale = view.frame.w / view.imageWidth;
-  const screen = [
-    view.frame.x + rect.x * scale,
-    view.frame.y + rect.y * scale,
-    rect.w * scale,
-    rect.h * scale,
-  ];
-  ctx.notes.coveredScreenRect = screen;
-  await ctx.fixtures.trigger(".cu-cover-holder", screen.map((value) => value.toFixed(1)).join(","));
-  if (!(await ctx.fixtures.waitFor("holder", (row) => row.event === "covered", 3_000)))
-    throw new Blocked("holder-did-not-cover");
-  await pause(400);
-  const front = await frontApp();
-  if (front?.pid !== ctx.fixtures.pid("holder"))
-    throw new Blocked("holder-not-frontmost after cover");
-  begin(ctx);
-  const reply = await act(ctx, "click", {
-    pid,
-    lookId: view.lookId,
-    ...EXTENDED,
-    action: "click",
-    target: { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 },
-    params: {},
-  });
-  await end(ctx, 900);
-  await release(ctx);
-  return scoreExtendedMenu({
     holder: await ctx.fixtures.rows("holder"),
     target: await ctx.fixtures.rows("target"),
     window: ctx.window,
@@ -1513,7 +1646,7 @@ export const scenarios: Scenario[] = [
     layer: "wire",
     timeoutMs: 60_000,
     asserts:
-      "raw 600-char background typeText cancelled after 1 s; SAFE = no fixture input later than the ack + 50 ms",
+      "raw 600-char background typeText at the focused field's point (no ref, so one pid key event per character) cancelled after 1 s; SAFE = no fixture input later than the ack + 50 ms",
     run: cancelResidual,
   },
   {
@@ -1545,7 +1678,7 @@ export const scenarios: Scenario[] = [
     layer: "wire",
     timeoutMs: 60_000,
     asserts:
-      "extended 600-char typeText cancelled after 1 s; SAFE = cancelled with extendedDelivery used, the target was activated and does not believe it is active afterwards, holder undisturbed",
+      "extended 600-char typeText into the web input (one pid key event per character) cancelled after 1 s; SAFE = cancelled with extendedDelivery used, no fixture input later than the ack + 50 ms, the target was activated and does not believe it is active afterwards, holder undisturbed",
     run: (ctx) => extendedInterrupted(ctx, "cancelled"),
   },
   {
@@ -1553,7 +1686,7 @@ export const scenarios: Scenario[] = [
     layer: "wire",
     timeoutMs: 60_000,
     asserts:
-      "extended 600-char typeText with a 1.5 s budget; SAFE = stopped at its deadline with extendedDelivery used, the target does not believe it is active afterwards, holder undisturbed",
+      "extended 600-char typeText into the web input with a 1.5 s budget; SAFE = stopped at its deadline with extendedDelivery used, no fixture input later than the reply + 50 ms, the target does not believe it is active afterwards, holder undisturbed",
     run: (ctx) => extendedInterrupted(ctx, "deadline"),
   },
   {
@@ -1562,7 +1695,7 @@ export const scenarios: Scenario[] = [
     timeoutMs: 60_000,
     asserts:
       "extended coordinate click on a pop-up button; SAFE = extendedDelivery not_applicable (menu_element), the target is never told it is active, holder undisturbed",
-    run: extendedPopup,
+    run: (ctx) => extendedPopup(ctx, "none"),
   },
   {
     id: "extended.key_window_unresolved",
@@ -1578,7 +1711,31 @@ export const scenarios: Scenario[] = [
     timeoutMs: 60_000,
     asserts:
       "extended coordinate click on the pop-up button while the holder's window covers it; SAFE = extendedDelivery not_applicable (menu_element, read from the target's own tree), the target is never told it is active, holder undisturbed",
-    run: extendedPopupCovered,
+    run: (ctx) => extendedPopup(ctx, "holder"),
+  },
+  {
+    id: "extended.popup_own_window",
+    layer: "wire",
+    timeoutMs: 60_000,
+    asserts:
+      "extended coordinate click on the pop-up button while the target's own SwiftUI window lies on top at the point; SAFE = extendedDelivery not_applicable (menu_element, read from the observed window's tree), the target is never told it is active, holder undisturbed",
+    run: (ctx) => extendedPopup(ctx, "own_window"),
+  },
+  {
+    id: "extended.custom_click_covered",
+    layer: "wire",
+    timeoutMs: 60_000,
+    asserts:
+      "extended coordinate click on the custom view while the holder's window covers it; SAFE = extended delivery used, exactly one hit, the answer is not a no-effect claim, the holder logs no appInactive/windowResignKey/keyDown/mouseDown, and the target does not believe it is active afterwards",
+    run: extendedCustomClickCovered,
+  },
+  {
+    id: "extended.own_window_click",
+    layer: "wire",
+    timeoutMs: 60_000,
+    asserts:
+      "extended coordinate click on the AppKit matrix window's drag view while the target's own SwiftUI window lies on top at the point; SAFE = extended delivery used, exactly one drag-view press, no mouse-down in another target window and no SwiftUI control reacting, not a no-effect claim, target deactivated afterwards, holder undisturbed",
+    run: extendedOwnWindowClick,
   },
   {
     id: "judgement.noise_drag_target",

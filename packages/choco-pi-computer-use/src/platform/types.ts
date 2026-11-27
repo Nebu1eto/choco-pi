@@ -25,6 +25,7 @@ export interface PlatformDiagnostics {
   accessibility?: boolean;
   screenRecording?: boolean;
   extendedDelivery?: { available: boolean; reason?: string };
+  offSpace?: { available: boolean; discoveryAvailable: boolean; reason?: string };
 }
 
 export interface PlatformReadyState {
@@ -73,6 +74,8 @@ export interface PlatformRoot {
   isMain: boolean;
   isModal: boolean;
   metadata?: JsonObject;
+  offSpace?: boolean;
+  offSpaceAccess?: "resolved" | "unresolved" | "not_checked";
 }
 
 export interface PlatformFrontmostResult {
@@ -126,6 +129,7 @@ export interface HelperActPerformed {
   extendedDelivery?: ExtendedDeliveryStatus;
   extendedDeliveryReason?: string;
   textEntry?: "characters";
+  offSpace?: boolean;
 }
 
 export type ExtendedDeliveryStatus = "used" | "unavailable" | "not_applicable";
@@ -234,6 +238,7 @@ export interface PlatformObserveRequest {
   scopeRef?: string;
   maxDimension?: number;
   includeImage?: boolean;
+  backgroundDelivery?: "extended";
 }
 
 export type PlatformActTarget =

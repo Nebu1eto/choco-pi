@@ -153,7 +153,7 @@ function parseRoots(result: JsonValue): PlatformRoot[] {
 
   return array.map((value): PlatformRoot => {
     const raw = isJsonObject(value) ? value : {};
-    return {
+    const root: PlatformRoot = {
       kind: isPlatformRootKind(raw.kind) ? raw.kind : "window",
       rootRef: toOptionalString(raw.rootRef ?? raw.windowRef),
       windowRef: toOptionalString(raw.windowRef ?? raw.rootRef),
@@ -177,6 +177,17 @@ function parseRoots(result: JsonValue): PlatformRoot[] {
       isModal: toBoolean(raw.isModal),
       metadata: isJsonObject(raw.metadata) ? raw.metadata : {},
     };
+    if (raw.offSpace === true) {
+      root.offSpace = true;
+      root.isOnscreen = false;
+      if (
+        raw.offSpaceAccess === "resolved" ||
+        raw.offSpaceAccess === "unresolved" ||
+        raw.offSpaceAccess === "not_checked"
+      )
+        root.offSpaceAccess = raw.offSpaceAccess;
+    }
+    return root;
   });
 }
 
@@ -212,7 +223,9 @@ export const macosBackend: Pick<
     const args: ListRootsArgs = {};
     if (Number.isFinite(query.pid)) args.pid = Math.trunc(query.pid!);
     if (query.title?.trim()) args.title = query.title.trim();
-    return parseRoots(await macosHelper.command("listRoots", args, { signal }));
+    return parseRoots(
+      await macosHelper.command("listRoots", withAppBlocklist({ ...args }), { signal }),
+    );
   },
 
   async getFrontmost(signal?: AbortSignal): Promise<PlatformFrontmostResult> {
@@ -294,6 +307,7 @@ export const macosBackend: Pick<
             readText: request.readText,
             scopeRef: request.scopeRef,
             includeImage: request.includeImage,
+            backgroundDelivery: request.backgroundDelivery,
           }),
           options,
         ),

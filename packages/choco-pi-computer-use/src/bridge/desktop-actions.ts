@@ -52,6 +52,7 @@ import {
   currentLookOrThrow,
   detailsConfig,
   executionTrace,
+  observationRefreshRequired,
   operationState,
   outlineNodeByRef,
   outlineNodeCenter,
@@ -164,10 +165,17 @@ export async function dispatchUiTransaction(
     const requests = prepared.map((action) =>
       helperActRequest(target, action, "ax_only", timeoutMs),
     );
-    const result = await currentPlatformBackend.actBatch(requests, {
-      signal,
-      timeoutMs,
-    });
+    let result: HelperActResult;
+    try {
+      result = await currentPlatformBackend.actBatch(requests, { signal, timeoutMs });
+    } catch (error) {
+      const first = requests[0];
+      if (signal?.aborted || !(error instanceof Error) || !first || !isLookGone(error)) throw error;
+      return {
+        execution: aggregateExecutions([]),
+        failure: { index: 0, error, request: { requestId: first.requestId, policy: "ax_only" } },
+      };
+    }
     if (!result.steps || result.steps.length === 0)
       throw new Error("Native action transaction returned no checked steps.");
     const execution = aggregateExecutions(
@@ -297,6 +305,13 @@ export function extendedDeliveryText(execution: ExecutionTrace): string {
       ? ""
       : ` Action ${ended + 1} ended after the app was told it was active, before its effect could be verified.`;
   return ` Extended background delivery was used for ${used === 1 ? "1 action" : `${used} actions`} (the app was told it was active while the input was sent); an effect that was not verified was not sent again.${endedText}`;
+}
+
+export function offSpaceActText(execution: ExecutionTrace): string {
+  const steps = execution.steps ?? [execution];
+  return steps.some((step) => step.performed?.offSpace === true)
+    ? " The target window is on a Space no display shows; the input was sent in the background without switching Spaces, and no discovery activation was used for it."
+    : "";
 }
 
 export function notSentText(executed: number, total: number): string {
@@ -479,7 +494,9 @@ export function foregroundRequiredResult(
       {
         type: "text",
         text: [
-          `foreground_required: ${actionLabel(refusal.action)}${step} in ${target.appName} — ${target.windowTitle} needs ${refusal.capability}, which requires granted foreground delivery. It will not be retried automatically.`,
+          target.offSpace
+            ? `foreground_required: ${actionLabel(refusal.action)}${step} in ${target.appName} — ${target.windowTitle} needs ${refusal.capability}, which background delivery could not provide here, and the window is on a Space no display shows, so foreground delivery is not used for it. It will not be retried automatically.`
+            : `foreground_required: ${actionLabel(refusal.action)}${step} in ${target.appName} — ${target.windowTitle} needs ${refusal.capability}, which requires granted foreground delivery. It will not be retried automatically.`,
           `${effect}${prefix}`,
           refusal.grantHint,
           refusal.nextStep
@@ -544,6 +561,61 @@ export function sessionConflictResult(
       ? "next step: retry_later_or_other_window — another session or the user may be using that window; retry later, or observe and act on the window that has the keyboard focus. The state_id is still usable."
       : "next step: retry_later — the state_id is still usable; retry this act_ui later.";
   return { content: [{ type: "text", text: `${headline}\n${advice}` }], details };
+}
+
+export function isLookGone(error: Error): boolean {
+  return (
+    error instanceof PlatformCommandError &&
+    error.code === "stale_look" &&
+    !errorEffectPossible(error)
+  );
+}
+
+export function lookGoneResult(
+  target: ResolvedTarget,
+  baseStateId: string,
+  dispatched: ExecutionTrace,
+  failure: DesktopDispatchFailure,
+): AgentToolResult<TerminalDesktopActionDetails> {
+  const failedStep = failedStepTrace(failure);
+  const execution = aggregateExecutions([...(dispatched.steps ?? []), failedStep]);
+  execution.stoppedAt = failure.index;
+  execution.error = failedStep.error;
+  execution.focusRestored = dispatched.focusRestored;
+  execution.focusRestoreReason = dispatched.focusRestoreReason;
+  if (dispatched.foregroundSection) execution.foregroundSection = dispatched.foregroundSection;
+  const { requirement } = observationRefreshRequired(
+    "act_ui",
+    "stale",
+    operationState(),
+    baseStateId,
+  );
+  requirement.cause = { code: "stale_look", message: failure.error.message };
+  const details: TerminalDesktopActionDetails = {
+    tool: "act_ui",
+    status: "observation_refresh_required",
+    baseStateId,
+    target: {
+      app: target.appName,
+      bundleId: target.bundleId,
+      pid: target.pid,
+      windowTitle: target.windowTitle,
+      windowId: target.windowId,
+      windowRef: target.windowRef,
+      nativeWindowRef: target.nativeWindowRef,
+    },
+    execution,
+    error: {
+      code: "stale_look",
+      message: failure.error.message,
+      inputSent: false,
+      effectPossible: false,
+    },
+    nextStep: "observe_then_retry",
+    refresh: requirement.refresh,
+    config: detailsConfig(),
+  };
+  return { content: [{ type: "text", text: JSON.stringify(requirement) }], details };
 }
 
 export function helperInterruption(error: Error): HelperInterruptionOutcome | undefined {
@@ -801,6 +873,8 @@ export async function performDesktopTransaction(
     if (failure?.index === 0) {
       const busy = busyCodeOf(failure.error);
       if (busy) return sessionConflictResult(target, baseView.stateId, execution, failure, busy);
+      if (isLookGone(failure.error))
+        return lookGoneResult(target, baseView.stateId, execution, failure);
       const destination = destinationFailureOf(failure.error);
       if (!destination) throw failure.error;
       if (!destination.inputSent)
@@ -901,7 +975,7 @@ export async function performDesktopTransaction(
         : `Executed ${executedActions.length} checked UI action${plural} in ${target.appName} — ${target.windowTitle}. Returned state ${capture.capture.stateId}.`;
       const result = await buildToolResult(
         "act_ui",
-        `${summary}${unverifiedEffectText(unverified)}${extendedDeliveryText(execution)}${failure ? "" : notSentText(executedActions.length, actions.length)}`,
+        `${summary}${unverifiedEffectText(unverified)}${extendedDeliveryText(execution)}${offSpaceActText(execution)}${failure ? "" : notSentText(executedActions.length, actions.length)}`,
         capture,
         execution,
         signal,

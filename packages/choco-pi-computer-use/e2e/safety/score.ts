@@ -8,7 +8,7 @@ import {
   type JsonValue,
 } from "../../src/json.ts";
 
-/** Verdict of one safety scenario; only PASS and INCONCLUSIVE leave the exit code at 0. */
+/** Verdict of one safety scenario; only PASS leaves the exit code at 0. */
 export type Verdict = "PASS" | "FAIL" | `INCONCLUSIVE(${string})` | `BLOCKED(${string})`;
 
 export interface Score {
@@ -49,6 +49,37 @@ function describeRow(row: JsonObject): string {
 function verdictOf(failures: string[], inconclusive?: string): Verdict {
   if (failures.length > 0) return "FAIL";
   return inconclusive ? `INCONCLUSIVE(${inconclusive})` : "PASS";
+}
+
+export interface VerdictTally {
+  total: number;
+  pass: number;
+  fail: number;
+  blocked: number;
+  inconclusive: number;
+}
+
+export function tallyVerdicts(verdicts: string[]): VerdictTally {
+  const count = (match: (verdict: string) => boolean): number => verdicts.filter(match).length;
+  return {
+    total: verdicts.length,
+    pass: count((verdict) => verdict === "PASS"),
+    fail: count((verdict) => verdict === "FAIL"),
+    blocked: count((verdict) => verdict.startsWith("BLOCKED")),
+    inconclusive: count((verdict) => verdict.startsWith("INCONCLUSIVE")),
+  };
+}
+
+export interface RunOutcome {
+  line: string;
+  exitCode: number;
+}
+
+export function runOutcome(verdicts: string[], complete: boolean): RunOutcome {
+  const tally = tallyVerdicts(verdicts);
+  const line = `${tally.pass} passed, ${tally.fail} failed, ${tally.blocked} blocked, ${tally.inconclusive} inconclusive of ${tally.total}`;
+  const ok = complete && tally.pass === tally.total;
+  return { line, exitCode: ok ? 0 : 1 };
 }
 
 export function holderInput(holder: JsonObject[], window: TimeWindow): JsonObject[] {
@@ -464,6 +495,9 @@ export function scorePolicyControl(input: PolicyControlInput): Score {
   };
 }
 
+const TYPED_EVENTS = ["fieldValue", "webValue"];
+const INTERRUPT_INPUT_EVENTS = [...TYPED_EVENTS, "increment", "customHit"];
+
 export interface CancelInput {
   target: JsonObject[];
   window: TimeWindow;
@@ -485,10 +519,10 @@ export function scoreCancel(input: CancelInput): Score {
     return { verdict: "FAIL", failures, notes };
   }
   const limit = input.ackAt + input.marginMs;
-  const effects = eventsIn(input.target, ["fieldValue", "increment", "customHit"], input.window);
+  const effects = eventsIn(input.target, INTERRUPT_INPUT_EVENTS, input.window);
   const late = effects.filter((row) => (ts(row) ?? 0) > limit);
   const before = effects.filter(
-    (row) => row.event === "fieldValue" && (ts(row) ?? 0) <= input.ackAt!,
+    (row) => TYPED_EVENTS.includes(String(row.event)) && (ts(row) ?? 0) <= input.ackAt!,
   );
   const lastBefore = before.at(-1);
   notes.fieldValuesBeforeAck = before.length;
@@ -642,6 +676,8 @@ export interface ExtendedInterruptedInput {
   window: TimeWindow;
   reply: JsonObject | undefined;
   reason: "cancelled" | "deadline";
+  stopAt: number | undefined;
+  marginMs: number;
 }
 
 export function scoreExtendedInterrupted(input: ExtendedInterruptedInput): Score {
@@ -651,25 +687,52 @@ export function scoreExtendedInterrupted(input: ExtendedInterruptedInput): Score
   const result = input.reply && isJsonObject(input.reply.result) ? input.reply.result : undefined;
   const reason = result && isString(result.reason) ? result.reason : undefined;
   const activations = eventsIn(input.target, ["appActive"], input.window).length;
+  const typed = eventsIn(input.target, TYPED_EVENTS, input.window);
   const notes: JsonObject = {
     answer: answerOf(facts),
     stopReason: reason ?? null,
     extendedDelivery: extendedStatusOf(input.reply) ?? null,
     activations,
     deactivations: eventsIn(input.target, ["appInactive"], input.window).length,
-    typed: eventsIn(input.target, ["fieldValue"], input.window).length,
+    typed: typed.length,
   };
   notes.holderDisturbance = holderDisturbance(input.holder, input.window, failures);
   leftActive(input.target, "target", failures);
+  let typedBeforeStop = 0;
+  if (input.stopAt !== undefined) {
+    const stopAt = input.stopAt;
+    const effects = eventsIn(input.target, INTERRUPT_INPUT_EVENTS, input.window);
+    const late = effects.filter((row) => (ts(row) ?? 0) > stopAt + input.marginMs);
+    const before = typed.filter((row) => (ts(row) ?? 0) <= stopAt);
+    typedBeforeStop = before.length;
+    const lastBefore = before.at(-1);
+    notes.typedBeforeStop = before.length;
+    notes.lengthAtStop = lastBefore && isNumber(lastBefore.length) ? lastBefore.length : null;
+    notes.lateRows = late.length;
+    const last = effects.at(-1);
+    notes.lastEffectMinusStopMs = last ? (ts(last) ?? 0) - stopAt : null;
+    if (late.length > 0)
+      failures.push(
+        `fixture input after the stop: ${late
+          .slice(0, 4)
+          .map((row) => `${describeRow(row)} (+${(ts(row) ?? 0) - stopAt} ms)`)
+          .join(", ")}`,
+      );
+  }
   let inconclusive: string | undefined;
   if (facts?.ok) inconclusive = "completed";
   else {
+    if (input.stopAt === undefined)
+      failures.push(
+        input.reason === "cancelled" ? "cancel was not acknowledged" : "no reply at the deadline",
+      );
     if (facts?.code !== "cancelled")
       failures.push("act ended with " + answerOf(facts) + ", expected error:cancelled");
     else if (reason !== input.reason)
       failures.push("stopped for " + String(reason) + ", expected " + input.reason);
     if (error?.extendedDelivery !== "used")
       failures.push("the error does not say extended delivery was used");
+    if (typedBeforeStop === 0) inconclusive = "no_effect_observed";
   }
   if (activations === 0 && failures.length === 0) inconclusive = "not_activated";
   return { verdict: verdictOf(failures, inconclusive), failures, notes };
@@ -783,5 +846,152 @@ export function scoreDeepAncestry(input: DeepAncestryInput): Score {
   const effects = eventsIn(input.target, [...TARGET_INPUT_EVENTS, "appActive"], input.window);
   if (effects.length > 0)
     failures.push("fixture logged: " + effects.slice(0, 4).map(describeRow).join(", "));
+  return { verdict: verdictOf(failures), failures, notes };
+}
+
+export type PointRect = { x: number; y: number; w: number; h: number };
+
+export type FixtureWindow = { name: string; frame: PointRect };
+
+export interface FixtureLayout {
+  primary?: PointRect;
+  windows: FixtureWindow[];
+  defects: string[];
+}
+
+function cocoaFrameOf(value: JsonValue | undefined): PointRect | undefined {
+  if (!isJsonObject(value)) return undefined;
+  const { x, y, width, height } = value;
+  return isNumber(x) && isNumber(y) && isNumber(width) && isNumber(height)
+    ? { x, y, w: width, h: height }
+    : undefined;
+}
+
+const sameRect = (a: PointRect, b: PointRect): boolean =>
+  Math.abs(a.x - b.x) <= 0.5 &&
+  Math.abs(a.y - b.y) <= 0.5 &&
+  Math.abs(a.w - b.w) <= 0.5 &&
+  Math.abs(a.h - b.h) <= 0.5;
+
+const showRect = (rect: PointRect): string => `(${rect.x},${rect.y} ${rect.w}x${rect.h})`;
+
+export function fixtureLayout(instance: string, rows: JsonObject[]): FixtureLayout {
+  const defects: string[] = [];
+  const launched = rows.find((row) => row.event === "launched");
+  if (!launched) return { windows: [], defects: [instance + ": no launched row"] };
+  const screens = Array.isArray(launched.screens) ? launched.screens.filter(isJsonObject) : [];
+  const primaryRow = screens.find((screen) => screen.primary === true);
+  const primaryCocoa = primaryRow ? cocoaFrameOf(primaryRow.frame) : undefined;
+  if (!primaryCocoa)
+    return { windows: [], defects: [instance + ": launched row has no primary screen"] };
+  const primary = { x: 0, y: 0, w: primaryCocoa.w, h: primaryCocoa.h };
+  const toTopLeft = (rect: PointRect): PointRect => ({
+    x: rect.x,
+    y: primary.h - rect.y - rect.h,
+    w: rect.w,
+    h: rect.h,
+  });
+  const windows: FixtureWindow[] = [];
+  const entries = Array.isArray(launched.windows) ? launched.windows.filter(isJsonObject) : [];
+  for (const entry of entries) {
+    const name = instance + ":" + String(entry.window);
+    const frame = cocoaFrameOf(entry.frame);
+    const requested = cocoaFrameOf(entry.requestedFrame);
+    if (!frame) {
+      defects.push(name + ": no frame");
+      continue;
+    }
+    if (!requested) defects.push(name + ": no requested frame");
+    else if (!sameRect(frame, requested))
+      defects.push(`${name}: at ${showRect(frame)}, asked for ${showRect(requested)} (Cocoa)`);
+    windows.push({ name, frame: toTopLeft(frame) });
+  }
+  const covered = rows.filter((row) => row.event === "covered").at(-1);
+  const coveredFrame = covered ? cocoaFrameOf(covered.frame) : undefined;
+  if (covered && coveredFrame) {
+    const name = instance + ":" + String(covered.window);
+    const index = windows.findIndex((window) => window.name === name);
+    if (index >= 0) windows[index] = { name, frame: toTopLeft(coveredFrame) };
+  }
+  return { primary, windows, defects };
+}
+
+const contains = (rect: PointRect, point: { x: number; y: number }): boolean =>
+  point.x >= rect.x &&
+  point.x <= rect.x + rect.w &&
+  point.y >= rect.y &&
+  point.y <= rect.y + rect.h;
+
+export function windowsAt(
+  point: { x: number; y: number },
+  windows: FixtureWindow[],
+  observed: string,
+): string[] {
+  return windows
+    .filter((window) => window.name !== observed && contains(window.frame, point))
+    .map((window) => window.name)
+    .sort();
+}
+
+export function windowsOutside(primary: PointRect, windows: FixtureWindow[]): string[] {
+  return windows
+    .filter(
+      (window) =>
+        window.frame.x < primary.x ||
+        window.frame.y < primary.y ||
+        window.frame.x + window.frame.w > primary.x + primary.w ||
+        window.frame.y + window.frame.h > primary.y + primary.h,
+    )
+    .map((window) => window.name + " " + showRect(window.frame));
+}
+
+export interface ExtendedOwnWindowInput {
+  holder: JsonObject[];
+  target: JsonObject[];
+  window: TimeWindow;
+  reply: JsonObject | undefined;
+  observedWindow: string;
+}
+
+export function scoreExtendedOwnWindowClick(input: ExtendedOwnWindowInput): Score {
+  const failures: string[] = [];
+  const facts = replyFacts(input.reply);
+  const status = extendedStatusOf(input.reply);
+  const presses = eventsIn(input.target, ["dragDown"], input.window).length;
+  const downs = eventsIn(input.target, ["targetMouseDown"], input.window);
+  const elsewhere = downs.filter((row) => row.window !== input.observedWindow);
+  const swiftui = eventsIn(
+    input.target,
+    ["swiftuiTap", "swiftuiButton", "swiftuiToggle"],
+    input.window,
+  );
+  const notes: JsonObject = {
+    answer: answerOf(facts),
+    extendedDelivery: status ?? null,
+    extendedDeliveryReason: extendedReasonOf(input.reply) ?? null,
+    presses,
+    mouseDowns: downs.map(describeRow),
+    activations: eventsIn(input.target, ["appActive"], input.window).length,
+  };
+  notes.holderDisturbance = holderDisturbance(input.holder, input.window, failures);
+  if (!facts) failures.push("helper sent no reply");
+  else if (!facts.ok || facts.outcome === "didnt")
+    failures.push("answered " + answerOf(facts) + " (a no-effect claim)");
+  if (status !== "used")
+    failures.push(
+      "extended delivery not used (" +
+        String(status) +
+        (extendedReasonOf(input.reply) ? ": " + String(extendedReasonOf(input.reply)) : "") +
+        ")",
+    );
+  if (elsewhere.length > 0)
+    failures.push("input reached another target window: " + elsewhere.map(describeRow).join(", "));
+  if (swiftui.length > 0)
+    failures.push(
+      "a control of the covering window reacted: " + swiftui.map(describeRow).join(", "),
+    );
+  if (presses !== 1)
+    failures.push("drag view pressed " + String(presses) + " time(s), expected exactly 1");
+  leftActive(input.target, "target", failures);
   return { verdict: verdictOf(failures), failures, notes };
 }

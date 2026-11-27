@@ -14,7 +14,7 @@ import {
   type Scenario,
   type ScenarioContext,
 } from "./scenarios.ts";
-import { isMainHelper, type Score, type Verdict } from "./score.ts";
+import { isMainHelper, runOutcome, type Score, type Verdict } from "./score.ts";
 import { loadTsLayer, type TsLayer } from "./ts-layer.ts";
 import { RequestLog, Wire } from "./wire.ts";
 
@@ -286,8 +286,9 @@ async function main(): Promise<number> {
       (error: Error) => `failed: ${error.message}`,
     );
   }
-  const failed = entries.filter(
-    (entry) => entry.verdict === "FAIL" || entry.verdict.startsWith("BLOCKED"),
+  const outcome = runOutcome(
+    entries.map((entry) => entry.verdict),
+    status === "complete",
   );
   await writeFile(
     summaryPath,
@@ -297,10 +298,8 @@ async function main(): Promise<number> {
       frontRestore: restoredFront,
     }),
   );
-  console.log(
-    `safety summary ${summaryPath} (${failed.length} failing or blocked of ${entries.length})`,
-  );
-  return status === "complete" && failed.length === 0 ? 0 : 1;
+  console.log(`safety summary ${summaryPath} (${status}: ${outcome.line})`);
+  return outcome.exitCode;
 }
 
 process.exit(await main());

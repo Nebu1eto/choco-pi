@@ -26,6 +26,7 @@ import {
 } from "./desktop.ts";
 import { buildFixture, fixtureApps, type FixtureBuild } from "./fixture/build.ts";
 import { launch, wire } from "./launch.ts";
+import { environmentBlock } from "./provider.ts";
 import {
   models,
   packagePath,
@@ -536,19 +537,18 @@ async function run(): Promise<void> {
               );
             const events = await jsonl(p.events);
             const session = await sessionRows(root, p.sessionId);
-            const capacityPattern = /capacity|rate.limit|overload|429|529/i;
             const stderr = await readFile(p.stderr, "utf8");
-            if (
-              (result.code !== 0 && capacityPattern.test(stderr)) ||
-              events.some(
-                (event) =>
-                  event.type === "message_end" &&
-                  field(event.message, "stopReason") === "error" &&
-                  capacityPattern.test(JSON.stringify(event.message)),
-              )
-            ) {
+            const environment = await environmentBlock({
+              code: result.code,
+              stderr,
+              events,
+              requests: async () => await jsonl(p.requests),
+            });
+            if (environment === "capacity") {
               verdict = "BLOCKED(capacity)";
               if (attempt < 3) backoff = [10_000, 30_000, 60_000][attempt];
+            } else if (environment === "provider-auth") {
+              verdict = "BLOCKED(provider-auth)";
             } else {
               const requests = await jsonl(p.requests);
               const fixture: FixtureEvidence | undefined = fixtureRun && {
@@ -619,6 +619,7 @@ async function run(): Promise<void> {
         await summary("running");
         if (verdict !== "PASS") allPass = false;
         if (scenario.id === "S1") isolationBlock = blockAfterIsolation(isolation);
+        if (verdict.startsWith("BLOCKED(provider-auth)")) isolationBlock = "provider-auth";
       }
     }
   } catch (error) {

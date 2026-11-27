@@ -1122,6 +1122,59 @@ test("the CLI exits on SIGTERM within 500 ms with an idle client connected", asy
   }
 });
 
+test("bridge: an act after its session went quiet past the helper TTL still uses its observation", async () => {
+  const fake = await startDaemon({ script: "s1-ok", ownerTtlMs: 100 });
+  const { details } = await actThroughBridge(
+    wireBackend(),
+    async () => await new Promise((resolve) => setTimeout(resolve, 350)),
+    { findFixture: true, actions: [{ action: "press", ref: "@e3" }] },
+  );
+  assert.equal(details.status, "ok");
+  assert.equal(field(details, "execution").outcome, "worked");
+  const acts = fake.requests.filter((request) => request.cmd === "act");
+  assert.equal(acts.length, 1);
+  assert.equal(field(acts[0]!, "response").ok, true, "the helper still had the look");
+});
+
+test("bridge: an observation the helper no longer has asks for a refresh and attributes the refused act", async () => {
+  const logPath = path.join(scratch, "gone.requests.jsonl");
+  const fake = await startDaemon({ script: "s1-ok", logPath });
+  const mutator = new helper.MacosHelperClient();
+  const { details, text } = await actThroughBridge(
+    wireBackend(),
+    async () => {
+      await mutator.command("look", { pid: FAKE_APP.pid, fixtureMutation: "bump_root_generation" });
+    },
+    { findFixture: true, actions: [{ action: "press", ref: "@e3" }] },
+  );
+  await fake.close();
+  daemon = undefined;
+  assert.equal(details.status, "observation_refresh_required");
+  assert.equal(details.nextStep, "observe_then_retry");
+  assert.deepEqual(details.refresh, {
+    tool: "observe_ui",
+    arguments: { root: "@r1", mode: "fused" },
+  });
+  assert.equal(field(details, "error").code, "stale_look");
+  assert.equal(field(details, "error").inputSent, false);
+  const requirement: JsonValue = JSON.parse(text);
+  assert.ok(isJsonObject(requirement));
+  assert.equal(requirement.code, "observation_refresh_required");
+  assert.equal(requirement.operation, "act_ui");
+  assert.equal(requirement.reason, "stale");
+  assert.deepEqual(requirement.refresh, details.refresh);
+  assert.equal(field(requirement, "cause").code, "stale_look");
+  const execution = field(details, "execution");
+  assert.equal(execution.outcome, "didnt");
+  assert.equal(execution.stoppedAt, 0);
+  const logged = (await logLines(logPath)).filter((line) => line.cmd === "act");
+  assert.equal(logged.length, 1, "the act was not retried");
+  assert.equal(field(field(logged[0]!, "response"), "error").code, "stale_look");
+  const steps = execution.steps;
+  assert.ok(Array.isArray(steps) && steps.length === 1 && isJsonObject(steps[0]));
+  assert.equal(steps[0].requestId, logged[0]?.requestId, "the refused act is in the trace");
+});
+
 test("a stale_look at action 2 over the wire returns a partial successor with both requests", async () => {
   const logPath = path.join(scratch, "partial.requests.jsonl");
   const fake = await startDaemon({ script: "s1-ok", logPath });
@@ -1593,8 +1646,13 @@ test("look and act requests carry the session's app blocklist", async () => {
       "this process is blocked",
     );
   }
-  for (const request of fake.requests.filter((candidate) => candidate.cmd === "listRoots"))
-    assert.equal(request.appBlocklist, undefined, "root listings are not filtered");
+  const listings = fake.requests.filter((candidate) => candidate.cmd === "listRoots");
+  assert.ok(listings.length > 0, "the bridge listed roots");
+  for (const request of listings)
+    assert.ok(
+      Array.isArray(field(request, "appBlocklist").bundleIds),
+      "listings carry the blocklist",
+    );
 });
 
 test("bridge: the helper's app_blocked on a window's real owner reads like the TypeScript check, before any capture", async () => {

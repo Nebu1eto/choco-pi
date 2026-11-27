@@ -14,6 +14,10 @@ import {
   scoreDeepAncestry,
   scoreExtendedKeyUnresolved,
   scoreExtendedMenu,
+  scoreExtendedOwnWindowClick,
+  fixtureLayout,
+  windowsAt,
+  windowsOutside,
   scoreJudgement,
   scoreJudgementControl,
   scoreMisdelivery,
@@ -22,6 +26,7 @@ import {
   scorePolicyControl,
   scoreRestore,
   scoreStandardControl,
+  runOutcome,
 } from "./score.ts";
 
 const window = { from: 1_000, to: 2_000 };
@@ -537,6 +542,12 @@ test("cancel residual compares fixture input with the ack time plus the margin",
     ["cancel was not acknowledged"],
   );
   assert.equal(scoreCancel({ ...base, ack: undefined, target: typed }).verdict, "FAIL");
+  const web = scoreCancel({
+    ...base,
+    target: [row("webValue", 1_200, { length: 3 }), row("webValue", 1_351, { length: 4 })],
+  });
+  assert.equal(web.verdict, "FAIL", "web input after the ack fails too");
+  assert.equal(web.notes.fieldValuesBeforeAck, 1);
 });
 
 test("diagnosticsBlock accepts any reported protocol version but requires the dev app and grants", () => {
@@ -892,20 +903,24 @@ test("extended interrupted: cancelled, used, deactivated passes; left active or 
     result: { outcome: "partial", reason },
   });
   const rows = [row("appActive", 1_100), row("fieldValue", 1_200), row("appInactive", 1_400)];
+  const stop = { stopAt: 1_300, marginMs: 50 };
   const pass = scoreExtendedInterrupted({
     holder: [],
     target: rows,
     window,
     reply: cancelled("cancelled"),
     reason: "cancelled",
+    ...stop,
   });
   assert.equal(pass.verdict, "PASS", pass.failures.join("; "));
+  assert.equal(pass.notes.typedBeforeStop, 1);
   const stuck = scoreExtendedInterrupted({
     holder: [],
     target: rows.slice(0, 2),
     window,
     reply: cancelled("deadline"),
     reason: "deadline",
+    ...stop,
   });
   assert.equal(stuck.verdict, "FAIL");
   assert.match(stuck.failures.join(";"), /still believes it is active/);
@@ -915,6 +930,7 @@ test("extended interrupted: cancelled, used, deactivated passes; left active or 
     window,
     reply: cancelled("deadline"),
     reason: "cancelled",
+    ...stop,
   });
   assert.match(wrong.failures.join(";"), /stopped for deadline/);
   const never = scoreExtendedInterrupted({
@@ -923,6 +939,7 @@ test("extended interrupted: cancelled, used, deactivated passes; left active or 
     window,
     reply: cancelled("cancelled"),
     reason: "cancelled",
+    ...stop,
   });
   assert.equal(never.verdict, "INCONCLUSIVE(not_activated)");
   const finished = scoreExtendedInterrupted({
@@ -931,8 +948,54 @@ test("extended interrupted: cancelled, used, deactivated passes; left active or 
     window,
     reply: used("worked"),
     reason: "cancelled",
+    ...stop,
   });
   assert.equal(finished.verdict, "INCONCLUSIVE(completed)");
+  const late = scoreExtendedInterrupted({
+    holder: [],
+    target: [...rows, row("webValue", 1_351, { length: 2 })],
+    window,
+    reply: cancelled("cancelled"),
+    reason: "cancelled",
+    ...stop,
+  });
+  assert.equal(late.verdict, "FAIL");
+  assert.match(late.failures.join(";"), /input after the stop: webValue@1351 \(\+51 ms\)/);
+  const unacked = scoreExtendedInterrupted({
+    holder: [],
+    target: rows,
+    window,
+    reply: cancelled("cancelled"),
+    reason: "cancelled",
+    stopAt: undefined,
+    marginMs: 50,
+  });
+  assert.match(unacked.failures.join(";"), /cancel was not acknowledged/);
+  const untyped = scoreExtendedInterrupted({
+    holder: [],
+    target: [row("appActive", 1_100), row("appInactive", 1_400)],
+    window,
+    reply: cancelled("deadline"),
+    reason: "deadline",
+    ...stop,
+  });
+  assert.equal(untyped.verdict, "INCONCLUSIVE(no_effect_observed)");
+});
+
+test("run outcome counts inconclusive scenarios separately and fails the run on them", () => {
+  assert.deepEqual(runOutcome(["PASS", "PASS"], true), {
+    line: "2 passed, 0 failed, 0 blocked, 0 inconclusive of 2",
+    exitCode: 0,
+  });
+  const mixed = runOutcome(
+    ["PASS", "INCONCLUSIVE(completed)", "FAIL", "BLOCKED(helper_owned: x)", "PASS"],
+    true,
+  );
+  assert.equal(mixed.line, "2 passed, 1 failed, 1 blocked, 1 inconclusive of 5");
+  assert.equal(mixed.exitCode, 1);
+  assert.equal(runOutcome(["PASS", "INCONCLUSIVE(no_effect_observed)"], true).exitCode, 1);
+  assert.equal(runOutcome(["PASS"], false).exitCode, 1, "an aborted run is never green");
+  assert.equal(runOutcome([], true).exitCode, 0);
 });
 
 test("extended popup: not_applicable for menu_element without activation passes; the mechanism on it fails", () => {
@@ -1030,4 +1093,146 @@ test("scoreDeepAncestry: the control observes and the deep client is refused for
   });
   assert.equal(refusesAll.verdict, "FAIL");
   assert.match(refusesAll.failures.join(";"), /control look/);
+});
+
+const primaryScreen: JsonObject = {
+  primary: true,
+  frame: { x: 0, y: 0, width: 2056, height: 1329 },
+};
+const cocoa = (x: number, y: number, width: number, height: number): JsonObject => ({
+  x,
+  y,
+  width,
+  height,
+});
+
+test("fixtureLayout converts frames to global top-left points and flags windows AppKit moved", () => {
+  const placed = fixtureLayout("target", [
+    row("launched", 1, {
+      screens: [primaryScreen],
+      windows: [
+        {
+          window: "appkit",
+          frame: cocoa(20, 909, 520, 372),
+          requestedFrame: cocoa(20, 909, 520, 372),
+        },
+        {
+          window: "swiftui",
+          frame: cocoa(100, 77, 480, 372),
+          requestedFrame: cocoa(1220, 909, 480, 372),
+        },
+      ],
+    }),
+  ]);
+  assert.deepEqual(placed.primary, { x: 0, y: 0, w: 2056, h: 1329 });
+  assert.deepEqual(placed.windows[0], {
+    name: "target:appkit",
+    frame: { x: 20, y: 48, w: 520, h: 372 },
+  });
+  assert.equal(placed.defects.length, 1);
+  assert.match(
+    placed.defects[0] ?? "",
+    /target:swiftui: at \(100,77 480x372\), asked for \(1220,909/,
+  );
+  const old = fixtureLayout("target", [
+    row("launched", 1, {
+      screens: [primaryScreen],
+      windows: [{ window: "main", frame: cocoa(560, 160, 640, 512) }],
+    }),
+  ]);
+  assert.match(old.defects.join(";"), /no requested frame/);
+  assert.match(fixtureLayout("holder", []).defects.join(";"), /no launched row/);
+  assert.match(
+    fixtureLayout("holder", [row("launched", 1, { windows: [] })]).defects.join(";"),
+    /no primary screen/,
+  );
+});
+
+test("fixtureLayout takes the holder's covered frame, and windowsAt names what lies over a point", () => {
+  const holder = fixtureLayout("holder", [
+    row("launched", 1, {
+      screens: [primaryScreen],
+      windows: [
+        {
+          window: "main",
+          frame: cocoa(60, 120, 420, 192),
+          requestedFrame: cocoa(60, 120, 420, 192),
+        },
+      ],
+    }),
+    row("covered", 2, { window: "main", frame: cocoa(9, 969, 242, 90) }),
+  ]);
+  assert.deepEqual(holder.defects, []);
+  assert.deepEqual(holder.windows, [
+    { name: "holder:main", frame: { x: 9, y: 270, w: 242, h: 90 } },
+  ]);
+  const target = [
+    { name: "target:appkit", frame: { x: 20, y: 48, w: 520, h: 372 } },
+    { name: "target:swiftui", frame: { x: 100, y: 48, w: 480, h: 372 } },
+  ];
+  const all = [...target, ...holder.windows];
+  assert.deepEqual(windowsAt({ x: 130, y: 316 }, all, "target:appkit"), [
+    "holder:main",
+    "target:swiftui",
+  ]);
+  assert.deepEqual(windowsAt({ x: 60, y: 316 }, all, "target:appkit"), ["holder:main"]);
+  assert.deepEqual(windowsAt({ x: 60, y: 100 }, all, "target:appkit"), []);
+  assert.deepEqual(windowsOutside({ x: 0, y: 0, w: 2056, h: 1329 }, all), []);
+  assert.deepEqual(windowsOutside({ x: 0, y: 0, w: 500, h: 400 }, all), [
+    "target:appkit (20,48 520x372)",
+    "target:swiftui (100,48 480x372)",
+  ]);
+});
+
+test("scoreExtendedOwnWindowClick: an extended press of the observed window's drag view passes, input to the covering window fails", () => {
+  const rows = [
+    row("appActive", 1_100),
+    row("targetMouseDown", 1_150, { window: "appkit" }),
+    row("targetMouseDown", 1_200, { window: "appkit" }),
+    row("dragDown", 1_200),
+    row("appInactive", 1_900),
+  ];
+  const pass = scoreExtendedOwnWindowClick({
+    holder: [],
+    target: rows,
+    window,
+    reply: used("unknown"),
+    observedWindow: "appkit",
+  });
+  assert.equal(pass.verdict, "PASS", pass.failures.join("; "));
+  const elsewhere = scoreExtendedOwnWindowClick({
+    holder: [row("mouseDown", 1_200)],
+    target: [
+      row("appActive", 1_100),
+      row("targetMouseDown", 1_200, { window: "swiftui" }),
+      row("swiftuiToggle", 1_210),
+    ],
+    window,
+    reply: used("worked"),
+    observedWindow: "appkit",
+  });
+  assert.equal(elsewhere.verdict, "FAIL");
+  const failures = elsewhere.failures.join(";");
+  assert.match(failures, /another target window/);
+  assert.match(failures, /covering window reacted/);
+  assert.match(failures, /pressed 0 time/);
+  assert.match(failures, /still believes it is active/);
+  assert.match(failures, /holder disturbed/);
+  const unidentified: JsonObject = {
+    ok: false,
+    error: {
+      code: "foreground_required",
+      extendedDelivery: "not_applicable",
+      extendedDeliveryReason: "element_unidentified",
+    },
+  };
+  const refused = scoreExtendedOwnWindowClick({
+    holder: [],
+    target: [],
+    window,
+    reply: unidentified,
+    observedWindow: "appkit",
+  });
+  assert.equal(refused.verdict, "FAIL");
+  assert.match(refused.failures.join(";"), /not_applicable: element_unidentified/);
 });

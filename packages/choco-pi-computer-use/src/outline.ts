@@ -89,6 +89,7 @@ export interface LookResponse {
   timings: Record<string, number>;
   readText?: { requested?: "auto" | "always" | "never"; executed: boolean };
   parsedOutline?: Outline;
+  offSpace?: { discoveryActivation: boolean; resolvedBy?: string; spacesUnchanged?: boolean };
 }
 
 export interface OutlineSearchMatch {
@@ -272,6 +273,14 @@ export function parseLookResponse(raw: JsonValue): LookResponse {
     parsedOutline: outline,
   };
   if (!look.lookId) throw new Error("Helper returned a look without lookId.");
+  const offSpace = isJsonObject(record.offSpace) ? record.offSpace : undefined;
+  if (offSpace) {
+    look.offSpace = { discoveryActivation: offSpace.discoveryActivation === true };
+    const resolvedBy = toString(offSpace.resolvedBy);
+    if (resolvedBy) look.offSpace.resolvedBy = resolvedBy;
+    if (offSpace.spacesUnchanged === true || offSpace.spacesUnchanged === false)
+      look.offSpace.spacesUnchanged = offSpace.spacesUnchanged;
+  }
   return look;
 }
 

@@ -188,6 +188,8 @@ export function foregroundGrantHint(
     return "Headless mode permits accessibility delivery only; foreground input is unavailable while headless is enabled.";
   if (currentDeliveryPolicy() === "ax_only")
     return "The host delivery policy is ax_only; foreground input is unavailable until the user changes PI_COMPUTER_USE_DELIVERY_POLICY.";
+  if (target.offSpace)
+    return "The target window is on a Space no display shows. Foreground input would bring it to the front and switch the user's Space, so it is not used for this window whatever the grants; use accessibility actions (press, set_text), background_delivery: extended for pointer and key input, or ask the user to show the window.";
   if (foregroundGrantCovers(target.bundleId))
     return policy === "foreground" || action.wantsForeground
       ? "A host foreground grant covers this app, and the helper still could not deliver this action. Observe the current state before choosing another approach."
@@ -521,8 +523,10 @@ export async function helperAct(
     "text" in action.params ? action.params.text.length * 25 + 4_000 : COMMAND_TIMEOUT_MS;
   const timeoutMs = Math.max(COMMAND_TIMEOUT_MS, textTimeout);
   const basePolicy: DeliveryPolicy = headless ? "ax_only" : currentDeliveryPolicy();
+  const mayUseForeground = !target.offSpace;
   const policy: DeliveryPolicy =
     basePolicy === "background" &&
+    mayUseForeground &&
     (action.wantsForeground || mayPidPointerAttempt(action)) &&
     foregroundGrantCovers(target.bundleId)
       ? "foreground"
@@ -576,8 +580,9 @@ export async function helperAct(
     usedExtendedDelivery(firstRefusal.evidence);
   let escalationReason: ExecutionTrace["escalationReason"];
   let prompt: GrantPromptOutcome | undefined;
-  if (foregroundGrantCovers(target.bundleId)) escalationReason = "foreground_required";
-  else if (session) {
+  if (mayUseForeground && foregroundGrantCovers(target.bundleId))
+    escalationReason = "foreground_required";
+  else if (mayUseForeground && session) {
     prompt = await promptForegroundGrant(
       session.ctx,
       { bundleId: target.bundleId, appName: target.appName },
@@ -621,7 +626,7 @@ export function deferRetryAfterDelivery(trace: ExecutionTrace, target: ResolvedT
   trace.retryDeferredReason = "pid_pointer_delivered_without_observable_change";
   const refusal = trace.refusal;
   if (!refusal) return;
-  const granted = foregroundGrantCovers(target.bundleId);
+  const granted = !target.offSpace && foregroundGrantCovers(target.bundleId);
   refusal.nextStep = "observe_then_retry";
   refusal.grantedForNextCall = granted;
   refusal.grantHint = granted
@@ -826,7 +831,9 @@ export function aggregateExecutions(steps: ExecutionTrace[]): ExecutionTrace {
       steps,
       actionCount: steps.length,
       rootDelta: steps.flatMap((step) => step.rootDelta ?? []),
-      backgroundFirst: true,
+      backgroundFirst: delivering.every(
+        (step) => step.backgroundFirst ?? step.deliveryPolicy !== "foreground",
+      ),
       deliveryPolicy: shared(delivering.map((step) => step.deliveryPolicy)),
       delivery: shared(delivering.map((step) => step.delivery)),
       refusal: refused?.refusal,

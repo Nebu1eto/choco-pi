@@ -56,6 +56,7 @@ export interface FakeHelperDaemonOptions {
     | "didnt"
     | "ending"
     | "key_window_refusal";
+  offSpace?: "resolved" | "never_shown";
 }
 
 export interface FakeHelperDaemon {
@@ -63,6 +64,7 @@ export interface FakeHelperDaemon {
   readonly script: FakeScript;
   readonly requests: JsonObject[];
   readonly actSpans: JsonObject[];
+  offSpaceDiscoveries(): number;
   close(): Promise<void>;
 }
 
@@ -246,6 +248,9 @@ class FakeHelperState {
   private readonly setTextValueOnly: boolean;
   private readonly extendedDelivery?: "available" | "unavailable";
   private readonly extendedAnswer: NonNullable<FakeHelperDaemonOptions["extendedAnswer"]>;
+  private readonly offSpace?: "resolved" | "never_shown";
+  private offSpaceExposed = false;
+  offSpaceDiscoveries = 0;
   private owner?: Session & { lastSeen: number };
   private ownerActive = 0;
   private readonly multi: boolean;
@@ -255,6 +260,8 @@ class FakeHelperState {
   >();
   private sessionlessActive = 0;
   private readonly lookOwners = new Map<string, string | undefined>();
+  private readonly lookGenerations = new Map<string, number>();
+  private readonly lookSessionGenerations = new Map<string, number>();
   private readonly targetHolders = new Map<number, string>();
   private section?: {
     holder: string;
@@ -309,6 +316,8 @@ class FakeHelperState {
     this.setTextValueOnly = options.setTextValueOnly === true;
     this.extendedDelivery = options.extendedDelivery;
     this.extendedAnswer = options.extendedAnswer ?? "unknown";
+    this.offSpace = options.offSpace;
+    this.offSpaceExposed = options.offSpace === "resolved";
     const user = options.userApp ?? "terminal";
     this.userApp = user === "neutral" ? NEUTRAL_USER_APP : TERMINAL_USER_APP;
     this.userWindowTitle = USER_WINDOW_TITLES[user];
@@ -321,6 +330,7 @@ class FakeHelperState {
     const gated = OWNER_GATED.has(cmd);
     if (gated) this.authorize(session, true);
     else if (session) this.refresh(session);
+    if (session && this.multi) this.noteLookSession(session);
     try {
       return await this.dispatch(cmd, request, session);
     } finally {
@@ -654,6 +664,12 @@ class FakeHelperState {
         this.extendedDelivery === "available"
           ? { available: true, osMajorVersion: 27, missingSymbols: [] }
           : { available: false, osMajorVersion: 26, missingSymbols: [], reason: "os_not_measured" };
+    if (this.offSpace)
+      output.offSpace = {
+        available: true,
+        discoveryAvailable: this.extendedDelivery === "available",
+        missingSymbols: [],
+      };
     return output;
   }
 
@@ -707,6 +723,7 @@ class FakeHelperState {
 
   private refresh(session: Session): void {
     if (this.multi) {
+      this.pruneSessions();
       const entry = this.sessions.get(session.id);
       if (!entry)
         this.sessions.set(session.id, {
@@ -740,7 +757,7 @@ class FakeHelperState {
           undefined,
           { activeRequests: entry.active },
         );
-      this.endSession(session.id);
+      this.endSession(session.id, true);
       return true;
     }
     if (
@@ -793,17 +810,32 @@ class FakeHelperState {
   private pruneSessions(): void {
     const now = Date.now();
     for (const [id, entry] of this.sessions)
-      if (entry.active === 0 && now - entry.lastSeen >= this.ownerTtlMs) this.endSession(id);
+      if (entry.active === 0 && now - entry.lastSeen >= this.ownerTtlMs) this.endSession(id, false);
   }
 
-  private endSession(id: string): void {
+  private endSession(id: string, dropLooks: boolean): void {
     this.sessions.delete(id);
+    if (dropLooks) {
+      this.dropLooks(id);
+      this.lookSessionGenerations.delete(id);
+    }
+    if (this.section?.holder === id) this.section = undefined;
+  }
+
+  private dropLooks(id: string): void {
     for (const [lookId, owner] of this.lookOwners)
       if (owner === id) {
         this.lookOwners.delete(lookId);
+        this.lookGenerations.delete(lookId);
         this.validLooks.delete(lookId);
       }
-    if (this.section?.holder === id) this.section = undefined;
+  }
+
+  private noteLookSession(session: Session): void {
+    const known = this.lookSessionGenerations.get(session.id);
+    if (known !== undefined && session.generation < known) return;
+    if (known !== undefined && session.generation > known) this.dropLooks(session.id);
+    this.lookSessionGenerations.set(session.id, session.generation);
   }
 
   private otherSessionsActive(caller: string | undefined): number {
@@ -1129,7 +1161,7 @@ class FakeHelperState {
   private root(pid: number): JsonObject {
     const second = this.secondTarget && pid === FAKE_APP_B.pid;
     const app = second ? FAKE_APP_B : FAKE_APP;
-    return {
+    const root: JsonObject = {
       kind: "window",
       rootRef: second ? ROOT_REF_B : ROOT_REF,
       windowRef: second ? ROOT_REF_B : ROOT_REF,
@@ -1150,6 +1182,17 @@ class FakeHelperState {
       isModal: false,
       metadata: { generation: this.generation },
     };
+    if (this.offSpace && !second) {
+      root.isOnscreen = false;
+      root.isFocused = false;
+      root.offSpace = true;
+      root.offSpaceAccess = this.offSpaceExposed ? "resolved" : "unresolved";
+      if (!this.offSpaceExposed) {
+        delete root.rootRef;
+        delete root.windowRef;
+      }
+    }
+    return root;
   }
 
   private node(
@@ -1191,6 +1234,30 @@ class FakeHelperState {
         ? FAKE_APP_B
         : FAKE_APP;
     this.enforceAppPolicy(request, this.realOwner === "window" ? this.userApp : requested, false);
+    let offSpace: JsonObject | undefined;
+    if (this.offSpace && requested.pid === FAKE_APP.pid) {
+      if (!this.offSpaceExposed) {
+        if (request.backgroundDelivery !== "extended" || this.extendedDelivery !== "available")
+          throw new FakeFailure(
+            "off_space_window_unresolved",
+            request.backgroundDelivery === "extended"
+              ? `off_space_window_unresolved: window ${WINDOW_ID} of ${FAKE_APP.appName} is on a Space no display shows, and the app has not exposed it to Accessibility; the discovery activation extended delivery would use is unavailable in this helper (os_not_measured), so nothing was activated or captured. The user can show the window once (switch to its Space and back)`
+              : `off_space_window_unresolved: window ${WINDOW_ID} of ${FAKE_APP.appName} is on a Space no display shows, and the app has not exposed it to Accessibility, so it cannot be read without switching Spaces; nothing was activated or captured. The user can show the window once (switch to its Space and back), or enable background_delivery: "extended", which lets the helper tell the app it is active for a moment so that it exposes the window`,
+            false,
+            undefined,
+            { offSpace: true, windowId: WINDOW_ID, discoveryActivation: false },
+          );
+        this.offSpaceDiscoveries += 1;
+        this.offSpaceExposed = true;
+        offSpace = {
+          discoveryActivation: true,
+          resolvedBy: "discovery_main_window",
+          spacesUnchanged: true,
+        };
+      } else {
+        offSpace = { discoveryActivation: false, resolvedBy: request.windowRef ? "ref" : "cache" };
+      }
+    }
     this.lookCount += 1;
     const bump =
       request.fixtureMutation === "bump_root_generation" ||
@@ -1212,6 +1279,7 @@ class FakeHelperState {
         request.pid === FAKE_APP_B.pid);
     this.lookApps.set(lookId, second ? FAKE_APP_B.pid : FAKE_APP.pid);
     this.lookOwners.set(lookId, session?.id);
+    if (session) this.lookGenerations.set(lookId, session.generation);
     const sameOwner = [...this.lookOwners].filter(([, owner]) => owner === session?.id);
     for (const [evicted] of sameOwner.slice(0, Math.max(0, sameOwner.length - 8))) {
       this.lookOwners.delete(evicted);
@@ -1263,7 +1331,7 @@ class FakeHelperState {
       ],
     };
     const readText = stringField(request, "readText") ?? "never";
-    return {
+    const response: JsonObject = {
       lookId,
       capturedAt: Date.now() / 1000,
       hasImage: false,
@@ -1282,6 +1350,8 @@ class FakeHelperState {
       timings: { captureMs: 0, describeMs: 0, readTextMs: 0 },
       readText: { requested: readText, executed: false },
     };
+    if (offSpace) response.offSpace = offSpace;
+    return response;
   }
 
   private async act(request: JsonObject, deferred: boolean, tracked: Tracked): Promise<JsonObject> {
@@ -1297,8 +1367,15 @@ class FakeHelperState {
         tracked.effect,
       );
     const lookId = stringField(request, "lookId") ?? "";
-    if (!this.validLooks.has(lookId))
-      throw new FakeFailure("stale_look", `Look id '${lookId}' is no longer available`);
+    const caller = sessionOf(request);
+    const lookGeneration = this.lookGenerations.get(lookId);
+    const otherGeneration =
+      this.multi &&
+      caller !== undefined &&
+      this.lookOwners.get(lookId) === caller.id &&
+      lookGeneration !== caller.generation;
+    if (!this.validLooks.has(lookId) || otherGeneration)
+      throw new FakeFailure("stale_look", `Look id '${lookId}' is no longer available`, false);
     const recordedFrame = this.lookFrames.get(lookId);
     if (recordedFrame && framesDiffer(recordedFrame, this.frame))
       throw new FakeFailure(
@@ -1318,6 +1395,15 @@ class FakeHelperState {
     this.enforceAppPolicy(request, this.realOwner === "window" ? this.userApp : app, true);
     if (this.realOwner === "element" && ref !== undefined)
       this.enforceAppPolicy(request, this.userApp, true);
+    const offSpaceTarget = this.offSpace !== undefined && app.pid === FAKE_APP.pid;
+    if (offSpaceTarget && policy === "foreground")
+      throw new FakeFailure(
+        "off_space_foreground",
+        "off_space_foreground: the target window is on a Space no display shows; foreground delivery would bring it to the front and switch the user's Space, so nothing was activated or sent",
+        false,
+        undefined,
+        { inputSent: false, activationAttempted: false, offSpace: true },
+      );
     const effect = (activates = delivery === "hid") => {
       tracked.effect = true;
       if (activates) this.frontmost = app;
@@ -1329,6 +1415,8 @@ class FakeHelperState {
         frontmostBefore,
         frontmostAfter: this.frontmost.pid,
       };
+      if (offSpaceTarget)
+        output.performed = { ...objectField(output, "performed"), offSpace: true };
       if (this.pendingDelta) {
         this.pendingDelta = false;
         output.rootDelta = [
@@ -1759,6 +1847,7 @@ export async function startFakeHelperDaemon(
     script: state.script,
     requests,
     actSpans: state.actSpans,
+    offSpaceDiscoveries: () => state.offSpaceDiscoveries,
     close() {
       closing ??= (async () => {
         const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));

@@ -1,6 +1,6 @@
 import { isJsonObject, isNumber, isString, type JsonField, type JsonObject } from "../src/json.ts";
 import type { RecordValue } from "./assertions.ts";
-import { grantTraceErrors } from "./grant.ts";
+import { grantScore, type GrantRoute } from "./grant.ts";
 import type { ScenarioId } from "./scenarios/index.ts";
 
 export interface FixtureEvidence {
@@ -22,6 +22,7 @@ export interface TierBNotes {
   staleRefusal?: "stale_look";
   unverifiedEffects?: { index: number; action: string; outcome: string }[];
   grantedOutcome?: string;
+  grantRoute?: GrantRoute;
 }
 
 export interface TierBInput {
@@ -252,34 +253,16 @@ function scoreS5(input: TierBInput, notes: TierBNotes, errors: string[]): void {
 
 function scoreS6(input: TierBInput, notes: TierBNotes, errors: string[]): void {
   const acts = input.requests.filter(isAct);
-  const foreground = acts.filter((row) => row.policy === "foreground");
-  if (foreground.length !== 1 || foreground[0].foregroundGrant !== true) {
-    errors.push(`expected one granted foreground act, got ${foreground.length}`);
-    return;
-  }
-  const [granted] = foreground;
-  const refused = acts[acts.indexOf(granted) - 1];
-  const refusal = get(refused?.response, "error");
-  if (
-    acts.length !== 2 ||
-    acts[1] !== granted ||
-    refused?.policy !== "background" ||
-    refused.foregroundGrant === true ||
-    get(refused.response, "ok") === true ||
-    get(refusal, "code") !== "foreground_required" ||
-    get(refusal, "effectPossible") !== false ||
-    JSON.stringify(refused.target) !== JSON.stringify(granted.target) ||
-    JSON.stringify(actions(refused)) !== JSON.stringify(actions(granted))
-  )
-    errors.push(
-      `expected a refused background act on the same target then the granted act, got ${acts.length} act(s)`,
-    );
+  const scored = grantScore(acts, input.traces);
+  errors.push(...scored.errors);
+  const { granted } = scored;
+  if (!granted) return;
+  if (scored.route) notes.grantRoute = scored.route;
   const result = get(granted.response, "result");
   const outcome = get(result, "outcome");
   if (isString(outcome)) notes.grantedOutcome = outcome;
   if (get(granted.response, "ok") !== true || (outcome !== "worked" && outcome !== "unknown"))
     errors.push(`granted foreground act answered ${String(outcome)}`);
-  errors.push(...grantTraceErrors(granted, input.traces));
   const pid = input.fixture?.targetPid;
   if (pid === undefined || num(get(result, "frontmostAfter")) !== pid)
     errors.push(`frontmostAfter ${String(get(result, "frontmostAfter"))} is not the target ${pid}`);

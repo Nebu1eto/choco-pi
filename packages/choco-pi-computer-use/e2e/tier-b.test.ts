@@ -238,7 +238,7 @@ test("S5 passes only on one helper window-frame stale_look refusal", () => {
   );
 });
 
-test("S6 requires a refused background act, then one granted act that hits the custom view", () => {
+test("S6 accepts the granted act alone or after one refused background act, and hits the custom view once", () => {
   const target = { ref: "e141" };
   const refused = act(
     1,
@@ -272,15 +272,51 @@ test("S6 requires a refused background act, then one granted act that hits the c
   const pass = s6([refused, granted()]);
   assert.deepEqual(pass.errors, []);
   assert.equal(pass.notes.grantedOutcome, "unknown");
+  assert.equal(pass.notes.grantRoute, "escalated");
   assert.deepEqual(s6([refused, granted("worked")]).errors, []);
+  const direct = s6([granted()]);
+  assert.deepEqual(direct.errors, []);
+  assert.equal(direct.notes.grantRoute, "direct");
   const b1 = act(1, "click", { ok: true, result: { outcome: "unknown" } });
   assert.match(
     s6([b1], [quit("", 0, 0)]).errors.join(";"),
     /expected one granted foreground act, got 0/,
   );
-  const sequence = /expected a refused background act on the same target then the granted act/;
-  assert.match(s6([granted()]).errors.join(";"), sequence);
+  assert.match(
+    s6([{ ...granted(), foregroundGrant: undefined }]).errors.join(";"),
+    /expected one granted foreground act, got 1 foreground act\(s\), 0 granted/,
+    "an ungranted foreground act fails",
+  );
+  assert.match(
+    s6([granted(), { ...granted(), requestId: "r3" }]).errors.join(";"),
+    /expected one granted foreground act, got 2 foreground act\(s\), 2 granted/,
+  );
+  const sequence =
+    /expected the granted act alone, or one refused background act on the same target then the granted act/;
   assert.match(s6([b1, granted()]).errors.join(";"), sequence);
+  assert.match(s6([granted(), { ...b1, requestId: "r3" }]).errors.join(";"), sequence);
+  assert.match(
+    s6([refused, { ...refused, requestId: "r0" }, granted()]).errors.join(";"),
+    sequence,
+  );
+  assert.match(
+    s6([
+      {
+        ...refused,
+        response: {
+          ok: false,
+          error: {
+            code: "foreground_required",
+            effectPossible: false,
+            evidence: { pidPointerAttempted: true, observableChange: false },
+          },
+        },
+      },
+      granted(),
+    ]).errors.join(";"),
+    sequence,
+    "a background pid pointer attempt reached the app; a same-call foreground repeat is a duplicate",
+  );
   assert.match(
     s6([refused, granted("unknown", { target: { ref: "e7" } })]).errors.join(";"),
     sequence,
@@ -317,11 +353,17 @@ test("S6 requires a refused background act, then one granted act that hits the c
   );
 });
 
-function grantTrace(outcome: string, step: RecordValue = {}): RecordValue {
+function grantTrace(
+  outcome: string,
+  step: RecordValue = {},
+  route: "direct" | "escalated" = "escalated",
+): RecordValue {
+  const escalated = route === "escalated";
   return {
     strategy: "act",
     outcome,
-    escalatedToForeground: true,
+    backgroundFirst: escalated,
+    escalatedToForeground: escalated ? true : undefined,
     steps: [
       {
         strategy: "act",
@@ -329,7 +371,8 @@ function grantTrace(outcome: string, step: RecordValue = {}): RecordValue {
         outcome,
         deliveryPolicy: "foreground",
         foregroundGrant: true,
-        escalatedToForeground: true,
+        backgroundFirst: escalated,
+        escalatedToForeground: escalated ? true : undefined,
         ...step,
       },
     ],
@@ -346,7 +389,13 @@ function scoreS6(
   held: RecordValue[],
   traces: RecordValue[] = requests
     .filter((row) => row.policy === "foreground")
-    .map((row) => grantTrace(wireOutcome(row))),
+    .map((row) =>
+      grantTrace(
+        wireOutcome(row),
+        { requestId: row.requestId },
+        requests.some((other) => other.policy !== "foreground") ? "escalated" : "direct",
+      ),
+    ),
 ) {
   return scoreTierB("S6", input({ requests, traces, fixture: fixture(target, held) }));
 }
@@ -407,7 +456,7 @@ test("S6 cross-checks the granted act's trace step against the wire reply", () =
   assert.equal(s6([grantTrace("unknown")]), "");
   assert.match(
     s6([grantTrace("worked", { escalatedToForeground: false })]),
-    /granted foreground act r2 trace disagrees with the wire reply: step escalatedToForeground false != true, step outcome "worked" != "unknown", trace outcome "worked" != "unknown"/,
+    /granted foreground act r2 \(escalated\) trace disagrees with the wire reply: step outcome "worked" != "unknown", step escalatedToForeground false != true, trace outcome "worked" != "unknown"/,
   );
   assert.match(
     s6([grantTrace("unknown", { deliveryPolicy: "background" })]),
@@ -425,6 +474,26 @@ test("S6 cross-checks the granted act's trace step against the wire reply", () =
   assert.match(
     s6([grantTrace("unknown", { requestId: "r1" })]),
     /expected one trace step for the granted foreground act r2, got 0/,
+  );
+});
+
+test("S6 cross-checks a direct granted act's trace: no background attempt, no escalation", () => {
+  const requests = [s6Granted()];
+  const held = [{ event: "appInactive", ts: 1260 }];
+  const s6 = (traces: RecordValue[]) => scoreS6(requests, s6Target, held, traces).errors.join(";");
+  assert.equal(s6([grantTrace("unknown", {}, "direct")]), "");
+  assert.match(
+    s6([grantTrace("unknown")]),
+    /granted foreground act r2 \(direct\) trace disagrees with the wire reply: step backgroundFirst true != false, step escalatedToForeground true != false, trace escalatedToForeground true != false/,
+    "an escalated trace for a single granted act disagrees with the wire",
+  );
+  assert.match(
+    s6([{ ...grantTrace("unknown", {}, "direct"), backgroundFirst: true }]),
+    /trace backgroundFirst true for a granted act sent to the foreground directly/,
+  );
+  assert.match(
+    s6([grantTrace("worked", {}, "direct")]),
+    /step outcome "worked" != "unknown", trace outcome "worked" != "unknown"/,
   );
 });
 

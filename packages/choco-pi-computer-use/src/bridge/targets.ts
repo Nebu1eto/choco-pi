@@ -105,6 +105,10 @@ export function formatWindowLine(window: ListWindowsDetails["windows"][number]):
     window.isOnscreen ? "onscreen" : undefined,
     window.isMinimized ? "minimized" : undefined,
     window.browserUseAllowed ? undefined : "browser_use_disabled",
+    window.off_space ? "off_space (on a Space no display shows)" : undefined,
+    window.off_space_access === "needs_discovery"
+      ? "needs_discovery (observing it needs background_delivery: extended)"
+      : undefined,
   ]
     .filter(Boolean)
     .join(", ");
@@ -256,7 +260,12 @@ export function toResolvedTarget(app: HelperApp, window: HelperWindow): Resolved
     isMain: window.isMain,
     isFocused: window.isFocused,
   };
-  return { ...baseTarget, windowRef: storeWindowRefForAppWindow(app, window).ref };
+  const resolved: ResolvedTarget = {
+    ...baseTarget,
+    windowRef: storeWindowRefForAppWindow(app, window).ref,
+  };
+  if (window.offSpace) resolved.offSpace = true;
+  return resolved;
 }
 
 export function nativeWindowRequest(
@@ -524,7 +533,7 @@ export function windowDetails(
   config: ReturnType<typeof getComputerUseConfig>,
 ): ListWindowsDetails["windows"][number] {
   const storedRef = storeWindowRefForAppWindow(app, window);
-  return {
+  const details: ListWindowsDetails["windows"][number] = {
     app: app.appName,
     bundleId: app.bundleId,
     pid: app.pid,
@@ -549,6 +558,16 @@ export function windowDetails(
       config.browser_use || !currentPlatformBackend.isBrowserApp(app.appName, app.bundleId),
     score: scoreWindow(window),
   };
+  if (window.offSpace) {
+    details.off_space = true;
+    details.off_space_access =
+      window.offSpaceAccess === "resolved"
+        ? "readable"
+        : window.offSpaceAccess === "unresolved"
+          ? "needs_discovery"
+          : "unchecked";
+  }
+  return details;
 }
 
 export function sortWindowDetails(

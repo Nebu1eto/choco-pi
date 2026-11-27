@@ -71,6 +71,7 @@ interface DiagnosticsResponse {
   accessibility?: boolean;
   screenRecording?: boolean;
   extendedDelivery?: JsonValue;
+  offSpace?: JsonValue;
 }
 
 const COMMAND_TIMEOUT_MS = 15_000;
@@ -238,6 +239,18 @@ function parseExtendedDeliveryCapability(
   const available = booleanField(value.available);
   if (available === undefined) return undefined;
   return isString(value.reason) ? { available, reason: value.reason } : { available };
+}
+
+function parseOffSpaceCapability(value: JsonValue | undefined): PlatformDiagnostics["offSpace"] {
+  if (!isJsonObject(value)) return undefined;
+  const available = booleanField(value.available);
+  if (available === undefined) return undefined;
+  const capability: NonNullable<PlatformDiagnostics["offSpace"]> = {
+    available,
+    discoveryAvailable: booleanField(value.discoveryAvailable) === true,
+  };
+  if (isString(value.reason)) capability.reason = value.reason;
+  return capability;
 }
 
 function parseAppBlock(error: HelperResponseEnvelope["error"]): HelperAppBlock | undefined {
@@ -850,6 +863,7 @@ export class MacosHelperClient {
       accessibility: toBoolean(result?.accessibility),
       screenRecording: toBoolean(result?.screenRecording),
       extendedDelivery: parseExtendedDeliveryCapability(result?.extendedDelivery),
+      offSpace: parseOffSpaceCapability(result?.offSpace),
     };
     this.diagnosticsCache = diagnostics;
     return diagnostics;

@@ -189,7 +189,7 @@ test("a session's looks survive other sessions' observations and waiting for the
   await busy;
 });
 
-test("a session that stops heart-beating expires alone: its section and looks go, others are untouched", async () => {
+test("a session that stops heart-beating expires alone: its section goes, its looks stay, others are untouched", async () => {
   await startDaemon({ ownerTtlMs: 120 });
   const dead = await client("session-dead");
   const live = await client("session-live");
@@ -205,11 +205,35 @@ test("a session that stops heart-beating expires alone: its section and looks go
     act(live.session, liveLook, FAKE_APP_B.pid, granted),
   );
   assert.equal(foreground.outcome, "worked", "the expired session's foreground section is gone");
-  const stale = await rejection(
-    dead.client.command("act", act(dead.session, deadLook, FAKE_APP.pid)),
+  const back = await dead.client.command<{ outcome?: string }>(
+    "act",
+    act(dead.session, deadLook, FAKE_APP.pid),
   );
+  assert.equal(back.outcome, "worked", "liveness expiry does not drop the session's looks");
+});
+
+test("a session's looks are reclaimed by its release and by a newer generation, never by another session", async () => {
+  await startDaemon({ ownerTtlMs: 120 });
+  const a = await client("session-a");
+  const b = await client("session-b");
+  const lookA = await look(a.client);
+  const lookB = await look(b.client, FAKE_APP_B.pid);
+  const newer = { id: a.session.id, generation: a.session.generation + 1 };
+  const stale = await rejection(a.client.command("act", act(newer, lookA, FAKE_APP.pid)));
   assert.ok(stale instanceof helper.HelperCommandError);
-  assert.equal(stale.code, "stale_look", "the expired session's looks were dropped");
+  assert.equal(stale.code, "stale_look");
+  const older = await rejection(a.client.command("act", act(a.session, lookA, FAKE_APP.pid)));
+  assert.ok(older instanceof helper.HelperCommandError);
+  assert.equal(older.code, "owned_by_other_session", "the older generation is refused as before");
+  const kept = await b.client.command<{ outcome?: string }>(
+    "act",
+    act(b.session, lookB, FAKE_APP_B.pid),
+  );
+  assert.equal(kept.outcome, "worked");
+  assert.equal(await b.client.release(), true);
+  const released = await rejection(b.client.command("act", act(b.session, lookB, FAKE_APP_B.pid)));
+  assert.ok(released instanceof helper.HelperCommandError);
+  assert.equal(released.code, "stale_look", "release drops the session's looks");
 });
 
 test("release ends only the caller's session, and is refused while that session is busy", async () => {

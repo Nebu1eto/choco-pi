@@ -74,6 +74,7 @@ export interface ObservationRefreshRequirement {
     observationEpoch: number;
     currentEpoch: number;
   };
+  cause?: { code: string; message: string };
 }
 
 export class ObservationRefreshRequiredError extends Error {
@@ -167,6 +168,7 @@ export interface ComputerUseDetails {
     debug?: JsonValue;
   };
   console?: CdpConsoleEntry[];
+  off_space?: { discovery_activation: boolean; resolved_by?: string; spaces_unchanged?: boolean };
   imageReason?:
     | "fallback_recovery"
     | "browser_ax_window_unavailable"
@@ -202,7 +204,8 @@ export interface TerminalDesktopActionDetails {
     | "owned_by_other_session"
     | "target_busy"
     | "foreground_busy"
-    | "key_window_conflict";
+    | "key_window_conflict"
+    | "observation_refresh_required";
   baseStateId: string;
   target: {
     app: string;
@@ -216,6 +219,7 @@ export interface TerminalDesktopActionDetails {
   execution: ExecutionTrace | InterruptedExecutionTrace;
   error: { code: string; message: string; inputSent?: boolean; effectPossible?: boolean };
   nextStep?: "observe_then_retry" | "retry_later" | "retry_later_or_other_window";
+  refresh?: ObservationRefreshRequirement["refresh"];
   config?: ComputerUseDetailsConfig;
 }
 
@@ -249,6 +253,8 @@ export interface ListWindowsDetails {
     browserUseAllowed: boolean;
     score: number;
     url?: string;
+    off_space?: true;
+    off_space_access?: "readable" | "needs_discovery" | "unchecked";
   }>;
   config: {
     browser_use: boolean;
@@ -342,6 +348,7 @@ export interface ResolvedTarget extends CurrentTarget {
   isOnscreen: boolean;
   isMain: boolean;
   isFocused: boolean;
+  offSpace?: boolean;
 }
 
 export interface WindowRefRecord {

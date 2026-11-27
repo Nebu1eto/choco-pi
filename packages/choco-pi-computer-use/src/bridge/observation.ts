@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { assertAppAllowed } from "../app-policy.ts";
 import { cdpSnapshotForContext, cdpTabForWindow } from "../cdp.ts";
+import { getBackgroundDelivery } from "../config.ts";
 import type {
   ExpandUiParams,
   ImageMode,
@@ -107,6 +108,7 @@ export async function performLook(
       scopeRef: options.scopeRef,
       maxDimension: options.maxDimension,
       includeImage: options.includeImage,
+      backgroundDelivery: getBackgroundDelivery() === "extended" ? "extended" : undefined,
     },
     { signal, timeoutMs: LOOK_TIMEOUT_MS },
   );
@@ -223,6 +225,13 @@ export async function buildToolResult(
     helper: runtimeState.helperDiagnostics,
     imageReason: fallbackReason?.reason,
   };
+  const offSpace = result.look.offSpace;
+  if (offSpace) {
+    details.off_space = { discovery_activation: offSpace.discoveryActivation };
+    if (offSpace.resolvedBy) details.off_space.resolved_by = offSpace.resolvedBy;
+    if (offSpace.spacesUnchanged !== undefined)
+      details.off_space.spaces_unchanged = offSpace.spacesUnchanged;
+  }
 
   let consoleText = "";
   if (currentPlatformBackend.isChromeFamilyApp(result.target.appName, result.target.bundleId)) {
@@ -241,10 +250,13 @@ export async function buildToolResult(
     : `\n\nOutline (${folded.nodeCount} nodes, state_id ${result.capture.stateId}${transition?.reason ? `, full view: ${transition.reason}` : ""}${folded.truncated ? ", folded output truncated" : ""}):\n${folded.text}`;
   const fallbackText = fallbackReason ? `\n\n${fallbackReason.message}` : "";
   const deltaText = rootDeltaLines(execution).join("\n");
+  const offSpaceText = offSpace
+    ? `\nThe window is on a Space no display shows; it was read without switching Spaces${offSpace.discoveryActivation ? " after a one-time discovery activation (the app was told it was active for a moment, then inactive)" : ""}. Foreground input to it is refused, because it would switch the user's Space.`
+    : "";
   const content: AgentToolResult<ComputerUseDetails>["content"] = [
     {
       type: "text",
-      text: `${summary}${deltaText ? `\n${deltaText}` : ""}${consoleText}${noteText}${outlineText}${fallbackText}`,
+      text: `${summary}${offSpaceText}${deltaText ? `\n${deltaText}` : ""}${consoleText}${noteText}${outlineText}${fallbackText}`,
     },
   ];
   if (fallbackReason && result.look.image?.jpegBase64) {

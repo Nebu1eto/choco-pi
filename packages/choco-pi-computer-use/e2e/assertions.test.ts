@@ -535,18 +535,25 @@ async function grantReplay(): Promise<ScenarioReplay> {
     foregroundGrant: true,
     requestId: "fg",
     escalatedToForeground: true,
+    backgroundFirst: true,
   };
   return withActResult(
     { ...r, requests },
     {
       tool: "act_ui",
-      execution: { strategy: "act", outcome: "worked", steps: [step], escalatedToForeground: true },
+      execution: {
+        strategy: "act",
+        outcome: "worked",
+        steps: [step],
+        escalatedToForeground: true,
+        backgroundFirst: true,
+      },
       config: { headless: false },
     },
   );
 }
 
-test("S6 passes on one refused background attempt and one granted foreground retry", async () => {
+test("S6 passes on one refused background attempt and one granted foreground retry, or on the granted act alone", async () => {
   const r = await grantReplay();
   assert.equal(scoreScenario("S6", r).verdict, "PASS");
   const ungranted = clone(r.requests);
@@ -560,15 +567,38 @@ test("S6 passes on one refused background attempt and one granted foreground ret
   const direct = clone(r.requests).filter((row) => row.requestId !== "bg");
   assert.match(
     scoreScenario("S6", { ...r, requests: direct }).verdict,
-    /not preceded by a refused background attempt/,
+    /fg \(direct\) trace disagrees with the wire reply: step backgroundFirst true != false, step escalatedToForeground true != false/,
   );
+  const directTrace = withActResult(
+    { ...r, requests: direct },
+    {
+      tool: "act_ui",
+      execution: {
+        strategy: "act",
+        outcome: "worked",
+        backgroundFirst: false,
+        steps: [
+          {
+            strategy: "act",
+            outcome: "worked",
+            deliveryPolicy: "foreground",
+            foregroundGrant: true,
+            requestId: "fg",
+            backgroundFirst: false,
+          },
+        ],
+      },
+      config: { headless: false },
+    },
+  );
+  assert.equal(scoreScenario("S6", directTrace).verdict, "PASS");
   const possible = clone(r.requests);
   const first = possible.find((row) => row.requestId === "bg");
   assert.ok(first && isJsonObject(first.response) && isJsonObject(first.response.error));
   first.response.error.effectPossible = true;
   assert.match(
     scoreScenario("S6", { ...r, requests: possible }).verdict,
-    /not preceded by a refused background attempt/,
+    /expected the granted act alone, or one refused background act on the same target then the granted act/,
   );
 });
 
@@ -604,6 +634,7 @@ function withGrantOutcome(
             foregroundGrant: true,
             requestId: "fg",
             escalatedToForeground: true,
+            backgroundFirst: true,
           },
         ],
       },
@@ -618,7 +649,7 @@ test("S6 accepts an unknown granted HID retry only when the escalated trace repo
   assert.equal(scoreScenario("S6", unknown).verdict, "PASS");
   assert.match(
     scoreScenario("S6", withGrantOutcome(r, "unknown", "worked")).verdict,
-    /granted foreground act fg trace disagrees with the wire reply: step outcome "worked" != "unknown", trace outcome "worked" != "unknown"/,
+    /granted foreground act fg \(escalated\) trace disagrees with the wire reply: step outcome "worked" != "unknown", trace outcome "worked" != "unknown"/,
   );
   assert.match(
     scoreScenario("S6", withGrantOutcome(r, "unknown", "unknown", "worked")).verdict,

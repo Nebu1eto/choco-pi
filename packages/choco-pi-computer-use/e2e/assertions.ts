@@ -10,7 +10,7 @@ import {
   type JsonValue,
 } from "../src/json.ts";
 import type { ScenarioId } from "./scenarios/index.ts";
-import { grantTraceErrors, traceEntries } from "./grant.ts";
+import { grantScore, traceEntries } from "./grant.ts";
 import { scoreTierB, type FixtureEvidence, type TierBNotes } from "./tier-b.ts";
 
 export type RecordValue = JsonObject;
@@ -200,24 +200,13 @@ function scoreCancel(all: RecordValue[], typing: RecordValue[], messages: JsonFi
   return errors;
 }
 function scoreGrant(requests: RecordValue[], traces: JsonObject[]): string[] {
-  const foreground = requests.filter((row) => row.policy === "foreground");
-  const retry = foreground[0];
-  if (foreground.length !== 1 || retry?.foregroundGrant !== true)
-    return [`expected one granted foreground act, got ${foreground.length}`];
-  const errors: string[] = [];
-  const first = requests[requests.indexOf(retry) - 1];
-  const refusal = field(first?.response, "error");
-  if (
-    first?.policy !== "background" ||
-    field(refusal, "code") !== "foreground_required" ||
-    field(refusal, "effectPossible") !== false ||
-    JSON.stringify(first.target) !== JSON.stringify(retry.target)
-  )
-    errors.push("foreground act not preceded by a refused background attempt on the same target");
-  const outcome = field(field(retry.response, "result"), "outcome");
-  if (field(retry.response, "ok") !== true || (outcome !== "worked" && outcome !== "unknown"))
+  const scored = grantScore(requests, traces);
+  const errors = [...scored.errors];
+  const { granted } = scored;
+  if (!granted) return errors;
+  const outcome = field(field(granted.response, "result"), "outcome");
+  if (field(granted.response, "ok") !== true || (outcome !== "worked" && outcome !== "unknown"))
     errors.push(`granted foreground act answered ${String(outcome)}`);
-  errors.push(...grantTraceErrors(retry, traces));
   return errors;
 }
 function checkDelivery(entry: JsonField, required: boolean, label: string, errors: string[]): void {

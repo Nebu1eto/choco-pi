@@ -1880,6 +1880,37 @@ test("a covering grant sends a pointer-only click to foreground with no backgrou
     );
     assert.equal(details.status, "ok");
     assert.equal(objectField(details, "execution").pidPointerAttempted, undefined);
+    assert.equal(objectField(details, "execution").backgroundFirst, false);
+  });
+});
+
+test("the combined trace says background first only when every step tried the background first", async () => {
+  const worked: Responder = () => ({ outcome: "worked" });
+  await withFixture({ grant: BUNDLE_ID }, worked, async (context) => {
+    const details = await actOnce(context, [
+      { action: "setText", ref: "@e2", text: "x" },
+      ...customClick,
+    ]);
+    assert.deepEqual(
+      context.requests.map((request) => request.policy),
+      ["background", "foreground"],
+    );
+    const execution = objectField(details, "execution");
+    const steps = execution.steps;
+    assert.ok(Array.isArray(steps));
+    assert.deepEqual(
+      steps.map((step) => (isJsonObject(step) ? step.backgroundFirst : undefined)),
+      [true, false],
+    );
+    assert.equal(
+      execution.backgroundFirst,
+      false,
+      "the granted click went to the foreground directly",
+    );
+  });
+  await withFixture({}, worked, async (context) => {
+    const details = await actOnce(context, [{ action: "setText", ref: "@e2", text: "x" }]);
+    assert.equal(objectField(details, "execution").backgroundFirst, true);
   });
 });
 

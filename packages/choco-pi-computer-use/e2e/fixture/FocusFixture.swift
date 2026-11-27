@@ -49,6 +49,62 @@ let layoutEnabled = layoutOrigin != nil
 let screensOnly = flag("CU_FIXTURE_SCREENS_ONLY")
 let windowShift = NSPoint(x: windowOffset.x + (layoutOrigin?.x ?? 0), y: windowOffset.y - (layoutOrigin?.y ?? 0))
 
+// Off-Space placement (safety/offspace.ts): CU_FIXTURE_SPACE=auto|<space id> puts this fixture's own
+let spaceRequest: String? = isHolder ? nil : env["CU_FIXTURE_SPACE"].flatMap { $0.isEmpty ? nil : $0 }
+typealias CGSConnectionFn = @convention(c) () -> Int32
+typealias CGSCopyDisplaySpacesFn = @convention(c) (Int32) -> Unmanaged<CFArray>?
+typealias CGSMoveWindowsFn = @convention(c) (Int32, CFArray, Int) -> Void
+typealias CGSSpacesForWindowsFn = @convention(c) (Int32, Int32, CFArray) -> Unmanaged<CFArray>?
+func cgsSymbol(_ name: String) -> UnsafeMutableRawPointer? { dlsym(UnsafeMutableRawPointer(bitPattern: -2), name) }
+func cgsConnection() -> Int32? {
+	guard let symbol = cgsSymbol("CGSMainConnectionID") else { return nil }
+	return unsafeBitCast(symbol, to: CGSConnectionFn.self)()
+}
+func managedDisplaySpaces() -> [[String: Any]] {
+	guard let cid = cgsConnection(), let symbol = cgsSymbol("CGSCopyManagedDisplaySpaces") else { return [] }
+	return (unsafeBitCast(symbol, to: CGSCopyDisplaySpacesFn.self)(cid)?.takeRetainedValue() as? [[String: Any]]) ?? []
+}
+func spacesOf(windowNumber: Int) -> [Int] {
+	guard let cid = cgsConnection(), let symbol = cgsSymbol("CGSCopySpacesForWindows") else { return [] }
+	return (unsafeBitCast(symbol, to: CGSSpacesForWindowsFn.self)(cid, 7, [NSNumber(value: windowNumber)] as CFArray)?.takeRetainedValue() as? [Int]) ?? []
+}
+func displayIdentifier(of window: NSWindow) -> String? {
+	let screen = window.screen ?? NSScreen.screens.first { $0.frame.intersects(window.frame) }
+	guard let number = (screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value,
+		let uuid = CGDisplayCreateUUIDFromDisplayID(number)?.takeRetainedValue()
+	else { return nil }
+	return CFUUIDCreateString(nil, uuid) as String?
+}
+func displaySpacesPayload() -> [[String: Any]] {
+	managedDisplaySpaces().map { display in
+		let spaces = (display["Spaces"] as? [[String: Any]]) ?? []
+		return [
+			"display": display["Display Identifier"] as? String ?? "",
+			"current": (display["Current Space"] as? [String: Any])?["ManagedSpaceID"] as? Int ?? -1,
+			"desktopSpaces": spaces.compactMap { ($0["type"] as? Int) == 0 ? $0["ManagedSpaceID"] as? Int : nil },
+		]
+	}
+}
+func offSpaceTarget(_ request: String, window: NSWindow) -> Int? {
+	if let id = Int(request) { return id }
+	guard request == "auto" else { return nil }
+	let identifier = displayIdentifier(of: window)
+	for display in managedDisplaySpaces() {
+		let name = display["Display Identifier"] as? String ?? ""
+		guard name == "Main" || identifier == nil || name.caseInsensitiveCompare(identifier ?? "") == .orderedSame else { continue }
+		let current = (display["Current Space"] as? [String: Any])?["ManagedSpaceID"] as? Int
+		for space in (display["Spaces"] as? [[String: Any]]) ?? [] {
+			if let id = space["ManagedSpaceID"] as? Int, (space["type"] as? Int) == 0, id != current { return id }
+		}
+	}
+	return nil
+}
+func moveWindows(_ numbers: [Int], to space: Int) -> Bool {
+	guard let cid = cgsConnection(), let symbol = cgsSymbol("CGSMoveWindowsToManagedSpace") else { return false }
+	unsafeBitCast(symbol, to: CGSMoveWindowsFn.self)(cid, numbers as CFArray, space)
+	return true
+}
+
 final class EventLog {
 	private let handle: FileHandle?
 	let directory: URL?
@@ -325,6 +381,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 	var window: NSWindow!
 	var windows: [NSWindow] = []
 	var labels: [ObjectIdentifier: String] = [:]
+	var requestedFrames: [ObjectIdentifier: NSRect] = [:]
 	let field = NSTextField(string: "")
 	let counterLabel = NSTextField(labelWithString: "Count: 0")
 	let customView = CustomView(frame: NSRect(x: 20, y: 40, width: 280, height: 120))
@@ -363,13 +420,16 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 		return ["window": label(window), "windowNumber": window.windowNumber, "title": window.title]
 	}
 
+	func place(_ window: NSWindow, contentRect: NSRect) {
+		let frame = window.frameRect(forContentRect: contentRect)
+		window.setFrame(frame, display: false)
+		requestedFrames[ObjectIdentifier(window)] = frame
+	}
+
 	func makeWindow(_ title: String, _ label: String, origin: NSPoint, size: NSSize) -> NSWindow {
-		let made = NSWindow(
-			contentRect: NSRect(origin: NSPoint(x: origin.x + windowShift.x, y: origin.y + windowShift.y), size: size),
-			styleMask: [.titled, .closable, .miniaturizable, .resizable],
-			backing: .buffered,
-			defer: false
-		)
+		let contentRect = NSRect(origin: NSPoint(x: origin.x + windowShift.x, y: origin.y + windowShift.y), size: size)
+		let made = NSWindow(contentRect: contentRect, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+		place(made, contentRect: contentRect)
 		made.title = title
 		made.isReleasedWhenClosed = false
 		made.isRestorable = false
@@ -399,10 +459,9 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 
 	func buildOptionalExtras() {
 		if unpairedWindowEnabled {
-			let hidden = UnpairedWindow(
-				contentRect: NSRect(x: 560 + windowShift.x, y: 40 + windowShift.y, width: 200, height: 80),
-				styleMask: [.titled], backing: .buffered, defer: false
-			)
+			let contentRect = NSRect(x: 560 + windowShift.x, y: 40 + windowShift.y, width: 200, height: 80)
+			let hidden = UnpairedWindow(contentRect: contentRect, styleMask: [.titled], backing: .buffered, defer: false)
+			place(hidden, contentRect: contentRect)
 			hidden.title = "CU Unpaired Window"
 			hidden.isReleasedWhenClosed = false
 			hidden.isRestorable = false
@@ -520,7 +579,8 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 			checkbox = box
 			scrollToMiddle()
 		}
-		let swiftui = makeWindow("CU Matrix SwiftUI", "swiftui", origin: matrixOrigin(left: 1220, top: 80, width: 480, height: 340), size: NSSize(width: 480, height: 340))
+		let swiftLeft = flag("CU_FIXTURE_MATRIX_OVERLAP") ? 100.0 : 1220.0
+		let swiftui = makeWindow("CU Matrix SwiftUI", "swiftui", origin: matrixOrigin(left: swiftLeft, top: 80, width: 480, height: 340), size: NSSize(width: 480, height: 340))
 		let hosting = NSHostingView(rootView: MatrixSwiftUIView(model: swiftModel))
 		hosting.frame = NSRect(x: 0, y: 0, width: 480, height: 340)
 		hosting.autoresizingMask = [.width, .height]
@@ -713,11 +773,32 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 			keyWindow.makeKeyAndOrderFront(nil)
 			NSApp.activate(ignoringOtherApps: true)
 		} else {
+			if let spaceRequest {
+				for made in windows { made.alphaValue = 0 }
+				if let space = offSpaceTarget(spaceRequest, window: keyWindow) { _ = moveWindows(windows.map { $0.windowNumber }, to: space) }
+			}
 			for other in windows where other !== keyWindow { other.orderFrontRegardless() }
 			keyWindow.orderFrontRegardless()
+			if let spaceRequest {
+				let space = offSpaceTarget(spaceRequest, window: keyWindow)
+				let moved = space.map { moveWindows(windows.map { $0.windowNumber }, to: $0) } ?? false
+				for made in windows { made.alphaValue = 1 }
+				logSpaceMove(request: spaceRequest, space: space, moved: moved)
+			}
+		}
+		for made in windows + [unpairedWindow].compactMap({ $0 }) {
+			if let requested = requestedFrames[ObjectIdentifier(made)], made.frame != requested { made.setFrame(requested, display: true) }
 		}
 		var launched: [String: Any] = ["bundleId": bundleId, "title": windowTitle, "frame": frameFields(window.frame), "active": NSApp.isActive]
-		launched["windows"] = windows.map { ["window": label($0), "windowNumber": $0.windowNumber, "title": $0.title, "frame": frameFields($0.frame)] as [String: Any] }
+		launched["windows"] = windows.map { made -> [String: Any] in
+			var row: [String: Any] = ["window": label(made), "windowNumber": made.windowNumber, "title": made.title, "frame": frameFields(made.frame)]
+			if let requested = requestedFrames[ObjectIdentifier(made)] { row["requestedFrame"] = frameFields(requested) }
+			return row
+		}
+		if let unpairedWindow, let requested = requestedFrames[ObjectIdentifier(unpairedWindow)] {
+			launched["unpairedWindow"] = ["frame": frameFields(unpairedWindow.frame), "requestedFrame": frameFields(requested)]
+		}
+		launched["screens"] = screensPayload()
 		launched["options"] = ["sticky": sticky, "noise": noise, "deadView": deadViewEnabled, "web": webEnabled, "windowCount": windowCount, "keyWindow": keyWindowIndex, "sameTitle": sameTitle]
 		if matrixEnabled { launched["matrix"] = true }
 		log.write("launched", launched)
@@ -791,6 +872,21 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 		}
 		let quitFile = directory.appendingPathComponent(".cu-quit").path
 		if FileManager.default.fileExists(atPath: quitFile) { quit(".cu-quit") }
+		if !isHolder, let body = trigger(".cu-space-\(triggerName)") {
+			let request = body.trimmingCharacters(in: .whitespacesAndNewlines)
+			let space = offSpaceTarget(request, window: windows[keyWindowIndex - 1])
+			let moved = space.map { moveWindows(windows.map { $0.windowNumber }, to: $0) } ?? false
+			logSpaceMove(request: request, space: space, moved: moved)
+		}
+		if let body = trigger(".cu-spaces-\(triggerName)") {
+			let seq = Int(body.trimmingCharacters(in: .whitespacesAndNewlines)) ?? -1
+			log.write("spaces", [
+				"seq": seq,
+				"windows": windows.map { ["window": label($0), "windowNumber": $0.windowNumber, "spaces": spacesOf(windowNumber: $0.windowNumber)] as [String: Any] },
+				"displays": displaySpacesPayload(),
+				"frontPid": Int(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0),
+			])
+		}
 		let resizeFile = directory.appendingPathComponent(".cu-resize").path
 		if !isHolder, FileManager.default.fileExists(atPath: resizeFile) {
 			try? FileManager.default.removeItem(atPath: resizeFile)
@@ -838,6 +934,16 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 
 	func windowDidBecomeKey(_ notification: Notification) { log.write("windowKey", windowFields(notification.object as? NSWindow)) }
 	func windowDidResignKey(_ notification: Notification) { log.write("windowResignKey", windowFields(notification.object as? NSWindow)) }
+
+	func logSpaceMove(request: String, space: Int?, moved: Bool) {
+		log.write("spaceMove", [
+			"request": request,
+			"space": space ?? -1,
+			"moved": moved,
+			"windows": windows.map { ["window": label($0), "windowNumber": $0.windowNumber, "spaces": spacesOf(windowNumber: $0.windowNumber)] as [String: Any] },
+			"displays": displaySpacesPayload(),
+		])
+	}
 
 	func quit(_ reason: String) {
 		if quitting { return }
