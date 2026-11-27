@@ -427,15 +427,15 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 			NSApp.activate(ignoringOtherApps: true)
 		} else {
 			if let spaceRequest {
-				for made in windows { made.alphaValue = 0 }
-				if let space = offSpaceTarget(spaceRequest, window: keyWindow) { _ = moveWindows(windows.map { $0.windowNumber }, to: space) }
+				for made in offSpaceWindows() { made.alphaValue = 0 }
+				if let space = offSpaceTarget(spaceRequest, window: keyWindow) { _ = moveWindows(offSpaceWindows().map { $0.windowNumber }, to: space) }
 			}
 			for other in windows where other !== keyWindow { other.orderFrontRegardless() }
 			keyWindow.orderFrontRegardless()
 			if let spaceRequest {
 				let space = offSpaceTarget(spaceRequest, window: keyWindow)
-				let moved = space.map { moveWindows(windows.map { $0.windowNumber }, to: $0) } ?? false
-				for made in windows { made.alphaValue = 1 }
+				let moved = space.map { moveWindows(offSpaceWindows().map { $0.windowNumber }, to: $0) } ?? false
+				for made in offSpaceWindows() { made.alphaValue = 1 }
 				logSpaceMove(request: spaceRequest, space: space, moved: moved)
 			}
 		}
@@ -528,7 +528,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 		if !isHolder, let body = trigger(".cu-space-\(triggerName)") {
 			let request = body.trimmingCharacters(in: .whitespacesAndNewlines)
 			let space = offSpaceTarget(request, window: windows[keyWindowIndex - 1])
-			let moved = space.map { moveWindows(windows.map { $0.windowNumber }, to: $0) } ?? false
+			let moved = space.map { moveWindows(offSpaceWindows().map { $0.windowNumber }, to: $0) } ?? false
 			logSpaceMove(request: request, space: space, moved: moved)
 		}
 		if let body = trigger(".cu-spaces-\(triggerName)") {
@@ -587,6 +587,10 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
 
 	func windowDidBecomeKey(_ notification: Notification) { log.write("windowKey", windowFields(notification.object as? NSWindow)) }
 	func windowDidResignKey(_ notification: Notification) { log.write("windowResignKey", windowFields(notification.object as? NSWindow)) }
+
+	func offSpaceWindows() -> [NSWindow] {
+		windows.filter { spaceWindowLabels?.contains(label($0)) ?? true }
+	}
 
 	func logSpaceMove(request: String, space: Int?, moved: Bool) {
 		log.write("spaceMove", [

@@ -372,21 +372,25 @@ async function acquireHelperForegroundSection(
   const section = currentPlatformBackend.foregroundSection;
   if (!section) return;
   const started = performance.now();
+  const acquireId = randomUUID();
   try {
-    const held = await section("acquire", HELPER_FOREGROUND_WAIT_MS, signal);
+    const held = await section("acquire", HELPER_FOREGROUND_WAIT_MS, signal, acquireId);
     if (held !== true) return;
   } catch (error) {
-    if (signal?.aborted) releaseHelperForegroundSection();
+    if (signal?.aborted) releaseHelperForegroundSection(acquireId);
     throw error;
   }
   session.helperSection = true;
+  session.helperSectionAcquireId = acquireId;
   trace.helperWaitedMs = Math.round(performance.now() - started);
 }
 
-function releaseHelperForegroundSection(): void {
+function releaseHelperForegroundSection(acquireId?: string): void {
   const section = currentPlatformBackend.foregroundSection;
   if (!section) return;
-  void section("release", 0, AbortSignal.timeout(COMMAND_TIMEOUT_MS)).catch(() => undefined);
+  void section("release", 0, AbortSignal.timeout(COMMAND_TIMEOUT_MS), acquireId).catch(
+    () => undefined,
+  );
 }
 
 export const UNFINISHED_DELIVERY_GRACE_MS = 2_000;
@@ -400,8 +404,10 @@ export function endForegroundSection(
   if (!lease) return;
   const helperHeld = session.helperSection === true;
   session.helperSection = false;
+  const acquireId = session.helperSectionAcquireId;
+  session.helperSectionAcquireId = undefined;
   const release = (unconfirmedRequestId?: string) => {
-    if (helperHeld) releaseHelperForegroundSection();
+    if (helperHeld) releaseHelperForegroundSection(acquireId);
     lease.release(unconfirmedRequestId);
   };
   if (!unfinished) return release();

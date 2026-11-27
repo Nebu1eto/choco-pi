@@ -402,6 +402,7 @@ export interface ComputerUsePlatformBackend {
     op: "acquire" | "release",
     waitMs: number,
     signal?: AbortSignal,
+    acquireId?: string,
   ): Promise<boolean | undefined>;
   ensureReady(
     ctx: ExtensionContext,

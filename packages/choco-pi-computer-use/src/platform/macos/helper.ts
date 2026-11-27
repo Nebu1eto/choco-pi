@@ -531,14 +531,20 @@ export class MacosHelperClient {
     op: "acquire" | "release",
     waitMs: number,
     signal?: AbortSignal,
+    acquireId?: string,
   ): Promise<JsonObject | undefined> {
     const session = this.session;
     if (!session || !this.coordinatesSessions) return undefined;
-    return await this.command<JsonObject>(
-      "foregroundSection",
-      { op, waitMs, session: { id: session.id, generation: session.generation } },
-      { signal, timeoutMs: waitMs + COMMAND_TIMEOUT_MS },
-    );
+    const args: JsonObject = {
+      op,
+      waitMs,
+      session: { id: session.id, generation: session.generation },
+    };
+    if (acquireId) args.acquireId = acquireId;
+    return await this.command<JsonObject>("foregroundSection", args, {
+      signal,
+      timeoutMs: waitMs + COMMAND_TIMEOUT_MS,
+    });
   }
 
   get diagnostics(): PlatformDiagnostics | undefined {

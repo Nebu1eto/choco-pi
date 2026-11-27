@@ -125,8 +125,8 @@ export const currentPlatformBackend: ComputerUsePlatformBackend = {
   get foregroundSection() {
     const section = activePlatformBackend.foregroundSection;
     return section
-      ? (op: "acquire" | "release", waitMs: number, signal?: AbortSignal) =>
-          section.call(activePlatformBackend, op, waitMs, signal)
+      ? (op: "acquire" | "release", waitMs: number, signal?: AbortSignal, acquireId?: string) =>
+          section.call(activePlatformBackend, op, waitMs, signal, acquireId)
       : undefined;
   },
   ensureReady(ctx, state, signal) {

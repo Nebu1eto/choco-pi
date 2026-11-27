@@ -97,7 +97,10 @@ extension Bridge {
 		case "endInputSuppression":
 			return endInputSuppression()
 		case "restoreUserFocus":
-			return try inForeground(request, keys: keys, pid: nil, context: nil) { try restoreUserFocus(request) }
+			return try inForeground(request, keys: keys, pid: nil, context: nil) {
+				guard let pid = optionalIntArg(request, "pid").map({ Int32($0) }) else { return try restoreUserFocus(request) }
+				return try onTarget(pid, keys: keys, context: nil) { try restoreUserFocus(request) }
+			}
 		case "focusWindow":
 			let pid = Int32(try intArg(request, "pid"))
 			return try onTarget(pid, keys: keys, context: nil) {

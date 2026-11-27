@@ -54,6 +54,11 @@ let windowShift = NSPoint(x: windowOffset.x + (layoutOrigin?.x ?? 0), y: windowO
 
 // Off-Space placement (safety/offspace.ts): CU_FIXTURE_SPACE=auto|<space id> puts this fixture's own
 let spaceRequest: String? = isHolder ? nil : env["CU_FIXTURE_SPACE"].flatMap { $0.isEmpty ? nil : $0 }
+// where they open (safety/coordination.ts: the web window visible, the main window never shown). Default: all.
+let spaceWindowLabels: Set<String>? = env["CU_FIXTURE_SPACE_WINDOWS"].flatMap { raw in
+	let labels = Set(raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+	return labels.isEmpty ? nil : labels
+}
 typealias CGSConnectionFn = @convention(c) () -> Int32
 typealias CGSCopyDisplaySpacesFn = @convention(c) (Int32) -> Unmanaged<CFArray>?
 typealias CGSMoveWindowsFn = @convention(c) (Int32, CFArray, Int) -> Void

@@ -267,6 +267,30 @@ extension Bridge {
 			details["discoveryUnavailableReason"] = "target_frontmost"
 			throw refusal("\(lead); the app is frontmost, so the helper does not tell it it is active, and nothing was activated or captured. \(showOnce)")
 		}
+		let requestKey = "req:" + UUID().uuidString
+		let keys = (request: requestKey, session: currentRequestSessionId() ?? requestKey)
+		do {
+			return try onTarget(pid, keys: keys, context: activeRequestContext()) {
+				if let found = resolveOffSpaceWindows(pid: pid, windowIds: [windowId], scan: false)[windowId] {
+					return (found.element, ["discoveryActivation": false, "resolvedBy": found.source])
+				}
+				if currentFrontmostPid() == pid || NSWorkspace.shared.frontmostApplication?.processIdentifier == pid {
+					details["discoveryUnavailableReason"] = "target_frontmost"
+					throw refusal("\(lead); the app is frontmost, so the helper does not tell it it is active, and nothing was activated or captured. \(showOnce)")
+				}
+				return try discoveryLook(pid: pid, windowId: windowId, lead: lead, showOnce: showOnce, details: &details)
+			}
+		} catch var failure as BridgeFailure where failure.code == "target_busy" {
+			var busy = failure.details ?? [:]
+			busy["offSpace"] = true
+			busy["windowId"] = Int(windowId)
+			busy["discoveryActivation"] = false
+			failure.details = busy
+			throw failure
+		}
+	}
+
+	private func discoveryLook(pid: Int32, windowId: UInt32, lead: String, showOnce: String, details: inout [String: Any]) throws -> (element: AXUIElement, info: [String: Any]) {
 		guard let bounds = windowInfo(windowId: windowId)?.bounds else {
 			throw BridgeFailure(message: "Window \(windowId) is no longer available", code: "root_not_found")
 		}
@@ -277,7 +301,10 @@ extension Bridge {
 		guard let found else {
 			details["discoveryActivation"] = true
 			details["spacesUnchanged"] = spacesUnchanged
-			throw refusal("\(lead); a discovery activation was tried (the app was told it was active for a moment, then inactive) and the window still did not resolve, so nothing was captured. \(showOnce)")
+			throw BridgeFailure(
+				message: "\(lead); a discovery activation was tried (the app was told it was active for a moment, then inactive) and the window still did not resolve, so nothing was captured. \(showOnce)",
+				code: "off_space_window_unresolved", effectPossible: false, details: details
+			)
 		}
 		return (found.element, ["discoveryActivation": true, "resolvedBy": found.source, "spacesUnchanged": spacesUnchanged])
 	}

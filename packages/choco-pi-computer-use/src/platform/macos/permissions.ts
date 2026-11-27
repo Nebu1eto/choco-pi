@@ -107,8 +107,9 @@ export async function macosForegroundSection(
   op: "acquire" | "release",
   waitMs: number,
   signal?: AbortSignal,
+  acquireId?: string,
 ): Promise<boolean | undefined> {
-  const result = await macosHelper.foregroundSection(op, waitMs, signal);
+  const result = await macosHelper.foregroundSection(op, waitMs, signal, acquireId);
   if (result === undefined) return undefined;
   return op === "acquire" ? result.acquired === true : result.released === true;
 }

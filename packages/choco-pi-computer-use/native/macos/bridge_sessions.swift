@@ -70,6 +70,7 @@ extension Bridge {
 		} else {
 			sessions[session.id] = (session.generation, now, pin ? 1 : 0)
 		}
+		armSessionExpiryLocked()
 	}
 
 	func pruneExpiredSessions() -> [String] {
@@ -78,7 +79,24 @@ extension Bridge {
 		let now = monotonicSeconds()
 		let expired = sessions.filter { $0.value.active == 0 && now - $0.value.lastSeen >= ownerTTL }.map { $0.key }
 		for id in expired { sessions.removeValue(forKey: id) }
+		armSessionExpiryLocked()
 		return expired
+	}
+
+	func armSessionExpiryLocked() {
+		sessionExpiryGeneration &+= 1
+		guard let due = sessions.values.filter({ $0.active == 0 }).map({ $0.lastSeen + ownerTTL }).min() else { return }
+		let generation = sessionExpiryGeneration
+		let delay = max(0, due - monotonicSeconds()) + 0.02
+		DispatchQueue.global().asyncAfter(wallDeadline: .now() + delay) { [weak self] in self?.sessionExpiryTimerFired(generation) }
+	}
+
+	private func sessionExpiryTimerFired(_ generation: UInt64) {
+		ownerLock.lock()
+		let current = generation == sessionExpiryGeneration
+		ownerLock.unlock()
+		guard current else { return }
+		finishExpiredSessions(pruneExpiredSessions())
 	}
 
 	func finishExpiredSessions(_ ids: [String]) {
@@ -98,6 +116,7 @@ extension Bridge {
 		} else if let session, let current = sessions[session.id] {
 			sessions[session.id] = (current.generation, current.lastSeen, max(0, current.active - 1))
 		}
+		armSessionExpiryLocked()
 		ownerLock.unlock()
 	}
 
@@ -110,11 +129,13 @@ extension Bridge {
 		} else {
 			sessions[session.id] = (session.generation, monotonicSeconds(), 0)
 		}
+		armSessionExpiryLocked()
 		ownerLock.unlock()
 		coordination.lock()
 		if var section = foregroundSection, section.holder == session.id {
 			section.lastSeen = monotonicSeconds()
 			foregroundSection = section
+			armSectionExpiryLocked()
 		}
 		coordination.unlock()
 	}
@@ -130,6 +151,7 @@ extension Bridge {
 			throw BridgeFailure(message: "release refused: this session has \(current.active) request(s) in flight", code: "owner_busy", effectPossible: false, details: ["activeRequests": current.active])
 		}
 		sessions.removeValue(forKey: session.id)
+		armSessionExpiryLocked()
 		ownerLock.unlock()
 		dropLookRecords(sessionId: session.id)
 		releaseForegroundSection(holder: session.id, restore: false)
@@ -153,6 +175,7 @@ extension Bridge {
 		ownerLock.unlock()
 		coordination.lock()
 		let held = foregroundSection != nil
+		let restoring = foregroundSection?.restoring == true
 		let busyTargets = targetHolders.count
 		coordination.unlock()
 		lookRecordLock.lock()
@@ -160,7 +183,8 @@ extension Bridge {
 		let retainedLooks = lookRecords.count
 		lookRecordLock.unlock()
 		return [
-			"live": live.count, "activeRequests": active, "foregroundSectionHeld": held, "busyTargets": busyTargets, "ttlMs": Int(ownerTTL * 1000),
+			"live": live.count, "activeRequests": active, "foregroundSectionHeld": held, "foregroundSectionRestoring": restoring,
+			"busyTargets": busyTargets, "ttlMs": Int(ownerTTL * 1000), "foregroundSectionIdleTtlMs": Int(foregroundSectionIdleTTL * 1000),
 			"looks": [
 				"sessions": retainedSessions, "records": retainedLooks, "perSession": looksPerSession, "maxSessions": maxLookSessions,
 				"retentionWithoutClientMs": Int(lookRetentionWithoutClient * 1000),

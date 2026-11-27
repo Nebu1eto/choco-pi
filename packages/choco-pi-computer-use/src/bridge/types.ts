@@ -436,6 +436,7 @@ export interface ForegroundSession {
   lastRequest?: { requestId: string; policy: DeliveryPolicy; budgetMs: number; sentAt: number };
   section?: ForegroundSectionLease;
   helperSection?: boolean;
+  helperSectionAcquireId?: string;
 }
 
 export interface HelperRefusalSignal {

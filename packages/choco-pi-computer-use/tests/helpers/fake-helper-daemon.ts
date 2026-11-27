@@ -41,6 +41,7 @@ export interface FakeHelperDaemonOptions {
   actHoldMs?: number;
   coordinationWaitMs?: number;
   foregroundSectionIdleMs?: number;
+  foregroundSectionRestoreMs?: number;
   refusalActivates?: boolean;
   secondTarget?: boolean;
   foregroundHoldMs?: number;
@@ -67,6 +68,7 @@ export interface FakeHelperDaemon {
   readonly requests: JsonObject[];
   readonly actSpans: JsonObject[];
   offSpaceDiscoveries(): number;
+  foregroundSectionHolder(): string | undefined;
   close(): Promise<void>;
 }
 
@@ -272,7 +274,15 @@ class FakeHelperState {
     lastSeen: number;
     active: number;
     targets: Set<number>;
+    userApp?: typeof FAKE_APP;
+    acquireIds?: Set<string>;
+    restoring?: boolean;
   };
+  private readonly pendingAcquires = new Set<string>();
+  private readonly cancelledAcquires = new Map<string, number>();
+  private readonly sectionRestoreMs: number;
+  private expiryTimer?: ReturnType<typeof setTimeout>;
+  private stopped = false;
   private readonly actHoldMs: number;
   private readonly coordinationWaitMs: number;
   private readonly sectionIdleMs: number;
@@ -312,6 +322,7 @@ class FakeHelperState {
     this.actHoldMs = options.actHoldMs ?? 0;
     this.coordinationWaitMs = options.coordinationWaitMs ?? 10_000;
     this.sectionIdleMs = options.foregroundSectionIdleMs ?? 10_000;
+    this.sectionRestoreMs = options.foregroundSectionRestoreMs ?? 30;
     this.refusalActivates = options.refusalActivates ?? true;
     this.secondTarget = options.secondTarget === true;
     this.foregroundHoldMs = options.foregroundHoldMs ?? 0;
@@ -328,7 +339,7 @@ class FakeHelperState {
     this.frontmost = this.userApp;
   }
 
-  async handle(request: JsonObject): Promise<JsonValue> {
+  async handle(request: JsonObject, connectionClosed?: () => boolean): Promise<JsonValue> {
     const cmd = stringField(request, "cmd") ?? "";
     const session = sessionOf(request);
     const gated = OWNER_GATED.has(cmd);
@@ -336,16 +347,39 @@ class FakeHelperState {
     else if (session) this.refresh(session);
     if (session && this.multi) this.noteLookSession(session);
     try {
-      return await this.dispatch(cmd, request, session);
+      return await this.dispatch(cmd, request, session, connectionClosed);
     } finally {
       if (gated) this.endOwned(session);
+      this.armExpiry();
     }
+  }
+
+  private armExpiry(): void {
+    clearTimeout(this.expiryTimer);
+    this.expiryTimer = undefined;
+    if (!this.multi || this.stopped) return;
+    const due: number[] = [];
+    const section = this.section;
+    if (section?.explicit && !section.restoring && section.active === 0)
+      due.push(section.lastSeen + this.sectionIdleMs);
+    for (const entry of this.sessions.values())
+      if (entry.active === 0) due.push(entry.lastSeen + this.ownerTtlMs);
+    if (due.length === 0) return;
+    const delay = Math.max(0, Math.min(...due) - Date.now()) + 5;
+    this.expiryTimer = setTimeout(() => {
+      this.expiryTimer = undefined;
+      this.pruneSessions();
+      this.expireIdleSection();
+      this.armExpiry();
+    }, delay);
+    this.expiryTimer.unref?.();
   }
 
   private async dispatch(
     cmd: string,
     request: JsonObject,
     session: Session | undefined,
+    connectionClosed?: () => boolean,
   ): Promise<JsonValue> {
     switch (cmd) {
       case "diagnostics":
@@ -389,7 +423,7 @@ class FakeHelperState {
       case "cancel":
         return await this.cancel(stringField(request, "target") ?? "", session);
       case "foregroundSection":
-        return await this.foregroundSectionCommand(request, session);
+        return await this.foregroundSectionCommand(request, session, connectionClosed);
       case "listApps":
         return {
           apps: [
@@ -438,6 +472,8 @@ class FakeHelperState {
             "focusWindow requires a host foreground grant",
             false,
           );
+        if (this.section && this.section.holder === session?.id)
+          this.section.targets.add(numberField(request, "pid") ?? FAKE_APP.pid);
         this.frontmost = FAKE_APP;
         return { focused: true };
       case "restoreUserFocus": {
@@ -562,7 +598,13 @@ class FakeHelperState {
     };
   }
 
+  foregroundSectionHolder(): string | undefined {
+    return this.section?.holder;
+  }
+
   shutdown(): void {
+    this.stopped = true;
+    clearTimeout(this.expiryTimer);
     for (const tracked of this.active.values()) {
       tracked.cancelled = true;
       tracked.wake?.();
@@ -824,7 +866,7 @@ class FakeHelperState {
       this.dropLooks(id);
       this.lookSessionGenerations.delete(id);
     }
-    if (this.section?.holder === id) this.section = undefined;
+    if (this.section?.holder === id && !this.section.restoring) this.retireSection(!dropLooks);
   }
 
   private dropLooks(id: string): void {
@@ -868,10 +910,30 @@ class FakeHelperState {
     const section = this.section;
     if (
       section?.explicit &&
+      !section.restoring &&
       section.active === 0 &&
       Date.now() - section.lastSeen >= this.sectionIdleMs
     )
+      this.retireSection(true);
+  }
+
+  private retireSection(restore: boolean): void {
+    const section = this.section;
+    if (!section) return;
+    const userApp = section.userApp;
+    if (!restore || !userApp || !section.targets.has(this.frontmost.pid)) {
       this.section = undefined;
+      return;
+    }
+    section.restoring = true;
+    const timer = setTimeout(() => {
+      if (this.section === section) {
+        if (section.targets.has(this.frontmost.pid)) this.frontmost = userApp;
+        this.section = undefined;
+      }
+      this.armExpiry();
+    }, this.sectionRestoreMs);
+    timer.unref?.();
   }
 
   private async coordinated(
@@ -899,7 +961,7 @@ class FakeHelperState {
       const started = Date.now();
       const entered = await this.waitUntil(tracked, this.coordinationWaitMs, () => {
         this.expireIdleSection();
-        return !this.section || this.section.holder === sessionKey;
+        return !this.section || (this.section.holder === sessionKey && !this.section.restoring);
       });
       if (!entered)
         throw new FakeFailure(
@@ -973,6 +1035,7 @@ class FakeHelperState {
   private async foregroundSectionCommand(
     request: JsonObject,
     session: Session | undefined,
+    connectionClosed?: () => boolean,
   ): Promise<JsonObject> {
     if (!session)
       throw new FakeFailure(
@@ -981,9 +1044,23 @@ class FakeHelperState {
         false,
       );
     const op = stringField(request, "op") ?? "acquire";
+    const acquireId = stringField(request, "acquireId") || undefined;
     if (op === "release") {
+      if (acquireId !== undefined) {
+        const now = Date.now();
+        for (const [id, at] of this.cancelledAcquires)
+          if (now - at >= 60_000) this.cancelledAcquires.delete(id);
+        const waiting = this.pendingAcquires.has(acquireId);
+        const section = this.section;
+        if (section?.holder === session.id && section.acquireIds?.has(acquireId)) {
+          if (!section.restoring) this.retireSection(false);
+          return { released: true, cancelledWait: waiting };
+        }
+        this.cancelledAcquires.set(acquireId, now);
+        return { released: false, cancelledWait: waiting };
+      }
       const held = this.section?.holder === session.id;
-      if (held) this.section = undefined;
+      if (held && !this.section?.restoring) this.section = undefined;
       return { released: held };
     }
     const waitMs = Math.max(
@@ -991,10 +1068,25 @@ class FakeHelperState {
       Math.min(this.coordinationWaitMs, numberField(request, "waitMs") ?? 0),
     );
     const started = Date.now();
-    const entered = await this.waitUntil(undefined, waitMs, () => {
-      this.expireIdleSection();
-      return !this.section || this.section.holder === session.id;
-    });
+    let abandoned: string | undefined;
+    if (acquireId !== undefined) this.pendingAcquires.add(acquireId);
+    let entered: boolean;
+    try {
+      entered = await this.waitUntil(undefined, waitMs, () => {
+        if (acquireId !== undefined && this.cancelledAcquires.has(acquireId)) {
+          abandoned = "cancelled";
+          return true;
+        }
+        if (connectionClosed?.()) {
+          abandoned = "connection_closed";
+          return true;
+        }
+        this.expireIdleSection();
+        return !this.section || (this.section.holder === session.id && !this.section.restoring);
+      });
+    } finally {
+      if (acquireId !== undefined) this.pendingAcquires.delete(acquireId);
+    }
     if (!entered)
       throw new FakeFailure(
         "foreground_busy",
@@ -1003,10 +1095,20 @@ class FakeHelperState {
         undefined,
         { waitedMs: Date.now() - started, retry: "later" },
       );
+    if (abandoned !== undefined)
+      throw new FakeFailure(
+        "cancelled",
+        `cancelled: this foregroundSection acquire ended before it was granted (${abandoned}); the section was not taken`,
+        false,
+        undefined,
+        { waitedMs: Date.now() - started, reason: abandoned },
+      );
     const alreadyHeld = this.section !== undefined;
     if (this.section) {
       this.section.explicit = true;
       this.section.lastSeen = Date.now();
+      this.section.acquireIds ??= new Set();
+      if (acquireId !== undefined) this.section.acquireIds.add(acquireId);
     } else
       this.section = {
         holder: session.id,
@@ -1014,7 +1116,10 @@ class FakeHelperState {
         lastSeen: Date.now(),
         active: 0,
         targets: new Set(),
+        userApp: this.frontmost,
+        acquireIds: new Set(acquireId === undefined ? [] : [acquireId]),
       };
+    this.armExpiry();
     return {
       acquired: true,
       alreadyHeld,
@@ -1820,7 +1925,7 @@ export async function startFakeHelperDaemon(
     } else {
       log(entry);
       try {
-        response = { id, ok: true, result: await state.handle(request) };
+        response = { id, ok: true, result: await state.handle(request, () => socket.destroyed) };
       } catch (error) {
         response = errorEnvelope(id, error instanceof Error ? error : new Error(String(error)));
       }
@@ -1866,6 +1971,7 @@ export async function startFakeHelperDaemon(
     requests,
     actSpans: state.actSpans,
     offSpaceDiscoveries: () => state.offSpaceDiscoveries,
+    foregroundSectionHolder: () => state.foregroundSectionHolder(),
     close() {
       closing ??= (async () => {
         const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));

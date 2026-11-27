@@ -91,6 +91,12 @@ final class Bridge {
 	var foregroundSection: ForegroundSectionState?
 	let coordinationWaitLimit: TimeInterval = 10
 	let foregroundSectionIdleTTL: TimeInterval = 10
+	let sectionRestoreHoldWait: TimeInterval = 2
+	let sectionRestoreVerifyBound: TimeInterval = 1.5
+	var sectionExpiryGeneration: UInt64 = 0
+	var sessionExpiryGeneration: UInt64 = 0
+	var pendingSectionAcquires: Set<String> = []
+	var cancelledSectionAcquires: [String: Double] = [:]
 	let extendedActivationLock = NSLock()
 	var extendedActivations: [Int32: (count: Int, target: ExtendedDeliveryTarget)] = [:]
 	var extendedShuttingDown = false
@@ -165,6 +171,7 @@ final class Bridge {
 
 	private func processClient(_ client: Int32) {
 		let clientInput = FileHandle(fileDescriptor: client, closeOnDealloc: true)
+		Thread.current.threadDictionary[requestClientSocketKey] = client
 		var buffer = Data()
 		let newline = Data([0x0A])
 		while true {
